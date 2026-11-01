@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.32 full-development / v1.0.0.29 stable
+NVIDIA GA104 XDDM DRIVER — v1.0.0.33 full-development / v1.0.0.29 stable
 Updated: November 1, 2026
 
 Latest hardware result
@@ -50,6 +50,15 @@ sequence until FWSEC/FRTS is available. `package-full` is boot-safe;
 `package-probe` is the explicitly unsafe reproducer. Run capture_vbios.sh while
 the host exposes the GPU PCI ROM so the next implementation can parse and run
 the board-specific FWSEC image.
+
+v32 BSOD root cause and v33 correction
+--------------------------------------
+v32 correctly skipped all GSP hardware operations but still produced 0x3B at
+the same point. Package comparison found that dist_full installed an obsolete
+10,976-byte nvxdisp.dll, while working v29 used the newer 16,896-byte display
+DLL. The failure occurred immediately after mode query, when win32k entered the
+display DLL. v33 replaces the obsolete DLL and makes package-full/package-probe
+always copy the known-working display DLL from dist/.
 
 Important corrections
 ----------------------

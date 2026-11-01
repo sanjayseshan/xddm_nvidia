@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_RUN_LOG="$NVX_ARCHIVE/v32-$NVX_STAMP.log"
+NVX_RUN_LOG="$NVX_ARCHIVE/v33-$NVX_STAMP.log"
 
 if [ "$EUID" -ne 0 ]; then
     echo "Run as root: sudo $0" >&2
@@ -13,15 +13,22 @@ fi
 
 mkdir -p "$NVX_ARCHIVE"
 if [ -f "$NVX_ROOT/vm_serial.log" ]; then
-    cp "$NVX_ROOT/vm_serial.log" "$NVX_ARCHIVE/before-v32-$NVX_STAMP.log"
+    cp "$NVX_ROOT/vm_serial.log" "$NVX_ARCHIVE/before-v33-$NVX_STAMP.log"
 fi
 
-echo "==> Running host tests and building boot-safe v32"
+echo "==> Running host tests and building boot-safe v33"
 if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
     sudo -u "$SUDO_USER" make -C "$NVX_ROOT/src_driver" check package-full
 else
     make -C "$NVX_ROOT/src_driver" check package-full
 fi
+
+if ! cmp -s "$NVX_ROOT/dist/nvxdisp.dll" "$NVX_ROOT/dist_full/nvxdisp.dll"; then
+    echo "Refusing test: dist_full/nvxdisp.dll does not match the known-working display DLL." >&2
+    exit 1
+fi
+echo "==> Verified miniport/display package pairing"
+sha256sum "$NVX_ROOT/dist_full/nvxmp.sys" "$NVX_ROOT/dist_full/nvxdisp.dll"
 
 echo "==> Updating the offline XP guest with dist_full"
 "$NVX_ROOT/update_disk_driver.sh" full

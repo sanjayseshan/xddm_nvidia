@@ -43,6 +43,7 @@ full: nvxmp.sys
 
 package-full: EXPERIMENTAL_GSP=1
 package-full: all
+	cp ../dist/nvxdisp.dll ../dist_full/nvxdisp.dll
 	cp nvxmp.sys ../dist_full/nvxmp.sys
 	genisoimage -quiet -J -R -o ../nvx_driver_full.iso ../dist_full
 
@@ -56,6 +57,7 @@ package-probe: EXPERIMENTAL_GSP=1
 package-probe: UNSAFE_GSP_PROBE=1
 package-probe: all
 	mkdir -p ../dist_probe
-	cp ../dist_full/nvx.inf ../dist_full/nvxdisp.dll ../dist_full/gsp_ga104.bin ../dist_probe/
+	cp ../dist_full/nvx.inf ../dist_full/gsp_ga104.bin ../dist_probe/
+	cp ../dist/nvxdisp.dll ../dist_probe/nvxdisp.dll
 	cp nvxmp.sys ../dist_probe/nvxmp.sys
 	genisoimage -quiet -J -R -o ../nvx_driver_probe.iso ../dist_probe
