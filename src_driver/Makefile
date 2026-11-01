@@ -1,6 +1,7 @@
 CC = x86_64-w64-mingw32-gcc
 EXPERIMENTAL_GSP ?= 0
-CFLAGS = -DNVX_ENABLE_EXPERIMENTAL_GSP=$(EXPERIMENTAL_GSP) -Wall -Wextra -O2 -nostdlib -m64 -fno-builtin -fno-stack-protector -I.
+UNSAFE_GSP_PROBE ?= 0
+CFLAGS = -DNVX_ENABLE_EXPERIMENTAL_GSP=$(EXPERIMENTAL_GSP) -DNVX_ENABLE_UNSAFE_GSP_PROBE=$(UNSAFE_GSP_PROBE) -Wall -Wextra -O2 -nostdlib -m64 -fno-builtin -fno-stack-protector -I.
 LDFLAGS = -shared -Wl,--entry=DriverEntry -Wl,--subsystem,native:5.2 -nostartfiles -Wl,--image-base,0x10000 -Wl,--file-alignment,0x200 -Wl,--section-alignment,0x1000 -L. -lvideoprt
 
 all: nvxmp.sys
@@ -31,7 +32,7 @@ check:
 
 HOSTCC ?= cc
 
-.PHONY: package package-full full
+.PHONY: package package-full package-probe full probe
 package: all
 	cp nvxmp.sys ../dist/nvxmp.sys
 	genisoimage -quiet -J -R -o ../nvx_driver.iso ../dist
@@ -44,3 +45,17 @@ package-full: EXPERIMENTAL_GSP=1
 package-full: all
 	cp nvxmp.sys ../dist_full/nvxmp.sys
 	genisoimage -quiet -J -R -o ../nvx_driver_full.iso ../dist_full
+
+# This deliberately unsafe diagnostic reproduces the SEC2 0x91 result without
+# being confused with the boot-safe full-development package.
+probe: EXPERIMENTAL_GSP=1
+probe: UNSAFE_GSP_PROBE=1
+probe: nvxmp.sys
+
+package-probe: EXPERIMENTAL_GSP=1
+package-probe: UNSAFE_GSP_PROBE=1
+package-probe: all
+	mkdir -p ../dist_probe
+	cp ../dist_full/nvx.inf ../dist_full/nvxdisp.dll ../dist_full/gsp_ga104.bin ../dist_probe/
+	cp nvxmp.sys ../dist_probe/nvxmp.sys
+	genisoimage -quiet -J -R -o ../nvx_driver_probe.iso ../dist_probe

@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.31 experimental / v1.0.0.29 stable
+NVIDIA GA104 XDDM DRIVER — v1.0.0.32 full-development / v1.0.0.29 stable
 Updated: November 1, 2026
 
 Latest hardware result
@@ -36,6 +36,20 @@ After a failed GSP bootstrap it explicitly reapplies and verifies the current
 VBE mode before the display DLL starts. The new test_full_driver.sh builds,
 updates the guest, runs QEMU with reboot disabled, archives the serial log, and
 classifies the last GSP stage. Record the visible STOP code if Windows crashes.
+
+v31 hardware result and v32 prerequisite gate
+---------------------------------------------
+v31 again blue-screened with SYSTEM_SERVICE_EXCEPTION (0x3B). The log proves
+the restored VBE mode was accepted, then the crash occurred after the XDDM
+display driver queried the current mode and before it mapped video memory. A
+partial GSP transition therefore cannot safely return to the display stack.
+
+Matching OpenRM 535 performs board-VBIOS FWSEC/FRTS, reset into RISC-V,
+optional scrubber, and only then Booter Load. v32 refuses the unsafe hardware
+sequence until FWSEC/FRTS is available. `package-full` is boot-safe;
+`package-probe` is the explicitly unsafe reproducer. Run capture_vbios.sh while
+the host exposes the GPU PCI ROM so the next implementation can parse and run
+the board-specific FWSEC image.
 
 Important corrections
 ----------------------

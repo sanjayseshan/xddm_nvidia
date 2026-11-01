@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_RUN_LOG="$NVX_ARCHIVE/v31-$NVX_STAMP.log"
+NVX_RUN_LOG="$NVX_ARCHIVE/v32-$NVX_STAMP.log"
 
 if [ "$EUID" -ne 0 ]; then
     echo "Run as root: sudo $0" >&2
@@ -13,10 +13,10 @@ fi
 
 mkdir -p "$NVX_ARCHIVE"
 if [ -f "$NVX_ROOT/vm_serial.log" ]; then
-    cp "$NVX_ROOT/vm_serial.log" "$NVX_ARCHIVE/before-v31-$NVX_STAMP.log"
+    cp "$NVX_ROOT/vm_serial.log" "$NVX_ARCHIVE/before-v32-$NVX_STAMP.log"
 fi
 
-echo "==> Running host tests and building v31"
+echo "==> Running host tests and building boot-safe v32"
 if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
     sudo -u "$SUDO_USER" make -C "$NVX_ROOT/src_driver" check package-full
 else
@@ -36,7 +36,9 @@ finish() {
     echo "==> Result log: $NVX_RUN_LOG"
     if [ -f "$NVX_RUN_LOG" ]; then
         grep -E "Miniport Driver|\[SEC2\]|\[GSP\]|\[RESET\]" "$NVX_RUN_LOG" | tail -80 || true
-        if grep -q "Mailbox0: 0x0000000000000091" "$NVX_RUN_LOG"; then
+        if grep -q "FWSEC/FRTS is required" "$NVX_RUN_LOG"; then
+            echo "RESULT: boot-safe GSP prerequisite gate worked."
+        elif grep -q "Mailbox0: 0x0000000000000091" "$NVX_RUN_LOG"; then
             echo "RESULT: SEC2 executed, but Booter Load returned 0x91."
         elif grep -q "Verified: 0xA0A0A0A0A0A0A0A0" "$NVX_RUN_LOG"; then
             echo "RESULT: WPR verification passed."
