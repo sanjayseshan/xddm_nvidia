@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.34 read-only PROM probe / v1.0.0.33 verified display
+NVIDIA GA104 XDDM DRIVER — v1.0.0.35 raw PROM diagnostic / v1.0.0.33 verified display
 Updated: November 1, 2026
 
 Latest hardware result
@@ -80,6 +80,14 @@ not reset, DMA to, or start any Falcon. Host sanitizer tests cover a valid v3
 descriptor, corrupted checksum, integer bounds, malformed sizes, and the known
 truncated sysfs ROM. The next hardware log must show the VBIOS/FWSEC lines while
 retaining the verified 1920x1080x32 scanout.
+
+v34 hardware result and v35 diagnostic
+--------------------------------------
+v34 retained 1920x1080x32 and performed no reset or GSP execution, but the live
+PROM parser returned INVALID_ROM (-2). The live aperture likely includes an IFR
+prefix before the PCI 55aa image, as handled by OpenRM. v35 logs raw aligned
+dwords at the PROM start and candidate PCI/extension/FWSEC offsets so IFR/ROM
+location can be implemented from observed data without speculative writes.
 
 Important corrections
 ----------------------

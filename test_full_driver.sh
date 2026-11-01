@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_RUN_LOG="$NVX_ARCHIVE/v34-$NVX_STAMP.log"
+NVX_RUN_LOG="$NVX_ARCHIVE/v35-$NVX_STAMP.log"
 
 if [ "$EUID" -ne 0 ]; then
     echo "Run as root: sudo $0" >&2
@@ -13,10 +13,10 @@ fi
 
 mkdir -p "$NVX_ARCHIVE"
 if [ -f "$NVX_ROOT/vm_serial.log" ]; then
-    cp "$NVX_ROOT/vm_serial.log" "$NVX_ARCHIVE/before-v34-$NVX_STAMP.log"
+    cp "$NVX_ROOT/vm_serial.log" "$NVX_ARCHIVE/before-v35-$NVX_STAMP.log"
 fi
 
-echo "==> Running host tests and building read-only PROM probe v34"
+echo "==> Running host tests and building raw PROM diagnostic v35"
 if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
     sudo -u "$SUDO_USER" make -C "$NVX_ROOT/src_driver" check package-full
 else
