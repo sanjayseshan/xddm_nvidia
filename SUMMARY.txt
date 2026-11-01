@@ -3,11 +3,11 @@ Updated: November 1, 2026
 
 Latest hardware result
 -----------------------
-vm_serial.log is from v29. VBE succeeds and exposes every mode supplied by the
-passthrough ROM: 640x480 and 800x600 at 16/32bpp. Windows cleanly selects
-800x600x32 with physical base E0000000 and 4096-byte stride, but the user still
-sees a heavily striped display. The ROM supplies no larger VBE mode. GSP
-initialization and acceleration are still NOT working.
+The archived v33 hardware log is test_logs/v33-20261101-182149.log. VBE exposes
+10 modes, Windows cleanly selects mode 0x177 at 1920x1080x32, confirms current
+mode 0x4177, and maps physical E0000000 with a 7680-byte stride. The user
+confirms a working 1080p 32-bit desktop. There is no reset/bugcheck marker.
+GSP initialization and hardware acceleration are still NOT working.
 
 Changes in experimental v30
 ---------------------------
@@ -59,6 +59,17 @@ the same point. Package comparison found that dist_full installed an obsolete
 DLL. The failure occurred immediately after mode query, when win32k entered the
 display DLL. v33 replaces the obsolete DLL and makes package-full/package-probe
 always copy the known-working display DLL from dist/.
+
+v33 hardware result and next milestone
+--------------------------------------
+v33 is the known-good native-resolution baseline. Preserve its package and Git
+tag before changing GPU initialization. The captured sysfs ROM is 157696 bytes,
+but BIT's Falcon table pointer is 0x72383 (467843), so that file is only a ROM
+prefix and cannot supply FWSEC. The next build must read the complete PROM via
+read-only BAR0 NV_PROM_DATA accesses (base 0x300000), parse and bounds-check the
+VBIOS FWSEC descriptor, and log it without modifying Falcon state. Only after
+that passes should FWSEC/FRTS execution, GSP reset, Booter Load, and RM RPC be
+enabled in successive hardware-tested stages.
 
 Important corrections
 ----------------------
