@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.30 experimental / v1.0.0.29 stable
+NVIDIA GA104 XDDM DRIVER — v1.0.0.31 experimental / v1.0.0.29 stable
 Updated: November 1, 2026
 
 Latest hardware result
@@ -22,6 +22,20 @@ Changes in experimental v30
   dist_full/ and nvx_driver_full.iso without replacing stable v29 in dist/.
 * Preserved verified VBE scanout on GSP failure. This is an initialization
   milestone, not yet a full accelerated driver.
+
+v30 hardware result and v31 safety update
+-----------------------------------------
+v30 made real progress: SEC2 transitioned from HALTED to running, executed the
+signed Booter Load code, halted normally, and returned mailbox error 0x91. WPR
+was not verified. Windows subsequently blue-screened; serial logging shows its
+HwVidResetHw callback was invoked, but the STOP code is not present in COM1.
+
+v31 removes DMA/common-buffer teardown, Falcon writes, and stalls from
+HwVidResetHw because VideoPort may invoke it during bugcheck at elevated IRQL.
+After a failed GSP bootstrap it explicitly reapplies and verifies the current
+VBE mode before the display DLL starts. The new test_full_driver.sh builds,
+updates the guest, runs QEMU with reboot disabled, archives the serial log, and
+classifies the last GSP stage. Record the visible STOP code if Windows crashes.
 
 Important corrections
 ----------------------

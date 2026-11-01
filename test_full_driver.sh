@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NVX_ARCHIVE="$NVX_ROOT/test_logs"
+NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
+NVX_RUN_LOG="$NVX_ARCHIVE/v31-$NVX_STAMP.log"
+
+if [ "$EUID" -ne 0 ]; then
+    echo "Run as root: sudo $0" >&2
+    exit 1
+fi
+
+mkdir -p "$NVX_ARCHIVE"
+if [ -f "$NVX_ROOT/vm_serial.log" ]; then
+    cp "$NVX_ROOT/vm_serial.log" "$NVX_ARCHIVE/before-v31-$NVX_STAMP.log"
+fi
+
+echo "==> Running host tests and building v31"
+if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
+    sudo -u "$SUDO_USER" make -C "$NVX_ROOT/src_driver" check package-full
+else
+    make -C "$NVX_ROOT/src_driver" check package-full
+fi
+
+echo "==> Updating the offline XP guest with dist_full"
+"$NVX_ROOT/update_disk_driver.sh" full
+
+if [ ! -e /dev/vfio/vfio ]; then
+    echo "VFIO is not ready. Run: sudo ./dynamic_vfio_switch.sh vm" >&2
+    exit 1
+fi
+
+finish() {
+    echo
+    echo "==> Result log: $NVX_RUN_LOG"
+    if [ -f "$NVX_RUN_LOG" ]; then
+        grep -E "Miniport Driver|\[SEC2\]|\[GSP\]|\[RESET\]" "$NVX_RUN_LOG" | tail -80 || true
+        if grep -q "Mailbox0: 0x0000000000000091" "$NVX_RUN_LOG"; then
+            echo "RESULT: SEC2 executed, but Booter Load returned 0x91."
+        elif grep -q "Verified: 0xA0A0A0A0A0A0A0A0" "$NVX_RUN_LOG"; then
+            echo "RESULT: WPR verification passed."
+        elif grep -q "\[RESET\]" "$NVX_RUN_LOG"; then
+            echo "RESULT: Windows invoked the reset callback; record the visible STOP code."
+        else
+            echo "RESULT: inconclusive; preserve the complete log and visible screen state."
+        fi
+    fi
+}
+trap finish EXIT
+
+echo "==> Launching VFIO VM. QEMU will not reboot after a guest crash."
+echo "==> At the QEMU monitor, use 'quit' after recording the screen/STOP code."
+NVX_DRIVER_ISO="$NVX_ROOT/nvx_driver_full.iso" \
+NVX_SERIAL_LOG="$NVX_RUN_LOG" \
+    "$NVX_ROOT/run_vfio_vm.sh"

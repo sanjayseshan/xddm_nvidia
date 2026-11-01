@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.30
+ * Driver Version: 1.0.0.31
  */
 
 #include "miniport.h"
@@ -71,9 +71,12 @@ BOOLEAN HwVidInterrupt(PVOID HwDeviceExtension) {
 }
 
 BOOLEAN HwVidResetHw(PVOID HwDeviceExtension, ULONG Columns, ULONG Rows) {
+    (void)HwDeviceExtension;
     (void)Columns;
     (void)Rows;
-    NvxGspShutdown(HwDeviceExtension);
+    /* VideoPort can call this at bugcheck/high IRQL.  Do not stall, reset a
+       Falcon, release common buffers, or destroy a DMA adapter here. */
+    LogStr("NVX [RESET]: HwVidResetHw invoked; allocations left intact.\n");
     return TRUE;
 }
 
@@ -271,7 +274,11 @@ BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
         }
 
 #if NVX_ENABLE_EXPERIMENTAL_GSP
-        NvxGspInitSubsystem(HwDeviceExtension);
+        if (!NvxGspInitSubsystem(HwDeviceExtension)) {
+            LogStr("NVX [GSP]: Bootstrap incomplete; restoring verified VBE mode.\n");
+            if (!NvxVbeSetMode(HwDeviceExtension, devExt->CurrentModeIndex))
+                LogStr("NVX [GSP]: WARNING: VBE mode restore failed.\n");
+        }
 #else
         LogStr("NVX [GSP]: Experimental bootstrap disabled; preserving BIOS scanout.\n");
 #endif
@@ -493,7 +500,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.30\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.31\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

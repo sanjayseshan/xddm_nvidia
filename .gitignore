@@ -9,6 +9,7 @@
 # Mutable hardware logs and local tools
 *.log
 /log
+/test_logs/
 *.exe
 /FRAMEBUF.DL_
 /framebuf.dll
