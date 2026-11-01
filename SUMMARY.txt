@@ -89,6 +89,20 @@ prefix before the PCI 55aa image, as handled by OpenRM. v35 logs raw aligned
 dwords at the PROM start and candidate PCI/extension/FWSEC offsets so IFR/ROM
 location can be implemented from observed data without speculative writes.
 
+v35 hardware result and official firmware verification
+-------------------------------------------------------
+v35 booted successfully and retained the verified 1920x1080x32 mapping. Its
+raw PROM values show PCI ROM images at offsets 0 and 0xfe00, then an NVIDIA
+private expansion image at 0x26800 beginning with `NV`; the original parser's
+assumption that every expansion image begins with 55aa is therefore incomplete.
+
+The matching official NVIDIA 535.113.01 installer and OpenRM extraction script
+were fetched and checksum-verified. The packaged GA10x GSP-RM, SEC2 bootloader,
+and Booter Load artifacts are byte-identical to the files already in this
+project. The official Booter Unload artifact was added for future teardown.
+These generic blobs do not contain the board-specific FWSEC/FRTS data. See
+FIRMWARE_PROVENANCE.md for URLs, hashes, and the exact trust boundary.
+
 Important corrections
 ----------------------
 Earlier notes incorrectly called EAX=0xffff004f a VBE failure. VBE defines AX;

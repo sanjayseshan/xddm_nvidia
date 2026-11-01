@@ -25,6 +25,7 @@
 /grub4dos-0.4.4.zip
 /backup_*/
 /xddm/
+/vendor/
 
 # Host-test outputs
 core
