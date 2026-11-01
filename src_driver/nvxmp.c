@@ -2,12 +2,13 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.33
+ * Driver Version: 1.0.0.34
  */
 
 #include "miniport.h"
 #include "nvx_gsp.h"
 #include "nvx_vbe.h"
+#include "nvx_vbios.h"
 
 #define NV_VENDOR_ID 0x10DE
 
@@ -45,6 +46,42 @@ void LogHex(unsigned long long val) {
     }
     buf[18] = '\0';
     LogStr(buf);
+}
+
+typedef struct _NVX_PROM_CONTEXT { PUCHAR Bar0; } NVX_PROM_CONTEXT;
+
+static int NvxPromRead32(void *context, uint32_t offset, uint32_t *value)
+{
+    NVX_PROM_CONTEXT *prom=(NVX_PROM_CONTEXT *)context;
+    if (!prom || !prom->Bar0 || !value || offset > 0xffffc || (offset & 3)) return 0;
+    *value=VideoPortReadRegisterUlong((PULONG)(prom->Bar0+0x300000+offset));
+    return 1;
+}
+
+static VOID NvxProbeFwsecRom(PUCHAR bar0)
+{
+    NVX_PROM_CONTEXT prom;
+    NVX_FWSEC_INFO info;
+    int status;
+    prom.Bar0=bar0;
+    status=NvxParseFwsecRom(NvxPromRead32,&prom,0x100000,&info);
+    LogStr("NVX [VBIOS]: Read-only FWSEC probe status ");LogHex((ULONG)status);LogStr("\n");
+    if (status==NVX_VBIOS_OK) {
+        LogStr("NVX [VBIOS]: size=");LogHex(info.BiosSize);
+        LogStr(" expansion=");LogHex(info.ExpansionRomOffset);
+        LogStr(" BIT=");LogHex(info.BitOffset);
+        LogStr(" FalconTable=");LogHex(info.FalconTableOffset);LogStr("\n");
+        LogStr("NVX [FWSEC]: desc=");LogHex(info.DescriptorOffset);
+        LogStr(" version=");LogHex(info.DescriptorVersion);
+        LogStr(" size=");LogHex(info.DescriptorSize);
+        LogStr(" image=");LogHex(info.ImageOffset);
+        LogStr(" stored=");LogHex(info.StoredSize);LogStr("\n");
+        LogStr("NVX [FWSEC]: imem=");LogHex(info.ImemLoadSize);
+        LogStr(" dmem=");LogHex(info.DmemLoadSize);
+        LogStr(" interface=");LogHex(info.InterfaceOffset);
+        LogStr(" ucode=");LogHex(info.UcodeId);
+        LogStr(" signatures=");LogHex(info.SignatureCount);LogStr("\n");
+    }
 }
 
 typedef struct _GPU_DEVICE_ID {
@@ -282,6 +319,7 @@ BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
         }
 #else
         LogStr("NVX [GSP]: Hardware bootstrap gated: board VBIOS FWSEC/FRTS is required before Booter Load.\n");
+        NvxProbeFwsecRom((PUCHAR)devExt->Bar0MmioVirtual);
 #endif
 #else
         LogStr("NVX [GSP]: Experimental bootstrap disabled; preserving BIOS scanout.\n");
@@ -504,7 +542,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.33\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.34\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

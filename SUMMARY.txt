@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.33 full-development / v1.0.0.29 stable
+NVIDIA GA104 XDDM DRIVER — v1.0.0.34 read-only PROM probe / v1.0.0.33 verified display
 Updated: November 1, 2026
 
 Latest hardware result
@@ -70,6 +70,16 @@ read-only BAR0 NV_PROM_DATA accesses (base 0x300000), parse and bounds-check the
 VBIOS FWSEC descriptor, and log it without modifying Falcon state. Only after
 that passes should FWSEC/FRTS execution, GSP reset, Booter Load, and RM RPC be
 enabled in successive hardware-tested stages.
+
+v34 read-only PROM/FWSEC probe
+-----------------------------
+v34 adds a bounded parser for chained PCI ROM images, BIT header checksums and
+tokens, the Falcon ucode table, and FWSEC v2/v3 descriptors. It reads the full
+1MB PROM aperture at BAR0+0x300000 and logs descriptor/image metadata. It does
+not reset, DMA to, or start any Falcon. Host sanitizer tests cover a valid v3
+descriptor, corrupted checksum, integer bounds, malformed sizes, and the known
+truncated sysfs ROM. The next hardware log must show the VBIOS/FWSEC lines while
+retaining the verified 1920x1080x32 scanout.
 
 Important corrections
 ----------------------

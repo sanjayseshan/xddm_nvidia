@@ -14,8 +14,8 @@ nvxmp.sys: FORCE
 gsp_blob.o: ../dist_full/gsp_ga104.bin
 	cd .. && x86_64-w64-mingw32-objcopy -I binary -O pe-x86-64 -B i386:x86-64 dist_full/gsp_ga104.bin src_driver/gsp_blob.o
 
-nvxmp.sys: nvxmp.c nvx_gsp.c nvx_vbe.c nvx_vbe.h nvx_fw.c nvx_fw.h nvx_gsp.h miniport.h bootloader_blob.h booter_load_blob.h gsp_blob.o nvxmp.def libvideoprt.a
-	$(CC) $(CFLAGS) -o $@ nvxmp.c nvx_gsp.c nvx_vbe.c nvx_fw.c gsp_blob.o nvxmp.def $(LDFLAGS)
+nvxmp.sys: nvxmp.c nvx_gsp.c nvx_vbe.c nvx_vbe.h nvx_fw.c nvx_fw.h nvx_vbios.c nvx_vbios.h nvx_gsp.h miniport.h bootloader_blob.h booter_load_blob.h gsp_blob.o nvxmp.def libvideoprt.a
+	$(CC) $(CFLAGS) -o $@ nvxmp.c nvx_gsp.c nvx_vbe.c nvx_fw.c nvx_vbios.c gsp_blob.o nvxmp.def $(LDFLAGS)
 
 libvideoprt.a: videoprt.def
 	x86_64-w64-mingw32-dlltool -d videoprt.def -l libvideoprt.a
@@ -29,6 +29,8 @@ check:
 	ASAN_OPTIONS=detect_leaks=0 /tmp/nvx-firmware-test
 	sh tests/run_gsp_host_test.sh
 	sh tests/run_vbe_host_test.sh
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I. -o /tmp/nvx-vbios-test tests/vbios_test.c nvx_vbios.c
+	ASAN_OPTIONS=detect_leaks=0 /tmp/nvx-vbios-test
 
 HOSTCC ?= cc
 
