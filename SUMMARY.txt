@@ -1,0 +1,117 @@
+NVIDIA GA104 XDDM DRIVER — v1.0.0.30 experimental / v1.0.0.29 stable
+Updated: November 1, 2026
+
+Latest hardware result
+-----------------------
+vm_serial.log is from v29. VBE succeeds and exposes every mode supplied by the
+passthrough ROM: 640x480 and 800x600 at 16/32bpp. Windows cleanly selects
+800x600x32 with physical base E0000000 and 4096-byte stride, but the user still
+sees a heavily striped display. The ROM supplies no larger VBE mode. GSP
+initialization and acceleration are still NOT working.
+
+Changes in experimental v30
+---------------------------
+* Rebased SEC2 bootstrap behavior on matching NVIDIA OpenRM 535.113.01, not the
+  unrelated local 615 checkout. Matching source is in /tmp/nvidia-open-535.113.01.
+* Implemented GA102 reset preparation, bit-preserving engine reset, Falcon-core
+  selection, second scrub wait, and BOOT_0 programming in the Nouveau/OpenRM
+  order. The old raw ENGINE writes could clobber unrelated control bits.
+* Start SEC2 through CPUCTL_ALIAS when CPUCTL.ALIAS_EN is set, matching OpenRM;
+  otherwise start through CPUCTL. Added transition and register diagnostics.
+* Added `make -C src_driver package-full`, which builds GSP-enabled v30 into
+  dist_full/ and nvx_driver_full.iso without replacing stable v29 in dist/.
+* Preserved verified VBE scanout on GSP failure. This is an initialization
+  milestone, not yet a full accelerated driver.
+
+Important corrections
+----------------------
+Earlier notes incorrectly called EAX=0xffff004f a VBE failure. VBE defines AX;
+its low 16 bits are 0x004f, which is success. Earlier code compared all of EAX.
+Earlier notes also misidentified 0x616300=0xa00 as framebuffer pitch. Nouveau
+uses that register in its head-capabilities setup; it is not pitch evidence.
+VBE current mode 3 does not prove 640x480x32 LFB scanout. Assuming that layout
+and BAR1+0 was incorrect. A BIOS mode such as 0x112 may instead be 24bpp.
+
+Changes in v29
+---------------
+* Replaced the hardcoded single-mode fallback with nvx_vbe.c.
+* Query VideoPortServicesInt10 and use its allocated BIOS buffer and segment
+  registers for controller/mode information. Mapping physical zero had failed
+  and produced no mode descriptions in the v28 log.
+* Read the BIOS's mode list and valid linear direct-color mode descriptions.
+  Report actual width, height, depth, color masks and scanline stride. For VBE3,
+  use the linear stride and color-mask fields. Validate framebuffer bounds
+  against the PCI BAR1 resource. Do not invent pixel geometry.
+* Check AX (low 16 bits of EAX), together with the VideoPort status.
+* Establish an initial BIOS graphics mode and verify it with GET_CURRENT_MODE.
+  Expose larger modes if the BIOS advertises valid descriptions; perform and
+  confirm mode changes. Failed requests keep the previous software state and
+  attempt to restore the previous hardware mode.
+* Map the actual selected mode's framebuffer physical base and storage size,
+  rather than all of BAR1 at offset zero.
+* Default builds skip the incomplete GSP bootstrap, so its engine/DMA writes
+  cannot interfere with this framebuffer test. A dedicated experimental build
+  can enable it with make -C src_driver EXPERIMENTAL_GSP=1.
+* Keep v28's checked firmware parsing, corrected 535 ABI and bootstrap tests.
+
+Reference analysis requested by user
+------------------------------------
+Read NullMoth's macOS driver source and NVIDIA's local OpenRM checkout.
+See DRIVER_REFERENCE_ANALYSIS.txt for exact paths, findings and source links.
+The macOS driver ports NVIDIA RM and NVKMS through an XNU OS layer, rather than
+using a tiny bespoke GSP loader. Its framebuffer uses explicit pitch/format,
+mode validation and commits. This is a useful model for an eventual NT port.
+Local NVIDIA sources are 615.78.08; embedded firmware is 535.113.01. Keep ABIs
+matched. No macOS driver code was copied.
+
+Validation and packaging
+--------------------------
+make -C src_driver check
+  PASS: real firmware parsing, fuse selection and malformed-input tests.
+  PASS: mocked GSP boot, stale HALTED, DMA timeout, offsets and VRAM metadata.
+  PASS: mocked VideoPort/VBE service, high EAX bits, mode list in reused BIOS
+        buffer, 24bpp and 32bpp, padded stride, framebuffer offsets, 1080p mode
+        selection, rejected mode confirmation, failure cleanup.
+Tests use address/undefined-behavior sanitizers. Leak detection is disabled due
+to the traced sandbox environment. Host shims are test-only; production ABI
+layout assertions also compile under MinGW.
+make -C src_driver package
+  PASS: warning-free x64 native-subsystem-5.2 build, only videoprt.sys imports.
+  Updated dist/nvxmp.sys, dist/nvx.inf (1.0.0.29), nvx_driver.iso.
+
+No physical-GPU test of v29 is possible in this workspace (/dev/kvm and
+/dev/vfio are absent). The guest disk and vm_serial.log are unchanged.
+Do not claim the stripes or native resolution are fixed until that test passes.
+
+Next physical test
+--------------------
+1. Stop the VM; retain the v28 log (also saved in backup_before_v29/).
+2. sudo ./update_disk_driver.sh
+3. sudo ./run_vfio_vm.sh
+4. Check the 1.0.0.29 banner, INT10 service status, CONTROLLER EAX, all VBE mode
+   records (depth, stride, physical base), SET_MODE and CURRENT_MODE results,
+   and the Mapping scanout line. GSP should be disabled in the normal package.
+5. If it displays correctly, inspect available resolutions in Display Settings.
+   Larger resolutions depend on which valid VBE modes the BIOS actually offers.
+6. If initialization fails, preserve the complete log; this build refuses to
+   guess a framebuffer layout when BIOS mode metadata cannot be read.
+
+Remaining implementation
+-------------------------
+The experimental GSP path still needs real SEC2 start diagnostics/correction,
+FWSEC-FRTS, full RM event/command handling and post-init exchanges. Hardware
+modesetting beyond VBE requires real display objects/commits (NVKMS or Nouveau
+port). Hardware acceleration requires memory management and rendering commands,
+then the corresponding XDDM/3D interfaces. The current display DLL uses software
+framebuffer drawing and is the existing Microsoft-derived binary, not a new
+accelerated implementation.
+
+Artifacts and rollback
+------------------------
+src_driver/                       Active source and tests
+src_driver/nvxmp.sys              Built v29
+dist/nvxmp.sys, dist/nvx.inf       Active package
+nvx_driver.iso                    Active installer
+backup_before_v29/                v28 source/binary/INF/ISO/notes/log
+backup_before_v28/                Earlier artifacts
+dist_full/ and nvx_driver_full.iso Experimental v30 GSP package (updated)

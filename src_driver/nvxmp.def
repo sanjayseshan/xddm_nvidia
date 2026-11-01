@@ -1,0 +1,3 @@
+NAME nvxmp.sys
+EXPORTS
+    DriverEntry

@@ -1,0 +1,669 @@
+/*
+ * NVIDIA Ampere GA104 GSP Coprocessor Subsystem
+ * Target: Windows XP Professional x64 Edition / Windows Server 2003 x64
+ *
+ * Implements Falcon IMEM DMA transfer, bootloader staging, queue initialization,
+ * and checked bootstrap diagnostics. RM dispatch and display channels remain
+ * separate work.
+ */
+
+#include "nvx_gsp.h"
+#include "nvx_fw.h"
+#include <stddef.h>
+#include "bootloader_blob.h"
+#include "booter_load_blob.h"
+
+/* ABI checks deliberately target firmware 535, not the current OpenRM ABI. */
+_Static_assert(sizeof(GSP_FW_WPR_META_V1) == 256, "WPR ABI");
+_Static_assert(offsetof(GSP_FW_WPR_META_V1, Verified) == 248, "WPR verified ABI");
+_Static_assert(sizeof(GSP_ARGUMENTS_CACHED) == 80, "535 RM args ABI");
+_Static_assert(sizeof(LIBOS_MEMORY_REGION_INIT_ARGUMENT) == 32, "LibOS ABI");
+_Static_assert(offsetof(RM_RISCV_UCODE_DESC, MonitorCodeOffset) == 48, "BL ABI");
+_Static_assert(sizeof(VP_DEVICE_DESCRIPTION) == 8, "VideoPort DMA ABI");
+_Static_assert(offsetof(VP_DEVICE_DESCRIPTION, Dma64BitAddresses) == 2, "DMA flags ABI");
+
+static BOOLEAN NvxWait(PUCHAR bar0, ULONG reg, ULONG mask, ULONG expected,
+                       ULONG iterations, ULONG delay)
+{
+    while (iterations--) {
+        ULONG value = VideoPortReadRegisterUlong((PULONG)(bar0 + reg));
+        if (value != 0xffffffff && (value & mask) == expected) return TRUE;
+        VideoPortStallExecution(delay);
+    }
+    LogStr("NVX [GSP]: Timeout at register "); LogHex(reg);
+    LogStr(" value "); LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+reg)));
+    LogStr("\n");
+    return FALSE;
+}
+
+/*
+ * GA102 Falcon enable sequence.  This follows gp102_flcn_reset_eng(),
+ * ga102_flcn_select(), and gm200_flcn_enable() instead of overwriting the
+ * entire ENGINE register.  The latter is important on a GPU handed to us by
+ * the VGA firmware, where unrelated control bits can already be populated.
+ */
+static BOOLEAN NvxSec2ResetEnable(PUCHAR bar0)
+{
+    ULONG value;
+    ULONG timeout;
+
+    /* GA102 reset preparation is advisory in Nouveau, with a 150us window. */
+    (void)VideoPortReadRegisterUlong((PULONG)(bar0 + 0x8400f4));
+    timeout = 150;
+    while (timeout--) {
+        if (VideoPortReadRegisterUlong((PULONG)(bar0 + 0x8400f4)) & 0x80000000)
+            break;
+        VideoPortStallExecution(1);
+    }
+
+    value = VideoPortReadRegisterUlong((PULONG)(bar0 + NV_PSEC_FALCON_ENGINE));
+    VideoPortWriteRegisterUlong((PULONG)(bar0 + NV_PSEC_FALCON_ENGINE), value | 1);
+    VideoPortStallExecution(10);
+    VideoPortWriteRegisterUlong((PULONG)(bar0 + NV_PSEC_FALCON_ENGINE), value & ~1UL);
+
+    if (!NvxWait(bar0, 0x8400f4, 0x00001000, 0, 2000, 10))
+        return FALSE;
+
+    /* Select the Falcon core when the second PRI block currently selects RISCV. */
+    value = VideoPortReadRegisterUlong((PULONG)(bar0 + 0x841668));
+    if (value & 0x10) {
+        VideoPortWriteRegisterUlong((PULONG)(bar0 + 0x841668), 0);
+        if (!NvxWait(bar0, 0x841668, 1, 1, 1000, 10))
+            return FALSE;
+    }
+
+    /* MC enable is dynamically described by TOP on Ampere.  Firmware normally
+       leaves SEC2 enabled; record its state rather than guessing a PMC mask. */
+    LogStr("NVX [SEC2]: MC_ENABLE 0x000600: 0x");
+    LogHex(VideoPortReadRegisterUlong((PULONG)(bar0 + 0x000600)));
+    LogStr(" BCR: 0x");
+    LogHex(VideoPortReadRegisterUlong((PULONG)(bar0 + 0x841668)));
+    LogStr("\n");
+
+    if (!NvxWait(bar0, 0x8400f4, 0x00001000, 0, 2000, 10))
+        return FALSE;
+
+    VideoPortWriteRegisterUlong((PULONG)(bar0 + 0x840084),
+                                VideoPortReadRegisterUlong((PULONG)bar0));
+    return TRUE;
+}
+
+static VOID NvxLogSec2State(PUCHAR bar0, const char *where)
+{
+    LogStr("NVX [SEC2]: "); LogStr(where);
+    LogStr(" HWCFG2="); LogHex(VideoPortReadRegisterUlong((PULONG)(bar0 + 0x8400f4)));
+    LogStr(" CPUCTL="); LogHex(VideoPortReadRegisterUlong((PULONG)(bar0 + NV_PSEC_FALCON_CPUCTL)));
+    LogStr(" ALIAS="); LogHex(VideoPortReadRegisterUlong((PULONG)(bar0 + NV_PSEC_FALCON_CPUCTL_ALIAS)));
+    LogStr(" BOOTVEC="); LogHex(VideoPortReadRegisterUlong((PULONG)(bar0 + NV_PSEC_FALCON_BOOTVEC)));
+    LogStr(" DMACTL="); LogHex(VideoPortReadRegisterUlong((PULONG)(bar0 + 0x84010c)));
+    LogStr(" DMACMD="); LogHex(VideoPortReadRegisterUlong((PULONG)(bar0 + NV_PSEC_FALCON_DMATRFCMD)));
+    LogStr(" FBIF_CTL="); LogHex(VideoPortReadRegisterUlong((PULONG)(bar0 + 0x840624)));
+    LogStr("\n");
+}
+
+static BOOLEAN NvxSec2Dma(PUCHAR bar0, ULONG64 physical, ULONG source,
+                          ULONG length, BOOLEAN imem)
+{
+    ULONG offset;
+    /* IMEM tags derive from the source offset; physical TCM starts at zero. */
+    if (!imem) physical += source;
+    VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_DMATRFBASE), (ULONG)(physical>>8));
+    VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_DMATRFBASE1), (ULONG)(physical>>40));
+    for (offset=0; offset<length; offset+=256) {
+        VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_DMATRFMOFF), offset);
+        VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_DMATRFFBOFF), offset+(imem ? source : 0));
+        VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_DMATRFCMD), imem ? 0x614 : 0x600);
+        /* Bit 2 is SEC, not BUSY. Completion is bit 1, for every transfer. */
+        if (!NvxWait(bar0,NV_PSEC_FALCON_DMATRFCMD,2,2,20000,5)) return FALSE;
+    }
+    return TRUE;
+}
+
+BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
+    PNVX_DEVICE_EXTENSION devExt = (PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    PUCHAR bar0 = (PUCHAR)devExt->Bar0MmioVirtual;
+    ULONG bootloaderLen = src_driver_bootloader_535_113_01_bin_len;
+    ULONG booterLoadLen = src_driver_booter_load_535_113_01_bin_len;
+    ULONG alignedLen = (bootloaderLen + 0xFF) & ~0xFF;
+    ULONG timeout;
+    VP_DEVICE_DESCRIPTION devDesc;
+    NVX_BOOTER_INFO bt;
+    int signatureIndex;
+    uint32_t imageOffset, imageSize, signatureOffset, signatureSize;
+    ULONG64 firmwareSize = (ULONG64)(_binary_dist_full_gsp_ga104_bin_end -
+                                     _binary_dist_full_gsp_ga104_bin_start);
+    /* A failed engine may still reference staging memory. Do not replace it. */
+    if (devExt->GspDmaVirtual) return devExt->GspInitialized;
+    devExt->GspInitialized = FALSE;
+    devExt->GspBootVerified = FALSE;
+
+    LogStr("NVX [GSP]: Initializing GA104 GSP Subsystem with authentic binary blobs...\n");
+    VideoPortDebugPrint(Info, "NVX [GSP]: Initializing GA104 GSP Subsystem with authentic binary blobs...\n");
+
+    if (!bar0) {
+        LogStr("NVX [GSP]: BAR0 MMIO virtual mapping is NULL! Aborting.\n");
+        return FALSE;
+    }
+
+    LogStr("NVX [GSP]: Embedded Falcon Bootloader size: ");
+    LogHex(bootloaderLen);
+    LogStr(" bytes (aligned ");
+    LogHex(alignedLen);
+    LogStr(")\n");
+    LogStr("NVX [GSP]: Embedded Booter Load size: ");
+    LogHex(booterLoadLen);
+    LogStr(" bytes\n");
+
+    /* Reject malformed/mismatched containers before DMA allocation or engine writes. */
+    if (!NvxParseBooter(src_driver_booter_load_535_113_01_bin, booterLoadLen, &bt) ||
+        !NvxFindElfSection(_binary_dist_full_gsp_ga104_bin_start, firmwareSize,
+                          ".fwimage", &imageOffset, &imageSize) ||
+        !NvxFindElfSection(_binary_dist_full_gsp_ga104_bin_start, firmwareSize,
+                          ".fwsignature_ga10x", &signatureOffset, &signatureSize) ||
+        imageSize != GSP_FW_IMAGE_SIZE || signatureSize != GSP_SIG_SIZE ||
+        bt.DataSize > GSP_WPR_META_OFFSET-GSP_BOOTER_LOAD_OFFSET ||
+        bt.EngineId != 1 || bt.UcodeId > 16) {
+        LogStr("NVX [GSP]: Invalid/unsupported firmware container.\n");
+        return FALSE;
+    }
+    signatureIndex = NvxSelectSignature(VideoPortReadRegisterUlong(
+        (PULONG)(bar0+0x824140+(bt.UcodeId-1)*4)), bt.FuseVersion, bt.SignatureCount);
+    if (signatureIndex < 0) {
+        LogStr("NVX [SEC2]: No signature matches GPU fuse version.\n");
+        return FALSE;
+    }
+    LogStr("NVX [SEC2]: Selected signature index "); LogHex(signatureIndex); LogStr("\n");
+
+    /* Obtain DMA adapter from VideoPort */
+    VideoPortZeroMemory(&devDesc, sizeof(devDesc));
+    devDesc.ScatterGather = TRUE;
+    devDesc.Dma32BitAddresses = TRUE;
+    devDesc.Dma64BitAddresses = FALSE;
+    devDesc.MaximumLength = 0x3000000; /* 48 MB */
+
+    devExt->DmaAdapter = VideoPortGetDmaAdapter(HwDeviceExtension, &devDesc);
+    LogStr("NVX [GSP]: VideoPortGetDmaAdapter returned: 0x");
+    LogHex((unsigned long long)devExt->DmaAdapter);
+    LogStr("\n");
+
+    if (!devExt->DmaAdapter) return FALSE;
+
+    /* Allocate 48MB contiguous coherent DMA memory for GSP staging, Radix-3 table, and queues */
+    devExt->GspDmaLength = 0x3000000; /* 48 MB */
+    devExt->GspDmaVirtual = VideoPortAllocateCommonBuffer(
+        HwDeviceExtension,
+        devExt->DmaAdapter,
+        devExt->GspDmaLength,
+        &devExt->GspDmaPhysical,
+        TRUE,
+        NULL
+    );
+
+    if (!devExt->GspDmaVirtual) {
+        LogStr("NVX [GSP]: Failed to allocate contiguous DMA buffer for GSP (48MB)!\n");
+        VideoPortDebugPrint(Error, "NVX [GSP]: Failed to allocate contiguous DMA buffer for GSP (%d bytes)\n", devExt->GspDmaLength);
+        VideoPortPutDmaAdapter(HwDeviceExtension, devExt->DmaAdapter);
+        devExt->DmaAdapter = NULL;
+        return FALSE;
+    }
+    if ((devExt->GspDmaPhysical.QuadPart & 0xfff) ||
+        (ULONG64)devExt->GspDmaPhysical.QuadPart + devExt->GspDmaLength > 0x100000000ULL) {
+        LogStr("NVX [GSP]: DMA allocation is not aligned/below 4GB.\n");
+        NvxGspShutdown(HwDeviceExtension);
+        return FALSE;
+    }
+
+    /* Parse authentic NVFW container header (Ported from Linux Nouveau nvfw_bin_hdr) */
+    PNVFW_BIN_HDR blHdr = (PNVFW_BIN_HDR)src_driver_bootloader_535_113_01_bin;
+    PRM_RISCV_UCODE_DESC blDesc = NULL;
+    ULONG blCodeOffset = 0;
+    ULONG blCodeSize = bootloaderLen;
+
+    if (blHdr->BinMagic == 0x10DE) {
+        LogStr("NVX [GSP]: Authentic NVFW container header detected!\n");
+        LogStr("NVX [GSP]:   BinVer: 0x"); LogHex(blHdr->BinVer);
+        LogStr(" HdrOff: 0x"); LogHex(blHdr->HeaderOffset);
+        LogStr(" DataOff: 0x"); LogHex(blHdr->DataOffset);
+        LogStr(" DataSize: 0x"); LogHex(blHdr->DataSize);
+        LogStr("\n");
+        blCodeOffset = blHdr->DataOffset;
+        blCodeSize = blHdr->DataSize;
+        if (blHdr->HeaderOffset <= bootloaderLen - sizeof(RM_RISCV_UCODE_DESC)) {
+            blDesc = (PRM_RISCV_UCODE_DESC)((PUCHAR)src_driver_bootloader_535_113_01_bin + blHdr->HeaderOffset);
+            LogStr("NVX [GSP]:   RISC-V AppVersion: 0x"); LogHex(blDesc->AppVersion);
+            LogStr(" MonitorCodeOff: 0x"); LogHex(blDesc->MonitorCodeOffset);
+            LogStr(" ManifestOff: 0x"); LogHex(blDesc->ManifestOffset);
+            LogStr("\n");
+        }
+    }
+
+    if (!blDesc || blHdr->BinVer != 1 || blCodeOffset > bootloaderLen ||
+        blCodeSize > bootloaderLen-blCodeOffset ||
+        blCodeSize > GSP_BOOTER_LOAD_OFFSET-GSP_BOOTLOADER_OFFSET ||
+        blDesc->MonitorCodeOffset >= blCodeSize || blDesc->MonitorDataOffset >= blCodeSize ||
+        blDesc->ManifestOffset >= blCodeSize) {
+        LogStr("NVX [GSP]: Invalid bootloader descriptor.\n");
+        NvxGspShutdown(HwDeviceExtension);
+        return FALSE;
+    }
+    ULONG btCodeOffset = bt.DataOffset;
+    ULONG btCodeSize = bt.DataSize;
+
+    /* Zero entire 48MB common buffer */
+    VideoPortZeroMemory(devExt->GspDmaVirtual, devExt->GspDmaLength);
+
+    /*
+     * STAGE 1: Copy authentic GSP Firmware Image (.fwimage section from gsp_ga104.bin)
+     * Size: 38,043,648 bytes (0x2448000), 9288 4KB pages.
+     */
+    LogStr("NVX [GSP]: Staging authentic GSP .fwimage (36.28MB) at DMA offset 0x0...\n");
+    VideoPortMoveMemory((PUCHAR)devExt->GspDmaVirtual + GSP_FW_IMAGE_OFFSET,
+                        (PVOID)(_binary_dist_full_gsp_ga104_bin_start + imageOffset),
+                        (ULONG)GSP_FW_IMAGE_SIZE);
+
+    /*
+     * STAGE 2: Copy authentic GA10x Cryptographic Signature (.fwsignature_ga10x)
+     * Size: 4096 bytes (0x1000).
+     */
+    LogStr("NVX [GSP]: Staging authentic GA10x signature (4KB) at DMA offset 0x");
+    LogHex(GSP_SIG_OFFSET);
+    LogStr("...\n");
+    VideoPortMoveMemory((PUCHAR)devExt->GspDmaVirtual + GSP_SIG_OFFSET,
+                        (PVOID)(_binary_dist_full_gsp_ga104_bin_start + signatureOffset),
+                        (ULONG)GSP_SIG_SIZE);
+
+    /*
+     * STAGE 3: Construct Radix-3 Page Table for GSP Firmware Image.
+     * Level 0: 1 4KB page at GSP_RADIX3_LVL0_OFFSET (points to Level 1 page)
+     * Level 1: 1 4KB page at GSP_RADIX3_LVL1_OFFSET (19 entries pointing to Level 2 pages)
+     * Level 2: 19 4KB pages at GSP_RADIX3_LVL2_OFFSET (9288 entries pointing to .fwimage pages)
+     */
+    LogStr("NVX [GSP]: Constructing Radix-3 Page Table (21 pages / 84KB)...\n");
+    {
+        PULONG64 pRadixLvl0 = (PULONG64)((PUCHAR)devExt->GspDmaVirtual + GSP_RADIX3_LVL0_OFFSET);
+        PULONG64 pRadixLvl1 = (PULONG64)((PUCHAR)devExt->GspDmaVirtual + GSP_RADIX3_LVL1_OFFSET);
+        PULONG64 pRadixLvl2 = (PULONG64)((PUCHAR)devExt->GspDmaVirtual + GSP_RADIX3_LVL2_OFFSET);
+        ULONG numPages = (ULONG)((GSP_FW_IMAGE_SIZE + 4095) / 4096); /* 9288 pages */
+        ULONG i, k;
+
+        /* Level 0: 1 entry pointing to Level 1 page physical address */
+        pRadixLvl0[0] = devExt->GspDmaPhysical.QuadPart + GSP_RADIX3_LVL1_OFFSET;
+
+        /* Level 1: 19 entries, each pointing to a Level 2 page physical address */
+        for (i = 0; i < 19; i++) {
+            pRadixLvl1[i] = (devExt->GspDmaPhysical.QuadPart + GSP_RADIX3_LVL2_OFFSET) + ((ULONG64)i * 4096ULL);
+        }
+
+        /* Level 2: 9288 entries, each pointing to a 4KB page of .fwimage */
+        for (k = 0; k < numPages; k++) {
+            pRadixLvl2[k] = (devExt->GspDmaPhysical.QuadPart + GSP_FW_IMAGE_OFFSET) + ((ULONG64)k * 4096ULL);
+        }
+
+        LogStr("NVX [GSP]: Radix-3 Level 0 at Phys 0x");
+        LogHex(devExt->GspDmaPhysical.QuadPart + GSP_RADIX3_LVL0_OFFSET);
+        LogStr(", Level 1 at Phys 0x");
+        LogHex(devExt->GspDmaPhysical.QuadPart + GSP_RADIX3_LVL1_OFFSET);
+        LogStr(", Level 2 at Phys 0x");
+        LogHex(devExt->GspDmaPhysical.QuadPart + GSP_RADIX3_LVL2_OFFSET);
+        LogStr("\n");
+    }
+
+    /* STAGE 4: Stage Bootloader ucode at GSP_BOOTLOADER_OFFSET */
+    VideoPortMoveMemory((PUCHAR)devExt->GspDmaVirtual + GSP_BOOTLOADER_OFFSET,
+                        (PUCHAR)src_driver_bootloader_535_113_01_bin + blCodeOffset,
+                        blCodeSize);
+
+    /* STAGE 5: Stage Booter Load ucode at GSP_BOOTER_LOAD_OFFSET & patch RSA signature */
+    VideoPortMoveMemory((PUCHAR)devExt->GspDmaVirtual + GSP_BOOTER_LOAD_OFFSET,
+                        (PUCHAR)src_driver_booter_load_535_113_01_bin + btCodeOffset,
+                        btCodeSize);
+    VideoPortMoveMemory((PUCHAR)devExt->GspDmaVirtual + GSP_BOOTER_LOAD_OFFSET + bt.PatchOffset,
+                        src_driver_booter_load_535_113_01_bin + bt.SignatureOffset + signatureIndex * bt.SignatureSize,
+                        bt.SignatureSize);
+
+    /*
+     * STAGE 6: Authentic GSP firmware WPR metadata V1 in DMA buffer at GSP_WPR_META_OFFSET.
+     * This metadata is passed to the SEC2 booter and GSP bootloader.
+     */
+    PGSP_FW_WPR_META_V1 wprMeta = (PGSP_FW_WPR_META_V1)((PUCHAR)devExt->GspDmaVirtual + GSP_WPR_META_OFFSET);
+    PHYSICAL_ADDRESS wprPhys;
+    wprPhys.QuadPart = devExt->GspDmaPhysical.QuadPart + GSP_WPR_META_OFFSET;
+
+    VideoPortZeroMemory(wprMeta, sizeof(GSP_FW_WPR_META_V1));
+    wprMeta->Magic = GSP_FW_WPR_META_MAGIC;
+    wprMeta->Revision = GSP_FW_WPR_META_REVISION;
+
+    /* SYSMEM pointers for SEC2 to verify and copy */
+    wprMeta->SysmemAddrOfRadix3Elf = devExt->GspDmaPhysical.QuadPart + GSP_RADIX3_LVL0_OFFSET;
+    wprMeta->SizeOfRadix3Elf = GSP_FW_IMAGE_SIZE;
+    wprMeta->SysmemAddrOfSignature = devExt->GspDmaPhysical.QuadPart + GSP_SIG_OFFSET;
+    wprMeta->SizeOfSignature = GSP_SIG_SIZE;
+
+    wprMeta->SysmemAddrOfBootloader = devExt->GspDmaPhysical.QuadPart + GSP_BOOTLOADER_OFFSET;
+    wprMeta->SizeOfBootloader = blCodeSize;
+    wprMeta->BootloaderCodeOffset = blDesc ? blDesc->MonitorCodeOffset : 0x1000;
+    wprMeta->BootloaderDataOffset = blDesc ? blDesc->MonitorDataOffset : 0x800;
+    wprMeta->BootloaderManifestOffset = blDesc ? blDesc->ManifestOffset : 0x0;
+
+    /* Authentic GA104 (8GB VRAM) Descending Framebuffer Layout */
+    wprMeta->FbSize = (ULONG64)VideoPortReadRegisterUlong((PULONG)(bar0+0x1183a4)) << 20;
+    if (wprMeta->FbSize < 0x20000000ULL || wprMeta->FbSize > 0x1000000000ULL) {
+        LogStr("NVX [GSP]: Invalid hardware VRAM size.\n");
+        NvxGspShutdown(HwDeviceExtension);
+        return FALSE;
+    }
+    LogStr("NVX [GSP]: Physical VRAM bytes "); LogHex(wprMeta->FbSize); LogStr("\n");
+    wprMeta->VgaWorkspaceOffset = wprMeta->FbSize - 0x100000ULL;
+    {
+        ULONG workspace = VideoPortReadRegisterUlong((PULONG)(bar0+0x625f04));
+        if (workspace & 8) {
+            ULONG64 addr = (ULONG64)(workspace & 0xffffff00) << 8;
+            wprMeta->VgaWorkspaceOffset = addr < wprMeta->VgaWorkspaceOffset ?
+                wprMeta->FbSize - 0x20000 : addr;
+        }
+        if (wprMeta->VgaWorkspaceOffset >= wprMeta->FbSize) {
+            LogStr("NVX [GSP]: Invalid VGA workspace.\n");
+            NvxGspShutdown(HwDeviceExtension);
+            return FALSE;
+        }
+    }
+    wprMeta->VgaWorkspaceSize = wprMeta->FbSize - wprMeta->VgaWorkspaceOffset;
+    wprMeta->GspFwWprEnd = wprMeta->VgaWorkspaceOffset & ~0x1ffffULL;
+    wprMeta->FrtsSize = 0x100000ULL;
+    wprMeta->FrtsOffset = wprMeta->GspFwWprEnd - wprMeta->FrtsSize;
+    wprMeta->BootBinOffset = (wprMeta->FrtsOffset - wprMeta->SizeOfBootloader) & ~0xFFFULL;
+    wprMeta->GspFwOffset = (wprMeta->BootBinOffset - wprMeta->SizeOfRadix3Elf) & ~0xFFFFULL;
+    /* 535 LibOS2: 8MB base + 1MB per-GB allowance + 96MB client heap. */
+    wprMeta->GspFwHeapSize = 0x6800000ULL +
+        ((((wprMeta->FbSize + 0x3fffffffULL) >> 30) * (96ULL << 10) + 0xfffffULL) & ~0xfffffULL);
+    wprMeta->GspFwHeapOffset = (wprMeta->GspFwOffset - wprMeta->GspFwHeapSize) & ~0xFFFFFULL;
+    wprMeta->GspFwHeapSize = (wprMeta->GspFwOffset-wprMeta->GspFwHeapOffset) & ~0xfffffULL;
+    wprMeta->GspFwWprStart = (wprMeta->GspFwHeapOffset-sizeof(*wprMeta)) & ~0xfffffULL;
+    wprMeta->NonWprHeapSize = 0x100000ULL;
+    wprMeta->NonWprHeapOffset = wprMeta->GspFwWprStart - wprMeta->NonWprHeapSize;
+    wprMeta->GspFwRsvdStart = wprMeta->NonWprHeapOffset;
+    wprMeta->BootCount = 0;
+    wprMeta->Verified = 0;
+
+    /* 535 shared memory: PTE page followed by two 256KB queues. */
+    {
+        ULONG i;
+        PULONG64 ptes = (PULONG64)((PUCHAR)devExt->GspDmaVirtual+GSP_SHARED_OFFSET);
+        NVX_MSGQ_HEADER *cmd = (NVX_MSGQ_HEADER *)((PUCHAR)devExt->GspDmaVirtual+GSP_CMD_QUEUE_OFFSET);
+        PGSP_ARGUMENTS_CACHED args = (PGSP_ARGUMENTS_CACHED)((PUCHAR)devExt->GspDmaVirtual+GSP_RM_ARGS_OFFSET);
+        for (i=0;i<129;i++) ptes[i] = devExt->GspDmaPhysical.QuadPart+GSP_SHARED_OFFSET+(ULONG64)i*4096;
+        cmd->Size = 0x40000; cmd->MsgSize = 4096; cmd->MsgCount = 63;
+        cmd->Flags = 1; cmd->RxHdrOff = 32; cmd->EntryOff = 4096;
+        args->MessageQueueInitArguments.SharedMemPhysAddr = devExt->GspDmaPhysical.QuadPart+GSP_SHARED_OFFSET;
+        args->MessageQueueInitArguments.PageTableEntryCount = 129;
+        args->MessageQueueInitArguments.CmdQueueOffset = 0x1000;
+        args->MessageQueueInitArguments.StatQueueOffset = 0x41000;
+        devExt->CmdQueueVirtual = cmd;
+        devExt->StatQueueVirtual = (PUCHAR)devExt->GspDmaVirtual+GSP_STAT_QUEUE_OFFSET;
+        devExt->CmdQueueSize = devExt->StatQueueSize = 0x40000;
+    }
+    PLIBOS_MEMORY_REGION_INIT_ARGUMENT libosArgs = (PLIBOS_MEMORY_REGION_INIT_ARGUMENT)((PUCHAR)devExt->GspDmaVirtual+GSP_LIBOS_ARGS_OFFSET);
+    PHYSICAL_ADDRESS libosPhys;
+    libosPhys.QuadPart = devExt->GspDmaPhysical.QuadPart+GSP_LIBOS_ARGS_OFFSET;
+    {
+        static const ULONG64 ids[] = {0x4c4f47494e4954ULL, 0x4c4f47494e5452ULL, 0x4c4f47524dULL, 0x524d41524753ULL};
+        ULONG i,j;
+        for (i=0;i<4;i++) {
+            ULONG64 off = i==3 ? GSP_RM_ARGS_OFFSET : 0x2581000ULL+(ULONG64)i*0x10000;
+            libosArgs[i].Id8 = ids[i];
+            libosArgs[i].Pa = devExt->GspDmaPhysical.QuadPart+off;
+            libosArgs[i].Size = i==3 ? 4096 : 65536;
+            libosArgs[i].Kind = libosArgs[i].Loc = 1;
+            if (i<3) {
+                PULONG64 log = (PULONG64)((PUCHAR)devExt->GspDmaVirtual+off);
+                for (j=0;j<16;j++) log[j+1] = libosArgs[i].Pa+(ULONG64)j*4096;
+            }
+        }
+    }
+
+    LogStr("NVX [GSP]: Staging DMA buffer at Virtual 0x");
+    LogHex((unsigned long long)devExt->GspDmaVirtual);
+    LogStr(", Physical 0x");
+    LogHex(devExt->GspDmaPhysical.QuadPart);
+    LogStr("\n");
+    LogStr("NVX [GSP]: WPR Metadata at Physical 0x");
+    LogHex(wprPhys.QuadPart);
+    LogStr("\n");
+
+    {
+        ULONG boot0 = VideoPortReadRegisterUlong((PULONG)bar0);
+        ULONG flcnStat = VideoPortReadRegisterUlong((PULONG)(bar0 + 0x1100F4));
+        ULONG sec2Stat = VideoPortReadRegisterUlong((PULONG)(bar0 + 0x8400F4));
+        ULONG dispOwner = VideoPortReadRegisterUlong((PULONG)(bar0 + 0x6254E8));
+        ULONG dispCore = VideoPortReadRegisterUlong((PULONG)(bar0 + 0x6104E0));
+        ULONG dispPut = VideoPortReadRegisterUlong((PULONG)(bar0 + 0x680000));
+        ULONG dispDma = VideoPortReadRegisterUlong((PULONG)(bar0 + 0x610B24));
+        ULONG headRg = VideoPortReadRegisterUlong((PULONG)(bar0 + 0x616300));
+        LogStr("NVX [GSP]: BAR0[0]: 0x"); LogHex(boot0);
+        LogStr(" Flcn 0x1100F4: 0x"); LogHex(flcnStat);
+        LogStr(" SEC2 0x8400F4: 0x"); LogHex(sec2Stat);
+        LogStr("\n");
+        LogStr("NVX [DISP]: Owner(0x6254E8): 0x"); LogHex(dispOwner);
+        LogStr(" Core(0x6104E0): 0x"); LogHex(dispCore);
+        LogStr(" Put(0x680000): 0x"); LogHex(dispPut);
+        LogStr(" Dma(0x610B24): 0x"); LogHex(dispDma);
+        LogStr(" HeadCapability(0x616300): 0x"); LogHex(headRg);
+        LogStr("\n");
+    }
+
+    /*
+     * STEP 1: Reset GSP Falcon, enable RISC-V mode, and program boot arguments.
+     * In GA104, GSP RISC-V is unlocked and booted by the SEC2 booter load ucode.
+     */
+    LogStr("NVX [GSP]: Preparing GSP Falcon for RISC-V execution...\n");
+
+    /* Wait for Falcon reset prep */
+    timeout = 1000;
+    while (!(VideoPortReadRegisterUlong((PULONG)(bar0 + 0x1100F4)) & 0x80000000) && --timeout) {
+        VideoPortStallExecution(10);
+    }
+
+    /* Reset GSP Falcon engine */
+    VideoPortWriteRegisterUlong((PULONG)(bar0 + NV_PGSP_FALCON_ENGINE), 1);
+    VideoPortStallExecution(20);
+    VideoPortWriteRegisterUlong((PULONG)(bar0 + NV_PGSP_FALCON_ENGINE), 0);
+    VideoPortStallExecution(20);
+
+    /* Wait for GSP memory scrubbing to finish */
+    timeout = 2000;
+    while ((VideoPortReadRegisterUlong((PULONG)(bar0 + 0x1100F4)) & 0x00001000) && --timeout) {
+        VideoPortStallExecution(10);
+    }
+    if (timeout == 0) {
+        LogStr("NVX [GSP]: GSP memory scrubbing wait timeout!\n");
+        return FALSE;
+    } else {
+        LogStr("NVX [GSP]: GSP memory scrubbing complete!\n");
+    }
+
+    /* Put GSP Falcon into RISC-V mode (0x111668 |= 0x111) */
+    {
+        ULONG bcr = VideoPortReadRegisterUlong((PULONG)(bar0 + NV_PGSP_FALCON_BCR));
+        VideoPortWriteRegisterUlong((PULONG)(bar0 + NV_PGSP_FALCON_BCR), bcr | 0x111);
+    }
+
+    /* Pass Libos init arguments physical base to GSP Mailbox 0 / 1 */
+    VideoPortWriteRegisterUlong((PULONG)(bar0 + NV_PGSP_FALCON_MAILBOX0),
+                               (ULONG)(libosPhys.QuadPart & 0xFFFFFFFF));
+    VideoPortWriteRegisterUlong((PULONG)(bar0 + NV_PGSP_FALCON_MAILBOX1),
+                               (ULONG)(libosPhys.QuadPart >> 32));
+
+    /*
+     * STEP 2: Execute Booter Load on SEC2 Falcon (0x840000).
+     * SEC2 verifies the WPR metadata, initializes WPR in VRAM, loads the bootloader into GSP, and unlocks GSP.
+     */
+    LogStr("NVX [SEC2]: Preparing SEC2 Falcon to execute Booter Load...\n");
+
+    NvxLogSec2State(bar0, "before reset");
+    if (!NvxSec2ResetEnable(bar0)) {
+        LogStr("NVX [SEC2]: Reset/enable sequence failed.\n");
+        return FALSE;
+    }
+    NvxLogSec2State(bar0, "after reset");
+
+    /* Setup SEC2 DMA interface */
+    {
+        ULONG val = VideoPortReadRegisterUlong((PULONG)(bar0 + 0x840624));
+        VideoPortWriteRegisterUlong((PULONG)(bar0 + 0x840624), val | 0x80);
+        VideoPortWriteRegisterUlong((PULONG)(bar0 + 0x84010C), 0);
+        val = VideoPortReadRegisterUlong((PULONG)(bar0 + 0x840600));
+        VideoPortWriteRegisterUlong((PULONG)(bar0 + 0x840600), (val & ~0x00010007) | 5);
+    }
+
+    ULONG64 booterPhys = devExt->GspDmaPhysical.QuadPart+GSP_BOOTER_LOAD_OFFSET;
+    if (!NvxSec2Dma(bar0,booterPhys,bt.ImemOffset,bt.ImemSize,TRUE) ||
+        !NvxSec2Dma(bar0,booterPhys,bt.DmemOffset,bt.DmemSize,FALSE)) return FALSE;
+
+    VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON2_PARAADDR),bt.PatchOffset-bt.DmemOffset);
+    VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON2_ENGIDMASK),bt.EngineId);
+    VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON2_UCODE_ID),bt.UcodeId);
+    VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON2_MOD_SEL),1);
+
+    /* Provide WPR metadata address in SEC2 mailboxes */
+    VideoPortWriteRegisterUlong((PULONG)(bar0 + NV_PSEC_FALCON_MAILBOX0), (ULONG)(wprPhys.QuadPart & 0xFFFFFFFF));
+    VideoPortWriteRegisterUlong((PULONG)(bar0 + NV_PSEC_FALCON_MAILBOX1), (ULONG)(wprPhys.QuadPart >> 32));
+
+    /* Check CPUCTL and start CPU.  Turing+ Falcons require the alias register
+       when CPUCTL.ALIAS_EN is set; this is the exact OpenRM 535 behavior. */
+    ULONG cpuCtl = VideoPortReadRegisterUlong((PULONG)(bar0 + NV_PSEC_FALCON_CPUCTL));
+    LogStr("NVX [SEC2]: CPUCTL before start: 0x"); LogHex(cpuCtl); LogStr("\n");
+
+    VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_BOOTVEC),bt.ImemOffset);
+    if (cpuCtl & 0x40) {
+        LogStr("NVX [SEC2]: Starting through CPUCTL_ALIAS.\n");
+        VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_CPUCTL_ALIAS),2);
+    } else {
+        LogStr("NVX [SEC2]: Starting through CPUCTL.\n");
+        VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_CPUCTL),2);
+    }
+    NvxLogSec2State(bar0, "immediately after start");
+    /* Boot ROM authentication may finish before we observe RUNNING. Require
+       HALTED + zero status + verified metadata, rather than seeing an edge. */
+    {
+        BOOLEAN sawRunning = FALSE;
+        ULONG lastCtl = cpuCtl;
+        timeout = 100000;
+        while (timeout) {
+            ULONG ctl = VideoPortReadRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_CPUCTL));
+            ULONG status = VideoPortReadRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_MAILBOX0));
+            ULONG64 verified = ((volatile GSP_FW_WPR_META_V1 *)wprMeta)->Verified;
+            if (ctl != lastCtl) {
+                LogStr("NVX [SEC2]: CPUCTL transition: 0x"); LogHex(lastCtl);
+                LogStr(" -> 0x"); LogHex(ctl); LogStr("\n");
+                lastCtl = ctl;
+            }
+            if (ctl != 0xffffffff) {
+                if (!(ctl & 0x10)) sawRunning = TRUE;
+                if ((ctl & 0x10) && (sawRunning || status != (ULONG)wprPhys.QuadPart ||
+                                     verified == GSP_FW_WPR_VERIFIED)) break;
+            }
+            timeout--;
+            VideoPortStallExecution(50);
+        }
+        if (!timeout) {
+            LogStr("NVX [SEC2]: Execution timeout; stale HALTED is not completion.\n");
+            return FALSE;
+        }
+    }
+    {
+        ULONG status = VideoPortReadRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_MAILBOX0));
+        ULONG status1 = VideoPortReadRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_MAILBOX1));
+        ULONG64 verified = ((volatile GSP_FW_WPR_META_V1 *)wprMeta)->Verified;
+        LogStr("NVX [SEC2]: Halted. Mailbox0: "); LogHex(status);
+        LogStr(" Mailbox1: "); LogHex(status1);
+        LogStr(" Verified: "); LogHex(verified);
+        LogStr(" SEC2 CPUCTL: "); LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_CPUCTL)));
+        LogStr("\n");
+        if (status || verified != GSP_FW_WPR_VERIFIED) {
+            LogStr("NVX [SEC2]: Booter failed; RM startup skipped.\n");
+            return FALSE;
+        }
+        devExt->GspBootVerified = TRUE;
+    }
+
+    /*
+     * STEP 3: Setup GSP Falcon OS version and verify RISC-V execution.
+     */
+    VideoPortWriteRegisterUlong((PULONG)(bar0 + NV_PGSP_FALCON_OS), blDesc ? blDesc->AppVersion : 0);
+
+    {
+        ULONG riscvStat = VideoPortReadRegisterUlong((PULONG)(bar0 + NV_PGSP_FALCON_RISCV_STAT));
+        ULONG bcrVal = VideoPortReadRegisterUlong((PULONG)(bar0 + NV_PGSP_FALCON_BCR));
+        LogStr("NVX [GSP]: RISC-V Active (0x111388): 0x"); LogHex(riscvStat);
+        LogStr(" BCR (0x111668): 0x"); LogHex(bcrVal);
+        LogStr("\n");
+    }
+
+    /* No 0x55aa55aa mailbox handshake exists in RM 535. RISC-V activity
+       and WPR verification do not establish RM readiness. Poll the real queue. */
+    LogStr("NVX [GSP]: Waiting for RM INIT_DONE event (0x1001).\n");
+    timeout = 20000;
+    while (timeout--) {
+        volatile NVX_MSGQ_HEADER *msg = (volatile NVX_MSGQ_HEADER *)devExt->StatQueueVirtual;
+        if (msg->WritePtr) {
+            volatile ULONG *entry = (volatile ULONG *)((PUCHAR)devExt->StatQueueVirtual+4096);
+            /* 48-byte transport header, then the 32-byte RPC header. */
+            LogStr("NVX [GSP]: First RM event "); LogHex(entry[15]); LogStr("\n");
+            if (msg->MsgSize == 4096 && msg->MsgCount == 63 && msg->WritePtr < 63 &&
+                entry[12] == 0x03000000 && entry[13] == 0x43505256 &&
+                entry[14] >= 32 && entry[14] <= 4096-48 &&
+                entry[15] == 0x1001 && entry[10] == 1 && entry[16] == 0 &&
+                (VideoPortReadRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_RISCV_STAT)) & 0x80)) {
+                __sync_synchronize();
+                ((volatile NVX_MSGQ_HEADER *)devExt->CmdQueueVirtual)->ReadPtr = 1;
+                __sync_synchronize();
+                devExt->GspInitialized = TRUE;
+                LogStr("NVX [GSP]: RM INIT_DONE received; display channels still unavailable.\n");
+                return TRUE;
+            }
+            LogStr("NVX [GSP]: Startup event requires RM dispatcher; leaving modesetting disabled.\n");
+            return FALSE;
+        }
+        VideoPortStallExecution(100);
+    }
+    LogStr("NVX [GSP]: RM INIT_DONE timeout. FWSEC-FRTS and RM event handling remain required.\n");
+    return FALSE;
+}
+
+VOID NvxGspShutdown(PVOID HwDeviceExtension) {
+    PNVX_DEVICE_EXTENSION devExt = (PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    PUCHAR bar0 = (PUCHAR)devExt->Bar0MmioVirtual;
+
+    if (devExt->GspDmaVirtual) {
+        if (bar0) {
+            VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_ENGINE),1);
+            VideoPortWriteRegisterUlong((PULONG)(bar0 + NV_PGSP_FALCON_ENGINE), 1); /* Halt Falcon */
+            /* Flush posted resets before releasing DMA-visible storage. */
+            (void)VideoPortReadRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_ENGINE));
+            (void)VideoPortReadRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_ENGINE));
+            VideoPortStallExecution(20);
+        }
+
+        VideoPortFreeCommonBuffer(
+            HwDeviceExtension,
+            devExt->GspDmaLength,
+            devExt->GspDmaVirtual,
+            devExt->GspDmaPhysical,
+            TRUE
+        );
+
+        devExt->GspDmaVirtual = NULL;
+        devExt->CmdQueueVirtual = devExt->StatQueueVirtual = NULL;
+        devExt->GspInitialized = FALSE;
+        devExt->GspBootVerified = FALSE;
+
+        if (devExt->DmaAdapter) {
+            VideoPortPutDmaAdapter(HwDeviceExtension, devExt->DmaAdapter);
+            devExt->DmaAdapter = NULL;
+        }
+
+        LogStr("NVX [GSP]: Subsystem halted and buffers released.\n");
+        VideoPortDebugPrint(Info, "NVX [GSP]: Subsystem halted and buffers released.\n");
+    }
+}
+

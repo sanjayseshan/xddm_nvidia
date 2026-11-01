@@ -1,0 +1,23 @@
+LIBRARY videoprt.sys
+EXPORTS
+    VideoPortInitialize
+    VideoPortZeroMemory
+    VideoPortMoveMemory
+    VideoPortGetDeviceBase
+    VideoPortMapMemory
+    VideoPortUnmapMemory
+    VideoPortGetBusData
+    VideoPortDebugPrint
+    VideoPortVerifyAccessRanges
+    VideoPortGetAccessRanges
+    VideoPortInt10
+    VideoPortFreeDeviceBase
+    VideoPortAllocateCommonBuffer
+    VideoPortFreeCommonBuffer
+    VideoPortStallExecution
+    VideoPortReadRegisterUlong
+    VideoPortWriteRegisterUlong
+    VideoPortGetDmaAdapter
+    VideoPortPutDmaAdapter
+    VideoPortSetBusData
+    VideoPortQueryServices

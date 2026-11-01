@@ -1,0 +1,32 @@
+# Guest disks, installation media, and generated driver packages
+*.qcow2
+*.iso
+*.img
+*.sys
+*.o
+*.a
+
+# Mutable hardware logs and local tools
+*.log
+/log
+*.exe
+/FRAMEBUF.DL_
+/framebuf.dll
+
+# Generated/extracted third-party source trees and historical snapshots
+/open-gpu-kernel-modules/
+/linux-drm/
+/linux-nouveau-drm/
+/grub4dos-0.4.4/
+/grub4dos-0.4.4.zip
+/backup_*/
+/xddm/
+
+# Host-test outputs
+core
+*.core
+
+# Keep the required prebuilt XDDM display DLL and GSP firmware inputs.
+!dist/nvxdisp.dll
+!dist_full/nvxdisp.dll
+!dist_full/gsp_ga104.bin
