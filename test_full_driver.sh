@@ -4,14 +4,14 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_RUN_LOG="$NVX_ARCHIVE/v40-$NVX_STAMP.log"
+NVX_RUN_LOG="$NVX_ARCHIVE/v41-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
 if [ -f "$NVX_ROOT/vm_serial.log" ]; then
-    cp "$NVX_ROOT/vm_serial.log" "$NVX_ARCHIVE/before-v40-$NVX_STAMP.log"
+    cp "$NVX_ROOT/vm_serial.log" "$NVX_ARCHIVE/before-v41-$NVX_STAMP.log"
 fi
 
-echo "==> Running host tests and building FWSEC signature-selection diagnostic v40"
+echo "==> Running host tests and building FRTS layout dry-run v41"
 if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
     sudo -u "$SUDO_USER" make -C "$NVX_ROOT/src_driver" check package-full
 else

@@ -78,6 +78,17 @@ int main(void)
         assert(!NvxSelectFwsecSignature(&f,4,&version,&index,&offset));
         f.SignatureVersions=1;f.SignatureCount=1;f.SignaturesSize=384;
     }
+    {
+        NVX_FRTS_LAYOUT layout;
+        assert(NvxComputeFrtsLayout(0x200000000ULL,0,0,0,0,&layout));
+        assert(layout.VgaWorkspaceOffset==0x1fff00000ULL);
+        assert(layout.GspFwWprEnd==0x1fff00000ULL);
+        assert(layout.FrtsOffset==0x1ffe00000ULL&&layout.FrtsSize4k==0x100);
+        assert(NvxComputeFrtsLayout(0x200000000ULL,0,1,0x1ff0000,0x1ff1000,&layout));
+        assert(layout.MmuLockValid&&layout.MmuLockLo==0x1ff000000ULL);
+        assert(layout.GspFwWprEnd==0x1ff000000ULL&&layout.FrtsOffset==0x1fef00000ULL);
+        assert(!NvxComputeFrtsLayout(0x1000,0,0,0,0,&layout));
+    }
     p32(rom,0x144,0xfffffff0);assert(NvxParseFwsecRom(read32,&m,sizeof(rom),&f)==NVX_VBIOS_BAD_DESCRIPTOR);
     p32(rom,0x144,0x500);rom[0x8b]++;assert(NvxParseFwsecRom(read32,&m,sizeof(rom),&f)==NVX_VBIOS_NO_BIT);
     rom[0x8b]--;assert(NvxParseFwsecRom(read32,&m,0x200,&f)==NVX_VBIOS_INVALID_ROM);

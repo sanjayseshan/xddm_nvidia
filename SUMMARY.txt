@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.40 FWSEC signature diagnostic / v1.0.0.33 verified display
+NVIDIA GA104 XDDM DRIVER — v1.0.0.41 FRTS layout dry-run / v1.0.0.33 verified display
 Updated: November 1, 2026
 
 Latest hardware result
@@ -166,6 +166,18 @@ v40 treats command output as advisory, completes CRC validation, reads the
 GA10x GSP fuse corresponding to FWSEC ucode ID 9, and selects the matching
 384-byte RSA signature from the VBIOS table. All actions remain read-only;
 FWSEC, FRTS, SEC2, and GSP execution are still gated.
+
+v40 hardware result and changes in v41
+--------------------------------------
+The third v40 launch attempt passed completely at 1920x1080x32. FWSEC image
+CRC32 is 0xbcf1b7e4, signature-table CRC32 is 0x99e7e5ed, ucode-9 GSP fuse raw
+value is 3 (version 2), and signature index 2 at ROM offset 0x43560 is selected.
+
+v41 reads the OpenRM layout prerequisite registers without writing them:
+physical VRAM size, VGA workspace, MMU lock PLM/range, and current WPR2. It
+computes the protected 1MB FRTS placement and logs a dry-run 44-byte FRTS
+command against the verified 64-byte input buffer. Firmware execution remains
+disabled until this hardware-derived placement is confirmed.
 
 Important corrections
 ----------------------

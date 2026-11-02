@@ -336,3 +336,36 @@ int NvxSelectFwsecSignature(const NVX_FWSEC_INFO *info, uint32_t rawFuse,
     *fuseVersion=version;*signatureIndex=index;*signatureOffset=offset;
     return 1;
 }
+
+int NvxComputeFrtsLayout(uint64_t fbSize, uint32_t workspaceReg,
+                         uint32_t mmuLockPlm, uint32_t mmuLockLoReg,
+                         uint32_t mmuLockHiReg, NVX_FRTS_LAYOUT *layout)
+{
+    uint64_t workspace, reserved, lockLo=0, lockHi=0;
+    if (!layout || fbSize<0x20000000ULL || fbSize>0x1000000000ULL)
+        return 0;
+    zero_bytes(layout,sizeof(*layout));
+    layout->FbSize=fbSize;
+    workspace=fbSize-0x100000ULL;
+    if (workspaceReg&8U) {
+        uint64_t reported=(uint64_t)(workspaceReg&0xffffff00U)<<8;
+        workspace=(reported<fbSize-0x100000ULL) ? fbSize-0x20000ULL : reported;
+    }
+    if (workspace>=fbSize) return 0;
+    if (mmuLockPlm&1U) {
+        lockLo=(uint64_t)(mmuLockLoReg&0xfffffff0U)<<8;
+        lockHi=(uint64_t)(mmuLockHiReg&0xfffffff0U)<<8;
+        if (lockHi>=lockLo) layout->MmuLockValid=1;
+    }
+    reserved=workspace;
+    if (layout->MmuLockValid && lockLo<reserved) reserved=lockLo;
+    if (reserved<0x120000ULL) return 0;
+    layout->VgaWorkspaceOffset=workspace;
+    layout->MmuLockLo=lockLo;layout->MmuLockHi=lockHi;
+    layout->VbiosReservedOffset=reserved;
+    layout->GspFwWprEnd=reserved&~0x1ffffULL;
+    if (layout->GspFwWprEnd<0x100000ULL) return 0;
+    layout->FrtsOffset=layout->GspFwWprEnd-0x100000ULL;
+    layout->FrtsSize4k=0x100;
+    return 1;
+}

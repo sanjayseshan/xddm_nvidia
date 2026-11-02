@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.40
+ * Driver Version: 1.0.0.41
  */
 
 #include "miniport.h"
@@ -142,6 +142,34 @@ static VOID NvxProbeFwsecRom(PUCHAR bar0)
             } else {
                 LogStr(" no compatible VBIOS signature\n");
             }
+        }
+        {
+            uint64_t fbSize=(uint64_t)VideoPortReadRegisterUlong((PULONG)(bar0+0x1183a4))<<20;
+            uint32_t workspace=VideoPortReadRegisterUlong((PULONG)(bar0+0x625f04));
+            uint32_t lockPlm=VideoPortReadRegisterUlong((PULONG)(bar0+0x1fa7c8));
+            uint32_t lockLo=VideoPortReadRegisterUlong((PULONG)(bar0+0x1fa82c));
+            uint32_t lockHi=VideoPortReadRegisterUlong((PULONG)(bar0+0x1fa830));
+            uint32_t wpr2Lo=VideoPortReadRegisterUlong((PULONG)(bar0+0x1fa824));
+            uint32_t wpr2Hi=VideoPortReadRegisterUlong((PULONG)(bar0+0x1fa828));
+            NVX_FRTS_LAYOUT layout;
+            LogStr("NVX [FRTS]: regs fb=");LogHex(fbSize);
+            LogStr(" workspace=");LogHex(workspace);
+            LogStr(" lock_plm=");LogHex(lockPlm);
+            LogStr(" lock_lo=");LogHex(lockLo);
+            LogStr(" lock_hi=");LogHex(lockHi);
+            LogStr(" wpr2_lo=");LogHex(wpr2Lo);
+            LogStr(" wpr2_hi=");LogHex(wpr2Hi);LogStr("\n");
+            if (NvxComputeFrtsLayout(fbSize,workspace,lockPlm,lockLo,lockHi,&layout)) {
+                LogStr("NVX [FRTS]: vga=");LogHex(layout.VgaWorkspaceOffset);
+                LogStr(" reserved=");LogHex(layout.VbiosReservedOffset);
+                LogStr(" wpr_end=");LogHex(layout.GspFwWprEnd);
+                LogStr(" frts=");LogHex(layout.FrtsOffset);
+                LogStr(" size4k=");LogHex(layout.FrtsSize4k);LogStr("\n");
+                LogStr("NVX [FRTS]: dry-run cmd=0x15 bytes=0x2C input_capacity=");
+                LogHex(info.CommandInSize);
+                LogStr(" region_offset4k=");LogHex(layout.FrtsOffset>>12);
+                LogStr(" region_size4k=0x100 media=0x2\n");
+            } else LogStr("NVX [FRTS]: layout invalid; execution remains blocked.\n");
         }
     }
 }
@@ -604,7 +632,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.40\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.41\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));
