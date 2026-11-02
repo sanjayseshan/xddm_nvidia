@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.38 recovery diagnostic / v1.0.0.33 verified display
+NVIDIA GA104 XDDM DRIVER — v1.0.0.39 FWSEC mapper diagnostic / v1.0.0.33 verified display
 Updated: November 1, 2026
 
 Latest hardware result
@@ -141,6 +141,18 @@ list is observed, after first establishing a verified BIOS mode. It also logs
 the FWSEC validation stage and partial interface-header fields even on failure.
 This distinguishes a stale VFIO/VBIOS mode list from a driver parser failure.
 All GSP/SEC2 hardware writes remain gated.
+
+v38 hardware result and changes in v39
+--------------------------------------
+v38 booted with all 10 VBE modes and successfully mapped 1920x1080x32. FWSEC
+validation reached stage 5: the v1 interface header and both entries were
+valid, and the required DMEM-mapper entry was found. The remaining failure is
+within mapper bounds, header reads, or command-buffer bounds.
+
+v39 assigns a separate validation stage to each of those remaining checks and
+logs the partial mapper offset, signature, version, size, and command buffers.
+It also adds an unprivileged guestmount/VFIO test workflow documented in
+ROOTLESS_TESTING.md. Firmware execution remains disabled.
 
 Important corrections
 ----------------------

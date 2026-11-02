@@ -4,19 +4,14 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_RUN_LOG="$NVX_ARCHIVE/v38-$NVX_STAMP.log"
-
-if [ "$EUID" -ne 0 ]; then
-    echo "Run as root: sudo $0" >&2
-    exit 1
-fi
+NVX_RUN_LOG="$NVX_ARCHIVE/v39-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
 if [ -f "$NVX_ROOT/vm_serial.log" ]; then
-    cp "$NVX_ROOT/vm_serial.log" "$NVX_ARCHIVE/before-v38-$NVX_STAMP.log"
+    cp "$NVX_ROOT/vm_serial.log" "$NVX_ARCHIVE/before-v39-$NVX_STAMP.log"
 fi
 
-echo "==> Running host tests and building VBE-retry/FWSEC diagnostic v38"
+echo "==> Running host tests and building FWSEC mapper diagnostic v39"
 if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
     sudo -u "$SUDO_USER" make -C "$NVX_ROOT/src_driver" check package-full
 else
@@ -31,10 +26,14 @@ echo "==> Verified miniport/display package pairing"
 sha256sum "$NVX_ROOT/dist_full/nvxmp.sys" "$NVX_ROOT/dist_full/nvxdisp.dll"
 
 echo "==> Updating the offline XP guest with dist_full"
-"$NVX_ROOT/update_disk_driver.sh" full
+if [ "$EUID" -eq 0 ]; then
+    "$NVX_ROOT/update_disk_driver.sh" full
+else
+    "$NVX_ROOT/update_disk_driver_user.sh" full
+fi
 
 if [ ! -e /dev/vfio/vfio ]; then
-    echo "VFIO is not ready. Run: sudo ./dynamic_vfio_switch.sh vm" >&2
+    echo "VFIO is not ready. See ROOTLESS_TESTING.md." >&2
     exit 1
 fi
 

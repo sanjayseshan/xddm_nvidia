@@ -32,8 +32,9 @@ switch_to_vm() {
     echo "$GPU" > /sys/bus/pci/drivers/vfio-pci/bind 2>/dev/null || true
     echo "$AUDIO" > /sys/bus/pci/drivers/vfio-pci/bind 2>/dev/null || true
 
-    # Fix permissions so VM launcher can access VFIO nodes
-    chmod 666 /dev/vfio/* 2>/dev/null || true
+    # Keep VFIO access limited to the VM group.
+    chgrp kvm /dev/vfio/* 2>/dev/null || true
+    chmod 660 /dev/vfio/* 2>/dev/null || true
 
     echo "[5/5] Done! Status:"
     echo -n "GPU Status: "

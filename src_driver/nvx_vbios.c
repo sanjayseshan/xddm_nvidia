@@ -269,18 +269,26 @@ int NvxParseFwsecRom(NVX_ROM_READ32 read32, void *context,
             if (!foundMapper || !add(info->DmemImageOffset,info->DmemMapperOffset,
                                      info->BiosSize,&mapperImage) ||
                 !add(info->DmemMapperOffset,64U,info->DmemLoadSize,&mapperEnd) ||
-                mapperEnd>info->DmemLoadSize ||
-                !u32at(&r,mapperImage,&info->DmemMapperSignature)||
-                !rd16(&r,mapperImage+4,&info->DmemMapperVersion)||
-                !rd16(&r,mapperImage+6,&info->DmemMapperSize)||
-                !u32at(&r,mapperImage+8,&info->CommandInOffset)||
-                !u32at(&r,mapperImage+12,&info->CommandInSize)||
-                !u32at(&r,mapperImage+16,&info->CommandOutOffset)||
-                !u32at(&r,mapperImage+20,&info->CommandOutSize)||
-                !range_fits(info->CommandInOffset,info->CommandInSize,info->DmemLoadSize)||
-                !range_fits(info->CommandOutOffset,info->CommandOutSize,info->DmemLoadSize))
+                mapperEnd>info->DmemLoadSize)
                 return NVX_VBIOS_BAD_INTERFACE;
             info->ValidationStage=6;
+            if (!u32at(&r,mapperImage,&info->DmemMapperSignature)||
+                !rd16(&r,mapperImage+4,&info->DmemMapperVersion)||
+                !rd16(&r,mapperImage+6,&info->DmemMapperSize))
+                return NVX_VBIOS_BAD_INTERFACE;
+            info->ValidationStage=7;
+            if (!u32at(&r,mapperImage+8,&info->CommandInOffset)||
+                !u32at(&r,mapperImage+12,&info->CommandInSize)||
+                !u32at(&r,mapperImage+16,&info->CommandOutOffset)||
+                !u32at(&r,mapperImage+20,&info->CommandOutSize))
+                return NVX_VBIOS_BAD_INTERFACE;
+            info->ValidationStage=8;
+            if (!range_fits(info->CommandInOffset,info->CommandInSize,info->DmemLoadSize))
+                return NVX_VBIOS_BAD_INTERFACE;
+            info->ValidationStage=9;
+            if (!range_fits(info->CommandOutOffset,info->CommandOutSize,info->DmemLoadSize))
+                return NVX_VBIOS_BAD_INTERFACE;
+            info->ValidationStage=10;
         } else {
             if (!u32at(&r,desc+16,&info->InterfaceOffset)||
                 !u32at(&r,desc+24,&info->ImemLoadSize)||
