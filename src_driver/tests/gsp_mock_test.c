@@ -134,7 +134,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         if(f==76&&request[22]==0xc36f0108) alloc[6]=0; /* 535 GSP returns zero external token. */
         if(f==76&&request[22]==0x20800179) {
             assert(request[24]==496&&request[26]==11);
-            alloc[6+62]=scenario==8?0xffffffffU:0x220000;
+            alloc[6+62]=scenario==8?0xffffffffU:0x220400;
         }
         if(f==10) {
             assert(request[20]==dev.GspClientHandle&&request[21]==0&&request[22]==dev.GspClientHandle);
@@ -244,9 +244,9 @@ int main(void)
         dev.VerifiedFrtsOffset=0x0ff00000ULL;
         dev.VerifiedVgaWorkspaceOffset=0x1fffe0000ULL;
         regs[0x1183a4/4]=8192;
-        regs[0x220008/4]=0x40000; /* doorbell selector 4 */
-        regs[0x220004/4]=0x80000b;
-        regs[0x220300/4]=0x80000000;
+        regs[0x220408/4]=0x40000; /* doorbell selector 4 */
+        regs[0x220404/4]=0x80000b;
+        regs[0x220700/4]=0x80000000;
         regs[NV_PSEC_FALCON_CPUCTL/4]=(scenario==3) ? 0x50 : 0x10;
         assert(NvxGspInitSubsystem(&dev)==(scenario==0 || scenario>=3));
         assert(dev.GspInitialized==(scenario==0 || scenario>=3));

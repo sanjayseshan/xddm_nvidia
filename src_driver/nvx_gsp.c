@@ -384,7 +384,8 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
     {
         ULONG base=((const ULONG *)dev->RpcRxRecord)[26+62];
         ULONG dbcfg,chcfg,enable;
-        if(!base||(base&0xfff)||dev->Bar0Length<0x304||base>dev->Bar0Length-0x304) {
+        /* GA104's COPY2 runlist is 0xc00400: 1KB windows, not 4KB pages. */
+        if(!base||(base&0x3ff)||dev->Bar0Length<0x304||base>dev->Bar0Length-0x304) {
             LogStr("NVX [COPY]: invalid CE runlist base=");LogHex(base);LogStr("\n");return FALSE;
         }
         dbcfg=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+base+8));

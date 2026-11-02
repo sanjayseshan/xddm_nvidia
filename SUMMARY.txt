@@ -1,8 +1,12 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.96 physical GSP CE capabilities
+NVIDIA GA104 XDDM DRIVER — v1.0.0.97 1KB-aligned runlist windows
 Updated: November 2, 2026
 
 Current checkpoint
 ------------------
+v97-20261102-164041.log reaches COPY2 submission: runlist=0xc00400,
+selector=1, token=0x10001, CHRAM slot1=2. Copy still times out, MMU fault data
+zero. Next test the per-runlist internal doorbell from Ampere channel-start.
+
 v96-20261102-163906.log selects COPY2 via physical capability queries:
 COPY0/1 caps=0x03e3, COPY2=0x03e2. Dedicated TSG/context/channel/C7B5 allocate.
 Its runlist base 0xc00400 is valid but rejected by the driver's 4KB alignment
