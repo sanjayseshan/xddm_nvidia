@@ -302,6 +302,7 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG PciBusNumber;
     ULONG PciSlot;
     ULONG GspAssertCount;
+    UCHAR RpcRxRecord[65536];
 } NVX_DEVICE_EXTENSION, *PNVX_DEVICE_EXTENSION;
 
 /* GSP Firmware Blobs */

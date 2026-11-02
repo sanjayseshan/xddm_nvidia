@@ -658,11 +658,19 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
             LogStr("NVX [RPC]: invalid queue pointer; receive stopped.\n");return FALSE;
         }
         if (write!=read) {
-            uint32_t function,result,sequence;
-            const uint8_t *entry=(const uint8_t *)devExt->StatQueueVirtual+4096+read*4096;
+            uint32_t function,result,sequence,elements=0,decodedElements=0;
+            const uint8_t *entry=devExt->RpcRxRecord;
+            int gathered;
             __sync_synchronize();
+            gathered=NvxGatherRpc((const uint8_t *)devExt->StatQueueVirtual+4096,
+                63*4096,63,read,write,devExt->RpcRxRecord,sizeof(devExt->RpcRxRecord),&elements);
+            if (!gathered) { VideoPortStallExecution(100);continue; }
+            if (gathered<0) {
+                LogStr("NVX [RPC]: invalid record element count; receive stopped.\n");return FALSE;
+            }
             if (msg->MsgSize!=4096||msg->MsgCount!=63||msg->EntryOff!=4096||
-                !NvxDecodeRpc(entry,4096,&function,&result,&sequence)||sequence!=rxSequence) {
+                !NvxDecodeRpcRecord(entry,elements*4096,&function,&result,&sequence,&decodedElements)||
+                decodedElements!=elements||sequence!=rxSequence) {
                 const uint32_t *raw=(const uint32_t *)entry;
                 LogStr("NVX [RPC]: invalid checksum/header/sequence; read=");LogHex(read);
                 LogStr(" write=");LogHex(write);LogStr(" expected_seq=");LogHex(rxSequence);
@@ -684,7 +692,7 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
                 LogStr("NVX [RPC]: firmware assertion count=");
                 LogHex(devExt->GspAssertCount);LogStr("\n");
             }
-            __sync_synchronize();local->ReadPtr=(read+1)%63;__sync_synchronize();
+            __sync_synchronize();local->ReadPtr=(read+elements)%63;__sync_synchronize();
             rxSequence++;
             if (function==0x1001) {
                 if (!(VideoPortReadRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_RISCV_STAT))&0x80))
