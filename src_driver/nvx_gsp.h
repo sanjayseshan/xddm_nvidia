@@ -310,6 +310,7 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG GspScratchMemoryHandle;
     ULONG GspVirtualMemoryHandle;
     ULONG64 GspScratchGpuVa;
+    ULONG GspChannelGroupHandle;
     ULONG GspChannelHandle;
     ULONG GspCopyEngineHandle;
     ULONG RpcTxSequence,RpcRxSequence;

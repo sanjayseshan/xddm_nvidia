@@ -165,22 +165,32 @@ static BOOLEAN NvxGspRegisterScratch(PNVX_DEVICE_EXTENSION dev)
 
 static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
 {
+    /* TSG (KEPLER_CHANNEL_GROUP_A = 0xA06C) on Device:
+       NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS: hVASpace, engineType, bIsCallingContextVgpuPlugin. */
+    ULONG tsg[3]={dev->GspVaSpaceHandle, 9, 0};
     /* NV_CHANNEL_ALLOC_PARAMS for 535.113.01: 360 bytes (90 ULONGs).
-       Allocate AMPERE_CHANNEL_GPFIFO_A (0xC56F) on Device. */
+       Allocate AMPERE_CHANNEL_GPFIFO_A (0xC56F) under TSG parent.
+       Note: hVASpace must be 0 when parent is a TSG! */
     ULONG chan[90]={0};
     ULONG bindEngine=9; /* COPY0 */
     UCHAR schedEnable[2]={1, 0};
     /* NVC0B5_ALLOCATION_PARAMETERS for AMPERE_DMA_COPY_A (0xC6B5): version=1, engineType=9 (COPY0). */
     ULONG ceParams[2]={1, 9};
 
+    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0xa06c0001,0xa06c,tsg,sizeof(tsg))) {
+        LogStr("NVX [RM]: KEPLER_CHANNEL_GROUP_A allocation failed.\n");
+        return FALSE;
+    }
+    dev->GspChannelGroupHandle=0xa06c0001;
+    LogStr("NVX [RM]: KEPLER_CHANNEL_GROUP_A allocated.\n");
+
     chan[2]=0x10000000; /* gpFifoOffset (U64) */
     chan[4]=1024;       /* gpFifoEntries */
     chan[5]=0x00200020; /* flags: CHANNEL_TYPE_PHYSICAL, PRIVILEGED, USERD_INDEX_PAGE_FIXED */
-    chan[7]=dev->GspVaSpaceHandle; /* hVASpace */
     chan[32]=9;         /* engineType = NV2080_ENGINE_TYPE_COPY0 */
     chan[34]=1;         /* subDeviceId */
 
-    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0xc56f0001,0xc56f,chan,sizeof(chan))) {
+    if(!NvxGspAlloc(dev,dev->GspChannelGroupHandle,0xc56f0001,0xc56f,chan,sizeof(chan))) {
         LogStr("NVX [RM]: AMPERE_CHANNEL_GPFIFO_A allocation failed.\n");
         return FALSE;
     }

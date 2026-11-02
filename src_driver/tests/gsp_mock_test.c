@@ -43,7 +43,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         PULONG request=(PULONG)((PUCHAR)cmd+4096+(cmd->WritePtr-1)*4096);
         ULONG alloc[44]={0};
         uint32_t f,r,s;
-        assert(cmd->WritePtr>=3&&cmd->WritePtr<=12);
+        assert(cmd->WritePtr>=3&&cmd->WritePtr<=13);
         assert(NvxDecodeRpc((PUCHAR)request,4096,&f,&r,&s));
         assert((f==103||f==76||f==4)&&s==cmd->WritePtr-1);
         if(f==4) {
@@ -139,11 +139,12 @@ int main(void)
         assert(NvxGspInitSubsystem(&dev)==(scenario==0 || scenario==3));
         assert(dev.GspInitialized==(scenario==0 || scenario==3));
         if (dev.GspInitialized) {
-            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==18);
+            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==19);
             assert(dev.GspClientHandle==0xc1d00001);
             assert(dev.GspDeviceHandle==0x80000001&&dev.GspSubdeviceHandle==0x20800001);
             assert(dev.GspVaSpaceHandle==0x90f10001);
             assert(dev.GspScratchMemoryHandle==0x81000001);
+            assert(dev.GspChannelGroupHandle==0xa06c0001);
             assert(dev.GspChannelHandle==0xc56f0001);
             assert(dev.GspCopyEngineHandle==0xc6b50001);
             assert(dev.GspAssertCount==7);
