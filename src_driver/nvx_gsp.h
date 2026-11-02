@@ -68,6 +68,8 @@
 #define GSP_STAT_QUEUE_OFFSET          0x02541000ULL
 #define GSP_LIBOS_ARGS_OFFSET          0x024E0000ULL
 #define GSP_RM_ARGS_OFFSET             0x024E1000ULL
+#define GSP_SCRATCH_OFFSET             0x02F00000ULL
+#define GSP_SCRATCH_SIZE               0x10000UL
 
 #pragma pack(push, 1)
 /* Libos Init Argument */

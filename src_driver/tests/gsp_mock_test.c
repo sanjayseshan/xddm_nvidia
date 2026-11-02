@@ -41,20 +41,23 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         ULONG write=q->WritePtr;
         PULONG packet=(PULONG)((PUCHAR)q+4096+write*4096);
         PULONG request=(PULONG)((PUCHAR)cmd+4096+(cmd->WritePtr-1)*4096);
-        ULONG alloc[39]={0};
+        ULONG alloc[44]={0};
         uint32_t f,r,s;
         assert(cmd->WritePtr>=3&&cmd->WritePtr<=8);
         assert(NvxDecodeRpc((PUCHAR)request,4096,&f,&r,&s));
-        assert((f==103||f==76)&&s==cmd->WritePtr-1);
-        if(f==103&&request[23]==0x40) {
+        assert((f==103||f==76||f==4)&&s==cmd->WritePtr-1);
+        if(f==4) {
+            assert(request[23]==0x81&&request[28]==65536&&request[30]==16);
+            assert(request[32]==(16U<<16));
+            assert(request[34]==((dev.GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET)>>12));
             ULONG assertions=7;
             assert(NvxEncodeRpc((PUCHAR)packet,4096,0x101b,write-1,&assertions,4));
             packet[16]=0;packet[8]^=0xffffffffU;
             write++;packet=(PULONG)((PUCHAR)q+4096+write*4096);
         }
-        memcpy(alloc,request+20,f==76?sizeof(alloc):16);
+        memcpy(alloc,request+20,f==76?156:16);
         if(f==76) memcpy((PUCHAR)alloc+28,"Mock RTX 3070",14);
-        assert(NvxEncodeRpc((PUCHAR)packet,4096,f,write-1,alloc,f==76?sizeof(alloc):32));
+        assert(NvxEncodeRpc((PUCHAR)packet,4096,f,write-1,alloc,f==76?156:32));
         packet[16]=0;packet[8]^=0xffffffffU;
         q->WritePtr=write+1;q->ReadPtr=cmd->WritePtr;
     }
@@ -140,7 +143,7 @@ int main(void)
             assert(dev.GspClientHandle==0xc1d00001);
             assert(dev.GspDeviceHandle==0x80000001&&dev.GspSubdeviceHandle==0x20800001);
             assert(dev.GspVaSpaceHandle==0x90f10001);
-            assert(dev.GspScratchMemoryHandle==0x40000001);
+            assert(dev.GspScratchMemoryHandle==0x81000001);
             assert(dev.GspAssertCount==7);
         }
         if(scenario==2) { assert(imemTransfers==1 && !cpuStarts); }
