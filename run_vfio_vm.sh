@@ -6,6 +6,21 @@ cd "$SCRIPT_DIR"
 
 NVX_DRIVER_ISO="${NVX_DRIVER_ISO:-$SCRIPT_DIR/nvx_driver_full.iso}"
 NVX_SERIAL_LOG="${NVX_SERIAL_LOG:-$SCRIPT_DIR/vm_serial.log}"
+NVX_VM_MEMORY_MB="${NVX_VM_MEMORY_MB:-3072}"
+
+if ! [[ "$NVX_VM_MEMORY_MB" =~ ^[0-9]+$ ]] || [ "$NVX_VM_MEMORY_MB" -lt 1024 ]; then
+    echo "Error: NVX_VM_MEMORY_MB must be an integer of at least 1024." >&2
+    exit 1
+fi
+NVX_MEMLOCK_KB="$(ulimit -Sl)"
+if [ "$NVX_MEMLOCK_KB" != unlimited ]; then
+    NVX_REQUIRED_MEMLOCK_KB=$((NVX_VM_MEMORY_MB * 1024 + 262144))
+    if [ "$NVX_MEMLOCK_KB" -lt "$NVX_REQUIRED_MEMLOCK_KB" ]; then
+        echo "Error: memlock limit ${NVX_MEMLOCK_KB}KB is too small for ${NVX_VM_MEMORY_MB}MB VFIO RAM." >&2
+        echo "Use a smaller NVX_VM_MEMORY_MB or apply the memlock setup in ROOTLESS_TESTING.md." >&2
+        exit 1
+    fi
+fi
 
 if [ "$EUID" -eq 0 ]; then
     chmod 660 /dev/vfio/* 2>/dev/null || true
@@ -42,12 +57,13 @@ echo "=================================================================="
 echo "Display Output: Monitor plugged into the RTX 3070"
 echo "Driver CD attached: $NVX_DRIVER_ISO"
 echo "Serial log: $NVX_SERIAL_LOG"
+echo "Guest RAM: ${NVX_VM_MEMORY_MB} MB (memlock: ${NVX_MEMLOCK_KB} KB)"
 echo "Input: Dedicated Logitech Keyboard & Mouse (PS/2 mapping)"
 echo "------------------------------------------------------------------"
 
 qemu-system-x86_64 \
     -enable-kvm \
-    -m 4096 \
+    -m "$NVX_VM_MEMORY_MB" \
     -cpu host,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time \
     -smp 4 \
     -vga none \
