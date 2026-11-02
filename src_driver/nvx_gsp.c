@@ -66,6 +66,20 @@ static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
             decoded!=elements||sequence!=dev->RpcRxSequence) return FALSE;
         LogStr("NVX [RM]: reply function=");LogHex(function);
         LogStr(" result=");LogHex(result);LogStr("\n");
+        if(!result && (function==0x101b||function==0x100c)) {
+            const ULONG *words=(const ULONG *)dev->RpcRxRecord;
+            if(function==0x101b) {
+                if(words[14]<36) return FALSE;
+                dev->GspAssertCount=words[20];
+                LogStr("NVX [RM]: firmware assertion count=");LogHex(words[20]);LogStr("\n");
+            } else {
+                if(words[14]<40||words[21]>words[14]-40) return FALSE;
+                LogStr("NVX [RM]: LibOS notification bytes=");LogHex(words[21]);LogStr("\n");
+            }
+            __sync_synchronize();cmd->ReadPtr=(read+elements)%63;__sync_synchronize();
+            dev->RpcRxSequence++;
+            continue;
+        }
         if(function!=expected) return FALSE;
         __sync_synchronize();cmd->ReadPtr=(read+elements)%63;__sync_synchronize();
         dev->RpcRxSequence++;
