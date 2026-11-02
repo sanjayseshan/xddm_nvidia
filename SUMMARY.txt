@@ -1,8 +1,13 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.95 capability-selected dedicated CE
+NVIDIA GA104 XDDM DRIVER — v1.0.0.96 physical GSP CE capabilities
 Updated: November 2, 2026
 
 Current checkpoint
 ------------------
+v96-20261102-163906.log selects COPY2 via physical capability queries:
+COPY0/1 caps=0x03e3, COPY2=0x03e2. Dedicated TSG/context/channel/C7B5 allocate.
+Its runlist base 0xc00400 is valid but rejected by the driver's 4KB alignment
+check. Next accept 1KB-aligned runlists and retry the copy test.
+
 v95 retry reaches INIT_DONE but public GET_CAPS_V2 controls are rejected;
 channel creation is skipped. The host API is implemented outside GSP and
 forwards to physical control 0x20802a07. Next use that GSP API directly.

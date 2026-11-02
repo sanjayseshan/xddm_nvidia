@@ -68,7 +68,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(request[21]==dev.GspDeviceHandle);
             assert(request[22]==0xa06c0001);
             assert(request[28+2]==dev.GspVaSpaceHandle);
-            assert(request[28+3]==11); /* COPY0 TSG */
+            assert(request[28+3]==11); /* dedicated COPY2 TSG */
         }
         if(f==103&&request[23]==0x9067) {
             /* FERMI_CONTEXT_SHARE_A on TSG */
@@ -84,7 +84,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(request[28+5]==0x00200120);        /* flags: PRIVILEGED, PAGE_FIXED, userd_i=1 (ChID=1) */
             assert(request[28+6]==0x90670001);        /* hContextShare == ContextShare */
             assert(request[28+7]==0);                 /* hVASpace == 0 */
-            assert(request[28+32]==11);                /* COPY0 channel */
+            assert(request[28+32]==11);                /* dedicated COPY2 channel */
             assert(request[28+34]==0);                /* subDeviceId == 0 */
             assert(request[28+36]==(ULONG)(scratchPhys+0x2000));
             assert(request[28+38]==0x1000);
@@ -127,7 +127,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             ULONG retSize=0x5000; /* Actual GA104 v90 firmware result. */
             memcpy((PUCHAR)alloc+24,&retSize,sizeof(retSize));
         }
-        if(f==76&&request[22]==0x20802a03) {
+        if(f==76&&request[22]==0x20802a07) {
             assert(request[26]>=9&&request[26]<=11&&request[24]==8);
             alloc[7]=request[26]<11?0x0321:0x032c;
         }

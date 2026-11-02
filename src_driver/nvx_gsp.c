@@ -3,8 +3,8 @@
  * Target: Windows XP Professional x64 Edition / Windows Server 2003 x64
  *
  * Implements Falcon IMEM DMA transfer, bootloader staging, queue initialization,
- * and checked bootstrap diagnostics. RM dispatch and display channels remain
- * separate work.
+ * checked RM objects, and an isolated GPU copy/completion probe. Native
+ * display channels and XDDM acceleration integration remain separate work.
  */
 
 #include "nvx_gsp.h"
@@ -125,7 +125,14 @@ static BOOLEAN NvxGspControl(PNVX_DEVICE_EXTENSION dev,ULONG object,ULONG cmd,
     if(bytes&&params) VideoPortMoveMemory(payload+6,(PVOID)params,bytes);
     if(!NvxGspCall(dev,76,payload,24+bytes)) return FALSE;
     if(words[14]<56+bytes||words[20]!=payload[0]||words[21]!=object||
-       words[22]!=cmd||words[23]!=0||words[24]!=bytes) return FALSE;
+       words[22]!=cmd||words[23]!=0||words[24]!=bytes) {
+        LogStr("NVX [RM]: control rejected cmd=");LogHex(cmd);
+        LogStr(" reply length=");LogHex(words[14]);
+        if(words[14]>=56) {
+            LogStr(" status=");LogHex(words[23]);LogStr(" returned bytes=");LogHex(words[24]);
+        }
+        LogStr(" expected bytes=");LogHex(bytes);LogStr("\n");return FALSE;
+    }
     return TRUE;
 }
 
@@ -199,12 +206,12 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
 
 static BOOLEAN NvxGspSelectCopyEngine(PNVX_DEVICE_EXTENSION dev)
 {
-    /* GET_CAPS_V2 is pointer-free: engineType + two capability bytes, padded
-       to 8 bytes. Skip graphics-synchronous CEs; require SYSMEM support. */
+    /* The public GET_CAPS_V2 is host-side. kceGetDeviceCaps calls the GSP
+       GET_PHYSICAL_CAPS API with this same 8-byte pointer-free structure. */
     dev->GspCopyEngineType=0;
     for(ULONG engine=9;engine<19;engine++) {
         ULONG caps[2]={engine,0};
-        if(!NvxGspControl(dev,dev->GspSubdeviceHandle,0x20802a03,caps,sizeof(caps))) continue;
+        if(!NvxGspControl(dev,dev->GspSubdeviceHandle,0x20802a07,caps,sizeof(caps))) continue;
         ULONG bits=((const ULONG *)dev->RpcRxRecord)[27]&0xffff;
         LogStr("NVX [COPY]: CE engine=");LogHex(engine);LogStr(" capabilities=");LogHex(bits);LogStr("\n");
         if((bits&0x21)==0x20) {
@@ -220,7 +227,7 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
     /* 1. TSG (KEPLER_CHANNEL_GROUP_A = 0xA06C) on Device:
        NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS (20 bytes):
        hObjectError, hObjectEccError, hVASpace, engineType, bIsCallingContextVgpuPlugin.
-       Use COPY0 for the isolated scratch-copy test. NVIDIA 535's GA104
+       Use the selected dedicated CE for the scratch-copy test. 535's GA104
        class table exposes AMPERE_DMA_COPY_B (0xC7B5), not GA100's 0xC6B5. */
     ULONG tsg[5]={0, 0, dev->GspVaSpaceHandle, dev->GspCopyEngineType, 0};
     /* 2. Context Share (FERMI_CONTEXT_SHARE_A = 0x9067) on TSG:
@@ -232,7 +239,7 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
     ULONG chan[90]={0};
     ULONG bindEngine=dev->GspCopyEngineType;
     UCHAR schedEnable[2]={1, 0};
-    /* NVC0B5_ALLOCATION_PARAMETERS: version=1, engineType=COPY0. */
+    /* NVC0B5_ALLOCATION_PARAMETERS: version=1, selected NV2080 engine type. */
     ULONG ceParams[2]={1, dev->GspCopyEngineType};
     ULONG64 scratchPhys=dev->GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET;
     ULONG64 instPhys=scratchPhys+0x2000;
