@@ -51,7 +51,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         PULONG request=(PULONG)((PUCHAR)cmd+4096+(cmd->WritePtr-1)*4096);
         ULONG alloc[160]={0},replyBytes;
         uint32_t f,r,s;
-        assert(cmd->WritePtr>=3&&cmd->WritePtr<=20);
+        assert(cmd->WritePtr>=3&&cmd->WritePtr<=21);
         assert(NvxDecodeRpc((PUCHAR)request,4096,&f,&r,&s));
         assert((f==103||f==76||f==4||f==14||f==10)&&s==cmd->WritePtr-1);
         if(f==4) {
@@ -113,6 +113,12 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(tables[2048]==((dev.GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET)>>4|0xd));
             assert(tables[2064]==0);
         }
+        if(f==76&&request[22]==0xa06f0107&&scenario==4) {
+            ULONG rc[5]={9,1,0x1f,0,0};
+            assert(NvxEncodeRpc((PUCHAR)packet,4096,0x1004,write-1,rc,sizeof(rc)));
+            packet[16]=0;packet[8]^=0xffffffffU;
+            write++;packet=(PULONG)((PUCHAR)q+4096+write*4096);
+        }
         replyBytes=f==76?24+request[24]:(f==14?56:32);
         assert(replyBytes<=sizeof(alloc));
         memcpy(alloc,request+20,f==76?replyBytes:(f==14?56:16));
@@ -141,13 +147,13 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         ULONG64 address=(entry&0xfffffffcULL)|((entry>>32&0xffULL)<<32);
         assert(value==0x40001&&userd[0x8c/4]==1);
         assert(address==dev.GspScratchGpuVa+0x9000&&(entry>>42)==20);
-        assert(push[0]==0x20010000&&push[1]==0xc7b5);
-        assert(push[2]==0x20040100&&push[3]==0&&push[4]==0x1000a000);
+        assert(push[0]==0x20018000&&push[1]==0xc7b5);
+        assert(push[2]==0x20048100&&push[3]==0&&push[4]==0x1000a000);
         assert(push[5]==0&&push[6]==0x1000b000);
-        assert(push[7]==0x20040104&&push[8]==256&&push[9]==256&&push[10]==256&&push[11]==1);
-        assert(push[12]==0x200100c0&&push[13]==0x04000186);
-        assert(push[14]==0x20030090&&push[15]==0&&push[16]==0x1000c000);
-        assert(push[18]==0x200100c0&&push[19]==0x0400000c);
+        assert(push[7]==0x20048104&&push[8]==256&&push[9]==256&&push[10]==256&&push[11]==1);
+        assert(push[12]==0x200180c0&&push[13]==0x04000186);
+        assert(push[14]==0x20038090&&push[15]==0&&push[16]==0x1000c000);
+        assert(push[18]==0x200180c0&&push[19]==0x0400000c);
         if(scenario!=4) { /* timeout: GPU never writes completion */
             memcpy(scratch+0xb000,scratch+0xa000,256);
             *(PULONG)(scratch+0xc000)=push[17];
@@ -241,7 +247,7 @@ int main(void)
         assert(NvxGspInitSubsystem(&dev)==(scenario==0 || scenario>=3));
         assert(dev.GspInitialized==(scenario==0 || scenario>=3));
         if (dev.GspInitialized) {
-            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==24);
+            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==(scenario==4?26:24));
             assert(dev.GspScratchGpuVa==0x10000000);
             assert(dev.GspClientHandle==0xc1d00001);
             assert(dev.GspDeviceHandle==0x80000001&&dev.GspSubdeviceHandle==0x20800001);
@@ -253,6 +259,7 @@ int main(void)
             assert(dev.GspCopyEngineHandle==0xc7b50001);
             assert(dev.GspCopyVerified==(scenario==0||scenario==3||scenario==7));
             assert(dev.GspAssertCount==7);
+            assert(dev.GspChannelFaulted==(scenario==4));
         }
         if(scenario==2) { assert(imemTransfers==1 && !cpuStarts); }
         else { assert(imemTransfers==131 && dmemTransfers==98 && cpuStarts==1); }

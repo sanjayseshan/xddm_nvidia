@@ -1,8 +1,13 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.93 early sequencer acknowledgement
+NVIDIA GA104 XDDM DRIVER — v1.0.0.94 GRCE subchannel diagnostics
 Updated: November 2, 2026
 
 Current checkpoint
 ------------------
+v94-20261102-163138.log reaches INIT_DONE and submits CE commands on
+subchannel 4, but copy completion still times out. CHRAM slot1=2, RAMFC FIFO
+base/limit correct, MMU fault query all zero. Next select a dedicated copy
+engine using capabilities rather than COPY0's graphics-synchronous runlist.
+
 v93-20261102-162855.log reaches INIT_DONE and C7B5 on its first boot after
 moving sequencer acknowledgement before diagnostics. COPY0 physical runlist
 0xc00000 is enabled and token 1 is submitted. GPGet remains 0 and completion

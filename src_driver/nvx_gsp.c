@@ -66,12 +66,18 @@ static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
             decoded!=elements||sequence!=dev->RpcRxSequence) return FALSE;
         LogStr("NVX [RM]: reply function=");LogHex(function);
         LogStr(" result=");LogHex(result);LogStr("\n");
-        if(!result && (function==0x101b||function==0x100c)) {
+        if(!result && (function==0x101b||function==0x100c||function==0x1004)) {
             const ULONG *words=(const ULONG *)dev->RpcRxRecord;
             if(function==0x101b) {
                 if(words[14]<36) return FALSE;
                 dev->GspAssertCount=words[20];
                 LogStr("NVX [RM]: firmware assertion count=");LogHex(words[20]);LogStr("\n");
+            } else if(function==0x1004) {
+                if(words[14]<52) return FALSE;
+                LogStr("NVX [RM]: channel RC fault engine=");LogHex(words[20]);
+                LogStr(" chid=");LogHex(words[21]);LogStr(" type=");LogHex(words[22]);
+                LogStr(" scope=");LogHex(words[23]);LogStr("\n");
+                if(words[21]==1) dev->GspChannelFaulted=TRUE;
             } else {
                 if(words[14]<40||words[21]>words[14]-40) return FALSE;
                 LogStr("NVX [RM]: LibOS notification bytes=");LogHex(words[21]);LogStr("\n");
@@ -334,6 +340,7 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
     ULONG64 va=dev->GspScratchGpuVa,pushVa=va+0x9000;
     const ULONG done=0x91c0ffee,guard=0xf17e55aa;
     dev->GspCopyVerified=FALSE;
+    dev->GspChannelFaulted=FALSE;
     if(dev->Bar0Length<0x30094||!dev->GspCopyEngineHandle||!va) return FALSE;
     if(!NvxGspControl(dev,dev->GspChannelHandle,0xc36f0108,&token,sizeof(token))) {
         LogStr("NVX [COPY]: work-submit token unavailable; no commands submitted.\n");
@@ -363,7 +370,18 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
         LogStr("NVX [COPY]: physical runlist=");LogHex(base);LogStr(" dbcfg=");LogHex(dbcfg);
         LogStr(" chcfg=");LogHex(chcfg);LogStr(" enable=");LogHex(enable);
         LogStr(" token=");LogHex(token);LogStr("\n");
+        {
+            ULONG chram=chcfg&0xfffffff0U;
+            if(chram&&chram<=dev->Bar0Length-8) {
+                LogStr("NVX [COPY]: CHRAM slot0=");
+                LogHex(VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+chram)));
+                LogStr(" slot1=");
+                LogHex(VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+chram+4)));
+                LogStr("\n");
+            }
+        }
     }
+    if(dev->GspChannelFaulted) return FALSE;
     if(userd[0x88/4]||userd[0x8c/4]) {
         LogStr("NVX [COPY]: fresh channel has nonzero GP pointers; submission skipped.\n");
         return FALSE;
@@ -371,18 +389,18 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
     for(ULONG i=0;i<64;i++) {src[i]=0x6d3a5000U^(i*0x10203U);dst[i]=~src[i];}
     src[-1]=src[64]=guard;dst[-1]=dst[64]=guard;
     fence[-1]=guard;fence[0]=0;fence[1]=guard;
-    /* Incrementing method packets on subchannel 0; SET_OBJECT uses class,
-       as in NVIDIA UVM's dedicated CE initialization, not the RM handle. */
-    push[n++]=0x20010000;push[n++]=0xc7b5;
-    push[n++]=0x20040100; /* OFFSET_IN_UPPER through OFFSET_OUT_LOWER */
+    /* Subchannel 4 works for dedicated CE and GRCE on the graphics runlist.
+       NVIDIA UVM notes that subchannel 0 fails on GRCE. SET_OBJECT uses class. */
+    push[n++]=0x20018000;push[n++]=0xc7b5;
+    push[n++]=0x20048100; /* OFFSET_IN_UPPER through OFFSET_OUT_LOWER */
     push[n++]=(ULONG)((va+0xa000)>>32);push[n++]=(ULONG)(va+0xa000);
     push[n++]=(ULONG)((va+0xb000)>>32);push[n++]=(ULONG)(va+0xb000);
-    push[n++]=0x20040104; /* PITCH_IN/OUT, LINE_LENGTH_IN, LINE_COUNT */
+    push[n++]=0x20048104; /* PITCH_IN/OUT, LINE_LENGTH_IN, LINE_COUNT */
     push[n++]=256;push[n++]=256;push[n++]=256;push[n++]=1;
-    push[n++]=0x200100c0;push[n++]=0x04000186; /* non-pipelined, pitch, flush, PLC disabled */
-    push[n++]=0x20030090; /* SET_SEMAPHORE_A/B/PAYLOAD */
+    push[n++]=0x200180c0;push[n++]=0x04000186; /* non-pipelined, pitch, flush, PLC disabled */
+    push[n++]=0x20038090; /* SET_SEMAPHORE_A/B/PAYLOAD */
     push[n++]=(ULONG)((va+0xc000)>>32);push[n++]=(ULONG)(va+0xc000);push[n++]=done;
-    push[n++]=0x200100c0;push[n++]=0x0400000c; /* flushed one-word semaphore release */
+    push[n++]=0x200180c0;push[n++]=0x0400000c; /* flushed one-word semaphore release */
     fifo[0]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|((ULONG64)n<<42);
     __sync_synchronize();userd[0x8c/4]=1;__sync_synchronize();
     /* Ampere USERMODE window is BAR0+0x30000, NOT Volta's 0x810000. */
@@ -410,6 +428,18 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
     }
     LogStr("NVX [COPY]: completion timeout; GPGet=");LogHex(userd[0x88/4]);
     LogStr(" GPPut=");LogHex(userd[0x8c/4]);LogStr(" fence=");LogHex(fence[0]);LogStr("\n");
+    {
+        PULONG ramfc=(PULONG)(scratch+0x2000);
+        ULONG fault[26]={0};
+        LogStr("NVX [COPY]: RAMFC userdLo=");LogHex(ramfc[0x8/4]);
+        LogStr(" userdHi=");LogHex(ramfc[0xc/4]);LogStr(" gpBaseLo=");LogHex(ramfc[0x48/4]);
+        LogStr(" gpBaseHi=");LogHex(ramfc[0x4c/4]);LogStr(" chid=");LogHex(ramfc[0xe8/4]);LogStr("\n");
+        if(NvxGspControl(dev,dev->GspChannelHandle,0xa06f0107,fault,sizeof(fault))) {
+            const ULONG *reply=(const ULONG *)dev->RpcRxRecord;
+            LogStr("NVX [COPY]: MMU fault addrHi=");LogHex(reply[26]);
+            LogStr(" addrLo=");LogHex(reply[27]);LogStr(" type=");LogHex(reply[28]);LogStr("\n");
+        } else LogStr("NVX [COPY]: MMU fault-info control unavailable.\n");
+    }
     return FALSE;
 }
 
@@ -1343,6 +1373,7 @@ VOID NvxGspShutdown(PVOID HwDeviceExtension) {
         devExt->GspInitialized = FALSE;
         devExt->GspBootVerified = FALSE;
         devExt->GspCopyVerified = FALSE;
+        devExt->GspChannelFaulted = FALSE;
 
         if (devExt->DmaAdapter) {
             VideoPortPutDmaAdapter(HwDeviceExtension, devExt->DmaAdapter);
