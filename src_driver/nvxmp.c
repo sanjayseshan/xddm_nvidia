@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.43
+ * Driver Version: 1.0.0.44
  */
 
 #include "miniport.h"
@@ -87,6 +87,44 @@ static VOID NvxPut32(PUCHAR p,uint32_t value)
     p[0]=(UCHAR)value;p[1]=(UCHAR)(value>>8);p[2]=(UCHAR)(value>>16);p[3]=(UCHAR)(value>>24);
 }
 
+static VOID NvxLogFwsecExecutionPlan(PUCHAR bar0,const NVX_FWSEC_INFO *info,
+                                     PHYSICAL_ADDRESS physical)
+{
+    if (!bar0 || !info || physical.QuadPart<0 ||
+        (uint64_t)physical.QuadPart<info->ImemVirtBase ||
+        (info->ImemLoadSize&0xffU) || (info->DmemLoadSize&0xffU)) {
+        LogStr("NVX [FWSEC-PLAN]: invalid DMA alignment/address inputs; execution blocked.\n");
+        return;
+    }
+    uint64_t imemSource=(uint64_t)physical.QuadPart-info->ImemVirtBase;
+    uint64_t dmemSource=(uint64_t)physical.QuadPart+info->ImemLoadSize;
+    LogStr("NVX [FWSEC-PLAN]: imem_src=");LogHex(imemSource);
+    LogStr(" base256=");LogHex(imemSource>>8);
+    LogStr(" mem_off=");LogHex(info->ImemVirtBase);
+    LogStr(" dst=");LogHex(info->ImemPhysBase);
+    LogStr(" bytes=");LogHex(info->ImemLoadSize);
+    LogStr(" blocks256=");LogHex(info->ImemLoadSize>>8);
+    LogStr(" cmd=0x614\n");
+    LogStr("NVX [FWSEC-PLAN]: dmem_src=");LogHex(dmemSource);
+    LogStr(" base256=");LogHex(dmemSource>>8);
+    LogStr(" mem_off=0x0 dst=");LogHex(info->DmemPhysBase);
+    LogStr(" bytes=");LogHex(info->DmemLoadSize);
+    LogStr(" blocks256=");LogHex(info->DmemLoadSize>>8);
+    LogStr(" cmd=0x600\n");
+    LogStr("NVX [FWSEC-PLAN]: brom paraaddr=");LogHex(info->PkcDataOffset);
+    LogStr(" engidmask=");LogHex(info->EngineIdMask);
+    LogStr(" ucode_id=");LogHex(info->UcodeId);
+    LogStr(" mod_sel=0x1 bootvec=");LogHex(info->ImemVirtBase);LogStr("\n");
+    LogStr("NVX [FWSEC-PLAN]: baseline engine=");
+    LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x1103c0)));
+    LogStr(" hwcfg2=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x1100f4)));
+    LogStr(" dmactl=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x11010c)));
+    LogStr(" cpuctl=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x110100)));
+    LogStr(" fbif_ctl=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x110624)));
+    LogStr(" transcfg0=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x110600)));
+    LogStr("\nNVX [FWSEC-PLAN]: read-only execution plan complete; no GPU writes.\n");
+}
+
 static VOID NvxDryRunFwsecDmaStage(PVOID hwDeviceExtension,NVX_PROM_CONTEXT *prom,
                                    const NVX_FWSEC_INFO *info,
                                    const NVX_FRTS_LAYOUT *layout,
@@ -166,6 +204,7 @@ static VOID NvxDryRunFwsecDmaStage(PVOID hwDeviceExtension,NVX_PROM_CONTEXT *pro
     LogStr(" mapper_dmem=");LogHex(info->DmemMapperOffset);
     LogStr(" init_cmd=0x15 cmd_dmem=");LogHex(info->CommandInOffset);
     LogStr(" bytes=0x2C coherent DMA dry-run complete; no GPU writes.\n");
+    NvxLogFwsecExecutionPlan(prom->Bar0,info,physical);
 cleanup:
     VideoPortZeroMemory(image,dmaLength);
     VideoPortFreeCommonBuffer(hwDeviceExtension,dmaLength,image,physical,TRUE);
@@ -754,7 +793,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.43\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.44\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

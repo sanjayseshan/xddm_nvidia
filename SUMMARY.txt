@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.43 FWSEC DMA staging dry-run / v1.0.0.33 rollback baseline
+NVIDIA GA104 XDDM DRIVER — v1.0.0.44 FWSEC execution-plan dry-run / v1.0.0.33 rollback baseline
 Updated: November 1, 2026
 
 Latest hardware result
@@ -214,6 +214,15 @@ v42 result and the buffer-release marker was observed. The display then mapped
 DMA staging but saw the known transient four-mode/800x600 VBE state. All three
 booted guests exited through ACPI system_powerdown; only attempt 1, which never
 produced serial output, was force-quit.
+
+Changes in v44
+--------------
+Matching OpenRM 535.113.01 confirms that GA102/GA104 runs VBIOS FWSEC on the
+GSP Falcon using coherent physical sysmem. v44 logs the exact 256-byte IMEM and
+DMEM DMA plan, BROM RSA-3K parameters, boot vector, and current GSP engine,
+HWCFG2, DMACTL, CPUCTL, FBIF control and TRANSCFG0 values. This remains a
+strictly read-only plan: no GSP/Falcon/FBIF register is written and the common
+buffer is scrubbed and released exactly as in v43.
 
 Important corrections
 ----------------------
