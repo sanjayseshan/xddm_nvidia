@@ -10,7 +10,10 @@ static ULONG regs[0x1000000/4];
 static NVX_DEVICE_EXTENSION dev;
 static int scenario, imemTransfers, dmemTransfers, cpuStarts,freeFailures;
 static ULONG regoff(PULONG p) { return (ULONG)((PUCHAR)p-(PUCHAR)regs); }
-VOID LogStr(const char *s) { (void)s; }
+VOID LogStr(const char *s) {
+    if(!strcmp(s,"NVX [SEQ]: validated capacity="))
+        assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr>=5);
+}
 VOID LogHex(unsigned long long x) { (void)x; }
 VOID VideoPortDebugPrint(VIDEO_DEBUG_LEVEL level, const CHAR *fmt, ...) { (void)level;(void)fmt; }
 VOID VideoPortStallExecution(ULONG us) { (void)us; }

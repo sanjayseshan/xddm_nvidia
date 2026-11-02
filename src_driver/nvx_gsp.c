@@ -1173,8 +1173,11 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
                 LogStr(" length=");LogHex(raw[14]);LogStr(" function=");LogHex(raw[15]);
                 LogStr(" result=");LogHex(raw[16]);LogStr("; receive stopped.\n");return FALSE;
             }
-            LogStr("NVX [RPC]: startup event=");LogHex(function);
-            LogStr(" result=");LogHex(result);LogStr(" sequence=");LogHex(sequence);LogStr("\n");
+            /* Avoid serial output before acknowledging the sequencer. */
+            if(function!=0x1002||result) {
+                LogStr("NVX [RPC]: startup event=");LogHex(function);
+                LogStr(" result=");LogHex(result);LogStr(" sequence=");LogHex(sequence);LogStr("\n");
+            }
             if (function==0x1002 && !result) {
                 const uint32_t *words=(const uint32_t *)entry;
                 const uint32_t *params=words+20;
@@ -1182,24 +1185,26 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
                 if (!NvxValidateSeq(params,words[14]-32,devExt->Bar0Length,&count)) {
                     LogStr("NVX [SEQ]: rejected malformed sequencer request.\n");return FALSE;
                 }
+                /* Match OpenRM receive ordering: acknowledge the validated
+                   copy before dispatch or slow serial diagnostics. */
+                __sync_synchronize();local->ReadPtr=(read+elements)%63;__sync_synchronize();
+                rxSequence++;consumed=TRUE;
                 LogStr("NVX [SEQ]: validated capacity=");LogHex(params[0]);
                 LogStr(" used=");LogHex(params[1]);LogStr(" commands=");LogHex(count);LogStr("\n");
-                for (uint32_t i=0;i<params[1] && i<16;i++) {
-                    LogStr("NVX [SEQ-WORD]: index=");LogHex(i);
-                    LogStr(" value=");LogHex(params[10+i]);LogStr("\n");
-                }
                 {
                     NVX_SEQ_IO io={devExt,NvxSeqRead,NvxSeqWrite,NvxSeqDelay,NvxGspSequencerCore};
                     uint32_t failedWord=0;
-                    /* OpenRM releases copied queue elements before dispatch.
-                       Firmware may wait for receive completion before setting
-                       the mailbox bit polled by its own sequencer request. */
-                    __sync_synchronize();local->ReadPtr=(read+elements)%63;__sync_synchronize();
-                    rxSequence++;consumed=TRUE;
                     if(!NvxExecuteSeq((uint32_t *)params,words[14]-32,devExt->Bar0Length,&io,&failedWord)) {
                         LogStr("NVX [SEQ]: execution failed at word=");LogHex(failedWord);
                         if(failedWord<params[1]) {
                             LogStr(" opcode=");LogHex(params[10+failedWord]);
+                            if(params[10+failedWord]==2) {
+                                ULONG reg=params[11+failedWord];
+                                LogStr(" reg=");LogHex(reg);
+                                LogStr(" value=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+reg)));
+                                LogStr(" mask=");LogHex(params[12+failedWord]);
+                                LogStr(" expected=");LogHex(params[13+failedWord]);
+                            }
                         }
                         LogStr("; staging retained.\n");return FALSE;
                     }

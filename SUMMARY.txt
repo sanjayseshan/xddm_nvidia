@@ -1,8 +1,13 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.92 physical runlist doorbell
+NVIDIA GA104 XDDM DRIVER — v1.0.0.93 early sequencer acknowledgement
 Updated: November 2, 2026
 
 Current checkpoint
 ------------------
+v93-20261102-162855.log reaches INIT_DONE and C7B5 on its first boot after
+moving sequencer acknowledgement before diagnostics. COPY0 physical runlist
+0xc00000 is enabled and token 1 is submitted. GPGet remains 0 and completion
+is absent. Next inspect GRCE subchannel routing and channel/MMU faults.
+
 User hardware log test_logs/v90-20261102-161211.log confirms INIT_DONE,
 COPY0 TSG/context/channel allocation, binding and scheduling. Class 0xc6b5
 still fails INVALID_CLASS (0x22). Changing engine type alone was insufficient.
