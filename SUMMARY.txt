@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.42 FWSEC staging dry-run / v1.0.0.33 verified display
+NVIDIA GA104 XDDM DRIVER — v1.0.0.43 FWSEC DMA staging dry-run / v1.0.0.33 rollback baseline
 Updated: November 1, 2026
 
 Latest hardware result
@@ -190,6 +190,20 @@ v42 copies the 0xe900-byte FWSEC image from live PROM into a private driver
 buffer, verifies its original CRC, injects selected signature 2 at DMEM 0x5a4,
 patches mapper init command 0x15 and the exact FRTS input structure, then logs
 the staged CRC and clears the buffer. It performs no DMA or GPU writes.
+
+v42 hardware result and changes in v43
+--------------------------------------
+v42 passed completely on attempt 4 in test_logs/v42-retry4.log. The base CRC
+was 0xbcf1b7e4, selected-signature CRC was 0x72d9750c, and patched image CRC
+was 0x354c62d3. Windows selected VBE 0x177 and mapped 1920x1080x32 at physical
+E0000000 with stride 7680. The test ended with ACPI system_powerdown; QEMU
+exited normally, so the successful boot was not force-terminated.
+
+v43 moves that same bounded staging operation into a page-rounded coherent
+VideoPort common buffer. It requires a page-aligned physical range wholly below
+4GB, logs its virtual/physical placement and checksums, then scrubs and frees
+the allocation and releases the DMA adapter. The GPU is never programmed with
+the address, and no Falcon/GSP register writes or firmware execution occur.
 
 Important corrections
 ----------------------

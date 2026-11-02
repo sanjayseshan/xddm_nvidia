@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.42
+ * Driver Version: 1.0.0.43
  */
 
 #include "miniport.h"
@@ -49,7 +49,6 @@ void LogHex(unsigned long long val) {
 }
 
 typedef struct _NVX_PROM_CONTEXT { PUCHAR Bar0; } NVX_PROM_CONTEXT;
-static UCHAR NvxFwsecDryRunImage[0x10000];
 
 static int NvxPromRead32(void *context, uint32_t offset, uint32_t *value)
 {
@@ -88,18 +87,58 @@ static VOID NvxPut32(PUCHAR p,uint32_t value)
     p[0]=(UCHAR)value;p[1]=(UCHAR)(value>>8);p[2]=(UCHAR)(value>>16);p[3]=(UCHAR)(value>>24);
 }
 
-static VOID NvxDryRunFwsecStage(NVX_PROM_CONTEXT *prom,const NVX_FWSEC_INFO *info,
-                                const NVX_FRTS_LAYOUT *layout,uint32_t signatureOffset)
+static VOID NvxDryRunFwsecDmaStage(PVOID hwDeviceExtension,NVX_PROM_CONTEXT *prom,
+                                   const NVX_FWSEC_INFO *info,
+                                   const NVX_FRTS_LAYOUT *layout,
+                                   uint32_t signatureOffset)
 {
     uint32_t sigDst,mapper,cmd,baseCrc,stagedCrc,sigCrc;
-    PUCHAR image=NvxFwsecDryRunImage;
-    if (!prom||!info||!layout||!info->StoredSize||info->StoredSize>sizeof(NvxFwsecDryRunImage) ||
-        info->ImemLoadSize>info->StoredSize ||
-        info->PkcDataOffset>info->DmemLoadSize ||
-        !NvxPromCopy(prom,info->ImageOffset,image,info->StoredSize)) {
-        LogStr("NVX [FWSEC-STAGE]: invalid image bounds/read; execution blocked.\n");return;
+    ULONG dmaLength;
+    VP_DEVICE_DESCRIPTION devDesc;
+    PVOID dmaAdapter=NULL;
+    PUCHAR image=NULL;
+    PHYSICAL_ADDRESS physical;
+    physical.QuadPart=0;
+    if (!hwDeviceExtension||!prom||!info||!layout||!info->StoredSize||
+        info->StoredSize>0x10000U||info->ImemLoadSize>info->StoredSize||
+        info->PkcDataOffset>info->DmemLoadSize) {
+        LogStr("NVX [FWSEC-DMA]: invalid image bounds; execution blocked.\n");return;
+    }
+    dmaLength=(info->StoredSize+0xfffU)&~0xfffU;
+    VideoPortZeroMemory(&devDesc,sizeof(devDesc));
+    devDesc.ScatterGather=TRUE;
+    devDesc.Dma32BitAddresses=TRUE;
+    devDesc.Dma64BitAddresses=FALSE;
+    devDesc.MaximumLength=dmaLength;
+    dmaAdapter=VideoPortGetDmaAdapter(hwDeviceExtension,&devDesc);
+    LogStr("NVX [FWSEC-DMA]: adapter=");LogHex((ULONG64)dmaAdapter);
+    LogStr(" requested=");LogHex(dmaLength);LogStr("\n");
+    if (!dmaAdapter) {
+        LogStr("NVX [FWSEC-DMA]: adapter unavailable; execution blocked.\n");return;
+    }
+    image=(PUCHAR)VideoPortAllocateCommonBuffer(hwDeviceExtension,dmaAdapter,dmaLength,
+                                                &physical,TRUE,NULL);
+    if (!image) {
+        LogStr("NVX [FWSEC-DMA]: common-buffer allocation failed; execution blocked.\n");
+        VideoPortPutDmaAdapter(hwDeviceExtension,dmaAdapter);return;
+    }
+    LogStr("NVX [FWSEC-DMA]: virtual=");LogHex((ULONG64)image);
+    LogStr(" physical=");LogHex((ULONG64)physical.QuadPart);
+    LogStr(" length=");LogHex(dmaLength);LogStr("\n");
+    if (physical.QuadPart<0 || ((ULONG64)physical.QuadPart&0xfffULL) ||
+        (ULONG64)physical.QuadPart>0x100000000ULL-dmaLength) {
+        LogStr("NVX [FWSEC-DMA]: buffer is not page-aligned/below 4GB; execution blocked.\n");
+        goto cleanup;
+    }
+    VideoPortZeroMemory(image,dmaLength);
+    if (!NvxPromCopy(prom,info->ImageOffset,image,info->StoredSize)) {
+        LogStr("NVX [FWSEC-DMA]: PROM copy failed; execution blocked.\n");goto cleanup;
     }
     baseCrc=NvxCrc32(image,info->StoredSize);
+    if (baseCrc!=info->ImageCrc32) {
+        LogStr("NVX [FWSEC-DMA]: PROM image CRC changed; execution blocked.\n");
+        goto cleanup;
+    }
     sigDst=info->ImemLoadSize+info->PkcDataOffset;
     mapper=info->ImemLoadSize+info->DmemMapperOffset;
     cmd=info->ImemLoadSize+info->CommandInOffset;
@@ -107,8 +146,8 @@ static VOID NvxDryRunFwsecStage(NVX_PROM_CONTEXT *prom,const NVX_FWSEC_INFO *inf
         mapper>info->StoredSize || 64U>info->StoredSize-mapper ||
         cmd>info->StoredSize || 44U>info->StoredSize-cmd ||
         !NvxPromCopy(prom,signatureOffset,image+sigDst,384U)) {
-        LogStr("NVX [FWSEC-STAGE]: patch bounds/read invalid; execution blocked.\n");
-        VideoPortZeroMemory(image,sizeof(NvxFwsecDryRunImage));return;
+        LogStr("NVX [FWSEC-DMA]: patch bounds/read invalid; execution blocked.\n");
+        goto cleanup;
     }
     sigCrc=NvxCrc32(image+sigDst,384U);
     NvxPut32(image+mapper+0x2c,0x15U);
@@ -119,18 +158,22 @@ static VOID NvxDryRunFwsecStage(NVX_PROM_CONTEXT *prom,const NVX_FWSEC_INFO *inf
     NvxPut32(image+cmd+32,(uint32_t)(layout->FrtsOffset>>12));
     NvxPut32(image+cmd+36,layout->FrtsSize4k);NvxPut32(image+cmd+40,2U);
     stagedCrc=NvxCrc32(image,info->StoredSize);
-    LogStr("NVX [FWSEC-STAGE]: base_crc=");LogHex(baseCrc);
+    LogStr("NVX [FWSEC-DMA]: base_crc=");LogHex(baseCrc);
     LogStr(" expected=");LogHex(info->ImageCrc32);
     LogStr(" selected_sig_crc=");LogHex(sigCrc);
     LogStr(" staged_crc=");LogHex(stagedCrc);LogStr("\n");
-    LogStr("NVX [FWSEC-STAGE]: sig_dmem=");LogHex(info->PkcDataOffset);
+    LogStr("NVX [FWSEC-DMA]: sig_dmem=");LogHex(info->PkcDataOffset);
     LogStr(" mapper_dmem=");LogHex(info->DmemMapperOffset);
     LogStr(" init_cmd=0x15 cmd_dmem=");LogHex(info->CommandInOffset);
-    LogStr(" bytes=0x2C dry-run complete; no GPU writes.\n");
-    VideoPortZeroMemory(image,sizeof(NvxFwsecDryRunImage));
+    LogStr(" bytes=0x2C coherent DMA dry-run complete; no GPU writes.\n");
+cleanup:
+    VideoPortZeroMemory(image,dmaLength);
+    VideoPortFreeCommonBuffer(hwDeviceExtension,dmaLength,image,physical,TRUE);
+    VideoPortPutDmaAdapter(hwDeviceExtension,dmaAdapter);
+    LogStr("NVX [FWSEC-DMA]: buffer scrubbed and released.\n");
 }
 
-static VOID NvxProbeFwsecRom(PUCHAR bar0)
+static VOID NvxProbeFwsecRom(PVOID hwDeviceExtension,PUCHAR bar0)
 {
     NVX_PROM_CONTEXT prom;
     NVX_FWSEC_INFO info;
@@ -248,7 +291,8 @@ static VOID NvxProbeFwsecRom(PUCHAR bar0)
             } else LogStr("NVX [FRTS]: layout invalid; execution remains blocked.\n");
         }
         if (signatureSelected&&frtsLayoutValid)
-            NvxDryRunFwsecStage(&prom,&info,&frtsLayout,selectedSignatureOffset);
+            NvxDryRunFwsecDmaStage(hwDeviceExtension,&prom,&info,&frtsLayout,
+                                   selectedSignatureOffset);
     }
 }
 
@@ -487,7 +531,7 @@ BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
         }
 #else
         LogStr("NVX [GSP]: Hardware bootstrap gated: board VBIOS FWSEC/FRTS is required before Booter Load.\n");
-        NvxProbeFwsecRom((PUCHAR)devExt->Bar0MmioVirtual);
+        NvxProbeFwsecRom(HwDeviceExtension,(PUCHAR)devExt->Bar0MmioVirtual);
 #endif
 #else
         LogStr("NVX [GSP]: Experimental bootstrap disabled; preserving BIOS scanout.\n");
@@ -710,7 +754,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.42\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.43\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));
