@@ -317,5 +317,6 @@ VOID LogHex(unsigned long long val);
 BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension);
 
 VOID NvxGspShutdown(PVOID HwDeviceExtension);
+int NvxGspSequencerCore(void *context,unsigned int opcode);
 
 #endif /* _NVX_GSP_H_ */

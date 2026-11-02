@@ -36,6 +36,9 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
 {
     ULONG off=regoff(p);
     regs[off/4]=value;
+    if(off==NV_PGSP_FALCON_BCR && value==0) regs[off/4]=1;
+    if((off==NV_PGSP_FALCON_CPUCTL||off==NV_PGSP_FALCON_CPUCTL_ALIAS)&&value==2)
+        regs[NV_PGSP_FALCON_CPUCTL/4]=0x10;
     if(off==NV_PSEC_FALCON_DMATRFCMD) {
         ULONG dst=regs[NV_PSEC_FALCON_DMATRFMOFF/4];
         ULONG src=regs[NV_PSEC_FALCON_DMATRFFBOFF/4];
@@ -114,6 +117,13 @@ int main(void)
         }
         if(scenario==2) { assert(imemTransfers==1 && !cpuStarts); }
         else { assert(imemTransfers==131 && dmemTransfers==98 && cpuStarts==1); }
+        if(scenario==0) {
+            assert(!NvxGspSequencerCore(&dev,9));
+            assert(NvxGspSequencerCore(&dev,5));
+            assert(NvxGspSequencerCore(&dev,6));
+            assert(NvxGspSequencerCore(&dev,7));
+            assert(dev.GspDmaVirtual);
+        }
         NvxGspShutdown(&dev);
         assert(!dev.GspDmaVirtual && !dev.DmaAdapter);
     }

@@ -49,7 +49,8 @@ int NvxExecuteSeq(uint32_t *p,size_t bytes,uint32_t barLength,const NVX_SEQ_IO *
             if(ok) ok=io->write(io->context,a[0],(value&~a[1])|a[2]);
             break;
         case 2: {
-            uint32_t remaining=a[3];
+            /* OpenRM zero selects the default timeout, not no waiting. */
+            uint32_t remaining=a[3]?a[3]:2000000;
             for(;;) {
                 ok=io->read(io->context,a[0],&value);
                 if(!ok||(value&a[1])==a[2]) break;

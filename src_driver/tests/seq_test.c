@@ -1,8 +1,10 @@
 #include "nvx_seq.h"
 #include <assert.h>
 #include <stdio.h>
-static uint32_t regs[128],writes,delays;
-static int rd(void *c,uint32_t a,uint32_t *v) { (void)c;*v=regs[a/4];return 1; }
+static uint32_t regs[128],writes,delays,settle,reads;
+static int rd(void *c,uint32_t a,uint32_t *v) {
+    (void)c;if(settle && ++reads==2) regs[a/4]=9;*v=regs[a/4];return 1;
+}
 static int wr(void *c,uint32_t a,uint32_t v) { (void)c;regs[a/4]=v;writes++;return 1; }
 static int delay(void *c,uint32_t us) { (void)c;delays+=us;return 1; }
 static int core(void *c,uint32_t op) { (void)c;return op==8; }
@@ -26,6 +28,9 @@ int main(void)
         uint32_t poll[16]={16,6,0,0,0,0,0,0,0,0,2,0x100,0xff,9,20,1};
         assert(!NvxExecuteSeq(poll,sizeof(poll),sizeof(regs),&io,&failed));
         assert(failed==0&&delays==30);
+        poll[14]=0;settle=1;reads=0;
+        assert(NvxExecuteSeq(poll,sizeof(poll),sizeof(regs),&io,&failed));
+        assert(delays==40);
     }
     puts("Sequencer tests passed: opcodes, operand bounds, MMIO alignment and save slots.");return 0;
 }

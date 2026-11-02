@@ -38,6 +38,61 @@ static BOOLEAN NvxWait(PUCHAR bar0, ULONG reg, ULONG mask, ULONG expected,
     return FALSE;
 }
 
+int NvxGspSequencerCore(void *context,unsigned int opcode)
+{
+    PNVX_DEVICE_EXTENSION dev=context;
+    PUCHAR bar0;
+    ULONG value,i;
+    if (!dev||!dev->Bar0MmioVirtual||!dev->GspDmaVirtual||!dev->GspBootVerified||
+        opcode<5||opcode>8) return FALSE;
+    bar0=dev->Bar0MmioVirtual;
+    LogStr("NVX [SEQ-CORE]: opcode=");LogHex(opcode);LogStr("\n");
+    if (opcode==5||opcode==8) {
+        for(i=0;i<150;i++) {
+            if(VideoPortReadRegisterUlong((PULONG)(bar0+0x1100f4))&0x80000000U) break;
+            VideoPortStallExecution(1);
+        }
+        value=VideoPortReadRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_ENGINE));
+        VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_ENGINE),value|1U);
+        for(i=0;i<10;i++) (void)VideoPortReadRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_ENGINE));
+        VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_ENGINE),value&~1U);
+        for(i=0;i<10;i++) (void)VideoPortReadRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_ENGINE));
+        if(!NvxWait(bar0,0x1100f4,0x1000,0,2000,10)) return FALSE;
+    }
+    if(opcode==5) {
+        value=VideoPortReadRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_BCR));
+        if(value&0x10) {
+            VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_BCR),0);
+            if(!NvxWait(bar0,NV_PGSP_FALCON_BCR,1,1,20000,5)) return FALSE;
+        }
+        VideoPortWriteRegisterUlong((PULONG)(bar0+0x110084),VideoPortReadRegisterUlong((PULONG)bar0));
+        value=VideoPortReadRegisterUlong((PULONG)(bar0+0x110624));
+        VideoPortWriteRegisterUlong((PULONG)(bar0+0x110624),value|0x80);
+        VideoPortWriteRegisterUlong((PULONG)(bar0+0x11010c),0);
+        return TRUE;
+    }
+    if(opcode==6) {
+        value=VideoPortReadRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_CPUCTL));
+        VideoPortWriteRegisterUlong((PULONG)(bar0+(value&0x40?NV_PGSP_FALCON_CPUCTL_ALIAS:NV_PGSP_FALCON_CPUCTL)),2);
+        return TRUE;
+    }
+    if(opcode==7) return NvxWait(bar0,NV_PGSP_FALCON_CPUCTL,0x10,0x10,40000,50);
+    /* GA102 CORE_RESUME: select RISC-V, restore LibOS argument pointer,
+       restart the suspended SEC2 RTOS, and verify stage-3 handoff. */
+    VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_BCR),0x111);
+    {
+        ULONG64 args=dev->GspDmaPhysical.QuadPart+GSP_LIBOS_ARGS_OFFSET;
+        VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_MAILBOX0),(ULONG)args);
+        VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_MAILBOX1),(ULONG)(args>>32));
+    }
+    value=VideoPortReadRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_CPUCTL));
+    VideoPortWriteRegisterUlong((PULONG)(bar0+(value&0x40?NV_PSEC_FALCON_CPUCTL_ALIAS:NV_PSEC_FALCON_CPUCTL)),2);
+    if(!NvxWait(bar0,0x1180f8,0x04000000,0x04000000,40000,50)||
+       VideoPortReadRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_MAILBOX0))) return FALSE;
+    VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_OS),0);
+    return (VideoPortReadRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_RISCV_STAT))&0x80)!=0;
+}
+
 /*
  * GA102 Falcon enable sequence.  This follows gp102_flcn_reset_eng(),
  * ga102_flcn_select(), and gm200_flcn_enable() instead of overwriting the
@@ -691,7 +746,7 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
                 }
                 LogStr("NVX [SEQ]: dry-run capacity=");LogHex(params[0]);
                 LogStr(" used=");LogHex(params[1]);LogStr(" commands=");LogHex(count);LogStr("\n");
-                for (uint32_t i=0;i<params[1] && i<512;i++) {
+                for (uint32_t i=0;i<params[1];i++) {
                     LogStr("NVX [SEQ-WORD]: index=");LogHex(i);
                     LogStr(" value=");LogHex(params[10+i]);LogStr("\n");
                 }
