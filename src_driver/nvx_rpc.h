@@ -7,6 +7,9 @@
 #define NVX_RPC_MAX_ELEMENTS 16U
 /* Decode one contiguous transport record (up to 64KB). */
 int NvxDecodeRpcRecord(const uint8_t *,size_t,uint32_t *,uint32_t *,uint32_t *,uint32_t *);
+/* 1=complete snapshot, 0=in flight/empty, -1=invalid; never advances read. */
+int NvxGatherRpc(const uint8_t *,size_t,uint32_t,uint32_t,uint32_t,
+                 uint8_t *,size_t,uint32_t *);
 /* 535 GspSystemInfo: natural LP64 layout, ACPI_METHOD_DATA is 484 bytes. */
 typedef struct {
     uint64_t gpuPhysAddr,gpuPhysFbAddr,gpuPhysInstAddr,dbdf;

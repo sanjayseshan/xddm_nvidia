@@ -24,5 +24,15 @@ int main(void)
         record[1024]^=1;
         assert(!NvxDecodeRpcRecord((uint8_t *)record,sizeof(record),&f,&r,&s,&elements));
     }
-    puts("RPC tests passed: 535 frame, checksum, corruption and bounds.");return 0;
+    {
+        static uint32_t ring[4*1024],snapshot[2*1024];uint32_t count;
+        ring[3*1024+10]=2;ring[3*1024+1023]=0x1234;ring[0]=0x5678;
+        assert(NvxGatherRpc((uint8_t *)ring,sizeof(ring),4,3,0,(uint8_t *)snapshot,sizeof(snapshot),&count)==0);
+        assert(NvxGatherRpc((uint8_t *)ring,sizeof(ring),4,3,1,(uint8_t *)snapshot,sizeof(snapshot),&count)==1);
+        assert(count==2&&snapshot[1023]==0x1234&&snapshot[1024]==0x5678);
+        assert(NvxGatherRpc((uint8_t *)ring,sizeof(ring),4,4,1,(uint8_t *)snapshot,sizeof(snapshot),&count)==-1);
+        ring[3*1024+10]=17;
+        assert(NvxGatherRpc((uint8_t *)ring,sizeof(ring),4,3,1,(uint8_t *)snapshot,sizeof(snapshot),&count)==-1);
+    }
+    puts("RPC tests passed: frames, checksum, bounds, partial and wrapped queues.");return 0;
 }

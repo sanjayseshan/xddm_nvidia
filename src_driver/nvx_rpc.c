@@ -48,3 +48,20 @@ int NvxDecodeRpcRecord(const uint8_t *slot,size_t capacity,uint32_t *function,
     *elements=count;
     *function=get32(slot+60);*result=get32(slot+64);*sequence=get32(slot+36);return 1;
 }
+int NvxGatherRpc(const uint8_t *ring,size_t ringBytes,uint32_t slots,
+                 uint32_t read,uint32_t write,uint8_t *out,size_t capacity,
+                 uint32_t *elements)
+{
+    uint32_t count,available;size_t i,j;
+    if(!ring||!out||!elements||slots<2||slots>63||read>=slots||write>=slots||
+       ringBytes<(size_t)slots*4096) return -1;
+    *elements=0;
+    available=(write+slots-read)%slots;
+    if(!available) return 0;
+    count=get32(ring+(size_t)read*4096+40);
+    if(!count||count>16||count>=slots||capacity<(size_t)count*4096) return -1;
+    if(count>available) return 0;
+    for(i=0;i<count;i++) for(j=0;j<4096;j++)
+        out[i*4096+j]=ring[((read+i)%slots)*4096+j];
+    *elements=count;return 1;
+}
