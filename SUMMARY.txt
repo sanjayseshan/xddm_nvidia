@@ -1,8 +1,12 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.94 GRCE subchannel diagnostics
+NVIDIA GA104 XDDM DRIVER — v1.0.0.95 capability-selected dedicated CE
 Updated: November 2, 2026
 
 Current checkpoint
 ------------------
+v95 retry reaches INIT_DONE but public GET_CAPS_V2 controls are rejected;
+channel creation is skipped. The host API is implemented outside GSP and
+forwards to physical control 0x20802a07. Next use that GSP API directly.
+
 v94-20261102-163138.log reaches INIT_DONE and submits CE commands on
 subchannel 4, but copy completion still times out. CHRAM slot1=2, RAMFC FIFO
 base/limit correct, MMU fault query all zero. Next select a dedicated copy

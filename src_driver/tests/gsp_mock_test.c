@@ -51,7 +51,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         PULONG request=(PULONG)((PUCHAR)cmd+4096+(cmd->WritePtr-1)*4096);
         ULONG alloc[160]={0},replyBytes;
         uint32_t f,r,s;
-        assert(cmd->WritePtr>=3&&cmd->WritePtr<=21);
+        assert(cmd->WritePtr>=3&&cmd->WritePtr<=24);
         assert(NvxDecodeRpc((PUCHAR)request,4096,&f,&r,&s));
         assert((f==103||f==76||f==4||f==14||f==10)&&s==cmd->WritePtr-1);
         if(f==4) {
@@ -68,7 +68,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(request[21]==dev.GspDeviceHandle);
             assert(request[22]==0xa06c0001);
             assert(request[28+2]==dev.GspVaSpaceHandle);
-            assert(request[28+3]==9); /* COPY0 TSG */
+            assert(request[28+3]==11); /* COPY0 TSG */
         }
         if(f==103&&request[23]==0x9067) {
             /* FERMI_CONTEXT_SHARE_A on TSG */
@@ -84,7 +84,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(request[28+5]==0x00200120);        /* flags: PRIVILEGED, PAGE_FIXED, userd_i=1 (ChID=1) */
             assert(request[28+6]==0x90670001);        /* hContextShare == ContextShare */
             assert(request[28+7]==0);                 /* hVASpace == 0 */
-            assert(request[28+32]==9);                /* COPY0 channel */
+            assert(request[28+32]==11);                /* COPY0 channel */
             assert(request[28+34]==0);                /* subDeviceId == 0 */
             assert(request[28+36]==(ULONG)(scratchPhys+0x2000));
             assert(request[28+38]==0x1000);
@@ -101,7 +101,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         }
         if(f==103&&request[23]==0xc7b5) {
             assert(request[21]==dev.GspChannelHandle);
-            assert(request[25]==8&&request[28]==1&&request[29]==9);
+            assert(request[25]==8&&request[28]==1&&request[29]==11);
         }
         assert(f!=103||request[23]!=0xc6b5); /* GA100 class is invalid on GA104. */
         if(f==76&&request[22]==0x801813) {
@@ -114,7 +114,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(tables[2064]==0);
         }
         if(f==76&&request[22]==0xa06f0107&&scenario==4) {
-            ULONG rc[5]={9,1,0x1f,0,0};
+            ULONG rc[5]={11,1,0x1f,0,0};
             assert(NvxEncodeRpc((PUCHAR)packet,4096,0x1004,write-1,rc,sizeof(rc)));
             packet[16]=0;packet[8]^=0xffffffffU;
             write++;packet=(PULONG)((PUCHAR)q+4096+write*4096);
@@ -127,9 +127,13 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             ULONG retSize=0x5000; /* Actual GA104 v90 firmware result. */
             memcpy((PUCHAR)alloc+24,&retSize,sizeof(retSize));
         }
+        if(f==76&&request[22]==0x20802a03) {
+            assert(request[26]>=9&&request[26]<=11&&request[24]==8);
+            alloc[7]=request[26]<11?0x0321:0x032c;
+        }
         if(f==76&&request[22]==0xc36f0108) alloc[6]=0; /* 535 GSP returns zero external token. */
         if(f==76&&request[22]==0x20800179) {
-            assert(request[24]==496&&request[26]==9);
+            assert(request[24]==496&&request[26]==11);
             alloc[6+62]=scenario==8?0xffffffffU:0x220000;
         }
         if(f==10) {
@@ -247,7 +251,7 @@ int main(void)
         assert(NvxGspInitSubsystem(&dev)==(scenario==0 || scenario>=3));
         assert(dev.GspInitialized==(scenario==0 || scenario>=3));
         if (dev.GspInitialized) {
-            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==(scenario==4?26:24));
+            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==(scenario==4?29:27));
             assert(dev.GspScratchGpuVa==0x10000000);
             assert(dev.GspClientHandle==0xc1d00001);
             assert(dev.GspDeviceHandle==0x80000001&&dev.GspSubdeviceHandle==0x20800001);
@@ -257,6 +261,7 @@ int main(void)
             assert(dev.GspContextShareHandle==0x90670001);
             assert(dev.GspChannelHandle==0xc56f0001);
             assert(dev.GspCopyEngineHandle==0xc7b50001);
+            assert(dev.GspCopyEngineType==11);
             assert(dev.GspCopyVerified==(scenario==0||scenario==3||scenario==7));
             assert(dev.GspAssertCount==7);
             assert(dev.GspChannelFaulted==(scenario==4));

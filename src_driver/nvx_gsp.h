@@ -316,6 +316,7 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG GspContextShareHandle;
     ULONG GspChannelHandle;
     ULONG GspCopyEngineHandle;
+    ULONG GspCopyEngineType;
     BOOLEAN GspCopyVerified;
     BOOLEAN GspChannelFaulted;
     ULONG RpcTxSequence,RpcRxSequence;

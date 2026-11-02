@@ -197,6 +197,24 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
     LogStr("NVX [RM]: scratch memory mapped at GPU VA 0x10000000.\n");return TRUE;
 }
 
+static BOOLEAN NvxGspSelectCopyEngine(PNVX_DEVICE_EXTENSION dev)
+{
+    /* GET_CAPS_V2 is pointer-free: engineType + two capability bytes, padded
+       to 8 bytes. Skip graphics-synchronous CEs; require SYSMEM support. */
+    dev->GspCopyEngineType=0;
+    for(ULONG engine=9;engine<19;engine++) {
+        ULONG caps[2]={engine,0};
+        if(!NvxGspControl(dev,dev->GspSubdeviceHandle,0x20802a03,caps,sizeof(caps))) continue;
+        ULONG bits=((const ULONG *)dev->RpcRxRecord)[27]&0xffff;
+        LogStr("NVX [COPY]: CE engine=");LogHex(engine);LogStr(" capabilities=");LogHex(bits);LogStr("\n");
+        if((bits&0x21)==0x20) {
+            dev->GspCopyEngineType=engine;
+            LogStr("NVX [COPY]: selected dedicated sysmem CE engine=");LogHex(engine);LogStr("\n");return TRUE;
+        }
+    }
+    LogStr("NVX [COPY]: no dedicated sysmem-capable CE found; channel allocation skipped.\n");return FALSE;
+}
+
 static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
 {
     /* 1. TSG (KEPLER_CHANNEL_GROUP_A = 0xA06C) on Device:
@@ -204,7 +222,7 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
        hObjectError, hObjectEccError, hVASpace, engineType, bIsCallingContextVgpuPlugin.
        Use COPY0 for the isolated scratch-copy test. NVIDIA 535's GA104
        class table exposes AMPERE_DMA_COPY_B (0xC7B5), not GA100's 0xC6B5. */
-    ULONG tsg[5]={0, 0, dev->GspVaSpaceHandle, 9, 0}; /* engineType = COPY0 */
+    ULONG tsg[5]={0, 0, dev->GspVaSpaceHandle, dev->GspCopyEngineType, 0};
     /* 2. Context Share (FERMI_CONTEXT_SHARE_A = 0x9067) on TSG:
        NV_CTXSHARE_ALLOCATION_PARAMETERS (12 bytes):
        hVASpace, flags, subctxId. */
@@ -212,10 +230,10 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
     /* 3. NV_CHANNEL_ALLOC_PARAMS for 535.113.01: 360 bytes (90 ULONGs).
        AMPERE_CHANNEL_GPFIFO_A (0xC56F) allocated under TSG parent with hContextShare. */
     ULONG chan[90]={0};
-    ULONG bindEngine=9; /* COPY0 */
+    ULONG bindEngine=dev->GspCopyEngineType;
     UCHAR schedEnable[2]={1, 0};
     /* NVC0B5_ALLOCATION_PARAMETERS: version=1, engineType=COPY0. */
-    ULONG ceParams[2]={1, 9};
+    ULONG ceParams[2]={1, dev->GspCopyEngineType};
     ULONG64 scratchPhys=dev->GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET;
     ULONG64 instPhys=scratchPhys+0x2000;
     ULONG64 userdPhys=scratchPhys+0x3200; /* USERD slot 1 in its 4KB page */
@@ -259,7 +277,7 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
     chan[5]=0x00200120;
     chan[6]=dev->GspContextShareHandle; /* hContextShare = Context Share handle under TSG */
     chan[7]=0;                          /* hVASpace = 0 when hContextShare is set! */
-    chan[32]=9;                         /* engineType = NV2080_ENGINE_TYPE_COPY0 (9) */
+    chan[32]=dev->GspCopyEngineType;
     chan[34]=0;                         /* subDeviceId = 0 */
 
     /* All descriptors describe OS-owned coherent SYSTEM memory. */
@@ -301,12 +319,12 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
     dev->GspChannelHandle=0xc56f0001;
     LogStr("NVX [RM]: AMPERE_CHANNEL_GPFIFO_A allocated under TSG.\n");
 
-    /* Bind channel to COPY0 engine. */
+    /* Bind channel to the capability-selected dedicated CE. */
     if(!NvxGspControl(dev,dev->GspChannelHandle,0xa06f0104,&bindEngine,sizeof(bindEngine))) {
         LogStr("NVX [RM]: NVA06F_CTRL_CMD_BIND failed.\n");
         return FALSE;
     }
-    LogStr("NVX [RM]: channel bound to COPY0.\n");
+    LogStr("NVX [RM]: channel bound to dedicated CE engine=");LogHex(bindEngine);LogStr("\n");
 
     /* Schedule channel */
     if(!NvxGspControl(dev,dev->GspChannelHandle,0xa06f0103,schedEnable,sizeof(schedEnable))) {
@@ -352,15 +370,15 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
        token but returns its initially-zero external value. Nouveau uses
        the physical runlist doorbell selector and the client-fixed ChID.
        Our PAGE_FIXED flags reserve USERD page 0 / slot 1, i.e. ChID 1. */
-    runlistQuery[0]=9;
+    runlistQuery[0]=dev->GspCopyEngineType;
     if(!NvxGspControl(dev,dev->GspSubdeviceHandle,0x20800179,runlistQuery,sizeof(runlistQuery))) {
-        LogStr("NVX [COPY]: COPY0 runlist query failed; no commands submitted.\n");return FALSE;
+        LogStr("NVX [COPY]: selected CE runlist query failed; no commands submitted.\n");return FALSE;
     }
     {
         ULONG base=((const ULONG *)dev->RpcRxRecord)[26+62];
         ULONG dbcfg,chcfg,enable;
         if(!base||(base&0xfff)||dev->Bar0Length<0x304||base>dev->Bar0Length-0x304) {
-            LogStr("NVX [COPY]: invalid COPY0 runlist base=");LogHex(base);LogStr("\n");return FALSE;
+            LogStr("NVX [COPY]: invalid CE runlist base=");LogHex(base);LogStr("\n");return FALSE;
         }
         dbcfg=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+base+8));
         chcfg=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+base+4));
@@ -464,8 +482,9 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
     LogStr("NVX [RM]: private GPU virtual address space allocated.\n");
     if(!NvxGspRegisterScratch(dev)) return FALSE;
     if(!NvxGspMapScratch(dev)) return FALSE;
+    if(!NvxGspSelectCopyEngine(dev)) return FALSE;
     if(!NvxGspAllocChannel(dev)) return FALSE;
-    LogStr("NVX [RM]: COPY0 channel and copy engine allocated; testing GPU execution.\n");
+    LogStr("NVX [RM]: dedicated channel and copy engine allocated; testing GPU execution.\n");
     return NvxGspCopySmokeTest(dev);
 }
 
