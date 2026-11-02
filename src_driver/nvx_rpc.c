@@ -1,0 +1,35 @@
+/* NVIDIA OpenRM 535 message_queue_priv.h / rpc-message-header ABI. */
+#include "nvx_rpc.h"
+static uint32_t get32(const uint8_t *p)
+{ return p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24; }
+static void put32(uint8_t *p,uint32_t v)
+{ p[0]=(uint8_t)v;p[1]=(uint8_t)(v>>8);p[2]=(uint8_t)(v>>16);p[3]=(uint8_t)(v>>24); }
+static uint32_t checksum(const uint8_t *p)
+{
+    uint32_t sum=0;size_t i;
+    for(i=0;i<NVX_RPC_SLOT_SIZE;i+=4) sum^=get32(p+i);
+    return sum;
+}
+int NvxEncodeRpc(uint8_t *slot,size_t capacity,uint32_t function,
+                 uint32_t sequence,const void *payload,size_t payloadSize)
+{
+    size_t i;
+    if(!slot||capacity<4096||payloadSize>4016||(payloadSize&&!payload)) return 0;
+    for(i=0;i<4096;i++) slot[i]=0;
+    put32(slot+36,sequence);put32(slot+40,1);
+    put32(slot+48,0x03000000);put32(slot+52,0x43505256);
+    put32(slot+56,(uint32_t)(32+payloadSize));put32(slot+60,function);
+    put32(slot+64,0xffffffffU);put32(slot+68,0xffffffffU);put32(slot+72,sequence);
+    for(i=0;i<payloadSize;i++) slot[80+i]=((const uint8_t *)payload)[i];
+    put32(slot+32,checksum(slot));return 1;
+}
+int NvxDecodeRpc(const uint8_t *slot,size_t capacity,uint32_t *function,
+                 uint32_t *result,uint32_t *sequence)
+{
+    uint32_t length;
+    if(!slot||capacity<4096||!function||!result||!sequence) return 0;
+    length=get32(slot+56);
+    if(get32(slot+40)!=1||get32(slot+48)!=0x03000000||
+       get32(slot+52)!=0x43505256||length<32||length>4048||checksum(slot)) return 0;
+    *function=get32(slot+60);*result=get32(slot+64);*sequence=get32(slot+36);return 1;
+}
