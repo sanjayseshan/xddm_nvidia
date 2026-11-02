@@ -10,6 +10,7 @@
 #include "nvx_gsp.h"
 #include "nvx_fw.h"
 #include "nvx_rpc.h"
+#include "nvx_seq.h"
 #include <stddef.h>
 #include "bootloader_blob.h"
 #include "booter_load_blob.h"
@@ -681,6 +682,21 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
             }
             LogStr("NVX [RPC]: startup event=");LogHex(function);
             LogStr(" result=");LogHex(result);LogStr(" sequence=");LogHex(sequence);LogStr("\n");
+            if (function==0x1002 && !result) {
+                const uint32_t *words=(const uint32_t *)entry;
+                const uint32_t *params=words+20;
+                uint32_t count=0;
+                if (!NvxValidateSeq(params,words[14]-32,devExt->Bar0Length,&count)) {
+                    LogStr("NVX [SEQ]: rejected malformed sequencer request.\n");return FALSE;
+                }
+                LogStr("NVX [SEQ]: dry-run capacity=");LogHex(params[0]);
+                LogStr(" used=");LogHex(params[1]);LogStr(" commands=");LogHex(count);LogStr("\n");
+                for (uint32_t i=0;i<params[1] && i<512;i++) {
+                    LogStr("NVX [SEQ-WORD]: index=");LogHex(i);
+                    LogStr(" value=");LogHex(params[10+i]);LogStr("\n");
+                }
+                LogStr("NVX [SEQ]: request retained; dry-run performs no MMIO.\n");return FALSE;
+            }
             if (result || (function!=72 && function!=73 && function!=0x1001 && function!=0x101b)) {
                 LogStr("NVX [RPC]: unhandled startup event retained for diagnosis.\n");return FALSE;
             }
