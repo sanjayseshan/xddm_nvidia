@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.44 FWSEC execution-plan dry-run / v1.0.0.33 rollback baseline
+NVIDIA GA104 XDDM DRIVER — v1.0.0.45 FWSEC reset/core-plan dry-run / v1.0.0.33 rollback baseline
 Updated: November 1, 2026
 
 Latest hardware result
@@ -239,6 +239,13 @@ post-DMA/start timeout, because the Falcon may still reference it. Only a
 confirmed halted Falcon permits scrubbing/freeing that memory. It must then
 validate scratch 0x0e's FRTS error field and WPR2 LO/HI against 0x0ff00000..
 0x10000000 before proceeding to GSP reset/Booter Load.
+
+Changes in v45
+--------------
+v45 closes the last read-only reset-plan gap by logging the GSP RISC-V CPUCTL
+and BCR registers. It records the OpenRM sequence that will assert/deassert the
+GSP engine reset, select the Falcon core through BCR, wait for BCR valid, and
+set FBIF TRANSCFG0 to coherent physical sysmem. It still performs no writes.
 
 Important corrections
 ----------------------

@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.44
+ * Driver Version: 1.0.0.45
  */
 
 #include "miniport.h"
@@ -122,7 +122,11 @@ static VOID NvxLogFwsecExecutionPlan(PUCHAR bar0,const NVX_FWSEC_INFO *info,
     LogStr(" cpuctl=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x110100)));
     LogStr(" fbif_ctl=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x110624)));
     LogStr(" transcfg0=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x110600)));
-    LogStr("\nNVX [FWSEC-PLAN]: read-only execution plan complete; no GPU writes.\n");
+    LogStr("\nNVX [FWSEC-PLAN]: riscv_cpuctl=");
+    LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x111388)));
+    LogStr(" bcr=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x111668)));
+    LogStr(" plan reset=1->0 switch_bcr=0 wait_valid=1 transcfg0_target=0x5\n");
+    LogStr("NVX [FWSEC-PLAN]: read-only execution plan complete; no GPU writes.\n");
 }
 
 static VOID NvxDryRunFwsecDmaStage(PVOID hwDeviceExtension,NVX_PROM_CONTEXT *prom,
@@ -793,7 +797,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.44\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.45\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));
