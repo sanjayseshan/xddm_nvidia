@@ -648,27 +648,51 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
     /* No 0x55aa55aa mailbox handshake exists in RM 535. RISC-V activity
        and WPR verification do not establish RM readiness. Poll the real queue. */
     LogStr("NVX [GSP]: Waiting for RM INIT_DONE event (0x1001).\n");
+    ULONG rxSequence=0;
     timeout = 20000;
     while (timeout--) {
         volatile NVX_MSGQ_HEADER *msg = (volatile NVX_MSGQ_HEADER *)devExt->StatQueueVirtual;
-        if (msg->WritePtr) {
-            volatile ULONG *entry = (volatile ULONG *)((PUCHAR)devExt->StatQueueVirtual+4096);
-            /* 48-byte transport header, then the 32-byte RPC header. */
-            LogStr("NVX [GSP]: First RM event "); LogHex(entry[15]); LogStr("\n");
-            if (msg->MsgSize == 4096 && msg->MsgCount == 63 && msg->WritePtr < 63 &&
-                entry[12] == 0x03000000 && entry[13] == 0x43505256 &&
-                entry[14] >= 32 && entry[14] <= 4096-48 &&
-                entry[15] == 0x1001 && entry[10] == 1 && entry[16] == 0 &&
-                (VideoPortReadRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_RISCV_STAT)) & 0x80)) {
-                __sync_synchronize();
-                ((volatile NVX_MSGQ_HEADER *)devExt->CmdQueueVirtual)->ReadPtr = 1;
-                __sync_synchronize();
-                devExt->GspInitialized = TRUE;
-                LogStr("NVX [GSP]: RM INIT_DONE received; display channels still unavailable.\n");
-                return TRUE;
+        volatile NVX_MSGQ_HEADER *local=(volatile NVX_MSGQ_HEADER *)devExt->CmdQueueVirtual;
+        ULONG write=msg->WritePtr,read=local->ReadPtr;
+        if (write>=63||read>=63) {
+            LogStr("NVX [RPC]: invalid queue pointer; receive stopped.\n");return FALSE;
+        }
+        if (write!=read) {
+            uint32_t function,result,sequence;
+            const uint8_t *entry=(const uint8_t *)devExt->StatQueueVirtual+4096+read*4096;
+            __sync_synchronize();
+            if (msg->MsgSize!=4096||msg->MsgCount!=63||msg->EntryOff!=4096||
+                !NvxDecodeRpc(entry,4096,&function,&result,&sequence)||sequence!=rxSequence) {
+                const uint32_t *raw=(const uint32_t *)entry;
+                LogStr("NVX [RPC]: invalid checksum/header/sequence; read=");LogHex(read);
+                LogStr(" write=");LogHex(write);LogStr(" expected_seq=");LogHex(rxSequence);
+                LogStr(" seq=");LogHex(raw[9]);LogStr(" elements=");LogHex(raw[10]);
+                LogStr(" version=");LogHex(raw[12]);LogStr(" signature=");LogHex(raw[13]);
+                LogStr(" length=");LogHex(raw[14]);LogStr(" function=");LogHex(raw[15]);
+                LogStr(" result=");LogHex(raw[16]);LogStr("; receive stopped.\n");return FALSE;
             }
-            LogStr("NVX [GSP]: Startup event requires RM dispatcher; leaving modesetting disabled.\n");
-            return FALSE;
+            LogStr("NVX [RPC]: startup event=");LogHex(function);
+            LogStr(" result=");LogHex(result);LogStr(" sequence=");LogHex(sequence);LogStr("\n");
+            if (result || (function!=72 && function!=73 && function!=0x1001 && function!=0x101b)) {
+                LogStr("NVX [RPC]: unhandled startup event retained for diagnosis.\n");return FALSE;
+            }
+            if (function==0x101b) {
+                /* 535 GspUserSharedData contains gspAssertCount. */
+                const uint32_t *words=(const uint32_t *)entry;
+                if (words[14]<36) return FALSE;
+                devExt->GspAssertCount=words[20];
+                LogStr("NVX [RPC]: firmware assertion count=");
+                LogHex(devExt->GspAssertCount);LogStr("\n");
+            }
+            __sync_synchronize();local->ReadPtr=(read+1)%63;__sync_synchronize();
+            rxSequence++;
+            if (function==0x1001) {
+                if (!(VideoPortReadRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_RISCV_STAT))&0x80))
+                    return FALSE;
+                devExt->GspInitialized=TRUE;
+                LogStr("NVX [GSP]: RM INIT_DONE received; display channels still unavailable.\n");return TRUE;
+            }
+            continue;
         }
         VideoPortStallExecution(100);
     }
@@ -678,6 +702,10 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
         ULONG i,j;
         LogStr("NVX [RM-DIAG]: status queue header");
         for (i=0;i<9;i++) { LogStr(" ");LogHex(queue[i]); }
+        LogStr("\n");
+        LogStr("NVX [RM-DIAG]: host command write=");
+        LogHex(((volatile NVX_MSGQ_HEADER *)devExt->CmdQueueVirtual)->WritePtr);
+        LogStr(" firmware command read=");LogHex(((volatile NVX_MSGQ_HEADER *)devExt->StatQueueVirtual)->ReadPtr);
         LogStr("\n");
         for (i=0;i<3;i++) {
             volatile UCHAR *log=(volatile UCHAR *)devExt->GspDmaVirtual+

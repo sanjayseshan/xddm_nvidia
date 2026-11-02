@@ -301,6 +301,7 @@ typedef struct _NVX_DEVICE_EXTENSION {
     PHYSICAL_ADDRESS PhysicalInstBar;
     ULONG PciBusNumber;
     ULONG PciSlot;
+    ULONG GspAssertCount;
 } NVX_DEVICE_EXTENSION, *PNVX_DEVICE_EXTENSION;
 
 /* GSP Firmware Blobs */

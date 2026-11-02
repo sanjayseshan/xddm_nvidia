@@ -1,8 +1,19 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.53 RM task running / startup protocol pending
+NVIDIA GA104 XDDM DRIVER — v1.0.0.58 RM startup message transport
 Updated: November 2, 2026
 
 Current checkpoint
 ------------------
+Five requested revisions v54–v58 built with passing host tests. v54 captures
+binary log words; v55 implements checked 535 RPC framing/checksum; v56 captures
+guest resources and prepares startup packets; v57 publishes SYSTEM_INFO and
+REGISTRY before Booter; v58 validates/consumes startup events.
+
+v57 hardware reached the first real RM event (0x101b USER_SHARED_DATA), proving
+the missing startup packets were necessary. Windows mapped 1080p, then shut
+down through ACPI. v58 handles that event before waiting for INIT_DONE.
+Hardware acceleration remains unimplemented. See TESTING.md for per-version
+validation and exact archived logs.
+
 v53 test_logs/v53-20261102-103447.log captures populated binary INIT and RM
 logs and an initialized status queue (4096-byte messages, 63 slots) with zero
 WritePtr. RISC-V remains active. RM task has run, but INIT_DONE is absent.

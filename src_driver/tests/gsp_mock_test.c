@@ -78,9 +78,15 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             meta->Verified=0;
             regs[NV_PSEC_FALCON_MAILBOX0/4]=0;
             regs[NV_PGSP_FALCON_RISCV_STAT/4]=0x80;
-            q->MsgSize=4096;q->MsgCount=63;q->WritePtr=1;
-            entry[10]=1;entry[12]=0x03000000;entry[13]=0x43505256;
-            entry[14]=32;entry[15]=0x1001;
+            q->MsgSize=4096;q->MsgCount=63;q->EntryOff=4096;q->WritePtr=4;
+            for (ULONG i=0;i<4;i++) {
+                PULONG packet=entry+i*1024;
+                ULONG assertions=7;
+                ULONG function=i==3?0x1001:(i==2?0x101b:72+i);
+                assert(NvxEncodeRpc((PUCHAR)packet,4096,function,i,
+                    i==2?&assertions:NULL,i==2?4:0));
+                packet[16]=0;packet[8]^=0xffffffffU;
+            }
         }
     }
 }
@@ -98,6 +104,10 @@ int main(void)
         regs[NV_PSEC_FALCON_CPUCTL/4]=(scenario==3) ? 0x50 : 0x10;
         assert(NvxGspInitSubsystem(&dev)==(scenario==0 || scenario==3));
         assert(dev.GspInitialized==(scenario==0 || scenario==3));
+        if (dev.GspInitialized) {
+            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==4);
+            assert(dev.GspAssertCount==7);
+        }
         if(scenario==2) { assert(imemTransfers==1 && !cpuStarts); }
         else { assert(imemTransfers==131 && dmemTransfers==98 && cpuStarts==1); }
         NvxGspShutdown(&dev);

@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.57
+ * Driver Version: 1.0.0.58
  */
 
 #include "miniport.h"
@@ -769,7 +769,7 @@ BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
                 LogStr("NVX [GSP]: WARNING: VBE mode restore failed.\n");
         }
 #else
-        LogStr("NVX [GSP]: Hardware bootstrap gated: board VBIOS FWSEC/FRTS is required before Booter Load.\n");
+        LogStr("NVX [GSP]: Validating and executing board FWSEC/FRTS before Booter Load.\n");
         NvxProbeFwsecRom(HwDeviceExtension,(PUCHAR)devExt->Bar0MmioVirtual);
         if (devExt->FwsecFrtsReady) {
             LogStr("NVX [GSP]: Verified FWSEC/FRTS prerequisite; starting GSP bootstrap.\n");
@@ -998,7 +998,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.57\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.58\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));
