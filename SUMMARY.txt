@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.39 FWSEC mapper diagnostic / v1.0.0.33 verified display
+NVIDIA GA104 XDDM DRIVER — v1.0.0.40 FWSEC signature diagnostic / v1.0.0.33 verified display
 Updated: November 1, 2026
 
 Latest hardware result
@@ -153,6 +153,19 @@ v39 assigns a separate validation stage to each of those remaining checks and
 logs the partial mapper offset, signature, version, size, and command buffers.
 It also adds an unprivileged guestmount/VFIO test workflow documented in
 ROOTLESS_TESTING.md. Firmware execution remains disabled.
+
+v39 hardware result and changes in v40
+--------------------------------------
+After three host-side launch failures, v39 booted with all 10 modes and mapped
+1920x1080x32. FWSEC reached stage 9: mapper `DMAP` v3 size 0x40 and its input
+buffer 0x7c0..0x800 are valid. The only rejected value was an unused command
+output sentinel at 0x01000000. Matching OpenRM does not consume or validate
+that field for FRTS/SB preparation.
+
+v40 treats command output as advisory, completes CRC validation, reads the
+GA10x GSP fuse corresponding to FWSEC ucode ID 9, and selects the matching
+384-byte RSA signature from the VBIOS table. All actions remain read-only;
+FWSEC, FRTS, SEC2, and GSP execution are still gated.
 
 Important corrections
 ----------------------

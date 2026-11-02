@@ -66,6 +66,18 @@ int main(void)
     assert(f.ApplicationId==0x85&&f.UcodeId==3&&f.SignatureCount==1);
     assert(f.SignaturesSize==384&&f.DmemImageOffset==0x3ec&&f.InterfaceImageOffset==0x3fc);
     assert(f.DmemMapperOffset==0x30&&f.CommandInOffset==0x100&&f.CommandOutOffset==0x140);
+    {
+        uint32_t version,index,offset;
+        assert(NvxSelectFwsecSignature(&f,0,&version,&index,&offset));
+        assert(version==0&&index==0&&offset==f.SignaturesOffset);
+        f.SignatureVersions=7;f.SignatureCount=3;f.SignaturesSize=3*384;
+        assert(NvxSelectFwsecSignature(&f,1,&version,&index,&offset));
+        assert(version==1&&index==1&&offset==f.SignaturesOffset+384);
+        assert(NvxSelectFwsecSignature(&f,2,&version,&index,&offset));
+        assert(version==2&&index==2&&offset==f.SignaturesOffset+768);
+        assert(!NvxSelectFwsecSignature(&f,4,&version,&index,&offset));
+        f.SignatureVersions=1;f.SignatureCount=1;f.SignaturesSize=384;
+    }
     p32(rom,0x144,0xfffffff0);assert(NvxParseFwsecRom(read32,&m,sizeof(rom),&f)==NVX_VBIOS_BAD_DESCRIPTOR);
     p32(rom,0x144,0x500);rom[0x8b]++;assert(NvxParseFwsecRom(read32,&m,sizeof(rom),&f)==NVX_VBIOS_NO_BIT);
     rom[0x8b]--;assert(NvxParseFwsecRom(read32,&m,0x200,&f)==NVX_VBIOS_INVALID_ROM);

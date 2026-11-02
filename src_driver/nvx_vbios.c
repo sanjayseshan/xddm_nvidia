@@ -286,8 +286,12 @@ int NvxParseFwsecRom(NVX_ROM_READ32 read32, void *context,
             if (!range_fits(info->CommandInOffset,info->CommandInSize,info->DmemLoadSize))
                 return NVX_VBIOS_BAD_INTERFACE;
             info->ValidationStage=9;
-            if (!range_fits(info->CommandOutOffset,info->CommandOutSize,info->DmemLoadSize))
-                return NVX_VBIOS_BAD_INTERFACE;
+            /* OpenRM's FWSEC command path consumes only cmd_in. Some board
+               images carry an out-of-DMEM sentinel in cmd_out; retain it for
+               diagnostics but do not reject an otherwise usable mapper. */
+            info->CommandOutValid=(uint8_t)range_fits(info->CommandOutOffset,
+                                                       info->CommandOutSize,
+                                                       info->DmemLoadSize);
             info->ValidationStage=10;
         } else {
             if (!u32at(&r,desc+16,&info->InterfaceOffset)||
@@ -303,4 +307,32 @@ int NvxParseFwsecRom(NVX_ROM_READ32 read32, void *context,
         return NVX_VBIOS_OK;
     }
     return NVX_VBIOS_NO_FWSEC;
+}
+
+int NvxSelectFwsecSignature(const NVX_FWSEC_INFO *info, uint32_t rawFuse,
+                            uint32_t *fuseVersion, uint32_t *signatureIndex,
+                            uint32_t *signatureOffset)
+{
+    uint32_t version=0, selectedMask, index=0, lower, offset;
+    uint32_t fuse=rawFuse&0xffffU;
+    if (!info || !fuseVersion || !signatureIndex || !signatureOffset ||
+        info->DescriptorVersion!=3 || !info->SignatureCount ||
+        info->SignaturesSize!=(uint32_t)info->SignatureCount*384U)
+        return 0;
+    if (fuse) {
+        uint32_t bit;
+        for (bit=0; bit<16; bit++) if (fuse&(1U<<bit)) version=bit+1;
+    }
+    selectedMask=1U<<version;
+    if (!(selectedMask&(uint32_t)info->SignatureVersions)) return 0;
+    lower=(uint32_t)info->SignatureVersions&(selectedMask-1U);
+    while (lower) { index+=lower&1U; lower>>=1; }
+    if (index>=info->SignatureCount ||
+        info->SignaturesOffset>info->BiosSize ||
+        index*384U>info->BiosSize-info->SignaturesOffset)
+        return 0;
+    offset=info->SignaturesOffset+index*384U;
+    if (!range_fits(offset,384U,info->BiosSize)) return 0;
+    *fuseVersion=version;*signatureIndex=index;*signatureOffset=offset;
+    return 1;
 }

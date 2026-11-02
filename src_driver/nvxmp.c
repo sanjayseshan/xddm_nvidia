@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.39
+ * Driver Version: 1.0.0.40
  */
 
 #include "miniport.h"
@@ -95,7 +95,8 @@ static VOID NvxProbeFwsecRom(PUCHAR bar0)
         LogStr("NVX [FWSEC]: partial cmd_in=");LogHex(info.CommandInOffset);
         LogStr(" size=");LogHex(info.CommandInSize);
         LogStr(" cmd_out=");LogHex(info.CommandOutOffset);
-        LogStr(" size=");LogHex(info.CommandOutSize);LogStr("\n");
+        LogStr(" size=");LogHex(info.CommandOutSize);
+        LogStr(" valid=");LogHex(info.CommandOutValid);LogStr("\n");
     }
     if (status==NVX_VBIOS_OK) {
         LogStr("NVX [VBIOS]: size=");LogHex(info.BiosSize);
@@ -125,7 +126,23 @@ static VOID NvxProbeFwsecRom(PUCHAR bar0)
         LogStr("NVX [FWSEC]: cmd_in=");LogHex(info.CommandInOffset);
         LogStr(" size=");LogHex(info.CommandInSize);
         LogStr(" cmd_out=");LogHex(info.CommandOutOffset);
-        LogStr(" size=");LogHex(info.CommandOutSize);LogStr("\n");
+        LogStr(" size=");LogHex(info.CommandOutSize);
+        LogStr(" valid=");LogHex(info.CommandOutValid);LogStr("\n");
+        if (info.UcodeId>=1 && info.UcodeId<=16) {
+            uint32_t fuseOffset=0x8241c0U+4U*((uint32_t)info.UcodeId-1U);
+            uint32_t rawFuse=VideoPortReadRegisterUlong((PULONG)(bar0+fuseOffset));
+            uint32_t fuseVersion=0,signatureIndex=0,signatureOffset=0;
+            LogStr("NVX [FWSEC]: GSP fuse offset=");LogHex(fuseOffset);
+            LogStr(" raw=");LogHex(rawFuse);
+            if (NvxSelectFwsecSignature(&info,rawFuse,&fuseVersion,
+                                        &signatureIndex,&signatureOffset)) {
+                LogStr(" version=");LogHex(fuseVersion);
+                LogStr(" signature_index=");LogHex(signatureIndex);
+                LogStr(" signature_rom=");LogHex(signatureOffset);LogStr("\n");
+            } else {
+                LogStr(" no compatible VBIOS signature\n");
+            }
+        }
     }
 }
 
@@ -587,7 +604,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.39\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.40\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

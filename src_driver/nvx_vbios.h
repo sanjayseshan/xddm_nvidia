@@ -48,6 +48,7 @@ typedef struct _NVX_FWSEC_INFO {
     uint8_t InterfaceEntrySize;
     uint8_t InterfaceEntryCount;
     uint8_t ValidationStage;
+    uint8_t CommandOutValid;
 } NVX_FWSEC_INFO;
 
 enum {
@@ -62,5 +63,8 @@ enum {
 
 int NvxParseFwsecRom(NVX_ROM_READ32 read32, void *context,
                      uint32_t maxSize, NVX_FWSEC_INFO *info);
+int NvxSelectFwsecSignature(const NVX_FWSEC_INFO *info, uint32_t rawFuse,
+                            uint32_t *fuseVersion, uint32_t *signatureIndex,
+                            uint32_t *signatureOffset);
 
 #endif
