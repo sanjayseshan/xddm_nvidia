@@ -4,6 +4,9 @@
 #include <stddef.h>
 #define NVX_RPC_SLOT_SIZE 4096U
 #define NVX_RPC_HEADER_SIZE 80U
+#define NVX_RPC_MAX_ELEMENTS 16U
+/* Decode one contiguous transport record (up to 64KB). */
+int NvxDecodeRpcRecord(const uint8_t *,size_t,uint32_t *,uint32_t *,uint32_t *,uint32_t *);
 /* 535 GspSystemInfo: natural LP64 layout, ACPI_METHOD_DATA is 484 bytes. */
 typedef struct {
     uint64_t gpuPhysAddr,gpuPhysFbAddr,gpuPhysInstAddr,dbdf;
