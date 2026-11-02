@@ -13,6 +13,11 @@ the missing startup packets were necessary. Windows mapped 1080p, then shut
 down through ACPI. v58 handles that event before waiting for INIT_DONE.
 Hardware acceleration remains unimplemented. See TESTING.md for per-version
 validation and exact archived logs.
+v58 accepted that event's checksum/sequence, captured firmware assertion count
+1, and stopped on validation of the following frame. It still mapped 1080p
+and shut down gracefully. Refined failure diagnostics are built into the final
+v58 ISO; subsequent zero-log GPU boots could not collect the additional fields.
+All five miniports are preserved separately under build_versions/.
 
 v53 test_logs/v53-20261102-103447.log captures populated binary INIT and RM
 logs and an initialized status queue (4096-byte messages, 63 slots) with zero
