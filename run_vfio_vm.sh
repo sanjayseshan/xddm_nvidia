@@ -27,6 +27,15 @@ for dev in /dev/vfio/vfio "${VFIO_GROUP_NODES[@]}" "$LOGITECH_KBD" "$LOGITECH_MO
     fi
 done
 
+for _ in $(seq 1 50); do
+    qemu-img info "$SCRIPT_DIR/winxp_x64.qcow2" >/dev/null 2>&1 && break
+    sleep 0.1
+done
+if ! qemu-img info "$SCRIPT_DIR/winxp_x64.qcow2" >/dev/null 2>&1; then
+    echo "Error: winxp_x64.qcow2 is still locked; refusing to start QEMU." >&2
+    exit 1
+fi
+
 echo "=================================================================="
 echo " Starting Windows XP x64 VM with RTX 3070 VFIO Passthrough        "
 echo "=================================================================="
