@@ -785,7 +785,25 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
                     LogStr("NVX [SEQ]: execution completed.\n");
                 }
             }
-            if (result || (function!=72 && function!=73 && function!=0x1001 && function!=0x101b && function!=0x1002)) {
+            if (function==0x100c && !result) {
+                /* RM 535 rpc_ucode_libos_print_v1E_08: two U32s then bytes.
+                   Diagnostic notification, no reply or register operations. */
+                const uint32_t *words=(const uint32_t *)entry;
+                uint32_t bytes=words[14]-32;
+                if(bytes<8 || words[21]>bytes-8) {
+                    LogStr("NVX [LIBOS]: malformed print payload retained.\n");return FALSE;
+                }
+                LogStr("NVX [LIBOS]: engine=");LogHex(words[20]);
+                LogStr(" bytes=");LogHex(words[21]);LogStr("\n");
+                for(uint32_t i=0;i<words[21] && i<256;i+=4) {
+                    uint32_t value=0;
+                    for(uint32_t j=0;j<4 && i+j<words[21];j++)
+                        value|=(uint32_t)entry[88+i+j]<<(8*j);
+                    LogStr("NVX [LIBOS-WORD]: offset=");LogHex(i);
+                    LogStr(" value=");LogHex(value);LogStr("\n");
+                }
+            }
+            if (result || (function!=72 && function!=73 && function!=0x1001 && function!=0x101b && function!=0x1002 && function!=0x100c)) {
                 LogStr("NVX [RPC]: unhandled startup event retained for diagnosis.\n");return FALSE;
             }
             if (function==0x101b) {

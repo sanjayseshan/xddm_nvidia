@@ -81,14 +81,15 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             meta->Verified=0;
             regs[NV_PSEC_FALCON_MAILBOX0/4]=0;
             regs[NV_PGSP_FALCON_RISCV_STAT/4]=0x80;
-            q->MsgSize=4096;q->MsgCount=63;q->EntryOff=4096;q->WritePtr=6;
-            for (ULONG i=0;i<5;i++) {
+            q->MsgSize=4096;q->MsgCount=63;q->EntryOff=4096;q->WritePtr=7;
+            for (ULONG i=0;i<6;i++) {
                 PULONG packet=entry+(i>=3?i+1:i)*1024;
                 ULONG assertions=7;
                 ULONG params[13]={16,3,0,0,0,0,0,0,0,0,0,0x110040,0};
-                ULONG function=i==4?0x1001:(i==3?0x1002:(i==2?0x101b:72+i));
+                ULONG print[3]={0,4,0x12345678};
+                ULONG function=i==5?0x1001:(i==4?0x100c:(i==3?0x1002:(i==2?0x101b:72+i)));
                 assert(NvxEncodeRpc((PUCHAR)packet,4096,function,i,
-                    i==3?params:(i==2?&assertions:NULL),i==3?sizeof(params):(i==2?4:0)));
+                    i==4?print:(i==3?params:(i==2?&assertions:NULL)),i==4?sizeof(print):(i==3?sizeof(params):(i==2?4:0))));
                 packet[16]=0;packet[8]^=0xffffffffU;
                 if (i==2) {
                     packet[10]=2;packet[14]=5000;packet[8]=0;
@@ -113,7 +114,7 @@ int main(void)
         assert(NvxGspInitSubsystem(&dev)==(scenario==0 || scenario==3));
         assert(dev.GspInitialized==(scenario==0 || scenario==3));
         if (dev.GspInitialized) {
-            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==6);
+            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==7);
             assert(dev.GspAssertCount==7);
         }
         if(scenario==2) { assert(imemTransfers==1 && !cpuStarts); }
