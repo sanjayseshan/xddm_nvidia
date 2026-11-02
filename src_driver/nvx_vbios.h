@@ -81,5 +81,7 @@ int NvxSelectFwsecSignature(const NVX_FWSEC_INFO *info, uint32_t rawFuse,
 int NvxComputeFrtsLayout(uint64_t fbSize, uint32_t workspaceReg,
                          uint32_t mmuLockPlm, uint32_t mmuLockLoReg,
                          uint32_t mmuLockHiReg, NVX_FRTS_LAYOUT *layout);
+int NvxValidateFrtsWpr2(uint64_t frtsOffset, uint32_t scratch,
+                         uint32_t wprLo, uint32_t wprHi);
 
 #endif

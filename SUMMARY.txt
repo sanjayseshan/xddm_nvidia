@@ -1,5 +1,27 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.49 no-block-bind FWSEC DMA / v1.0.0.33 rollback baseline
-Updated: November 1, 2026
+NVIDIA GA104 XDDM DRIVER — v1.0.0.50 verified FWSEC/FRTS / v1.0.0.33 rollback baseline
+Updated: November 2, 2026
+
+Current checkpoint
+------------------
+v50 successfully executes signed board FWSEC and initializes FRTS/WPR2 on
+hardware. v49 already ran firmware successfully but the driver incorrectly
+required WPR2 HI to equal the exclusive allocation end. v50 follows OpenRM:
+zero FRTS error, initialized HI, exact requested LO. Regression tests cover the
+captured register values and failure cases. First hardware run passed firmware
+validation and mapped 800x600x32; VBE had exposed only four modes before any
+firmware execution. Log: test_logs/v50-20261102-102127.log. Shutdown was graceful.
+
+Display remains BIOS VBE with software drawing. Some prior boots exposed ten
+modes and reached 1920x1080x32; mode enumeration is still intermittent. GSP-RM
+boot, complete RM RPC/events, memory/channels, native modesetting, and hardware
+rendering interfaces are not complete. Successful FWSEC is a prerequisite,
+not an accelerated-driver completion claim.
+
+Second v50 run (test_logs/v50-retry2.log) passed FWSEC and mapped 1920x1080x32
+with ten enumerated VBE modes, then shut down through ACPI. Before enabling
+GSP-RM, carry the hardware-derived FRTS/MMU-lock layout into its metadata:
+the older GSP builder currently derives WPR end from VGA workspace alone,
+which disagrees with the verified lower MMU-lock boundary on this board.
 
 Latest hardware result
 -----------------------

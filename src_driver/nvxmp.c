@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.49
+ * Driver Version: 1.0.0.50
  */
 
 #include "miniport.h"
@@ -208,8 +208,6 @@ static BOOLEAN NvxExecuteFwsecFrts(PVOID hwDeviceExtension,PUCHAR bar0,
 {
     ULONG value,originalEngine,cpuCtl,lastCtl,iterations;
     BOOLEAN sawRunning=FALSE,confirmedHalt=FALSE;
-    ULONG expectedLo=(ULONG)(layout->FrtsOffset>>12);
-    ULONG expectedHi=(ULONG)(layout->GspFwWprEnd>>12);
     uint64_t imemSource=(uint64_t)physical.QuadPart-info->ImemVirtBase;
     uint64_t dmemSource=(uint64_t)physical.QuadPart+info->ImemLoadSize;
     PNVX_DEVICE_EXTENSION devExt=(PNVX_DEVICE_EXTENSION)hwDeviceExtension;
@@ -277,7 +275,8 @@ static BOOLEAN NvxExecuteFwsecFrts(PVOID hwDeviceExtension,PUCHAR bar0,
         if (ctl&0x10) {
             ULONG wprLo=VideoPortReadRegisterUlong((PULONG)(bar0+0x1fa824));
             ULONG wprHi=VideoPortReadRegisterUlong((PULONG)(bar0+0x1fa828));
-            if (sawRunning || ((wprLo>>4)==expectedLo && (wprHi>>4)==expectedHi)) {
+            ULONG scratch=VideoPortReadRegisterUlong((PULONG)(bar0+0x1438));
+            if (sawRunning || NvxValidateFrtsWpr2(layout->FrtsOffset,scratch,wprLo,wprHi)) {
                 confirmedHalt=TRUE;break;
             }
         }
@@ -298,8 +297,7 @@ static BOOLEAN NvxExecuteFwsecFrts(PVOID hwDeviceExtension,PUCHAR bar0,
         LogStr(" mailbox1=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x110044)));
         LogStr(" scratch0e=");LogHex(scratch);
         LogStr(" wpr2_lo=");LogHex(wprLo);LogStr(" wpr2_hi=");LogHex(wprHi);LogStr("\n");
-        if (((scratch>>16)&0xffffU)!=0 || (wprLo>>4)!=expectedLo ||
-            (wprHi>>4)!=expectedHi) {
+        if (!NvxValidateFrtsWpr2(layout->FrtsOffset,scratch,wprLo,wprHi)) {
             LogStr("NVX [FWSEC-EXEC]: FRTS/WPR2 validation failed.\n");return FALSE;
         }
     }
@@ -989,7 +987,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.49\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.50\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

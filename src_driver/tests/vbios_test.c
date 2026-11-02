@@ -89,6 +89,13 @@ int main(void)
         assert(layout.GspFwWprEnd==0x1ff000000ULL&&layout.FrtsOffset==0x1fef00000ULL);
         assert(!NvxComputeFrtsLayout(0x1000,0,0,0,0,&layout));
     }
+    /* Captured v49: successful firmware uses a hardware HI limit, not
+       the exclusive 0x10000000 allocation end. */
+    assert(NvxValidateFrtsWpr2(0x0ff00000,0,0x000ff000,0x000ffe00));
+    assert(!NvxValidateFrtsWpr2(0x0ff00000,0x10000,0x000ff000,0x000ffe00));
+    assert(!NvxValidateFrtsWpr2(0x0ff00000,0,0x000ff000,0));
+    assert(!NvxValidateFrtsWpr2(0x0ff00000,0,0x00100000,0x000ffe00));
+    assert(!NvxValidateFrtsWpr2(0x0ff00001,0,0x000ff000,0x000ffe00));
     p32(rom,0x144,0xfffffff0);assert(NvxParseFwsecRom(read32,&m,sizeof(rom),&f)==NVX_VBIOS_BAD_DESCRIPTOR);
     p32(rom,0x144,0x500);rom[0x8b]++;assert(NvxParseFwsecRom(read32,&m,sizeof(rom),&f)==NVX_VBIOS_NO_BIT);
     rom[0x8b]--;assert(NvxParseFwsecRom(read32,&m,0x200,&f)==NVX_VBIOS_INVALID_ROM);
