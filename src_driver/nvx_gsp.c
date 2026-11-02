@@ -361,7 +361,7 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
     volatile ULONG *fence=(volatile ULONG *)(scratch+0xc000);
     PULONG src=(PULONG)(scratch+0xa000),push=(PULONG)(scratch+0x9000);
     volatile ULONG64 *fifo=(volatile ULONG64 *)scratch;
-    ULONG token=0,n=0,runlistQuery[124]={0}; /* two arrays of 62 engines */
+    ULONG token=0,n=0,runlistBase=0,runlistQuery[124]={0}; /* two arrays of 62 engines */
     ULONG64 va=dev->GspScratchGpuVa,pushVa=va+0x9000;
     const ULONG done=0x91c0ffee,guard=0xf17e55aa;
     dev->GspCopyVerified=FALSE;
@@ -393,6 +393,7 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
         enable=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+base+0x300));
         if(dbcfg==0xffffffffU||(dbcfg&0xffff0000U)==0xbadf0000U) return FALSE;
         token=(dbcfg&0xffff0000U)|1;
+        runlistBase=base;
         LogStr("NVX [COPY]: physical runlist=");LogHex(base);LogStr(" dbcfg=");LogHex(dbcfg);
         LogStr(" chcfg=");LogHex(chcfg);LogStr(" enable=");LogHex(enable);
         LogStr(" token=");LogHex(token);LogStr("\n");
@@ -431,6 +432,10 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
     __sync_synchronize();userd[0x8c/4]=1;__sync_synchronize();
     /* Ampere USERMODE window is BAR0+0x30000, NOT Volta's 0x810000. */
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),token);
+    /* Match ga100_chan_start(): an initial per-runlist notification is
+       needed when starting the client-allocated channel (GFID 0, ChID 1).
+       Re-notifying the same published GPPut does not enqueue extra work. */
+    VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x90),1);
     LogStr("NVX [COPY]: submitted 256-byte GPU copy and completion release.\n");
     for(ULONG wait=0;wait<20000;wait++) {
         if(fence[0]==done) {

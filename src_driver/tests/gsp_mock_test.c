@@ -144,12 +144,12 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         packet[16]=0;packet[8]^=0xffffffffU;
         q->WritePtr=write+1;q->ReadPtr=cmd->WritePtr;
     }
-    if(off==0x30090) {
+    if(off==0x220490) {
         PUCHAR scratch=(PUCHAR)dev.GspDmaVirtual+GSP_SCRATCH_OFFSET;
         PULONG push=(PULONG)(scratch+0x9000),userd=(PULONG)(scratch+0x3200);
         ULONG64 entry=*(PULONG64)scratch;
         ULONG64 address=(entry&0xfffffffcULL)|((entry>>32&0xffULL)<<32);
-        assert(value==0x40001&&userd[0x8c/4]==1);
+        assert(value==1&&regs[0x30090/4]==0x40001&&userd[0x8c/4]==1);
         assert(address==dev.GspScratchGpuVa+0x9000&&(entry>>42)==20);
         assert(push[0]==0x20018000&&push[1]==0xc7b5);
         assert(push[2]==0x20048100&&push[3]==0&&push[4]==0x1000a000);

@@ -1,59 +1,30 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.97 1KB-aligned runlist windows
+NVIDIA GA104 XDDM DRIVER — v1.0.0.98 hardware-verified GPU copy
 Updated: November 2, 2026
 
 Current checkpoint
 ------------------
-v97-20261102-164041.log reaches COPY2 submission: runlist=0xc00400,
-selector=1, token=0x10001, CHRAM slot1=2. Copy still times out, MMU fault data
-zero. Next test the per-runlist internal doorbell from Ampere channel-start.
+v98 is the first hardware-verified GPU copy execution checkpoint.
+Log: test_logs/v98-20261102-164453.log.
+GSP INIT_DONE, coherent scratch/page tables, dedicated COPY2 TSG/channel,
+AMPERE_DMA_COPY_B and work submission all succeed. The GPU writes a completion
+semaphore; all 256 copied bytes, source data and six guards verify exactly.
+The missing step was Ampere's initial per-runlist internal doorbell, in addition
+to USERD GPPut and the usermode doorbell. Earlier v98 launches were pre-boot
+VGA BIOS stalls/exits with empty logs; the successful retry proves the result.
+A soft ACPI shutdown has been requested for the successful guest.
 
-v96-20261102-163906.log selects COPY2 via physical capability queries:
-COPY0/1 caps=0x03e3, COPY2=0x03e2. Dedicated TSG/context/channel/C7B5 allocate.
-Its runlist base 0xc00400 is valid but rejected by the driver's 4KB alignment
-check. Next accept 1KB-aligned runlists and retry the copy test.
+THIS DOES NOT YET ACCELERATE WINDOWS DESKTOP DRAWING. nvxdisp.dll is still the
+stock software framebuffer display DLL. Next build the VRAM/framebuffer mapping
+and reusable copy/fill interface, then add XDDM hooks. No 3D API or native mode
+setting is implemented. Latest v98 log ends at 640x480x32 after Windows switched
+from 1080p, though all ten VBE modes were enumerated. Resolution is separate work.
 
-v95 retry reaches INIT_DONE but public GET_CAPS_V2 controls are rejected;
-channel creation is skipped. The host API is implemented outside GSP and
-forwards to physical control 0x20802a07. Next use that GSP API directly.
-
-v94-20261102-163138.log reaches INIT_DONE and submits CE commands on
-subchannel 4, but copy completion still times out. CHRAM slot1=2, RAMFC FIFO
-base/limit correct, MMU fault query all zero. Next select a dedicated copy
-engine using capabilities rather than COPY0's graphics-synchronous runlist.
-
-v93-20261102-162855.log reaches INIT_DONE and C7B5 on its first boot after
-moving sequencer acknowledgement before diagnostics. COPY0 physical runlist
-0xc00000 is enabled and token 1 is submitted. GPGet remains 0 and completion
-is absent. Next inspect GRCE subchannel routing and channel/MMU faults.
-
-User hardware log test_logs/v90-20261102-161211.log confirms INIT_DONE,
-COPY0 TSG/context/channel allocation, binding and scheduling. Class 0xc6b5
-still fails INVALID_CLASS (0x22). Changing engine type alone was insufficient.
-The log ends with a 640x480x32 VBE framebuffer; GPU execution is unverified.
-
-v91 selects AMPERE_DMA_COPY_B (0xc7b5), which NVIDIA 535's generated
-GA104 class table exposes (0xc6b5 is GA100). It then queries the channel's
-work-submit token and submits a bounded 256-byte scratch copy and completion
-semaphore via GPFIFO, USERD and the Ampere BAR0+0x30090 doorbell. A success
-log requires matching data and intact guards after the GPU completion value.
-This is a GPU execution probe; the XDDM display DLL still draws in software.
-Shutdown releases the RM client/channels before their DMA storage; unconfirmed
-teardown retains the backing pages. Host sanitizer tests cover completion,
-timeout, corrupt data/guards and failed teardown. All host checks and the
-native XP x64 build pass. No ISO generated; v91 is in dist_full and archived.
-Hardware v91 ran autonomously via ./test_full_driver.sh with escalated
-execution access (normal UID; no sudo). That execution mode exposes VFIO and
-allows the rootless guest updater; the earlier workspace-blocker report was
-incomplete. Log v91-20261102-162046.log proves C7B5 allocation. The GPU copy
-times out with GPGet=0, GPPut=1, fence=0, external work-submit token=0. ACPI
-shutdown completed. v92 derives the physical token from COPY0's queried
-runlist doorbell selector and fixed channel ID, matching Nouveau. Host checks
-pass; the first hardware run hit the intermittent sequencer poll failure and
-was shut down through ACPI. Four v92 attempts: three Windows boots stopped
-at that first poll, one exited in pre-boot KVM emulation. The physical-token
-path has not been reached on hardware. All responding guests received ACPI
-shutdown. Latest v91/v92 successful scanout mappings are 1920x1080x32 VBE. vm_serial.log
-now follows the live archived log. No ISO generated.
+Builds v91-v98 and host checks passed, with hardware evidence recorded in
+TESTING.md and archived miniports/hashes in build_versions/README.md.
+No ISO was regenerated. Run ./test_full_driver.sh with require_escalated execution
+permissions for VFIO/FUSE access; it still runs at normal UID and updates the guest
+without sudo. It retries only when invoked again; prefer system_powerdown for
+responding Windows guests. vm_serial.log follows the current archived run.
 
 Hardware logs from v88 prove RM INIT_DONE, client/device/subdevice allocation,
 scratch page registration, channel group and context share allocation. GPFIFO
