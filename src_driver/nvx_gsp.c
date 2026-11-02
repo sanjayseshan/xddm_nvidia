@@ -93,6 +93,28 @@ int NvxGspSequencerCore(void *context,unsigned int opcode)
     return (VideoPortReadRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_RISCV_STAT))&0x80)!=0;
 }
 
+static int NvxSeqRead(void *context,uint32_t address,uint32_t *value)
+{
+    PNVX_DEVICE_EXTENSION dev=context;
+    if(!dev||!value||(address&3)||dev->Bar0Length<4||address>dev->Bar0Length-4) return 0;
+    *value=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+address));return 1;
+}
+static int NvxSeqWrite(void *context,uint32_t address,uint32_t value)
+{
+    PNVX_DEVICE_EXTENSION dev=context;
+    if(!dev||(address&3)||dev->Bar0Length<4||address>dev->Bar0Length-4) return 0;
+    VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+address),value);return 1;
+}
+static int NvxSeqDelay(void *context,uint32_t microseconds)
+{
+    (void)context;
+    while(microseconds) {
+        ULONG step=microseconds>50?50:microseconds;
+        VideoPortStallExecution(step);microseconds-=step;
+    }
+    return 1;
+}
+
 /*
  * GA102 Falcon enable sequence.  This follows gp102_flcn_reset_eng(),
  * ga102_flcn_select(), and gm200_flcn_enable() instead of overwriting the
@@ -744,15 +766,26 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
                 if (!NvxValidateSeq(params,words[14]-32,devExt->Bar0Length,&count)) {
                     LogStr("NVX [SEQ]: rejected malformed sequencer request.\n");return FALSE;
                 }
-                LogStr("NVX [SEQ]: dry-run capacity=");LogHex(params[0]);
+                LogStr("NVX [SEQ]: validated capacity=");LogHex(params[0]);
                 LogStr(" used=");LogHex(params[1]);LogStr(" commands=");LogHex(count);LogStr("\n");
-                for (uint32_t i=0;i<params[1];i++) {
+                for (uint32_t i=0;i<params[1] && i<16;i++) {
                     LogStr("NVX [SEQ-WORD]: index=");LogHex(i);
                     LogStr(" value=");LogHex(params[10+i]);LogStr("\n");
                 }
-                LogStr("NVX [SEQ]: request retained; dry-run performs no MMIO.\n");return FALSE;
+                {
+                    NVX_SEQ_IO io={devExt,NvxSeqRead,NvxSeqWrite,NvxSeqDelay,NvxGspSequencerCore};
+                    uint32_t failedWord=0;
+                    if(!NvxExecuteSeq((uint32_t *)params,words[14]-32,devExt->Bar0Length,&io,&failedWord)) {
+                        LogStr("NVX [SEQ]: execution failed at word=");LogHex(failedWord);
+                        if(failedWord<params[1]) {
+                            LogStr(" opcode=");LogHex(params[10+failedWord]);
+                        }
+                        LogStr("; staging retained.\n");return FALSE;
+                    }
+                    LogStr("NVX [SEQ]: execution completed.\n");
+                }
             }
-            if (result || (function!=72 && function!=73 && function!=0x1001 && function!=0x101b)) {
+            if (result || (function!=72 && function!=73 && function!=0x1001 && function!=0x101b && function!=0x1002)) {
                 LogStr("NVX [RPC]: unhandled startup event retained for diagnosis.\n");return FALSE;
             }
             if (function==0x101b) {
