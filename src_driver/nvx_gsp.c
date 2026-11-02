@@ -31,6 +31,13 @@ typedef struct {
 } NVX_VASPACE_535;
 _Static_assert(sizeof(NVX_VASPACE_535)==48,"535 VASpace ABI");
 _Static_assert(offsetof(NVX_VASPACE_535,base)==40,"535 VASpace base");
+typedef struct {
+    ULONG owner,type,flags,width,height,pitch,attr,attr2,format,comprCovg,zcullCovg;
+    ULONG64 rangeLo,rangeHi,size,alignment,offset,limit,address;
+    ULONG ctagOffset,hVASpace,internalflags,tag;
+} NVX_MEMORY_535;
+_Static_assert(sizeof(NVX_MEMORY_535)==120,"535 memory alloc ABI");
+_Static_assert(offsetof(NVX_MEMORY_535,size)==64,"535 memory size offset");
 
 /* One synchronous post-init RPC. Unexpected events remain unconsumed. */
 static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
@@ -71,9 +78,9 @@ static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
 static BOOLEAN NvxGspAlloc(PNVX_DEVICE_EXTENSION dev,ULONG parent,ULONG object,
                           ULONG hclass,const void *params,ULONG bytes)
 {
-    ULONG payload[35]={0};
+    ULONG payload[40]={0};
     const ULONG *words=(const ULONG *)dev->RpcRxRecord;
-    if(bytes>108||(bytes&&!params)) return FALSE;
+    if(bytes>128||(bytes&&!params)) return FALSE;
     payload[0]=0xc1d00001;payload[1]=parent;payload[2]=object;payload[3]=hclass;payload[5]=bytes;
     if(bytes) VideoPortMoveMemory(payload+8,(PVOID)params,bytes);
     if(!NvxGspCall(dev,103,payload,32+bytes)) return FALSE;
@@ -107,6 +114,7 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
     ULONG client[27]={0xc1d00001,0,0x0078766e};
     ULONG device[14]={0},subdevice=0;
     NVX_VASPACE_535 va={0};
+    NVX_MEMORY_535 memory={0};
     dev->RpcTxSequence=2;dev->RpcRxSequence=rxSequence;
     if(!NvxGspAlloc(dev,0,0xc1d00001,0,client,sizeof(client))) return FALSE;
     dev->GspClientHandle=0xc1d00001;
@@ -119,6 +127,13 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
     if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0x90f10001,0x90f1,&va,sizeof(va))) return FALSE;
     dev->GspVaSpaceHandle=0x90f10001;
     LogStr("NVX [RM]: private GPU virtual address space allocated.\n");
+    memory.flags=0x1100; /* ALIGNMENT_FORCE | NO_SCANOUT */
+    memory.attr=0x10800000; /* contiguous VIDMEM, 4KB pages */
+    memory.size=65536;memory.alignment=4096;
+    memory.rangeLo=0x02000000;memory.rangeHi=dev->VerifiedWprEnd-1;
+    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0x40000001,0x40,&memory,sizeof(memory))) return FALSE;
+    dev->GspScratchMemoryHandle=0x40000001;
+    LogStr("NVX [RM]: 64KB private scratch video memory allocated.\n");
     LogStr("NVX [RM]: client, device and subdevice ready; rendering channels unavailable.\n");
     return TRUE;
 }
