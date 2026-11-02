@@ -205,6 +205,16 @@ VideoPort common buffer. It requires a page-aligned physical range wholly below
 the allocation and releases the DMA adapter. The GPU is never programmed with
 the address, and no Falcon/GSP register writes or firmware execution occur.
 
+v43 hardware result
+-------------------
+v43 passed completely on attempt 4 in test_logs/v43-retry4.log. The coherent
+buffer was physical 0x09a07000, page-aligned and below 4GB; all CRCs matched the
+v42 result and the buffer-release marker was observed. The display then mapped
+1920x1080x32 at E0000000 with stride 7680. Attempts 2 and 3 safely validated
+DMA staging but saw the known transient four-mode/800x600 VBE state. All three
+booted guests exited through ACPI system_powerdown; only attempt 1, which never
+produced serial output, was force-quit.
+
 Important corrections
 ----------------------
 Earlier notes incorrectly called EAX=0xffff004f a VBE failure. VBE defines AX;
