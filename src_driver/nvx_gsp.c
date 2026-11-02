@@ -658,14 +658,22 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
             LogStr("NVX [RM-DIAG]: log index=");LogHex(i);
             LogStr(" header");
             for (j=0;j<8;j++) { LogStr(" ");LogHex(((volatile ULONG64 *)log)[j]); }
-            LogStr("\nNVX [RM-DIAG]: printable log bytes: ");
-            for (j=128;j<65536;j++) {
-                UCHAR c=log[j];
-                if (c) nonzero++;
-                if (printed<2048 && ((c>=32 && c<127)||c=='\n'||c=='\t')) {
-                    char s[2]={(char)c,0};LogStr(s);printed++;
+            LogStr("\n");
+            /* 535 LibOS PUT counts 64-bit ring entries, excluding PUT itself.
+               Preserve the latest 512 words exactly for offline decoding. */
+            {
+                volatile ULONG64 *words=(volatile ULONG64 *)log;
+                ULONG64 put=words[0],first=put>512 ? put-512 : 0,k;
+                LogStr("NVX [RM-RING]: log=");LogHex(i);
+                LogStr(" put=");LogHex(put);LogStr(" first=");LogHex(first);LogStr("\n");
+                for (k=first;k<put;k++) {
+                    LogStr("NVX [RM-WORD]: log=");LogHex(i);
+                    LogStr(" index=");LogHex(k);
+                    LogStr(" value=");LogHex(words[1+(k%8191)]);LogStr("\n");
                 }
             }
+            for (j=128;j<65536;j++) if (log[j]) nonzero++;
+            (void)printed;
             LogStr("\nNVX [RM-DIAG]: nonzero_bytes=");LogHex(nonzero);LogStr("\n");
         }
         LogStr("NVX [RM-DIAG]: riscv=");
