@@ -23,6 +23,14 @@ _Static_assert(sizeof(LIBOS_MEMORY_REGION_INIT_ARGUMENT) == 32, "LibOS ABI");
 _Static_assert(offsetof(RM_RISCV_UCODE_DESC, MonitorCodeOffset) == 48, "BL ABI");
 _Static_assert(sizeof(VP_DEVICE_DESCRIPTION) == 8, "VideoPort DMA ABI");
 _Static_assert(offsetof(VP_DEVICE_DESCRIPTION, Dma64BitAddresses) == 2, "DMA flags ABI");
+typedef struct {
+    ULONG index,flags;
+    ULONG64 size,startInternal,limitInternal;
+    ULONG bigPageSize;
+    ULONG64 base;
+} NVX_VASPACE_535;
+_Static_assert(sizeof(NVX_VASPACE_535)==48,"535 VASpace ABI");
+_Static_assert(offsetof(NVX_VASPACE_535,base)==40,"535 VASpace base");
 
 /* One synchronous post-init RPC. Unexpected events remain unconsumed. */
 static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
@@ -98,6 +106,7 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
 {
     ULONG client[27]={0xc1d00001,0,0x0078766e};
     ULONG device[14]={0},subdevice=0;
+    NVX_VASPACE_535 va={0};
     dev->RpcTxSequence=2;dev->RpcRxSequence=rxSequence;
     if(!NvxGspAlloc(dev,0,0xc1d00001,0,client,sizeof(client))) return FALSE;
     dev->GspClientHandle=0xc1d00001;
@@ -106,6 +115,10 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
     if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0x20800001,0x2080,&subdevice,4)) return FALSE;
     dev->GspSubdeviceHandle=0x20800001;
     if(!NvxGspGetName(dev)) return FALSE;
+    /* A private, RM-managed VASpace. No externally owned page tables. */
+    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0x90f10001,0x90f1,&va,sizeof(va))) return FALSE;
+    dev->GspVaSpaceHandle=0x90f10001;
+    LogStr("NVX [RM]: private GPU virtual address space allocated.\n");
     LogStr("NVX [RM]: client, device and subdevice ready; rendering channels unavailable.\n");
     return TRUE;
 }

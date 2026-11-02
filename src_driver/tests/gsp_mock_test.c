@@ -43,7 +43,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         PULONG request=(PULONG)((PUCHAR)cmd+4096+(cmd->WritePtr-1)*4096);
         ULONG alloc[39]={0};
         uint32_t f,r,s;
-        assert(cmd->WritePtr>=3&&cmd->WritePtr<=6);
+        assert(cmd->WritePtr>=3&&cmd->WritePtr<=7);
         assert(NvxDecodeRpc((PUCHAR)request,4096,&f,&r,&s));
         assert((f==103||f==76)&&s==cmd->WritePtr-1);
         memcpy(alloc,request+20,f==76?sizeof(alloc):16);
@@ -130,9 +130,10 @@ int main(void)
         assert(NvxGspInitSubsystem(&dev)==(scenario==0 || scenario==3));
         assert(dev.GspInitialized==(scenario==0 || scenario==3));
         if (dev.GspInitialized) {
-            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==11);
+            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==12);
             assert(dev.GspClientHandle==0xc1d00001);
             assert(dev.GspDeviceHandle==0x80000001&&dev.GspSubdeviceHandle==0x20800001);
+            assert(dev.GspVaSpaceHandle==0x90f10001);
             assert(dev.GspAssertCount==7);
         }
         if(scenario==2) { assert(imemTransfers==1 && !cpuStarts); }
