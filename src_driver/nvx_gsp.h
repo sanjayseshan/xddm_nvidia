@@ -295,6 +295,9 @@ typedef struct _NVX_DEVICE_EXTENSION {
     PVOID FwsecDmaVirtual;
     ULONG FwsecDmaLength;
     BOOLEAN FwsecFrtsReady;
+    ULONG64 VerifiedFrtsOffset;
+    ULONG64 VerifiedWprEnd;
+    ULONG64 VerifiedVgaWorkspaceOffset;
 } NVX_DEVICE_EXTENSION, *PNVX_DEVICE_EXTENSION;
 
 /* GSP Firmware Blobs */

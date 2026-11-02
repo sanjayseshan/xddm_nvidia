@@ -61,7 +61,11 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(meta->BootloaderCodeOffset==0x1800);
             assert(meta->BootloaderDataOffset==0x800);
             assert(meta->GspFwHeapSize>=0x6900000);
-            meta->Verified=GSP_FW_WPR_VERIFIED;
+            assert(meta->GspFwWprEnd==0x10000000ULL);
+            assert(meta->FrtsOffset==0x0ff00000ULL);
+            assert(meta->GspFwWprStart<meta->FrtsOffset);
+            /* Booter need not write the sysmem metadata back. */
+            meta->Verified=0;
             regs[NV_PSEC_FALCON_MAILBOX0/4]=0;
             regs[NV_PGSP_FALCON_RISCV_STAT/4]=0x80;
             q->MsgSize=4096;q->MsgCount=63;q->WritePtr=1;
@@ -76,6 +80,10 @@ int main(void)
         memset(&dev,0,sizeof(dev));memset(regs,0,sizeof(regs));
         imemTransfers=dmemTransfers=cpuStarts=0;
         dev.Bar0MmioVirtual=regs;dev.Bar1Length=0x10000000;
+        dev.FwsecFrtsReady=TRUE;
+        dev.VerifiedWprEnd=0x10000000ULL;
+        dev.VerifiedFrtsOffset=0x0ff00000ULL;
+        dev.VerifiedVgaWorkspaceOffset=0x1fffe0000ULL;
         regs[0x1183a4/4]=8192;
         regs[NV_PSEC_FALCON_CPUCTL/4]=(scenario==3) ? 0x50 : 0x10;
         assert(NvxGspInitSubsystem(&dev)==(scenario==0 || scenario==3));

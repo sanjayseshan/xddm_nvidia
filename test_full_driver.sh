@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="50"
+NVX_TEST_VERSION="52"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
@@ -43,7 +43,11 @@ finish() {
     echo "==> Result log: $NVX_RUN_LOG"
     if [ -f "$NVX_RUN_LOG" ]; then
         grep -E "Miniport Driver|\[SEC2\]|\[GSP\]|\[RESET\]" "$NVX_RUN_LOG" | tail -80 || true
-        if grep -q "NVX \[FWSEC-EXEC\]: FRTS initialized and WPR2 validated" "$NVX_RUN_LOG"; then
+        if grep -q 'RM INIT_DONE received' "$NVX_RUN_LOG"; then
+            echo "RESULT: RM INIT_DONE received; acceleration still requires channels and drawing."
+        elif grep -q 'Bootstrap incomplete; staging retained' "$NVX_RUN_LOG"; then
+            echo "RESULT: FWSEC passed but GSP bootstrap remains incomplete; inspect SEC2/GSP diagnostics."
+        elif grep -q "NVX \[FWSEC-EXEC\]: FRTS initialized and WPR2 validated" "$NVX_RUN_LOG"; then
             echo "RESULT: FWSEC executed; FRTS and WPR2 validation passed."
         elif grep -q "retained for hardware safety" "$NVX_RUN_LOG"; then
             echo "RESULT: FWSEC completion was ambiguous; DMA storage was safely retained."

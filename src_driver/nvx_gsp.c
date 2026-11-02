@@ -371,6 +371,21 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
     wprMeta->GspFwWprEnd = wprMeta->VgaWorkspaceOffset & ~0x1ffffULL;
     wprMeta->FrtsSize = 0x100000ULL;
     wprMeta->FrtsOffset = wprMeta->GspFwWprEnd - wprMeta->FrtsSize;
+    if (devExt->FwsecFrtsReady) {
+        if (devExt->VerifiedWprEnd < 0x100000ULL ||
+            devExt->VerifiedFrtsOffset != devExt->VerifiedWprEnd-0x100000ULL ||
+            devExt->VerifiedWprEnd > wprMeta->FbSize ||
+            devExt->VerifiedVgaWorkspaceOffset >= wprMeta->FbSize) {
+            LogStr("NVX [GSP]: Invalid verified FRTS layout; bootstrap blocked.\n");
+            return FALSE;
+        }
+        wprMeta->VgaWorkspaceOffset=devExt->VerifiedVgaWorkspaceOffset;
+        wprMeta->VgaWorkspaceSize=wprMeta->FbSize-wprMeta->VgaWorkspaceOffset;
+        wprMeta->GspFwWprEnd=devExt->VerifiedWprEnd;
+        wprMeta->FrtsOffset=devExt->VerifiedFrtsOffset;
+        LogStr("NVX [GSP]: Using verified WPR end ");LogHex(wprMeta->GspFwWprEnd);
+        LogStr(" FRTS ");LogHex(wprMeta->FrtsOffset);LogStr("\n");
+    }
     wprMeta->BootBinOffset = (wprMeta->FrtsOffset - wprMeta->SizeOfBootloader) & ~0xFFFULL;
     wprMeta->GspFwOffset = (wprMeta->BootBinOffset - wprMeta->SizeOfRadix3Elf) & ~0xFFFFULL;
     /* 535 LibOS2: 8MB base + 1MB per-GB allowance + 96MB client heap. */
@@ -579,7 +594,10 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
         LogStr(" Verified: "); LogHex(verified);
         LogStr(" SEC2 CPUCTL: "); LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_CPUCTL)));
         LogStr("\n");
-        if (status || verified != GSP_FW_WPR_VERIFIED) {
+        /* Booter authenticates/copies metadata into protected framebuffer.
+           The input sysmem copy need not receive the Verified writeback.
+           OpenRM accepts a completed Booter with mailbox0 == 0. */
+        if (status) {
             LogStr("NVX [SEC2]: Booter failed; RM startup skipped.\n");
             return FALSE;
         }

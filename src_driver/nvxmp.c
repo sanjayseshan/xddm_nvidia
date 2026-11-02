@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.50
+ * Driver Version: 1.0.0.52
  */
 
 #include "miniport.h"
@@ -302,6 +302,9 @@ static BOOLEAN NvxExecuteFwsecFrts(PVOID hwDeviceExtension,PUCHAR bar0,
         }
     }
     devExt->FwsecFrtsReady=TRUE;
+    devExt->VerifiedFrtsOffset=layout->FrtsOffset;
+    devExt->VerifiedWprEnd=layout->GspFwWprEnd;
+    devExt->VerifiedVgaWorkspaceOffset=layout->VgaWorkspaceOffset;
     LogStr("NVX [FWSEC-EXEC]: FRTS initialized and WPR2 validated.\n");
     return TRUE;
 }
@@ -765,6 +768,11 @@ BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
 #else
         LogStr("NVX [GSP]: Hardware bootstrap gated: board VBIOS FWSEC/FRTS is required before Booter Load.\n");
         NvxProbeFwsecRom(HwDeviceExtension,(PUCHAR)devExt->Bar0MmioVirtual);
+        if (devExt->FwsecFrtsReady) {
+            LogStr("NVX [GSP]: Verified FWSEC/FRTS prerequisite; starting GSP bootstrap.\n");
+            if (!NvxGspInitSubsystem(HwDeviceExtension))
+                LogStr("NVX [GSP]: Bootstrap incomplete; staging retained for diagnosis.\n");
+        }
 #endif
 #else
         LogStr("NVX [GSP]: Experimental bootstrap disabled; preserving BIOS scanout.\n");
@@ -987,7 +995,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.50\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.52\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

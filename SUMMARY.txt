@@ -1,8 +1,19 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.50 verified FWSEC/FRTS / v1.0.0.33 rollback baseline
+NVIDIA GA104 XDDM DRIVER — v1.0.0.52 active GSP RISC-V / RM initialization pending
 Updated: November 2, 2026
 
 Current checkpoint
 ------------------
+v52 hardware test test_logs/v52-20261102-103128.log passed FWSEC/FRTS,
+completed SEC2 Booter Load with mailbox0=0, and reported active GSP RISC-V
+CPUCTL=0x80 with BCR=0x111. RM INIT_DONE timed out. Windows mapped 1080p and
+shut down through ACPI. No accelerated operation is implemented yet.
+
+v51 carried verified MMU-lock-aware WPR/FRTS/VGA offsets into Booter metadata.
+v52 corrected another overly strict check: OpenRM accepts halted Booter with
+zero mailbox0; its input sysmem Verified marker need not be written back.
+Mock tests now cover zero writeback, lower WPR placement, and heap placement.
+Next investigate firmware startup logs/shared queues and missing startup RPCs.
+
 v50 successfully executes signed board FWSEC and initializes FRTS/WPR2 on
 hardware. v49 already ran firmware successfully but the driver incorrectly
 required WPR2 HI to equal the exclusive allocation end. v50 follows OpenRM:
