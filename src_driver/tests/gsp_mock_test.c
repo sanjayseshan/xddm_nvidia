@@ -38,15 +38,18 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
     regs[off/4]=value;
     if(off==0x110c00) {
         NVX_MSGQ_HEADER *q=dev.StatQueueVirtual,*cmd=dev.CmdQueueVirtual;
-        PULONG packet=(PULONG)((PUCHAR)q+4096+7*4096);
-        ULONG alloc[8]={0xc1d00001,0,0xc1d00001,0,0,0,0,0};
+        ULONG write=q->WritePtr;
+        PULONG packet=(PULONG)((PUCHAR)q+4096+write*4096);
+        PULONG request=(PULONG)((PUCHAR)cmd+4096+(cmd->WritePtr-1)*4096);
+        ULONG alloc[8]={0};
         uint32_t f,r,s;
-        assert(cmd->WritePtr==3);
-        assert(NvxDecodeRpc((PUCHAR)cmd+4096+2*4096,4096,&f,&r,&s));
-        assert(f==103&&s==2);
-        assert(NvxEncodeRpc((PUCHAR)packet,4096,103,6,alloc,sizeof(alloc)));
+        assert(cmd->WritePtr>=3&&cmd->WritePtr<=5);
+        assert(NvxDecodeRpc((PUCHAR)request,4096,&f,&r,&s));
+        assert(f==103&&s==cmd->WritePtr-1);
+        memcpy(alloc,request+20,16);
+        assert(NvxEncodeRpc((PUCHAR)packet,4096,103,write-1,alloc,sizeof(alloc)));
         packet[16]=0;packet[8]^=0xffffffffU;
-        q->WritePtr=8;q->ReadPtr=3;
+        q->WritePtr=write+1;q->ReadPtr=cmd->WritePtr;
     }
     if(off==NV_PGSP_FALCON_BCR && value==0) regs[off/4]=1;
     if((off==NV_PGSP_FALCON_CPUCTL||off==NV_PGSP_FALCON_CPUCTL_ALIAS)&&value==2)
@@ -126,8 +129,9 @@ int main(void)
         assert(NvxGspInitSubsystem(&dev)==(scenario==0 || scenario==3));
         assert(dev.GspInitialized==(scenario==0 || scenario==3));
         if (dev.GspInitialized) {
-            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==8);
+            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==10);
             assert(dev.GspClientHandle==0xc1d00001);
+            assert(dev.GspDeviceHandle==0x80000001&&dev.GspSubdeviceHandle==0x20800001);
             assert(dev.GspAssertCount==7);
         }
         if(scenario==2) { assert(imemTransfers==1 && !cpuStarts); }

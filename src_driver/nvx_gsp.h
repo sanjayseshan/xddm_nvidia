@@ -303,6 +303,8 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG PciSlot;
     ULONG GspAssertCount;
     ULONG GspClientHandle;
+    ULONG GspDeviceHandle,GspSubdeviceHandle;
+    ULONG RpcTxSequence,RpcRxSequence;
     UCHAR RpcRxRecord[65536];
 } NVX_DEVICE_EXTENSION, *PNVX_DEVICE_EXTENSION;
 

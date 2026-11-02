@@ -24,23 +24,25 @@ _Static_assert(offsetof(RM_RISCV_UCODE_DESC, MonitorCodeOffset) == 48, "BL ABI")
 _Static_assert(sizeof(VP_DEVICE_DESCRIPTION) == 8, "VideoPort DMA ABI");
 _Static_assert(offsetof(VP_DEVICE_DESCRIPTION, Dma64BitAddresses) == 2, "DMA flags ABI");
 
-/* First post-init RM object. No channel or framebuffer ownership is changed. */
-static BOOLEAN NvxGspCreateClient(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
+/* RM 535 GSP_RM_ALLOC, fixed 32-byte header and class-specific parameters. */
+static BOOLEAN NvxGspAlloc(PNVX_DEVICE_EXTENSION dev,ULONG parent,ULONG object,
+                          ULONG hclass,const void *params,ULONG bytes)
 {
     volatile NVX_MSGQ_HEADER *cmd=dev->CmdQueueVirtual,*stat=dev->StatQueueVirtual;
     ULONG payload[35]={0}; /* alloc header 32 + NV0000_ALLOC_PARAMETERS 108 */
     ULONG write=cmd->WritePtr,next=(write+1)%63;
     const ULONG handle=0xc1d00001;
-    if(write>=63||stat->ReadPtr>=63||next==stat->ReadPtr) return FALSE;
-    payload[0]=handle;payload[2]=handle; /* hClient, hObject; root parent/class=0 */
-    payload[5]=108;
-    payload[8]=handle;
-    payload[10]=0x0078766e; /* processName: nvx */
+    if(bytes>108||(bytes&&!params)||write>=63||stat->ReadPtr>=63||next==stat->ReadPtr) return FALSE;
+    payload[0]=handle;payload[1]=parent;payload[2]=object;payload[3]=hclass;
+    payload[5]=bytes;
+    if(bytes) VideoPortMoveMemory(payload+8,(PVOID)params,bytes);
     if(!NvxEncodeRpc((PUCHAR)dev->CmdQueueVirtual+4096+write*4096,
-        4096,103,2,payload,sizeof(payload))) return FALSE;
+        4096,103,dev->RpcTxSequence,payload,32+bytes)) return FALSE;
     __sync_synchronize();cmd->WritePtr=next;__sync_synchronize();
+    dev->RpcTxSequence++;
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x110c00),0);
-    LogStr("NVX [RM]: root client allocation submitted.\n");
+    LogStr("NVX [RM]: allocation submitted class=");LogHex(hclass);
+    LogStr(" object=");LogHex(object);LogStr("\n");
     for(ULONG wait=0;wait<20000;wait++) {
         ULONG read=cmd->ReadPtr,head=stat->WritePtr;
         uint32_t elements=0,decoded=0,function=0,result=0,sequence=0;
@@ -52,19 +54,34 @@ static BOOLEAN NvxGspCreateClient(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
         if(gathered<0) return FALSE;
         if(!gathered) {VideoPortStallExecution(100);continue;}
         if(!NvxDecodeRpcRecord(dev->RpcRxRecord,elements*4096,&function,&result,&sequence,&decoded)||
-            decoded!=elements||sequence!=rxSequence) return FALSE;
+            decoded!=elements||sequence!=dev->RpcRxSequence) return FALSE;
         LogStr("NVX [RM]: allocation reply function=");LogHex(function);
         LogStr(" result=");LogHex(result);LogStr("\n");
         if(function!=103) return FALSE; /* Preserve unexpected events. */
         const ULONG *words=(const ULONG *)dev->RpcRxRecord;
-        if(words[14]<64||words[20]!=handle||words[22]!=handle||words[23]!=0) return FALSE;
+        if(words[14]<64||words[20]!=handle||words[21]!=parent||words[22]!=object||words[23]!=hclass) return FALSE;
         LogStr("NVX [RM]: allocation status=");LogHex(words[24]);LogStr("\n");
         __sync_synchronize();cmd->ReadPtr=(read+elements)%63;__sync_synchronize();
+        dev->RpcRxSequence++;
         if(result||words[24]) return FALSE;
-        dev->GspClientHandle=handle;
-        LogStr("NVX [RM]: root client allocated successfully.\n");return TRUE;
+        LogStr("NVX [RM]: object allocated successfully class=");LogHex(hclass);LogStr("\n");return TRUE;
     }
     LogStr("NVX [RM]: client allocation timed out; staging retained.\n");return FALSE;
+}
+
+static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
+{
+    ULONG client[27]={0xc1d00001,0,0x0078766e};
+    ULONG device[14]={0},subdevice=0;
+    dev->RpcTxSequence=2;dev->RpcRxSequence=rxSequence;
+    if(!NvxGspAlloc(dev,0,0xc1d00001,0,client,sizeof(client))) return FALSE;
+    dev->GspClientHandle=0xc1d00001;
+    if(!NvxGspAlloc(dev,dev->GspClientHandle,0x80000001,0x80,device,sizeof(device))) return FALSE;
+    dev->GspDeviceHandle=0x80000001;
+    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0x20800001,0x2080,&subdevice,4)) return FALSE;
+    dev->GspSubdeviceHandle=0x20800001;
+    LogStr("NVX [RM]: client, device and subdevice ready; rendering channels unavailable.\n");
+    return TRUE;
 }
 
 static BOOLEAN NvxWait(PUCHAR bar0, ULONG reg, ULONG mask, ULONG expected,
@@ -864,8 +881,8 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
                     return FALSE;
                 devExt->GspInitialized=TRUE;
                 LogStr("NVX [GSP]: RM INIT_DONE received; display channels still unavailable.\n");
-                if(!NvxGspCreateClient(devExt,rxSequence))
-                    LogStr("NVX [RM]: client allocation not established; acceleration unavailable.\n");
+                if(!NvxGspCreateObjects(devExt,rxSequence))
+                    LogStr("NVX [RM]: object setup incomplete; acceleration unavailable.\n");
                 return TRUE;
             }
             continue;
