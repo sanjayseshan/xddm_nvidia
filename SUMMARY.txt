@@ -1,8 +1,13 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.98 hardware-verified GPU copy
+NVIDIA GA104 XDDM DRIVER — v1.0.0.99 VRAM layout discovery
 Updated: November 2, 2026
 
 Current checkpoint
 ------------------
+v99-20261102-165132.log repeats the verified GPU copy. Its read-only VRAM
+metadata query is rejected as invalid message format because its request
+payload is empty. Original 535 SDK gives static-info size 2168; next send
+that full zeroed request. Desktop drawing remains software.
+
 v98 is the first hardware-verified GPU copy execution checkpoint.
 Log: test_logs/v98-20261102-164453.log.
 GSP INIT_DONE, coherent scratch/page tables, dedicated COPY2 TSG/channel,

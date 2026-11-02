@@ -38,6 +38,13 @@ typedef struct {
 } NVX_MEMORY_535;
 _Static_assert(sizeof(NVX_MEMORY_535)==120,"535 memory alloc ABI");
 _Static_assert(offsetof(NVX_MEMORY_535,size)==64,"535 memory size offset");
+typedef struct {
+    ULONG64 base,limit,reserved;
+    ULONG performance;
+    UCHAR compressed,iso,protectedMemory,blackList[17];
+} NVX_FB_REGION_535;
+_Static_assert(sizeof(NVX_FB_REGION_535)==48,"535 FB region ABI");
+_Static_assert(offsetof(NVX_FB_REGION_535,protectedMemory)==30,"535 FB region flags");
 
 /* One synchronous post-init RPC. Unexpected events remain unconsumed. */
 static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
@@ -202,6 +209,41 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
     if(!NvxGspControl(dev,dev->GspDeviceHandle,0x801813,setDirectory,sizeof(setDirectory))) return FALSE;
     dev->GspScratchGpuVa=0x10000000;
     LogStr("NVX [RM]: scratch memory mapped at GPU VA 0x10000000.\n");return TRUE;
+}
+
+static BOOLEAN NvxGspGetFbLayout(PNVX_DEVICE_EXTENSION dev)
+{
+    /* Verified against 535 SDK types: GspStaticConfigInfo.fbRegionInfoParams
+       is at 840, contains an 8-byte prefix and sixteen 48-byte entries.
+       GET_GSP_STATIC_INFO is the same pointer-free RPC used by Nouveau. */
+    const ULONG infoOffset=840,entriesOffset=848,prefixSize=1616;
+    const GSP_FW_WPR_META_V1 *wpr=(const void *)((PUCHAR)dev->GspDmaVirtual+GSP_WPR_META_OFFSET);
+    ULONG count=0;
+    ULONG64 freeBase=0,freeLimit=0;
+    dev->GspFbLayoutValid=FALSE;dev->GspFbRegionCount=0;
+    dev->GspFbFreeBase=dev->GspFbFreeLimit=0;
+    if(!NvxGspCall(dev,65,NULL,0)||((const ULONG *)dev->RpcRxRecord)[14]<32+prefixSize) return FALSE;
+    VideoPortMoveMemory(&count,dev->RpcRxRecord+80+infoOffset,sizeof(count));
+    if(!count||count>16) return FALSE;
+    for(ULONG i=0;i<count;i++) {
+        NVX_FB_REGION_535 region;
+        VideoPortMoveMemory(&region,dev->RpcRxRecord+80+entriesOffset+i*sizeof(region),sizeof(region));
+        if(region.base>region.limit||region.limit>=wpr->FbSize) return FALSE;
+        LogStr("NVX [FB]: region=");LogHex(i);LogStr(" base=");LogHex(region.base);
+        LogStr(" limit=");LogHex(region.limit);LogStr(" reserved=");LogHex(region.reserved);
+        LogStr(" protected=");LogHex(region.protectedMemory);LogStr(" iso=");LogHex(region.iso);LogStr("\n");
+        if(!freeBase&&!region.reserved&&!region.protectedMemory&&region.compressed&&region.iso) {
+            ULONG64 base=region.base>wpr->GspFwWprEnd?region.base:wpr->GspFwWprEnd;
+            base=(base+0xffffULL)&~0xffffULL;
+            if(base<=region.limit&&region.limit-base>=0xffff) {freeBase=base;freeLimit=region.limit;}
+        }
+    }
+    if(!freeBase) return FALSE;
+    dev->GspFbRegionCount=count;dev->GspFbFreeBase=freeBase;dev->GspFbFreeLimit=freeLimit;
+    dev->GspFbLayoutValid=TRUE;
+    LogStr("NVX [FB]: available VRAM candidate base=");LogHex(freeBase);
+    LogStr(" limit=");LogHex(freeLimit);LogStr("; discovery only, no VRAM writes.\n");
+    return TRUE;
 }
 
 static BOOLEAN NvxGspSelectCopyEngine(PNVX_DEVICE_EXTENSION dev)
@@ -495,6 +537,7 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
     LogStr("NVX [RM]: private GPU virtual address space allocated.\n");
     if(!NvxGspRegisterScratch(dev)) return FALSE;
     if(!NvxGspMapScratch(dev)) return FALSE;
+    if(!NvxGspGetFbLayout(dev)) LogStr("NVX [FB]: static VRAM layout unavailable; retaining system-memory copy probe.\n");
     if(!NvxGspSelectCopyEngine(dev)) return FALSE;
     if(!NvxGspAllocChannel(dev)) return FALSE;
     LogStr("NVX [RM]: dedicated channel and copy engine allocated; testing GPU execution.\n");
@@ -1406,6 +1449,7 @@ VOID NvxGspShutdown(PVOID HwDeviceExtension) {
         devExt->GspBootVerified = FALSE;
         devExt->GspCopyVerified = FALSE;
         devExt->GspChannelFaulted = FALSE;
+        devExt->GspFbLayoutValid = FALSE;
 
         if (devExt->DmaAdapter) {
             VideoPortPutDmaAdapter(HwDeviceExtension, devExt->DmaAdapter);

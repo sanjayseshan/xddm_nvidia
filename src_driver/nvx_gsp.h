@@ -319,6 +319,9 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG GspCopyEngineType;
     BOOLEAN GspCopyVerified;
     BOOLEAN GspChannelFaulted;
+    BOOLEAN GspFbLayoutValid;
+    ULONG GspFbRegionCount;
+    ULONG64 GspFbFreeBase,GspFbFreeLimit;
     ULONG RpcTxSequence,RpcRxSequence;
     UCHAR RpcRxRecord[65536];
 } NVX_DEVICE_EXTENSION, *PNVX_DEVICE_EXTENSION;

@@ -51,9 +51,24 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         PULONG request=(PULONG)((PUCHAR)cmd+4096+(cmd->WritePtr-1)*4096);
         ULONG alloc[160]={0},replyBytes;
         uint32_t f,r,s;
-        assert(cmd->WritePtr>=3&&cmd->WritePtr<=24);
+        assert(cmd->WritePtr>=3&&cmd->WritePtr<=25);
         assert(NvxDecodeRpc((PUCHAR)request,4096,&f,&r,&s));
-        assert((f==103||f==76||f==4||f==14||f==10)&&s==cmd->WritePtr-1);
+        assert((f==103||f==76||f==4||f==14||f==10||f==65)&&s==cmd->WritePtr-1);
+        if(f==65) {
+            UCHAR cfg[1616]={0};
+            ULONG count=scenario==10?17:2;
+            ULONG64 base=0,limit=0x0fffffff,reserved=0x10000000;
+            memcpy(cfg+840,&count,4);
+            memcpy(cfg+848,&base,8);memcpy(cfg+856,&limit,8);memcpy(cfg+864,&reserved,8);
+            cfg[848+28]=cfg[848+29]=cfg[848+30]=1;
+            base=0x10000000;limit=scenario==11?0xfff:0x1dfffffffULL;reserved=0;
+            memcpy(cfg+896,&base,8);memcpy(cfg+904,&limit,8);memcpy(cfg+912,&reserved,8);
+            cfg[896+28]=cfg[896+29]=1;
+            assert(NvxEncodeRpc((PUCHAR)packet,4096,f,write-1,cfg,scenario==9?840:sizeof(cfg)));
+            packet[16]=0;packet[8]^=0xffffffffU;
+            q->WritePtr=write+1;q->ReadPtr=cmd->WritePtr;
+            return;
+        }
         if(f==4) {
             assert(request[23]==0x81&&request[28]==65536&&request[30]==16);
             assert(request[32]==(16U<<16));
@@ -234,7 +249,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
 }
 int main(void)
 {
-    for(scenario=0;scenario<9;scenario++) {
+    for(scenario=0;scenario<12;scenario++) {
         memset(&dev,0,sizeof(dev));memset(regs,0,sizeof(regs));
         imemTransfers=dmemTransfers=cpuStarts=0;
         freeFailures=scenario==7?1:0;
@@ -251,7 +266,7 @@ int main(void)
         assert(NvxGspInitSubsystem(&dev)==(scenario==0 || scenario>=3));
         assert(dev.GspInitialized==(scenario==0 || scenario>=3));
         if (dev.GspInitialized) {
-            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==(scenario==4?29:27));
+            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==(scenario==4?30:28));
             assert(dev.GspScratchGpuVa==0x10000000);
             assert(dev.GspClientHandle==0xc1d00001);
             assert(dev.GspDeviceHandle==0x80000001&&dev.GspSubdeviceHandle==0x20800001);
@@ -262,7 +277,10 @@ int main(void)
             assert(dev.GspChannelHandle==0xc56f0001);
             assert(dev.GspCopyEngineHandle==0xc7b50001);
             assert(dev.GspCopyEngineType==11);
-            assert(dev.GspCopyVerified==(scenario==0||scenario==3||scenario==7));
+            assert(dev.GspFbLayoutValid==(scenario<9));
+            if(dev.GspFbLayoutValid) assert(dev.GspFbRegionCount==2&&dev.GspFbFreeBase==0x10000000&&dev.GspFbFreeLimit==0x1dfffffffULL);
+            else assert(dev.GspFbFreeBase==0&&dev.GspFbFreeLimit==0);
+            assert(dev.GspCopyVerified==(scenario==0||scenario==3||scenario==7||scenario>=9));
             assert(dev.GspAssertCount==7);
             assert(dev.GspChannelFaulted==(scenario==4));
         }

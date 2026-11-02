@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="98"
+NVX_TEST_VERSION="99"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
@@ -44,7 +44,7 @@ finish() {
     echo
     echo "==> Result log: $NVX_RUN_LOG"
     if [ -f "$NVX_RUN_LOG" ]; then
-        grep -E "Miniport Driver|\[SEC2\]|\[GSP\]|\[RM\]|\[COPY\]|\[RESET\]" "$NVX_RUN_LOG" | tail -80 || true
+        grep -E "Miniport Driver|\[SEC2\]|\[GSP\]|\[RM\]|\[COPY\]|\[FB\]|\[RESET\]" "$NVX_RUN_LOG" | tail -80 || true
         if grep -q 'RM INIT_DONE received' "$NVX_RUN_LOG"; then
             if grep -q 'GPU copy completed and verified' "$NVX_RUN_LOG"; then
                 echo "RESULT: GPU copy completion verified."
