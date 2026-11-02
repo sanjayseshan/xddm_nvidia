@@ -92,9 +92,9 @@ static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
 static BOOLEAN NvxGspAlloc(PNVX_DEVICE_EXTENSION dev,ULONG parent,ULONG object,
                           ULONG hclass,const void *params,ULONG bytes)
 {
-    ULONG payload[40]={0};
+    ULONG payload[128]={0};
     const ULONG *words=(const ULONG *)dev->RpcRxRecord;
-    if(bytes>128||(bytes&&!params)) return FALSE;
+    if(bytes>400||(bytes&&!params)) return FALSE;
     payload[0]=0xc1d00001;payload[1]=parent;payload[2]=object;payload[3]=hclass;payload[5]=bytes;
     if(bytes) VideoPortMoveMemory(payload+8,(PVOID)params,bytes);
     if(!NvxGspCall(dev,103,payload,32+bytes)) return FALSE;
@@ -102,6 +102,25 @@ static BOOLEAN NvxGspAlloc(PNVX_DEVICE_EXTENSION dev,ULONG parent,ULONG object,
     LogStr("NVX [RM]: allocation class=");LogHex(hclass);
     LogStr(" status=");LogHex(words[24]);LogStr("\n");
     return words[24]==0;
+}
+
+static BOOLEAN NvxGspControl(PNVX_DEVICE_EXTENSION dev,ULONG object,ULONG cmd,
+                            const void *params,ULONG bytes)
+{
+    ULONG payload[64]={0};
+    const ULONG *words=(const ULONG *)dev->RpcRxRecord;
+    if(bytes>128) return FALSE;
+    payload[0]=dev->GspClientHandle;
+    payload[1]=object;
+    payload[2]=cmd;
+    payload[3]=0; /* status */
+    payload[4]=bytes;
+    payload[5]=0; /* flags */
+    if(bytes&&params) VideoPortMoveMemory(payload+6,(PVOID)params,bytes);
+    if(!NvxGspCall(dev,76,payload,24+bytes)) return FALSE;
+    if(words[14]<56||words[20]!=payload[0]||words[21]!=object||
+       words[22]!=cmd||words[23]!=0) return FALSE;
+    return TRUE;
 }
 
 static BOOLEAN NvxGspGetName(PNVX_DEVICE_EXTENSION dev)
@@ -144,25 +163,53 @@ static BOOLEAN NvxGspRegisterScratch(PNVX_DEVICE_EXTENSION dev)
     LogStr("NVX [RM]: 64KB coherent scratch memory registered.\n");return TRUE;
 }
 
-static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
+static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
 {
-    /* NV_MEMORY_VIRTUAL_ALLOCATION_PARAMS: two U64, handle, padding. */
-    ULONG virtualMemory[6]={0x10000000,0,0x1000ffff,0,0,0};
-    /* NVOS46_PARAMETERS_v03_00: 56 bytes, dmaOffset at byte 40. */
-    ULONG map[14]={0};
-    const ULONG *reply=(const ULONG *)dev->RpcRxRecord;
-    virtualMemory[4]=dev->GspVaSpaceHandle;
-    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0x70000001,0x70,
-                   virtualMemory,sizeof(virtualMemory))) return FALSE;
-    dev->GspVirtualMemoryHandle=0x70000001;
-    map[0]=dev->GspClientHandle;map[1]=dev->GspDeviceHandle;
-    map[2]=dev->GspVirtualMemoryHandle;map[3]=dev->GspScratchMemoryHandle;
-    map[6]=GSP_SCRATCH_SIZE;map[8]=0x8000;map[10]=0x10000000;
-    if(!NvxGspCall(dev,14,map,sizeof(map))) return FALSE;
-    if(reply[14]<32+sizeof(map)||reply[20]!=map[0]||reply[21]!=map[1]||
-       reply[22]!=map[2]||reply[23]!=map[3]||reply[30]!=map[10]||reply[31]||reply[32]) return FALSE;
-    dev->GspScratchGpuVa=0x10000000;
-    LogStr("NVX [RM]: scratch memory mapped at GPU VA 0x10000000.\n");return TRUE;
+    /* NV_CHANNEL_ALLOC_PARAMS for 535.113.01: 360 bytes (90 ULONGs).
+       Allocate AMPERE_CHANNEL_GPFIFO_A (0xC56F) on Device. */
+    ULONG chan[90]={0};
+    ULONG bindEngine=9; /* COPY0 */
+    UCHAR schedEnable[2]={1, 0};
+    /* NVC0B5_ALLOCATION_PARAMETERS for AMPERE_DMA_COPY_A (0xC6B5): version=1, engineType=9 (COPY0). */
+    ULONG ceParams[2]={1, 9};
+
+    chan[2]=0x10000000; /* gpFifoOffset (U64) */
+    chan[4]=1024;       /* gpFifoEntries */
+    chan[5]=0x00200020; /* flags: CHANNEL_TYPE_PHYSICAL, PRIVILEGED, USERD_INDEX_PAGE_FIXED */
+    chan[7]=dev->GspVaSpaceHandle; /* hVASpace */
+    chan[32]=9;         /* engineType = NV2080_ENGINE_TYPE_COPY0 */
+    chan[34]=1;         /* subDeviceId */
+
+    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0xc56f0001,0xc56f,chan,sizeof(chan))) {
+        LogStr("NVX [RM]: AMPERE_CHANNEL_GPFIFO_A allocation failed.\n");
+        return FALSE;
+    }
+    dev->GspChannelHandle=0xc56f0001;
+    LogStr("NVX [RM]: AMPERE_CHANNEL_GPFIFO_A allocated.\n");
+
+    /* Bind channel to COPY0 engine */
+    if(!NvxGspControl(dev,dev->GspChannelHandle,0xa06f0104,&bindEngine,sizeof(bindEngine))) {
+        LogStr("NVX [RM]: NVA06F_CTRL_CMD_BIND failed.\n");
+        return FALSE;
+    }
+    LogStr("NVX [RM]: channel bound to COPY0.\n");
+
+    /* Schedule channel */
+    if(!NvxGspControl(dev,dev->GspChannelHandle,0xa06f0103,schedEnable,sizeof(schedEnable))) {
+        LogStr("NVX [RM]: NVA06F_CTRL_CMD_GPFIFO_SCHEDULE failed.\n");
+        return FALSE;
+    }
+    LogStr("NVX [RM]: channel scheduled.\n");
+
+    /* Allocate Copy Engine object AMPERE_DMA_COPY_A (0xC6B5) on Channel */
+    if(!NvxGspAlloc(dev,dev->GspChannelHandle,0xc6b50001,0xc6b5,ceParams,sizeof(ceParams))) {
+        LogStr("NVX [RM]: AMPERE_DMA_COPY_A allocation failed.\n");
+        return FALSE;
+    }
+    dev->GspCopyEngineHandle=0xc6b50001;
+    LogStr("NVX [RM]: AMPERE_DMA_COPY_A allocated.\n");
+
+    return TRUE;
 }
 
 static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
@@ -183,8 +230,8 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
     dev->GspVaSpaceHandle=0x90f10001;
     LogStr("NVX [RM]: private GPU virtual address space allocated.\n");
     if(!NvxGspRegisterScratch(dev)) return FALSE;
-    if(!NvxGspMapScratch(dev)) return FALSE;
-    LogStr("NVX [RM]: client, device and subdevice ready; rendering channels unavailable.\n");
+    if(!NvxGspAllocChannel(dev)) return FALSE;
+    LogStr("NVX [RM]: channel and copy engine ready; GPU acceleration initialized.\n");
     return TRUE;
 }
 
