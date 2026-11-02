@@ -288,6 +288,13 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG StatQueueSize;
     ULONG Reserved8;
     ULONG RpcSeqNumber;
+
+    /* FWSEC staging is kept alive on ambiguous DMA/Falcon timeouts. */
+    PVOID FwsecDmaAdapter;
+    PHYSICAL_ADDRESS FwsecDmaPhysical;
+    PVOID FwsecDmaVirtual;
+    ULONG FwsecDmaLength;
+    BOOLEAN FwsecFrtsReady;
 } NVX_DEVICE_EXTENSION, *PNVX_DEVICE_EXTENSION;
 
 /* GSP Firmware Blobs */

@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.45
+ * Driver Version: 1.0.0.46
  */
 
 #include "miniport.h"
@@ -129,7 +129,142 @@ static VOID NvxLogFwsecExecutionPlan(PUCHAR bar0,const NVX_FWSEC_INFO *info,
     LogStr("NVX [FWSEC-PLAN]: read-only execution plan complete; no GPU writes.\n");
 }
 
-static VOID NvxDryRunFwsecDmaStage(PVOID hwDeviceExtension,NVX_PROM_CONTEXT *prom,
+static BOOLEAN NvxWaitMask(PUCHAR bar0,ULONG offset,ULONG mask,ULONG expected,
+                           ULONG iterations,ULONG stallUs)
+{
+    while (iterations--) {
+        if ((VideoPortReadRegisterUlong((PULONG)(bar0+offset))&mask)==expected)
+            return TRUE;
+        VideoPortStallExecution(stallUs);
+    }
+    return FALSE;
+}
+
+static BOOLEAN NvxFwsecDma(PUCHAR bar0,uint64_t source,uint32_t destination,
+                            uint32_t memoryOffset,uint32_t size,uint32_t command,
+                            BOOLEAN *retainAllocation)
+{
+    uint32_t offset;
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x110110),(ULONG)(source>>8));
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x110128),(ULONG)((source>>40)&0x1ff));
+    for (offset=0;offset<size;offset+=0x100) {
+        VideoPortWriteRegisterUlong((PULONG)(bar0+0x110114),destination+offset);
+        VideoPortWriteRegisterUlong((PULONG)(bar0+0x11011c),memoryOffset+offset);
+        VideoPortWriteRegisterUlong((PULONG)(bar0+0x110118),command);
+        if (!NvxWaitMask(bar0,0x110118,2,2,20000,5)) {
+            *retainAllocation=TRUE;
+            LogStr("NVX [FWSEC-EXEC]: DMA timeout; allocation retained.\n");
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
+static BOOLEAN NvxExecuteFwsecFrts(PVOID hwDeviceExtension,PUCHAR bar0,
+                                    const NVX_FWSEC_INFO *info,
+                                    const NVX_FRTS_LAYOUT *layout,
+                                    PHYSICAL_ADDRESS physical,
+                                    BOOLEAN *retainAllocation)
+{
+    ULONG value,originalEngine,cpuCtl,lastCtl,iterations;
+    BOOLEAN sawRunning=FALSE,confirmedHalt=FALSE;
+    ULONG expectedLo=(ULONG)(layout->FrtsOffset>>12);
+    ULONG expectedHi=(ULONG)(layout->GspFwWprEnd>>12);
+    uint64_t imemSource=(uint64_t)physical.QuadPart-info->ImemVirtBase;
+    uint64_t dmemSource=(uint64_t)physical.QuadPart+info->ImemLoadSize;
+    PNVX_DEVICE_EXTENSION devExt=(PNVX_DEVICE_EXTENSION)hwDeviceExtension;
+    *retainAllocation=FALSE;
+    LogStr("NVX [FWSEC-EXEC]: beginning guarded GSP-Falcon FRTS execution.\n");
+
+    /* OpenRM treats RESET_READY as advisory on GA10x (bug 3419321). */
+    for (iterations=0;iterations<150;iterations++) {
+        if (VideoPortReadRegisterUlong((PULONG)(bar0+0x1100f4))&0x80000000U) break;
+        VideoPortStallExecution(1);
+    }
+    originalEngine=VideoPortReadRegisterUlong((PULONG)(bar0+0x1103c0));
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x1103c0),originalEngine|1U);
+    for (iterations=0;iterations<10;iterations++)
+        (void)VideoPortReadRegisterUlong((PULONG)(bar0+0x1103c0));
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x1103c0),originalEngine&~1U);
+    for (iterations=0;iterations<10;iterations++)
+        (void)VideoPortReadRegisterUlong((PULONG)(bar0+0x1103c0));
+    if (!NvxWaitMask(bar0,0x1100f4,0x1000,0,2000,10)) {
+        LogStr("NVX [FWSEC-EXEC]: reset scrub timeout before DMA.\n");return FALSE;
+    }
+    value=VideoPortReadRegisterUlong((PULONG)(bar0+0x1100f4));
+    if (!(value&0x400)) {
+        LogStr("NVX [FWSEC-EXEC]: GSP RISC-V/Falcon complex disabled.\n");return FALSE;
+    }
+    value=VideoPortReadRegisterUlong((PULONG)(bar0+0x111668));
+    if (value&0x10) {
+        VideoPortWriteRegisterUlong((PULONG)(bar0+0x111668),0);
+        if (!NvxWaitMask(bar0,0x111668,1,1,20000,5)) {
+            LogStr("NVX [FWSEC-EXEC]: Falcon core-select timeout before DMA.\n");return FALSE;
+        }
+    }
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x110084),
+        VideoPortReadRegisterUlong((PULONG)bar0));
+    value=VideoPortReadRegisterUlong((PULONG)(bar0+0x110624));
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x110624),value|0x80U);
+    value=VideoPortReadRegisterUlong((PULONG)(bar0+0x110600));
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x110600),(value&~7U)|5U);
+
+    if (!NvxFwsecDma(bar0,imemSource,info->ImemPhysBase,info->ImemVirtBase,
+                     info->ImemLoadSize,0x614,retainAllocation) ||
+        !NvxFwsecDma(bar0,dmemSource,info->DmemPhysBase,0,
+                     info->DmemLoadSize,0x600,retainAllocation)) return FALSE;
+
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x111210),info->PkcDataOffset);
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x11119c),info->EngineIdMask);
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x111198),info->UcodeId);
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x111180),1);
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x110104),info->ImemVirtBase);
+    cpuCtl=VideoPortReadRegisterUlong((PULONG)(bar0+0x110100));
+    if (cpuCtl&0x40) VideoPortWriteRegisterUlong((PULONG)(bar0+0x110130),2);
+    else VideoPortWriteRegisterUlong((PULONG)(bar0+0x110100),2);
+
+    lastCtl=cpuCtl;
+    for (iterations=0;iterations<40000;iterations++) {
+        ULONG ctl=VideoPortReadRegisterUlong((PULONG)(bar0+0x110100));
+        if (ctl!=lastCtl) {
+            LogStr("NVX [FWSEC-EXEC]: CPUCTL transition ");LogHex(lastCtl);
+            LogStr(" -> ");LogHex(ctl);LogStr("\n");lastCtl=ctl;
+        }
+        if (!(ctl&0x10)) sawRunning=TRUE;
+        if (ctl&0x10) {
+            ULONG wprLo=VideoPortReadRegisterUlong((PULONG)(bar0+0x1fa824));
+            ULONG wprHi=VideoPortReadRegisterUlong((PULONG)(bar0+0x1fa828));
+            if (sawRunning || ((wprLo>>4)==expectedLo && (wprHi>>4)==expectedHi)) {
+                confirmedHalt=TRUE;break;
+            }
+        }
+        VideoPortStallExecution(50);
+    }
+    if (!confirmedHalt) {
+        *retainAllocation=TRUE;
+        LogStr("NVX [FWSEC-EXEC]: no confirmed run-to-halt; allocation retained.\n");
+        return FALSE;
+    }
+    {
+        ULONG scratch=VideoPortReadRegisterUlong((PULONG)(bar0+0x1438));
+        ULONG wprLo=VideoPortReadRegisterUlong((PULONG)(bar0+0x1fa824));
+        ULONG wprHi=VideoPortReadRegisterUlong((PULONG)(bar0+0x1fa828));
+        LogStr("NVX [FWSEC-EXEC]: halted cpuctl=");LogHex(lastCtl);
+        LogStr(" mailbox0=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x110040)));
+        LogStr(" mailbox1=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x110044)));
+        LogStr(" scratch0e=");LogHex(scratch);
+        LogStr(" wpr2_lo=");LogHex(wprLo);LogStr(" wpr2_hi=");LogHex(wprHi);LogStr("\n");
+        if (((scratch>>16)&0xffffU)!=0 || (wprLo>>4)!=expectedLo ||
+            (wprHi>>4)!=expectedHi) {
+            LogStr("NVX [FWSEC-EXEC]: FRTS/WPR2 validation failed.\n");return FALSE;
+        }
+    }
+    devExt->FwsecFrtsReady=TRUE;
+    LogStr("NVX [FWSEC-EXEC]: FRTS initialized and WPR2 validated.\n");
+    return TRUE;
+}
+
+static VOID NvxFwsecDmaStageAndExecute(PVOID hwDeviceExtension,NVX_PROM_CONTEXT *prom,
                                    const NVX_FWSEC_INFO *info,
                                    const NVX_FRTS_LAYOUT *layout,
                                    uint32_t signatureOffset)
@@ -140,6 +275,8 @@ static VOID NvxDryRunFwsecDmaStage(PVOID hwDeviceExtension,NVX_PROM_CONTEXT *pro
     PVOID dmaAdapter=NULL;
     PUCHAR image=NULL;
     PHYSICAL_ADDRESS physical;
+    BOOLEAN retainAllocation=FALSE;
+    PNVX_DEVICE_EXTENSION devExt=(PNVX_DEVICE_EXTENSION)hwDeviceExtension;
     physical.QuadPart=0;
     if (!hwDeviceExtension||!prom||!info||!layout||!info->StoredSize||
         info->StoredSize>0x10000U||info->ImemLoadSize>info->StoredSize||
@@ -207,9 +344,20 @@ static VOID NvxDryRunFwsecDmaStage(PVOID hwDeviceExtension,NVX_PROM_CONTEXT *pro
     LogStr("NVX [FWSEC-DMA]: sig_dmem=");LogHex(info->PkcDataOffset);
     LogStr(" mapper_dmem=");LogHex(info->DmemMapperOffset);
     LogStr(" init_cmd=0x15 cmd_dmem=");LogHex(info->CommandInOffset);
-    LogStr(" bytes=0x2C coherent DMA dry-run complete; no GPU writes.\n");
+    LogStr(" bytes=0x2C coherent DMA staging complete; guarded execution follows.\n");
     NvxLogFwsecExecutionPlan(prom->Bar0,info,physical);
+    if (!NvxExecuteFwsecFrts(hwDeviceExtension,prom->Bar0,info,layout,physical,
+                             &retainAllocation))
+        LogStr("NVX [FWSEC-EXEC]: execution did not validate; GSP boot remains blocked.\n");
 cleanup:
+    if (retainAllocation) {
+        devExt->FwsecDmaAdapter=dmaAdapter;
+        devExt->FwsecDmaPhysical=physical;
+        devExt->FwsecDmaVirtual=image;
+        devExt->FwsecDmaLength=dmaLength;
+        LogStr("NVX [FWSEC-DMA]: retained for hardware safety; not scrubbed or freed.\n");
+        return;
+    }
     VideoPortZeroMemory(image,dmaLength);
     VideoPortFreeCommonBuffer(hwDeviceExtension,dmaLength,image,physical,TRUE);
     VideoPortPutDmaAdapter(hwDeviceExtension,dmaAdapter);
@@ -334,8 +482,8 @@ static VOID NvxProbeFwsecRom(PVOID hwDeviceExtension,PUCHAR bar0)
             } else LogStr("NVX [FRTS]: layout invalid; execution remains blocked.\n");
         }
         if (signatureSelected&&frtsLayoutValid)
-            NvxDryRunFwsecDmaStage(hwDeviceExtension,&prom,&info,&frtsLayout,
-                                   selectedSignatureOffset);
+            NvxFwsecDmaStageAndExecute(hwDeviceExtension,&prom,&info,&frtsLayout,
+                                      selectedSignatureOffset);
     }
 }
 
@@ -797,7 +945,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.45\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.46\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

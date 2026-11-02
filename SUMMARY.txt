@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.45 FWSEC reset/core-plan dry-run / v1.0.0.33 rollback baseline
+NVIDIA GA104 XDDM DRIVER — v1.0.0.46 guarded FWSEC-FRTS execution / v1.0.0.33 rollback baseline
 Updated: November 1, 2026
 
 Latest hardware result
@@ -246,6 +246,15 @@ v45 closes the last read-only reset-plan gap by logging the GSP RISC-V CPUCTL
 and BCR registers. It records the OpenRM sequence that will assert/deassert the
 GSP engine reset, select the Falcon core through BCR, wait for BCR valid, and
 set FBIF TRANSCFG0 to coherent physical sysmem. It still performs no writes.
+
+v45 hardware result and changes in v46
+--------------------------------------
+v45 passed on attempt 3 in test_logs/v45-retry3.log. BCR was 1 (valid with the
+Falcon core already selected) and RISC-V CPUCTL was inactive at 0x10. v46 is
+the first guarded write-enabled FWSEC stage. It follows matching OpenRM's
+GA102 coherent-sysmem DMA and BROM sequence and validates scratch/WPR2 after
+halt. Any ambiguous DMA or execution timeout retains the coherent allocation
+and DMA adapter instead of risking use-after-free.
 
 Important corrections
 ----------------------

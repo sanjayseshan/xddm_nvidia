@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="45"
+NVX_TEST_VERSION="46"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
@@ -12,7 +12,7 @@ if [ -f "$NVX_ROOT/vm_serial.log" ]; then
     cp "$NVX_ROOT/vm_serial.log" "$NVX_ARCHIVE/before-v$NVX_TEST_VERSION-$NVX_STAMP.log"
 fi
 
-echo "==> Running host tests and building FWSEC reset/core-plan dry-run v$NVX_TEST_VERSION"
+echo "==> Running host tests and building guarded FWSEC-FRTS execution v$NVX_TEST_VERSION"
 if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
     sudo -u "$SUDO_USER" make -C "$NVX_ROOT/src_driver" check package-full
 else
@@ -43,7 +43,13 @@ finish() {
     echo "==> Result log: $NVX_RUN_LOG"
     if [ -f "$NVX_RUN_LOG" ]; then
         grep -E "Miniport Driver|\[SEC2\]|\[GSP\]|\[RESET\]" "$NVX_RUN_LOG" | tail -80 || true
-        if grep -q "NVX \[FWSEC-DMA\]: buffer scrubbed and released" "$NVX_RUN_LOG"; then
+        if grep -q "NVX \[FWSEC-EXEC\]: FRTS initialized and WPR2 validated" "$NVX_RUN_LOG"; then
+            echo "RESULT: FWSEC executed; FRTS and WPR2 validation passed."
+        elif grep -q "retained for hardware safety" "$NVX_RUN_LOG"; then
+            echo "RESULT: FWSEC completion was ambiguous; DMA storage was safely retained."
+        elif grep -q "execution did not validate" "$NVX_RUN_LOG"; then
+            echo "RESULT: FWSEC halted/failed validation; GSP boot remained blocked."
+        elif grep -q "NVX \[FWSEC-DMA\]: buffer scrubbed and released" "$NVX_RUN_LOG"; then
             echo "RESULT: coherent FWSEC DMA staging passed and the buffer was released."
         elif grep -q "NVX \[FWSEC\]: desc=" "$NVX_RUN_LOG"; then
             echo "RESULT: complete PROM and FWSEC descriptor parsed read-only."
