@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.46 guarded FWSEC-FRTS execution / v1.0.0.33 rollback baseline
+NVIDIA GA104 XDDM DRIVER — v1.0.0.47 FWSEC start-state diagnostic / v1.0.0.33 rollback baseline
 Updated: November 1, 2026
 
 Latest hardware result
@@ -255,6 +255,16 @@ the first guarded write-enabled FWSEC stage. It follows matching OpenRM's
 GA102 coherent-sysmem DMA and BROM sequence and validates scratch/WPR2 after
 halt. Any ambiguous DMA or execution timeout retains the coherent allocation
 and DMA adapter instead of risking use-after-free.
+
+v46 hardware result and changes in v47
+--------------------------------------
+v46 was display-safe at 1920x1080x32 but FWSEC did not start: after all IMEM and
+DMEM DMA transfers, CPUCTL changed from halted 0x10 to 0x12 and stayed there.
+No run-to-halt or WPR2 evidence appeared, so the driver correctly retained the
+DMA allocation and adapter. Windows shut down normally through ACPI. v47 adds
+full pre-start and timeout state readbacks to distinguish rejected BROM inputs,
+core/start state, or an unreported DMA/authentication issue without weakening
+the retention rule.
 
 Important corrections
 ----------------------

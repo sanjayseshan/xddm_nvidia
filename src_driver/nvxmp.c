@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.46
+ * Driver Version: 1.0.0.47
  */
 
 #include "miniport.h"
@@ -160,6 +160,32 @@ static BOOLEAN NvxFwsecDma(PUCHAR bar0,uint64_t source,uint32_t destination,
     return TRUE;
 }
 
+static VOID NvxLogFwsecExecState(PUCHAR bar0,const char *where)
+{
+    LogStr("NVX [FWSEC-STATE]: ");LogStr(where);
+    LogStr(" engine=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x1103c0)));
+    LogStr(" hwcfg2=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x1100f4)));
+    LogStr(" cpuctl=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x110100)));
+    LogStr(" bootvec=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x110104)));
+    LogStr(" dmactl=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x11010c)));
+    LogStr(" dmacmd=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x110118)));
+    LogStr(" irqstat=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x110008)));
+    LogStr("\nNVX [FWSEC-STATE]: mailbox0=");
+    LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x110040)));
+    LogStr(" mailbox1=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x110044)));
+    LogStr(" riscv_cpuctl=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x111388)));
+    LogStr(" bcr=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x111668)));
+    LogStr(" mod_sel=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x111180)));
+    LogStr(" ucode_id=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x111198)));
+    LogStr(" engidmask=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x11119c)));
+    LogStr(" paraaddr=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x111210)));
+    LogStr("\nNVX [FWSEC-STATE]: scratch0e=");
+    LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x1438)));
+    LogStr(" wpr2_lo=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x1fa824)));
+    LogStr(" wpr2_hi=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x1fa828)));
+    LogStr("\n");
+}
+
 static BOOLEAN NvxExecuteFwsecFrts(PVOID hwDeviceExtension,PUCHAR bar0,
                                     const NVX_FWSEC_INFO *info,
                                     const NVX_FRTS_LAYOUT *layout,
@@ -219,6 +245,7 @@ static BOOLEAN NvxExecuteFwsecFrts(PVOID hwDeviceExtension,PUCHAR bar0,
     VideoPortWriteRegisterUlong((PULONG)(bar0+0x111198),info->UcodeId);
     VideoPortWriteRegisterUlong((PULONG)(bar0+0x111180),1);
     VideoPortWriteRegisterUlong((PULONG)(bar0+0x110104),info->ImemVirtBase);
+    NvxLogFwsecExecState(bar0,"before start");
     cpuCtl=VideoPortReadRegisterUlong((PULONG)(bar0+0x110100));
     if (cpuCtl&0x40) VideoPortWriteRegisterUlong((PULONG)(bar0+0x110130),2);
     else VideoPortWriteRegisterUlong((PULONG)(bar0+0x110100),2);
@@ -242,6 +269,7 @@ static BOOLEAN NvxExecuteFwsecFrts(PVOID hwDeviceExtension,PUCHAR bar0,
     }
     if (!confirmedHalt) {
         *retainAllocation=TRUE;
+        NvxLogFwsecExecState(bar0,"unconfirmed completion");
         LogStr("NVX [FWSEC-EXEC]: no confirmed run-to-halt; allocation retained.\n");
         return FALSE;
     }
@@ -945,7 +973,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.46\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.47\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));
