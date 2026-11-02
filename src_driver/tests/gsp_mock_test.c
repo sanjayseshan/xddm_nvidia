@@ -1,5 +1,6 @@
 /* User-mode harness for the real GSP bootstrap, with VideoPort/MMIO mocked. */
 #include "nvx_gsp.h"
+#include "nvx_rpc.h"
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,6 +53,15 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
     if((off==NV_PSEC_FALCON_CPUCTL || off==NV_PSEC_FALCON_CPUCTL_ALIAS) && value==2) {
         assert((scenario==3) == (off==NV_PSEC_FALCON_CPUCTL_ALIAS));
         cpuStarts++;
+        {
+            NVX_MSGQ_HEADER *cmd=dev.CmdQueueVirtual;
+            uint32_t f,r,s;
+            assert(cmd->WritePtr==2);
+            assert(NvxDecodeRpc((PUCHAR)cmd+4096,4096,&f,&r,&s));
+            assert(f==72&&s==0&&r==0xffffffffU);
+            assert(NvxDecodeRpc((PUCHAR)cmd+8192,4096,&f,&r,&s));
+            assert(f==73&&s==1);
+        }
         regs[NV_PSEC_FALCON_CPUCTL/4]=0x10; /* may finish before driver observes RUNNING */
         if(scenario==0 || scenario==3) {
             volatile GSP_FW_WPR_META_V1 *meta=(void *)((PUCHAR)dev.GspDmaVirtual+GSP_WPR_META_OFFSET);

@@ -437,7 +437,12 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
             LogStr("NVX [RPC]: prepared SYSTEM_INFO bytes=");LogHex(sizeof(sys));
             LogStr(" BAR0=");LogHex(sys.gpuPhysAddr);LogStr(" BAR1=");LogHex(sys.gpuPhysFbAddr);
             LogStr(" INST=");LogHex(sys.gpuPhysInstAddr);LogStr(" DBDF=");LogHex(sys.dbdf);
-            LogStr("; empty REGISTRY prepared, queue unpublished.\n");
+            LogStr("; empty REGISTRY prepared.\n");
+            /* Publish both complete slots before Booter can start RM. */
+            __sync_synchronize();
+            cmd->WritePtr=2;
+            __sync_synchronize();
+            LogStr("NVX [RPC]: published startup SYSTEM_INFO then REGISTRY; write=2.\n");
         }
     }
     PLIBOS_MEMORY_REGION_INIT_ARGUMENT libosArgs = (PLIBOS_MEMORY_REGION_INIT_ARGUMENT)((PUCHAR)devExt->GspDmaVirtual+GSP_LIBOS_ARGS_OFFSET);
