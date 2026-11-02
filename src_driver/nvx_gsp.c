@@ -644,7 +644,36 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
         }
         VideoPortStallExecution(100);
     }
-    LogStr("NVX [GSP]: RM INIT_DONE timeout. FWSEC-FRTS and RM event handling remain required.\n");
+    LogStr("NVX [GSP]: RM INIT_DONE timeout; capturing bounded startup diagnostics.\n");
+    {
+        volatile ULONG *queue=(volatile ULONG *)devExt->StatQueueVirtual;
+        ULONG i,j;
+        LogStr("NVX [RM-DIAG]: status queue header");
+        for (i=0;i<9;i++) { LogStr(" ");LogHex(queue[i]); }
+        LogStr("\n");
+        for (i=0;i<3;i++) {
+            volatile UCHAR *log=(volatile UCHAR *)devExt->GspDmaVirtual+
+                0x2581000ULL+(ULONG64)i*0x10000;
+            ULONG nonzero=0,printed=0;
+            LogStr("NVX [RM-DIAG]: log index=");LogHex(i);
+            LogStr(" header");
+            for (j=0;j<8;j++) { LogStr(" ");LogHex(((volatile ULONG64 *)log)[j]); }
+            LogStr("\nNVX [RM-DIAG]: printable log bytes: ");
+            for (j=128;j<65536;j++) {
+                UCHAR c=log[j];
+                if (c) nonzero++;
+                if (printed<2048 && ((c>=32 && c<127)||c=='\n'||c=='\t')) {
+                    char s[2]={(char)c,0};LogStr(s);printed++;
+                }
+            }
+            LogStr("\nNVX [RM-DIAG]: nonzero_bytes=");LogHex(nonzero);LogStr("\n");
+        }
+        LogStr("NVX [RM-DIAG]: riscv=");
+        LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_RISCV_STAT)));
+        LogStr(" mailbox0=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_MAILBOX0)));
+        LogStr(" mailbox1=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_MAILBOX1)));
+        LogStr("\n");
+    }
     return FALSE;
 }
 
