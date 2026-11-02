@@ -298,6 +298,9 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG64 VerifiedFrtsOffset;
     ULONG64 VerifiedWprEnd;
     ULONG64 VerifiedVgaWorkspaceOffset;
+    PHYSICAL_ADDRESS PhysicalInstBar;
+    ULONG PciBusNumber;
+    ULONG PciSlot;
 } NVX_DEVICE_EXTENSION, *PNVX_DEVICE_EXTENSION;
 
 /* GSP Firmware Blobs */

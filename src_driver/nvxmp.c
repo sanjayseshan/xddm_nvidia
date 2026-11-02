@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.55
+ * Driver Version: 1.0.0.56
  */
 
 #include "miniport.h"
@@ -643,8 +643,9 @@ VP_STATUS HwVidFindAdapter(
         accessRanges,
         NULL,
         NULL,
-        NULL
+        &devExt->PciSlot
     );
+    devExt->PciBusNumber=ConfigInfo->SystemIoBusNumber;
 
     LogStr("NVX: VideoPortGetAccessRanges status: ");
     LogHex(status);
@@ -690,6 +691,8 @@ VP_STATUS HwVidFindAdapter(
             } else if (devExt->PhysicalBar1.QuadPart == 0 && accessRanges[i].RangeLength >= 0x4000000) {
                 devExt->PhysicalBar1 = accessRanges[i].RangeStart;
                 devExt->Bar1Length = accessRanges[i].RangeLength;
+            } else if (devExt->PhysicalInstBar.QuadPart==0) {
+                devExt->PhysicalInstBar=accessRanges[i].RangeStart;
             }
         }
     }
@@ -995,7 +998,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.55\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.56\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

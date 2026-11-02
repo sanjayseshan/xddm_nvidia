@@ -9,6 +9,7 @@
 
 #include "nvx_gsp.h"
 #include "nvx_fw.h"
+#include "nvx_rpc.h"
 #include <stddef.h>
 #include "bootloader_blob.h"
 #include "booter_load_blob.h"
@@ -416,6 +417,28 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
         devExt->CmdQueueVirtual = cmd;
         devExt->StatQueueVirtual = (PUCHAR)devExt->GspDmaVirtual+GSP_STAT_QUEUE_OFFSET;
         devExt->CmdQueueSize = devExt->StatQueueSize = 0x40000;
+        {
+            NVX_SYSTEM_INFO_535 sys;
+            ULONG registry[2]={8,0};
+            PUCHAR entries=(PUCHAR)cmd+4096;
+            VideoPortZeroMemory(&sys,sizeof(sys));
+            sys.gpuPhysAddr=devExt->PhysicalBar0.QuadPart;
+            sys.gpuPhysFbAddr=devExt->PhysicalBar1.QuadPart;
+            sys.gpuPhysInstAddr=devExt->PhysicalInstBar.QuadPart;
+            sys.dbdf=((ULONG64)devExt->PciBusNumber<<8)|(devExt->PciSlot&31U);
+            /* Conservative user VA ceiling until OS capabilities are plumbed. */
+            sys.maxUserVa=0x7ffeffffULL;
+            sys.mirrorBase=0x88000;sys.mirrorSize=0x1000;
+            sys.hypervisor=3;sys.passthrough=TRUE;
+            if (!NvxEncodeRpc(entries,4096,72,0,&sys,sizeof(sys)) ||
+                !NvxEncodeRpc(entries+4096,4096,73,1,registry,sizeof(registry))) {
+                LogStr("NVX [RPC]: startup packet preparation failed.\n");return FALSE;
+            }
+            LogStr("NVX [RPC]: prepared SYSTEM_INFO bytes=");LogHex(sizeof(sys));
+            LogStr(" BAR0=");LogHex(sys.gpuPhysAddr);LogStr(" BAR1=");LogHex(sys.gpuPhysFbAddr);
+            LogStr(" INST=");LogHex(sys.gpuPhysInstAddr);LogStr(" DBDF=");LogHex(sys.dbdf);
+            LogStr("; empty REGISTRY prepared, queue unpublished.\n");
+        }
     }
     PLIBOS_MEMORY_REGION_INIT_ARGUMENT libosArgs = (PLIBOS_MEMORY_REGION_INIT_ARGUMENT)((PUCHAR)devExt->GspDmaVirtual+GSP_LIBOS_ARGS_OFFSET);
     PHYSICAL_ADDRESS libosPhys;

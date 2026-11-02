@@ -1,5 +1,8 @@
 /* NVIDIA OpenRM 535 message_queue_priv.h / rpc-message-header ABI. */
 #include "nvx_rpc.h"
+_Static_assert(sizeof(NVX_SYSTEM_INFO_535)==664,"535 system info ABI");
+_Static_assert(offsetof(NVX_SYSTEM_INFO_535,acpi)==120,"535 ACPI offset");
+_Static_assert(offsetof(NVX_SYSTEM_INFO_535,timerOffset)==616,"535 timer offset");
 static uint32_t get32(const uint8_t *p)
 { return p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24; }
 static void put32(uint8_t *p,uint32_t v)
