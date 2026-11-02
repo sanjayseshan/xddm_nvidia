@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.48 queue-safe FWSEC DMA / v1.0.0.33 rollback baseline
+NVIDIA GA104 XDDM DRIVER — v1.0.0.49 no-block-bind FWSEC DMA / v1.0.0.33 rollback baseline
 Updated: November 1, 2026
 
 Latest hardware result
@@ -274,6 +274,14 @@ DMACTL had changed from baseline 0x80 to 0x110001. Newer OpenRM explicitly warns
 that writing DMA base/control registers while the request queue is full corrupts
 the transfer. v48 adopts its exact discipline: wait queue-not-full before base
 and each request, enqueue 256-byte blocks, then wait for engine-idle once.
+
+v48 hardware result and changes in v49
+--------------------------------------
+v48 stopped request corruption, but its first DMA request filled the queue and
+never drained. Matching OpenRM shows why: disabling the context requirement is
+a two-register operation. In addition to FBIF ALLOW_PHYS_NO_CTX, it writes
+Falcon DMACTL=0 so requests can issue without a block bind. v49 adds that exact
+missing write before the queue-safe DMA sequence.
 
 Important corrections
 ----------------------

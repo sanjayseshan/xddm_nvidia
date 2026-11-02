@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.48
+ * Driver Version: 1.0.0.49
  */
 
 #include "miniport.h"
@@ -155,7 +155,11 @@ static BOOLEAN NvxFwsecDma(PUCHAR bar0,uint64_t source,uint32_t destination,
     for (offset=0;offset<size;offset+=0x100) {
         if (!NvxWaitMask(bar0,0x110118,1,0,20000,5)) {
             *retainAllocation=TRUE;
-            LogStr("NVX [FWSEC-EXEC]: DMA request queue stayed full; allocation retained.\n");
+            LogStr("NVX [FWSEC-EXEC]: DMA request queue stayed full at offset=");
+            LogHex(offset);LogStr(" dmacmd=");
+            LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x110118)));
+            LogStr(" dmactl=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x11010c)));
+            LogStr("; allocation retained.\n");
             return FALSE;
         }
         VideoPortWriteRegisterUlong((PULONG)(bar0+0x110114),destination+offset);
@@ -242,6 +246,8 @@ static BOOLEAN NvxExecuteFwsecFrts(PVOID hwDeviceExtension,PUCHAR bar0,
         VideoPortReadRegisterUlong((PULONG)bar0));
     value=VideoPortReadRegisterUlong((PULONG)(bar0+0x110624));
     VideoPortWriteRegisterUlong((PULONG)(bar0+0x110624),value|0x80U);
+    /* OpenRM also clears DMACTL to permit requests without a block bind. */
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x11010c),0);
     value=VideoPortReadRegisterUlong((PULONG)(bar0+0x110600));
     VideoPortWriteRegisterUlong((PULONG)(bar0+0x110600),(value&~7U)|5U);
 
@@ -983,7 +989,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.48\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.49\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));
