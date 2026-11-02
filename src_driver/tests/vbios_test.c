@@ -39,23 +39,35 @@ static void fwsec_v3(unsigned char *p,uint32_t table,uint32_t desc,uint32_t desc
 {
     p[table]=1;p[table+1]=6;p[table+2]=6;p[table+3]=1;p[table+4]=3;p[table+5]=44;
     p[table+6]=0x85;p[table+7]=1;p32(p,table+8,descRel);
-    p32(p,desc,0x002c0301);p32(p,desc+4,0x100);p32(p,desc+8,0x20);
-    p32(p,desc+12,0x40);p32(p,desc+20,0x80);p32(p,desc+32,0x80);
-    p16(p,desc+36,1);p[desc+38]=3;p[desc+39]=2;p16(p,desc+40,3);
+    p32(p,desc,0x01ac0301);p32(p,desc+4,0x500);p32(p,desc+8,0x280);
+    p32(p,desc+12,0x10);p32(p,desc+16,0);p32(p,desc+20,0x100);
+    p32(p,desc+24,0);p32(p,desc+28,0);p32(p,desc+32,0x400);
+    p16(p,desc+36,1);p[desc+38]=3;p[desc+39]=1;p16(p,desc+40,1);
+    {
+        uint32_t image=desc+0x1ac,dmem=image+0x100,iface=dmem+0x10,mapper=dmem+0x30;
+        p[iface]=1;p[iface+1]=4;p[iface+2]=8;p[iface+3]=2;
+        p32(p,iface+4,1);p32(p,iface+8,0);
+        p32(p,iface+12,4);p32(p,iface+16,0x30);
+        p32(p,mapper,0xfaceb00c);p16(p,mapper+4,3);p16(p,mapper+6,64);
+        p32(p,mapper+8,0x100);p32(p,mapper+12,0x40);
+        p32(p,mapper+16,0x140);p32(p,mapper+20,0x40);
+    }
 }
 int main(void)
 {
     unsigned char rom[0x1000]; MEM m={rom,sizeof(rom)}; NVX_FWSEC_INFO f;
     FILE *in; unsigned char *captured; long size;
-    memset(rom,0,sizeof(rom));image(rom,0,1,0,0);image(rom,0x200,2,0xe0,0x80);
+    memset(rom,0,sizeof(rom));image(rom,0,1,0,0);image(rom,0x200,4,0xe0,0x80);
     bit_header(rom,0x80,0xa0,0x100);fwsec_v3(rom,0x100,0x140,0x140);
     assert(NvxParseFwsecRom(read32,&m,sizeof(rom),&f)==NVX_VBIOS_OK);
-    assert(f.BiosSize==0x600&&f.BitOffset==0x80&&f.FalconTableOffset==0x100);
-    assert(f.DescriptorVersion==3&&f.DescriptorOffset==0x140&&f.ImageOffset==0x16c);
-    assert(f.StoredSize==0x100&&f.ImemLoadSize==0x80&&f.DmemLoadSize==0x80);
-    assert(f.ApplicationId==0x85&&f.UcodeId==3&&f.SignatureCount==2);
+    assert(f.BiosSize==0xa00&&f.BitOffset==0x80&&f.FalconTableOffset==0x100);
+    assert(f.DescriptorVersion==3&&f.DescriptorOffset==0x140&&f.ImageOffset==0x2ec);
+    assert(f.StoredSize==0x500&&f.ImemLoadSize==0x100&&f.DmemLoadSize==0x400);
+    assert(f.ApplicationId==0x85&&f.UcodeId==3&&f.SignatureCount==1);
+    assert(f.SignaturesSize==384&&f.DmemImageOffset==0x3ec&&f.InterfaceImageOffset==0x3fc);
+    assert(f.DmemMapperOffset==0x30&&f.CommandInOffset==0x100&&f.CommandOutOffset==0x140);
     p32(rom,0x144,0xfffffff0);assert(NvxParseFwsecRom(read32,&m,sizeof(rom),&f)==NVX_VBIOS_BAD_DESCRIPTOR);
-    p32(rom,0x144,0x100);rom[0x8b]++;assert(NvxParseFwsecRom(read32,&m,sizeof(rom),&f)==NVX_VBIOS_NO_BIT);
+    p32(rom,0x144,0x500);rom[0x8b]++;assert(NvxParseFwsecRom(read32,&m,sizeof(rom),&f)==NVX_VBIOS_NO_BIT);
     rom[0x8b]--;assert(NvxParseFwsecRom(read32,&m,0x200,&f)==NVX_VBIOS_INVALID_ROM);
 
     /* Reproduce the v35 live layout: a base image, a public EFI image, then
@@ -73,9 +85,12 @@ int main(void)
         assert(NvxParseFwsecRom(read32,&m,n,&f)==NVX_VBIOS_OK);
         assert(f.BiosSize==n&&f.ExpansionRomOffset==expansion);
         assert(f.BitOffset==0x1b0&&f.FalconTableOffset==table);
-        assert(f.DescriptorOffset==desc&&f.ImageOffset==desc+44);
+        assert(f.DescriptorOffset==desc&&f.ImageOffset==desc+0x1ac);
+        assert(f.SignaturesSize==384&&f.DmemMapperOffset==0x30);
         privateRom[0x26800]=0x34;
         assert(NvxParseFwsecRom(read32,&m,n,&f)==NVX_VBIOS_INVALID_ROM);
+        privateRom[0x26800]=0x56;privateRom[desc+0x1ac+0x100+0x10]=2;
+        assert(NvxParseFwsecRom(read32,&m,n,&f)==NVX_VBIOS_BAD_INTERFACE);
         free(privateRom);
     }
     in=fopen("../firmware/ga104-vbios.rom","rb");

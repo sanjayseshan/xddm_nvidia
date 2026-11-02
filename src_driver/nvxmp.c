@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.36
+ * Driver Version: 1.0.0.37
  */
 
 #include "miniport.h"
@@ -93,6 +93,20 @@ static VOID NvxProbeFwsecRom(PUCHAR bar0)
         LogStr(" interface=");LogHex(info.InterfaceOffset);
         LogStr(" ucode=");LogHex(info.UcodeId);
         LogStr(" signatures=");LogHex(info.SignatureCount);LogStr("\n");
+        LogStr("NVX [FWSEC]: pkc_dmem=");LogHex(info.PkcDataOffset);
+        LogStr(" sig_bytes=");LogHex(info.SignaturesSize);
+        LogStr(" sig_versions=");LogHex(info.SignatureVersions);
+        LogStr(" sig_crc32=");LogHex(info.SignaturesCrc32);
+        LogStr(" image_crc32=");LogHex(info.ImageCrc32);LogStr("\n");
+        LogStr("NVX [FWSEC]: interface_image=");LogHex(info.InterfaceImageOffset);
+        LogStr(" iface_v=");LogHex(info.InterfaceVersion);
+        LogStr(" entries=");LogHex(info.InterfaceEntryCount);
+        LogStr(" mapper_dmem=");LogHex(info.DmemMapperOffset);
+        LogStr(" mapper_v=");LogHex(info.DmemMapperVersion);LogStr("\n");
+        LogStr("NVX [FWSEC]: cmd_in=");LogHex(info.CommandInOffset);
+        LogStr(" size=");LogHex(info.CommandInSize);
+        LogStr(" cmd_out=");LogHex(info.CommandOutOffset);
+        LogStr(" size=");LogHex(info.CommandOutSize);LogStr("\n");
     }
 }
 
@@ -554,7 +568,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.36\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.37\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

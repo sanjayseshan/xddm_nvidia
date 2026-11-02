@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.36 private-ROM diagnostic / v1.0.0.33 verified display
+NVIDIA GA104 XDDM DRIVER — v1.0.0.37 FWSEC structure diagnostic / v1.0.0.33 verified display
 Updated: November 1, 2026
 
 Latest hardware result
@@ -114,6 +114,20 @@ private signatures and all previous bounds/checksum cases remain rejected.
 No Falcon, SEC2, GSP, or display-engine writes were enabled. The hardware test
 should either print a fully bounded FWSEC descriptor or a more specific parser
 status while preserving the 1920x1080x32 VBE desktop.
+
+v36 hardware result and changes in v37
+--------------------------------------
+v36 passed: the live ROM is 0x89000 bytes, its expansion bias is 0x16a00, the
+Falcon table is at 0x88d83, and the production FWSEC v3 descriptor parses at
+0x43234. Its 0x4ac-byte descriptor contains 0x480 bytes after the 44-byte v3
+header, exactly three 384-byte RSA-3K signatures. Its 0xe100-byte IMEM plus
+0x800-byte DMEM exactly equals the 0xe900-byte stored image.
+
+v37 validates those relationships, the PKC signature destination, the DMEM
+application-interface header and entries, the required DMEM-mapper entry, and
+the mapper command-buffer bounds. It logs CRC32 identities for the signature
+table and stored image for repeatable read-only comparison. It still performs
+no Falcon, SEC2, GSP, or display-engine writes.
 
 Important corrections
 ----------------------

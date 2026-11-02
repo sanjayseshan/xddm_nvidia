@@ -62,6 +62,27 @@ static int add(uint32_t a, uint32_t b, uint32_t limit, uint32_t *out)
     return 1;
 }
 
+static int range_fits(uint32_t offset, uint32_t size, uint32_t limit)
+{
+    return offset <= limit && size <= limit - offset;
+}
+
+static int crc32_range(READER *r, uint32_t offset, uint32_t size, uint32_t *result)
+{
+    uint32_t crc=0xffffffffU, i;
+    uint8_t value;
+    if (!result || !range_fits(offset,size,r->Limit)) return 0;
+    for (i=0; i<size; i++) {
+        unsigned bit;
+        if (!rd8(r,offset+i,&value)) return 0;
+        crc^=value;
+        for (bit=0; bit<8; bit++)
+            crc=(crc>>1)^((0U-(crc&1U))&0xedb88320U);
+    }
+    *result=crc^0xffffffffU;
+    return 1;
+}
+
 static int valid_rom_signature(uint16_t sig)
 {
     /* Public PCI ROM, NVIDIA private ROM ("VN" as a little-endian word),
@@ -154,8 +175,8 @@ int NvxParseFwsecRom(NVX_ROM_READ32 read32, void *context,
         !add(bit,headerSize,info->BiosSize,&tokenBase)) return NVX_VBIOS_NO_BIT;
     for (i=0; i<tokenCount; i++) {
         uint32_t tok; uint8_t id, ver; uint16_t size, ptr;
-        if (i > (info->BiosSize-tokenBase)/tokenSize) return NVX_VBIOS_NO_BIT;
-        tok=tokenBase+i*tokenSize;
+        if (!add(tokenBase,i*tokenSize,info->BiosSize,&tok) ||
+            !range_fits(tok,6,info->BiosSize)) return NVX_VBIOS_NO_BIT;
         if (!rd8(&r,tok,&id)||!rd8(&r,tok+1,&ver)||!rd16(&r,tok+2,&size)||!rd16(&r,tok+4,&ptr))
             return NVX_VBIOS_IO_ERROR;
         if (id==0x42 && (ver==1||ver==2) && size>=5) {
@@ -173,8 +194,8 @@ int NvxParseFwsecRom(NVX_ROM_READ32 read32, void *context,
         tableVersion!=1||tableHeader<6||entrySize<6) return NVX_VBIOS_NO_FWSEC;
     for (i=0; i<entryCount; i++) {
         uint32_t entry; uint8_t app,target;
-        if (i > (info->BiosSize-table-tableHeader)/entrySize) return NVX_VBIOS_NO_FWSEC;
-        entry=table+tableHeader+i*entrySize;
+        if (!add(table,tableHeader+i*entrySize,info->BiosSize,&entry) ||
+            !range_fits(entry,6,info->BiosSize)) return NVX_VBIOS_NO_FWSEC;
         if (!rd8(&r,entry,&app)||!rd8(&r,entry+1,&target)||!u32at(&r,entry+2,&descRel))
             return NVX_VBIOS_IO_ERROR;
         if (app!=0x05 && app!=0x85) continue;
@@ -190,13 +211,70 @@ int NvxParseFwsecRom(NVX_ROM_READ32 read32, void *context,
         info->DescriptorOffset=desc; info->ApplicationId=app; info->TargetId=target;
         if (!u32at(&r,desc+4,&info->StoredSize)) return NVX_VBIOS_BAD_DESCRIPTOR;
         if (info->DescriptorVersion==3) {
-            if (!u32at(&r,desc+12,&info->InterfaceOffset)||
+            uint32_t signaturesEnd, dmemEnd, pkcEnd, interfaceEnd;
+            uint32_t mapperImage, mapperEnd;
+            uint32_t entryBase;
+            int foundMapper=0;
+            if (!u32at(&r,desc+8,&info->PkcDataOffset)||
+                !u32at(&r,desc+12,&info->InterfaceOffset)||
+                !u32at(&r,desc+16,&info->ImemPhysBase)||
                 !u32at(&r,desc+20,&info->ImemLoadSize)||
+                !u32at(&r,desc+24,&info->ImemVirtBase)||
+                !u32at(&r,desc+28,&info->DmemPhysBase)||
                 !u32at(&r,desc+32,&info->DmemLoadSize)||
                 !rd16(&r,desc+36,&info->EngineIdMask)||
                 !rd8(&r,desc+38,&info->UcodeId)||
                 !rd8(&r,desc+39,&info->SignatureCount)||
                 !rd16(&r,desc+40,&info->SignatureVersions)) return NVX_VBIOS_BAD_DESCRIPTOR;
+            info->SignaturesOffset=desc+44;
+            info->SignaturesSize=info->DescriptorSize-44;
+            if (!info->SignatureCount ||
+                info->SignaturesSize!=(uint32_t)info->SignatureCount*384U ||
+                !add(info->SignaturesOffset,info->SignaturesSize,info->BiosSize,&signaturesEnd) ||
+                signaturesEnd!=info->ImageOffset ||
+                !add(info->ImemLoadSize,info->DmemLoadSize,info->StoredSize,&dmemEnd) ||
+                dmemEnd>info->StoredSize ||
+                !add(info->ImageOffset,info->ImemLoadSize,info->BiosSize,&info->DmemImageOffset) ||
+                !add(info->PkcDataOffset,384U,info->DmemLoadSize,&pkcEnd) ||
+                pkcEnd>info->DmemLoadSize ||
+                !add(info->DmemImageOffset,info->InterfaceOffset,info->BiosSize,&info->InterfaceImageOffset) ||
+                !add(info->InterfaceOffset,4U,info->DmemLoadSize,&interfaceEnd))
+                return NVX_VBIOS_BAD_DESCRIPTOR;
+            if (!rd8(&r,info->InterfaceImageOffset,&info->InterfaceVersion)||
+                !rd8(&r,info->InterfaceImageOffset+1,&info->InterfaceHeaderSize)||
+                !rd8(&r,info->InterfaceImageOffset+2,&info->InterfaceEntrySize)||
+                !rd8(&r,info->InterfaceImageOffset+3,&info->InterfaceEntryCount))
+                return NVX_VBIOS_BAD_INTERFACE;
+            if (info->InterfaceVersion!=1 || info->InterfaceHeaderSize<4 ||
+                info->InterfaceEntrySize<8 || info->InterfaceEntryCount<2 ||
+                !add(info->InterfaceOffset,info->InterfaceHeaderSize,
+                     info->DmemLoadSize,&entryBase))
+                return NVX_VBIOS_BAD_INTERFACE;
+            for (i=0; i<info->InterfaceEntryCount; i++) {
+                uint32_t entryOffset, entryImage, id, mapperOffset;
+                if (!add(entryBase,i*info->InterfaceEntrySize,
+                         info->DmemLoadSize,&entryOffset) ||
+                    !range_fits(entryOffset,8,info->DmemLoadSize))
+                    return NVX_VBIOS_BAD_INTERFACE;
+                if (!add(info->DmemImageOffset,entryOffset,info->BiosSize,&entryImage) ||
+                    !u32at(&r,entryImage,&id)||!u32at(&r,entryImage+4,&mapperOffset))
+                    return NVX_VBIOS_BAD_INTERFACE;
+                if (id==4) { info->DmemMapperOffset=mapperOffset; foundMapper=1; break; }
+            }
+            if (!foundMapper || !add(info->DmemImageOffset,info->DmemMapperOffset,
+                                     info->BiosSize,&mapperImage) ||
+                !add(info->DmemMapperOffset,64U,info->DmemLoadSize,&mapperEnd) ||
+                mapperEnd>info->DmemLoadSize ||
+                !u32at(&r,mapperImage,&info->DmemMapperSignature)||
+                !rd16(&r,mapperImage+4,&info->DmemMapperVersion)||
+                !rd16(&r,mapperImage+6,&info->DmemMapperSize)||
+                !u32at(&r,mapperImage+8,&info->CommandInOffset)||
+                !u32at(&r,mapperImage+12,&info->CommandInSize)||
+                !u32at(&r,mapperImage+16,&info->CommandOutOffset)||
+                !u32at(&r,mapperImage+20,&info->CommandOutSize)||
+                !range_fits(info->CommandInOffset,info->CommandInSize,info->DmemLoadSize)||
+                !range_fits(info->CommandOutOffset,info->CommandOutSize,info->DmemLoadSize))
+                return NVX_VBIOS_BAD_INTERFACE;
         } else {
             if (!u32at(&r,desc+16,&info->InterfaceOffset)||
                 !u32at(&r,desc+24,&info->ImemLoadSize)||
@@ -204,6 +282,10 @@ int NvxParseFwsecRom(NVX_ROM_READ32 read32, void *context,
         }
         if (!info->StoredSize || !add(info->ImageOffset,info->StoredSize,info->BiosSize,&imageEnd))
             return NVX_VBIOS_BAD_DESCRIPTOR;
+        if (info->DescriptorVersion==3 &&
+            (!crc32_range(&r,info->SignaturesOffset,info->SignaturesSize,&info->SignaturesCrc32)||
+             !crc32_range(&r,info->ImageOffset,info->StoredSize,&info->ImageCrc32)))
+            return NVX_VBIOS_IO_ERROR;
         return NVX_VBIOS_OK;
     }
     return NVX_VBIOS_NO_FWSEC;
