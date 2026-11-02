@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.47
+ * Driver Version: 1.0.0.48
  */
 
 #include "miniport.h"
@@ -145,17 +145,27 @@ static BOOLEAN NvxFwsecDma(PUCHAR bar0,uint64_t source,uint32_t destination,
                             BOOLEAN *retainAllocation)
 {
     uint32_t offset;
+    if (!NvxWaitMask(bar0,0x110118,1,0,20000,5)) {
+        *retainAllocation=TRUE;
+        LogStr("NVX [FWSEC-EXEC]: DMA queue full before base programming; allocation retained.\n");
+        return FALSE;
+    }
     VideoPortWriteRegisterUlong((PULONG)(bar0+0x110110),(ULONG)(source>>8));
     VideoPortWriteRegisterUlong((PULONG)(bar0+0x110128),(ULONG)((source>>40)&0x1ff));
     for (offset=0;offset<size;offset+=0x100) {
+        if (!NvxWaitMask(bar0,0x110118,1,0,20000,5)) {
+            *retainAllocation=TRUE;
+            LogStr("NVX [FWSEC-EXEC]: DMA request queue stayed full; allocation retained.\n");
+            return FALSE;
+        }
         VideoPortWriteRegisterUlong((PULONG)(bar0+0x110114),destination+offset);
         VideoPortWriteRegisterUlong((PULONG)(bar0+0x11011c),memoryOffset+offset);
         VideoPortWriteRegisterUlong((PULONG)(bar0+0x110118),command);
-        if (!NvxWaitMask(bar0,0x110118,2,2,20000,5)) {
-            *retainAllocation=TRUE;
-            LogStr("NVX [FWSEC-EXEC]: DMA timeout; allocation retained.\n");
-            return FALSE;
-        }
+    }
+    if (!NvxWaitMask(bar0,0x110118,2,2,20000,5)) {
+        *retainAllocation=TRUE;
+        LogStr("NVX [FWSEC-EXEC]: DMA engine-idle timeout; allocation retained.\n");
+        return FALSE;
     }
     return TRUE;
 }
@@ -973,7 +983,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.47\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.48\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

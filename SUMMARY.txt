@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.47 FWSEC start-state diagnostic / v1.0.0.33 rollback baseline
+NVIDIA GA104 XDDM DRIVER — v1.0.0.48 queue-safe FWSEC DMA / v1.0.0.33 rollback baseline
 Updated: November 1, 2026
 
 Latest hardware result
@@ -265,6 +265,15 @@ DMA allocation and adapter. Windows shut down normally through ACPI. v47 adds
 full pre-start and timeout state readbacks to distinguish rejected BROM inputs,
 core/start state, or an unreported DMA/authentication issue without weakening
 the retention rule.
+
+v47 hardware result and changes in v48
+--------------------------------------
+v47 identified the fault before CPU start. BROM inputs read back correctly, but
+DMACMD was 0x617—queue FULL and IDLE with stale IMEM/SEC command fields—and
+DMACTL had changed from baseline 0x80 to 0x110001. Newer OpenRM explicitly warns
+that writing DMA base/control registers while the request queue is full corrupts
+the transfer. v48 adopts its exact discipline: wait queue-not-full before base
+and each request, enqueue 256-byte blocks, then wait for engine-idle once.
 
 Important corrections
 ----------------------
