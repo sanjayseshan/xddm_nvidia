@@ -24,3 +24,55 @@ int NvxValidateSeq(const uint32_t *p,size_t bytes,uint32_t barLength,uint32_t *c
     }
     *commands=n;return 1;
 }
+int NvxExecuteSeq(uint32_t *p,size_t bytes,uint32_t barLength,const NVX_SEQ_IO *io,
+                  uint32_t *failedWord)
+{
+    uint32_t count,index=0,budget=2000000;
+    if(!failedWord) return 0;
+    *failedWord=0;
+    if(!io||!io->read||!io->write||!io->delay||!NvxValidateSeq(p,bytes,barLength,&count)) return 0;
+    /* Reject unsupported transitions before making any register changes. */
+    while(index<p[1]) {
+        uint32_t op=p[10+index];
+        if(op>=5&&!io->core) { *failedWord=index;return 0; }
+        index+=1+NvxSeqArgs(op);
+    }
+    index=0;
+    while(index<p[1]) {
+        uint32_t start=index,op=p[10+index++],*a=p+10+index,value=0;
+        int ok=1;
+        *failedWord=start;
+        switch(op) {
+        case 0: ok=io->write(io->context,a[0],a[1]);break;
+        case 1:
+            ok=io->read(io->context,a[0],&value);
+            if(ok) ok=io->write(io->context,a[0],(value&~a[1])|a[2]);
+            break;
+        case 2: {
+            uint32_t remaining=a[3];
+            for(;;) {
+                ok=io->read(io->context,a[0],&value);
+                if(!ok||(value&a[1])==a[2]) break;
+                if(!remaining||!budget) { ok=0;break; }
+                uint32_t step=remaining<10?remaining:10;
+                if(step>budget) step=budget;
+                ok=io->delay(io->context,step);
+                remaining-=step;budget-=step;
+                if(!ok) break;
+            }
+            break;
+        }
+        case 3:
+            if(a[0]>budget) ok=0;
+            else { budget-=a[0];ok=io->delay(io->context,a[0]); }break;
+        case 4:
+            ok=io->read(io->context,a[0],&value);
+            if(ok) p[2+a[1]]=value;
+            break;
+        default: ok=io->core(io->context,op);break;
+        }
+        if(!ok) return 0;
+        index+=NvxSeqArgs(op);
+    }
+    *failedWord=p[1];return 1;
+}
