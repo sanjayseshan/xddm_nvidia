@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.35 raw PROM diagnostic / v1.0.0.33 verified display
+NVIDIA GA104 XDDM DRIVER — v1.0.0.36 private-ROM diagnostic / v1.0.0.33 verified display
 Updated: November 1, 2026
 
 Latest hardware result
@@ -102,6 +102,18 @@ and Booter Load artifacts are byte-identical to the files already in this
 project. The official Booter Unload artifact was added for future teardown.
 These generic blobs do not contain the board-specific FWSEC/FRTS data. See
 FIRMWARE_PROVENANCE.md for URLs, hashes, and the exact trust boundary.
+
+Changes in v36
+--------------
+v36 extends the read-only ROM walker with the NVIDIA private ROM signatures
+`VN`/0x4e56 and 0xbb77 and private PCI-data signatures `NPDS` and `RGIS`, as
+defined by matching OpenRM. A host test reproduces the offsets observed on the
+card: base image size 0xfe00, private image at 0x26800, expansion bias 0x16a00,
+BIT Falcon pointer 0x72383, and resulting table address 0x88d83. Malformed
+private signatures and all previous bounds/checksum cases remain rejected.
+No Falcon, SEC2, GSP, or display-engine writes were enabled. The hardware test
+should either print a fully bounded FWSEC descriptor or a more specific parser
+status while preserving the 1920x1080x32 VBE desktop.
 
 Important corrections
 ----------------------

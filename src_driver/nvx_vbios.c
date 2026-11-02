@@ -62,6 +62,19 @@ static int add(uint32_t a, uint32_t b, uint32_t limit, uint32_t *out)
     return 1;
 }
 
+static int valid_rom_signature(uint16_t sig)
+{
+    /* Public PCI ROM, NVIDIA private ROM ("VN" as a little-endian word),
+       and the second NVIDIA private signature accepted by OpenRM. */
+    return sig == 0xaa55 || sig == 0x4e56 || sig == 0xbb77;
+}
+
+static int valid_pcir_signature(uint32_t sig)
+{
+    /* PCIR plus NVIDIA's private NPDS and RGIS data structures. */
+    return sig == 0x52494350 || sig == 0x5344504e || sig == 0x53494752;
+}
+
 static int locate_roms(READER *r, uint32_t *biosSize, uint32_t *expansion)
 {
     uint32_t block = 0, baseSize = 0, extOffset = 0, end = 0;
@@ -71,10 +84,10 @@ static int locate_roms(READER *r, uint32_t *biosSize, uint32_t *expansion)
         uint32_t pcir, pcirSig, npde, npdeSig, blockSize;
         uint8_t type, indicator, npdeLast;
         int last;
-        if (!rd16(r, block, &sig) || sig != 0xaa55 ||
+        if (!rd16(r, block, &sig) || !valid_rom_signature(sig) ||
             !rd16(r, block + 0x18, &pcirPtr) ||
             !add(block, pcirPtr, r->Limit, &pcir) ||
-            !u32at(r, pcir, &pcirSig) || pcirSig != 0x52494350 ||
+            !u32at(r, pcir, &pcirSig) || !valid_pcir_signature(pcirSig) ||
             !rd16(r, pcir + 0x0a, &pcirLen) ||
             !rd16(r, pcir + 0x10, &imageBlocks) || !imageBlocks ||
             !rd8(r, pcir + 0x14, &type) ||
