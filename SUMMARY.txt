@@ -224,6 +224,22 @@ HWCFG2, DMACTL, CPUCTL, FBIF control and TRANSCFG0 values. This remains a
 strictly read-only plan: no GSP/Falcon/FBIF register is written and the common
 buffer is scrubbed and released exactly as in v43.
 
+v44 hardware result
+-------------------
+v44 passed completely on attempt 3 in test_logs/v44-retry3.log. Its live plan
+resolved IMEM to 225 256-byte transfers from physical 0x09201000 with command
+0x614 and DMEM to eight transfers from 0x0920f100 with command 0x600. BROM
+inputs are signature DMEM 0x5a4, engine mask 0x400, ucode ID 9, RSA-3K selector
+1, and boot vector 0. Baseline registers are engine 0, HWCFG2 0x47f7, DMACTL
+0x80, CPUCTL 0x10, FBIF_CTL 0x190, and TRANSCFG0 0x110. The allocation was
+released before Windows mapped 1920x1080x32, and ACPI shutdown completed.
+
+The next write-enabled build must retain the DMA allocation and adapter on any
+post-DMA/start timeout, because the Falcon may still reference it. Only a
+confirmed halted Falcon permits scrubbing/freeing that memory. It must then
+validate scratch 0x0e's FRTS error field and WPR2 LO/HI against 0x0ff00000..
+0x10000000 before proceeding to GSP reset/Booter Load.
+
 Important corrections
 ----------------------
 Earlier notes incorrectly called EAX=0xffff004f a VBE failure. VBE defines AX;
