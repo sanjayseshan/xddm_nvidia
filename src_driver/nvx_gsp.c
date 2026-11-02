@@ -166,8 +166,9 @@ static BOOLEAN NvxGspRegisterScratch(PNVX_DEVICE_EXTENSION dev)
 static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
 {
     /* TSG (KEPLER_CHANNEL_GROUP_A = 0xA06C) on Device:
-       NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS: hVASpace, engineType, bIsCallingContextVgpuPlugin. */
-    ULONG tsg[3]={dev->GspVaSpaceHandle, 9, 0};
+       NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS (20 bytes):
+       hObjectError, hObjectEccError, hVASpace, engineType, bIsCallingContextVgpuPlugin. */
+    ULONG tsg[5]={0, 0, dev->GspVaSpaceHandle, 9, 0};
     /* NV_CHANNEL_ALLOC_PARAMS for 535.113.01: 360 bytes (90 ULONGs).
        Allocate AMPERE_CHANNEL_GPFIFO_A (0xC56F) under TSG parent.
        Note: hVASpace must be 0 when parent is a TSG! */
