@@ -1,8 +1,23 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.58 RM startup message transport
+NVIDIA GA104 XDDM DRIVER — v1.0.0.66 CPU sequencer execution
 Updated: November 2, 2026
 
 Current checkpoint
 ------------------
+Eight further revisions v59–v66 are built and separately committed. All passed
+host checks and packaging. Archived miniports and source commits are listed in
+build_versions/README.md; the current full ISO is v66.
+
+Hardware v66 successfully executed the firmware's entire 417-command CPU
+sequencer request, including GSP reset, start, halt and RISC-V resume. Startup
+then advanced to event 0x100c (UCODE_LIBOS_PRINT), which is not handled yet.
+INIT_DONE remains absent; accelerated drawing is not implemented. Next handle
+the bounded LibOS print payload and continue the matching 535 startup protocol.
+Log: test_logs/v66-20261102-111518.log. ACPI shutdown completed successfully.
+Windows initially mapped 1080p, then explicitly requested 640x480 later in the
+same boot despite ten enumerated modes. Stable desktop resolution is unresolved.
+
+Previous checkpoint
+-------------------
 Five requested revisions v54–v58 built with passing host tests. v54 captures
 binary log words; v55 implements checked 535 RPC framing/checksum; v56 captures
 guest resources and prepares startup packets; v57 publishes SYSTEM_INFO and
