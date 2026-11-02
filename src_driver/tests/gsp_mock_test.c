@@ -31,7 +31,12 @@ PVOID VideoPortAllocateCommonBuffer(PVOID e,PVOID a,ULONG n,PPHYSICAL_ADDRESS pa
 }
 VOID VideoPortFreeCommonBuffer(PVOID e,ULONG n,PVOID p,PHYSICAL_ADDRESS pa,BOOLEAN c)
 { (void)e;(void)n;(void)pa;(void)c; free(p); }
-ULONG VideoPortReadRegisterUlong(PULONG p) { return regs[regoff(p)/4]; }
+ULONG VideoPortReadRegisterUlong(PULONG p) {
+    if(regoff(p)==0x110040 && dev.CmdQueueVirtual &&
+       ((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr>=5)
+        return 0x80000000;
+    return regs[regoff(p)/4];
+}
 VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
 {
     ULONG off=regoff(p);
@@ -43,9 +48,9 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         PULONG request=(PULONG)((PUCHAR)cmd+4096+(cmd->WritePtr-1)*4096);
         ULONG alloc[44]={0};
         uint32_t f,r,s;
-        assert(cmd->WritePtr>=3&&cmd->WritePtr<=13);
+        assert(cmd->WritePtr>=3&&cmd->WritePtr<=16);
         assert(NvxDecodeRpc((PUCHAR)request,4096,&f,&r,&s));
-        assert((f==103||f==76||f==4)&&s==cmd->WritePtr-1);
+        assert((f==103||f==76||f==4||f==14)&&s==cmd->WritePtr-1);
         if(f==4) {
             assert(request[23]==0x81&&request[28]==65536&&request[30]==16);
             assert(request[32]==(16U<<16));
@@ -55,9 +60,56 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             packet[16]=0;packet[8]^=0xffffffffU;
             write++;packet=(PULONG)((PUCHAR)q+4096+write*4096);
         }
-        memcpy(alloc,request+20,f==76?156:16);
+        if(f==103&&request[23]==0xa06c) {
+            /* KEPLER_CHANNEL_GROUP_A on Device */
+            assert(request[21]==dev.GspDeviceHandle);
+            assert(request[22]==0xa06c0001);
+            assert(request[28+2]==dev.GspVaSpaceHandle);
+        }
+        if(f==103&&request[23]==0x9067) {
+            /* FERMI_CONTEXT_SHARE_A on TSG */
+            assert(request[21]==0xa06c0001);
+            assert(request[22]==0x90670001);
+            assert(request[28+0]==dev.GspVaSpaceHandle);
+        }
+        if(f==103&&request[23]==0xc56f) {
+            /* Validate AMPERE_CHANNEL_GPFIFO_A descriptors match registered scratch and TSG parent */
+            ULONG64 scratchPhys=dev.GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET;
+            assert(request[21]==0xa06c0001);          /* hParent == TSG */
+            assert(request[22]==0xc56f0001);          /* hObject */
+            assert(request[28+5]==0x00200120);        /* flags: PRIVILEGED, PAGE_FIXED, userd_i=1 (ChID=1) */
+            assert(request[28+6]==0x90670001);        /* hContextShare == ContextShare */
+            assert(request[28+7]==0);                 /* hVASpace == 0 */
+            assert(request[28+34]==0);                /* subDeviceId == 0 */
+            assert(request[28+36]==(ULONG)(scratchPhys+0x2000));
+            assert(request[28+38]==0x1000);
+            assert(request[28+40]==1); /* SYSMEM */
+            assert(request[28+42]==(ULONG)(scratchPhys+0x3200));
+            assert(request[28+44]==0x200);
+            assert(request[28+46]==1); /* SYSMEM */
+            assert(request[28+48]==(ULONG)(scratchPhys+0x2000));
+            assert(request[28+50]==0x200);
+            assert(request[28+52]==1); /* SYSMEM */
+            assert(request[28+54]==(ULONG)(scratchPhys+0x4000));
+            assert(request[28+58]==1); /* SYSMEM */
+            assert(request[28+61]==0x15);
+        }
+        if(f==76&&request[22]==0x801813) {
+            ULONG64 physical=dev.GspDmaPhysical.QuadPart+GSP_PAGE_TABLES_OFFSET;
+            PULONG64 tables=(PULONG64)((PUCHAR)dev.GspDmaVirtual+GSP_PAGE_TABLES_OFFSET);
+            assert(request[26]==(ULONG)physical&&request[28]==4&&request[29]==1);
+            assert(tables[0]==((physical+4096)>>4|0xc));
+            assert(tables[1536+257]==((physical+0x4000)>>4|0xc));
+            assert(tables[2048]==((dev.GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET)>>4|0xd));
+            assert(tables[2064]==0);
+        }
+        memcpy(alloc,request+20,f==76?156:(f==14?56:16));
         if(f==76&&request[22]==0x20800110) memcpy((PUCHAR)alloc+28,"Mock RTX 3070",14);
-        assert(NvxEncodeRpc((PUCHAR)packet,4096,f,write-1,alloc,f==76?156:32));
+        if(f==76&&request[22]==0x20802a08) {
+            ULONG retSize=0x1000;
+            memcpy((PUCHAR)alloc+24,&retSize,sizeof(retSize));
+        }
+        assert(NvxEncodeRpc((PUCHAR)packet,4096,f,write-1,alloc,f==76?156:(f==14?56:32)));
         packet[16]=0;packet[8]^=0xffffffffU;
         q->WritePtr=write+1;q->ReadPtr=cmd->WritePtr;
     }
@@ -110,7 +162,10 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             for (ULONG i=0;i<6;i++) {
                 PULONG packet=entry+(i>=3?i+1:i)*1024;
                 ULONG assertions=7;
-                ULONG params[13]={16,3,0,0,0,0,0,0,0,0,0,0x110040,0};
+                /* Firmware waits for CPU receive acknowledgement before
+                   publishing the mailbox bit requested by this sequencer. */
+                ULONG params[19]={32,9,0,0,0,0,0,0,0,0,
+                    2,0x110040,0x80000000,0x80000000,0,3,0,0x110044,0};
                 ULONG print[3]={0,4,0x12345678};
                 ULONG function=i==5?0x1001:(i==4?0x100c:(i==3?0x1002:(i==2?0x101b:72+i)));
                 assert(NvxEncodeRpc((PUCHAR)packet,4096,function,i,
@@ -139,12 +194,14 @@ int main(void)
         assert(NvxGspInitSubsystem(&dev)==(scenario==0 || scenario==3));
         assert(dev.GspInitialized==(scenario==0 || scenario==3));
         if (dev.GspInitialized) {
-            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==19);
+            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==22);
+            assert(dev.GspScratchGpuVa==0x10000000);
             assert(dev.GspClientHandle==0xc1d00001);
             assert(dev.GspDeviceHandle==0x80000001&&dev.GspSubdeviceHandle==0x20800001);
             assert(dev.GspVaSpaceHandle==0x90f10001);
             assert(dev.GspScratchMemoryHandle==0x81000001);
             assert(dev.GspChannelGroupHandle==0xa06c0001);
+            assert(dev.GspContextShareHandle==0x90670001);
             assert(dev.GspChannelHandle==0xc56f0001);
             assert(dev.GspCopyEngineHandle==0xc6b50001);
             assert(dev.GspAssertCount==7);

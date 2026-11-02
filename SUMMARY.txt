@@ -1,8 +1,35 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.66 CPU sequencer execution
+NVIDIA GA104 XDDM DRIVER — v1.0.0.89 channel memory corrections
 Updated: November 2, 2026
 
 Current checkpoint
 ------------------
+Reviewed intervening v75–v88 work and built one further revision, v89, at the
+user's request to stop after one new version. Host checks and packaging pass.
+The current full ISO and installed guest miniport are v89.
+
+Hardware logs from v88 prove RM INIT_DONE, client/device/subdevice allocation,
+scratch page registration, channel group and context share allocation. GPFIFO
+allocation fails with INVALID_STATE (0x40); no GPU drawing has been verified.
+v75 MAP_MEMORY_DMA already failed with INVALID_FUNCTION (0x2a).
+
+v89 corrects channel descriptors that mislabeled host physical DMA addresses
+as VRAM. USERD slot 1 now includes its 512-byte offset. Method-buffer size is
+checked against its reserved storage. v89 installs coherent Pascal+ page tables
+through DMA_SET_PAGE_DIRECTORY in an externally owned address space instead
+of repeating the unsupported mapping RPC. A successful object allocation must
+not be called acceleration: the log now explicitly says execution is unverified.
+The display DLL remains the software framebuffer driver. Full acceleration
+still needs a working channel, verified submission/completion and XDDM hooks.
+Final v89 also acknowledges staged CPU sequencer requests before execution,
+matching OpenRM's receive order; a regression test gates the polled mailbox
+on acknowledgement. Hardware test_logs/v89-20261102-154211.log completes the
+sequencer, reaches INIT_DONE, installs the external page directory and creates
+the GPFIFO channel successfully. Binding to GRAPHICS and scheduling succeed.
+The next allocation, copy-engine class 0xc6b5, fails INVALID_CLASS (0x22).
+No GPU command has been submitted or completed. Stop here per user instruction.
+
+Earlier v66 checkpoint (historical)
+----------------------------------
 Eight further revisions v59–v66 are built and separately committed. All passed
 host checks and packaging. Archived miniports and source commits are listed in
 build_versions/README.md; the current full ISO is v66.

@@ -70,6 +70,8 @@
 #define GSP_RM_ARGS_OFFSET             0x024E1000ULL
 #define GSP_SCRATCH_OFFSET             0x02F00000ULL
 #define GSP_SCRATCH_SIZE               0x10000UL
+#define GSP_PAGE_TABLES_OFFSET         0x02E00000ULL
+#define GSP_PAGE_TABLES_SIZE           0x5000UL
 
 #pragma pack(push, 1)
 /* Libos Init Argument */
@@ -311,6 +313,7 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG GspVirtualMemoryHandle;
     ULONG64 GspScratchGpuVa;
     ULONG GspChannelGroupHandle;
+    ULONG GspContextShareHandle;
     ULONG GspChannelHandle;
     ULONG GspCopyEngineHandle;
     ULONG RpcTxSequence,RpcRxSequence;

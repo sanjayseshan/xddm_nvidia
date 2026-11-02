@@ -163,21 +163,70 @@ static BOOLEAN NvxGspRegisterScratch(PNVX_DEVICE_EXTENSION dev)
     LogStr("NVX [RM]: 64KB coherent scratch memory registered.\n");return TRUE;
 }
 
+static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
+{
+    /* GSP rejects MAP_MEMORY_DMA (v75: INVALID_FUNCTION). Use externally
+       owned Pascal+ page tables and DMA_SET_PAGE_DIRECTORY, as Nouveau r535.
+       Five 4KB levels map only our coherent 64KB scratch at VA 0x10000000. */
+    ULONG setDirectory[8]={0};
+    ULONG64 physical=dev->GspDmaPhysical.QuadPart+GSP_PAGE_TABLES_OFFSET;
+    PULONG64 tables=(PULONG64)((PUCHAR)dev->GspDmaVirtual+GSP_PAGE_TABLES_OFFSET);
+    if(dev->GspDmaLength<GSP_PAGE_TABLES_OFFSET+GSP_PAGE_TABLES_SIZE||(physical&4095)) return FALSE;
+    VideoPortZeroMemory(tables,GSP_PAGE_TABLES_SIZE);
+    /* PDEs: coherent-system aperture, volatile, next-table address >> 4. */
+    tables[0]=((physical+0x1000)>>4)|0xc;
+    tables[512]=((physical+0x2000)>>4)|0xc;
+    tables[1024]=((physical+0x3000)>>4)|0xc;
+    /* PD0 has paired large/small entries; VA>>21 == 128, small is +8. */
+    tables[1536+128*2+1]=((physical+0x4000)>>4)|0xc;
+    for(ULONG i=0;i<16;i++)
+        tables[2048+i]=((dev->GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET+i*4096)>>4)|0xd;
+    __sync_synchronize();
+    setDirectory[0]=(ULONG)physical;setDirectory[1]=(ULONG)(physical>>32);
+    setDirectory[2]=4; /* top-level 49-bit directory has four entries */
+    setDirectory[3]=1; /* SYSMEM_COH */
+    setDirectory[4]=dev->GspVaSpaceHandle;
+    if(!NvxGspControl(dev,dev->GspDeviceHandle,0x801813,setDirectory,sizeof(setDirectory))) return FALSE;
+    dev->GspScratchGpuVa=0x10000000;
+    LogStr("NVX [RM]: scratch memory mapped at GPU VA 0x10000000.\n");return TRUE;
+}
+
 static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
 {
-    /* TSG (KEPLER_CHANNEL_GROUP_A = 0xA06C) on Device:
+    /* 1. TSG (KEPLER_CHANNEL_GROUP_A = 0xA06C) on Device:
        NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS (20 bytes):
-       hObjectError, hObjectEccError, hVASpace, engineType, bIsCallingContextVgpuPlugin. */
-    ULONG tsg[5]={0, 0, dev->GspVaSpaceHandle, 9, 0};
-    /* NV_CHANNEL_ALLOC_PARAMS for 535.113.01: 360 bytes (90 ULONGs).
-       Allocate AMPERE_CHANNEL_GPFIFO_A (0xC56F) under TSG parent.
-       Note: hVASpace must be 0 when parent is a TSG! */
+       hObjectError, hObjectEccError, hVASpace, engineType, bIsCallingContextVgpuPlugin.
+       On Ampere GA104, TSG headers are only supported on the Graphics runlist (NV2080_ENGINE_TYPE_GRAPHICS = 1). */
+    ULONG tsg[5]={0, 0, dev->GspVaSpaceHandle, 1, 0}; /* engineType = 1 (GRAPHICS) */
+    /* 2. Context Share (FERMI_CONTEXT_SHARE_A = 0x9067) on TSG:
+       NV_CTXSHARE_ALLOCATION_PARAMETERS (12 bytes):
+       hVASpace, flags, subctxId. */
+    ULONG ctxShare[3]={dev->GspVaSpaceHandle, 0, 0}; /* SUBCONTEXT_SYNC = 0, subctxId = 0 */
+    /* 3. NV_CHANNEL_ALLOC_PARAMS for 535.113.01: 360 bytes (90 ULONGs).
+       AMPERE_CHANNEL_GPFIFO_A (0xC56F) allocated under TSG parent with hContextShare. */
     ULONG chan[90]={0};
-    ULONG bindEngine=9; /* COPY0 */
+    ULONG bindEngine=1; /* GRAPHICS */
     UCHAR schedEnable[2]={1, 0};
     /* NVC0B5_ALLOCATION_PARAMETERS for AMPERE_DMA_COPY_A (0xC6B5): version=1, engineType=9 (COPY0). */
     ULONG ceParams[2]={1, 9};
+    ULONG64 scratchPhys=dev->GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET;
+    ULONG64 instPhys=scratchPhys+0x2000;
+    ULONG64 userdPhys=scratchPhys+0x3200; /* USERD slot 1 in its 4KB page */
+    ULONG64 mthdbufPhys=scratchPhys+0x4000;
+    ULONG mthdSize=0x1000;
+    ULONG ceMthdParam=0;
 
+    /* Query CE fault method buffer size on Subdevice (NV2080_CTRL_CMD_CE_GET_FAULT_METHOD_BUFFER_SIZE) */
+    if(NvxGspControl(dev,dev->GspSubdeviceHandle,0x20802a08,&ceMthdParam,sizeof(ceMthdParam))) {
+        const ULONG *words=(const ULONG *)dev->RpcRxRecord;
+        if(words[24]>=4) {
+            mthdSize=*(const ULONG *)(dev->RpcRxRecord+104);
+            LogStr("NVX [RM]: queried CE fault method buffer size: ");LogHex(mthdSize);LogStr("\n");
+        }
+    }
+    if(!mthdSize||mthdSize>GSP_SCRATCH_SIZE-0x4000||!dev->GspScratchGpuVa) return FALSE;
+
+    /* Allocate TSG on Device */
     if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0xa06c0001,0xa06c,tsg,sizeof(tsg))) {
         LogStr("NVX [RM]: KEPLER_CHANNEL_GROUP_A allocation failed.\n");
         return FALSE;
@@ -185,25 +234,71 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
     dev->GspChannelGroupHandle=0xa06c0001;
     LogStr("NVX [RM]: KEPLER_CHANNEL_GROUP_A allocated.\n");
 
-    chan[2]=0x10000000; /* gpFifoOffset (U64) */
-    chan[4]=1024;       /* gpFifoEntries */
-    chan[5]=0x00200020; /* flags: CHANNEL_TYPE_PHYSICAL, PRIVILEGED, USERD_INDEX_PAGE_FIXED */
-    chan[32]=9;         /* engineType = NV2080_ENGINE_TYPE_COPY0 */
-    chan[34]=1;         /* subDeviceId */
+    /* Allocate Context Share on TSG */
+    if(!NvxGspAlloc(dev,dev->GspChannelGroupHandle,0x90670001,0x9067,ctxShare,sizeof(ctxShare))) {
+        LogStr("NVX [RM]: FERMI_CONTEXT_SHARE_A allocation failed.\n");
+        return FALSE;
+    }
+    dev->GspContextShareHandle=0x90670001;
+    LogStr("NVX [RM]: FERMI_CONTEXT_SHARE_A allocated.\n");
 
+    chan[2]=(ULONG)dev->GspScratchGpuVa;
+    chan[3]=(ULONG)(dev->GspScratchGpuVa>>32);
+    chan[4]=1024;       /* gpFifoEntries */
+    /* flags: CHANNEL_TYPE_PHYSICAL (0), PRIVILEGED (0x20),
+       CHANNEL_USERD_INDEX_PAGE_FIXED (0x00200000), userd_i = 1 (0x100) -> 0x00200120 (ChID = 1).
+       GSP-RM client RPC requires PAGE_FIXED for client-allocated USERD. */
+    chan[5]=0x00200120;
+    chan[6]=dev->GspContextShareHandle; /* hContextShare = Context Share handle under TSG */
+    chan[7]=0;                          /* hVASpace = 0 when hContextShare is set! */
+    chan[32]=1;                         /* engineType = NV2080_ENGINE_TYPE_GRAPHICS (1) */
+    chan[34]=0;                         /* subDeviceId = 0 */
+
+    /* All descriptors describe OS-owned coherent SYSTEM memory. */
+    chan[36]=(ULONG)instPhys;
+    chan[37]=(ULONG)(instPhys>>32);
+    chan[38]=0x1000;
+    chan[40]=1;         /* ADDR_SYSMEM, never a VRAM physical offset */
+    chan[41]=1;         /* cacheAttrib = CACHED */
+
+    /* userdMem: slot 1, matching CHANNEL_USERD_INDEX_VALUE. */
+    chan[42]=(ULONG)userdPhys;
+    chan[43]=(ULONG)(userdPhys>>32);
+    chan[44]=0x200;
+    chan[46]=1;
+    chan[47]=1;         /* cacheAttrib = CACHED */
+
+    /* ramfcMem aliases the beginning of the instance block. */
+    chan[48]=(ULONG)instPhys;
+    chan[49]=(ULONG)(instPhys>>32);
+    chan[50]=0x200;
+    chan[52]=1;
+    chan[53]=1;         /* cacheAttrib = CACHED */
+
+    /* mthdbufMem: at scratch offset 0x4000 (ADDR_SYSMEM = 1, UNCACHED = 0) */
+    chan[54]=(ULONG)mthdbufPhys;
+    chan[55]=(ULONG)(mthdbufPhys>>32);
+    chan[56]=mthdSize?mthdSize:0x1000;
+    chan[58]=1;         /* addressSpace = ADDR_SYSMEM */
+    chan[59]=0;         /* cacheAttrib = UNCACHED */
+
+    /* internalFlags: ADMIN (1) | ERROR_NOTIFIER_TYPE_NONE (4) | ECC_ERROR_NOTIFIER_TYPE_NONE (0x10) */
+    chan[61]=0x15;
+
+    /* Allocate channel under TSG (parent = dev->GspChannelGroupHandle) */
     if(!NvxGspAlloc(dev,dev->GspChannelGroupHandle,0xc56f0001,0xc56f,chan,sizeof(chan))) {
         LogStr("NVX [RM]: AMPERE_CHANNEL_GPFIFO_A allocation failed.\n");
         return FALSE;
     }
     dev->GspChannelHandle=0xc56f0001;
-    LogStr("NVX [RM]: AMPERE_CHANNEL_GPFIFO_A allocated.\n");
+    LogStr("NVX [RM]: AMPERE_CHANNEL_GPFIFO_A allocated under TSG.\n");
 
-    /* Bind channel to COPY0 engine */
+    /* Bind channel to GRAPHICS engine */
     if(!NvxGspControl(dev,dev->GspChannelHandle,0xa06f0104,&bindEngine,sizeof(bindEngine))) {
         LogStr("NVX [RM]: NVA06F_CTRL_CMD_BIND failed.\n");
         return FALSE;
     }
-    LogStr("NVX [RM]: channel bound to COPY0.\n");
+    LogStr("NVX [RM]: channel bound to GRAPHICS.\n");
 
     /* Schedule channel */
     if(!NvxGspControl(dev,dev->GspChannelHandle,0xa06f0103,schedEnable,sizeof(schedEnable))) {
@@ -231,18 +326,21 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
     dev->RpcTxSequence=2;dev->RpcRxSequence=rxSequence;
     if(!NvxGspAlloc(dev,0,0xc1d00001,0,client,sizeof(client))) return FALSE;
     dev->GspClientHandle=0xc1d00001;
+    device[1]=dev->GspClientHandle; /* hClientShare = client handle (Nouveau r535_gsp_device_ctor) */
     if(!NvxGspAlloc(dev,dev->GspClientHandle,0x80000001,0x80,device,sizeof(device))) return FALSE;
     dev->GspDeviceHandle=0x80000001;
     if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0x20800001,0x2080,&subdevice,4)) return FALSE;
     dev->GspSubdeviceHandle=0x20800001;
     if(!NvxGspGetName(dev)) return FALSE;
-    /* A private, RM-managed VASpace. No externally owned page tables. */
+    /* Private externally owned VASpace; page directory installed below. */
+    va.flags=8;
     if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0x90f10001,0x90f1,&va,sizeof(va))) return FALSE;
     dev->GspVaSpaceHandle=0x90f10001;
     LogStr("NVX [RM]: private GPU virtual address space allocated.\n");
     if(!NvxGspRegisterScratch(dev)) return FALSE;
+    if(!NvxGspMapScratch(dev)) return FALSE;
     if(!NvxGspAllocChannel(dev)) return FALSE;
-    LogStr("NVX [RM]: channel and copy engine ready; GPU acceleration initialized.\n");
+    LogStr("NVX [RM]: channel and copy engine allocated; GPU execution still unverified.\n");
     return TRUE;
 }
 
@@ -961,6 +1059,7 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
             uint32_t function,result,sequence,elements=0,decodedElements=0;
             const uint8_t *entry=devExt->RpcRxRecord;
             int gathered;
+            BOOLEAN consumed=FALSE;
             __sync_synchronize();
             gathered=NvxGatherRpc((const uint8_t *)devExt->StatQueueVirtual+4096,
                 63*4096,63,read,write,devExt->RpcRxRecord,sizeof(devExt->RpcRxRecord),&elements);
@@ -997,6 +1096,11 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
                 {
                     NVX_SEQ_IO io={devExt,NvxSeqRead,NvxSeqWrite,NvxSeqDelay,NvxGspSequencerCore};
                     uint32_t failedWord=0;
+                    /* OpenRM releases copied queue elements before dispatch.
+                       Firmware may wait for receive completion before setting
+                       the mailbox bit polled by its own sequencer request. */
+                    __sync_synchronize();local->ReadPtr=(read+elements)%63;__sync_synchronize();
+                    rxSequence++;consumed=TRUE;
                     if(!NvxExecuteSeq((uint32_t *)params,words[14]-32,devExt->Bar0Length,&io,&failedWord)) {
                         LogStr("NVX [SEQ]: execution failed at word=");LogHex(failedWord);
                         if(failedWord<params[1]) {
@@ -1036,8 +1140,10 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
                 LogStr("NVX [RPC]: firmware assertion count=");
                 LogHex(devExt->GspAssertCount);LogStr("\n");
             }
-            __sync_synchronize();local->ReadPtr=(read+elements)%63;__sync_synchronize();
-            rxSequence++;
+            if(!consumed) {
+                __sync_synchronize();local->ReadPtr=(read+elements)%63;__sync_synchronize();
+                rxSequence++;
+            }
             if (function==0x1001) {
                 if (!(VideoPortReadRegisterUlong((PULONG)(bar0+NV_PGSP_FALCON_RISCV_STAT))&0x80))
                     return FALSE;
