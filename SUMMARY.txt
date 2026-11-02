@@ -1,12 +1,26 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.90 COPY0 channel experiment
+NVIDIA GA104 XDDM DRIVER — v1.0.0.91 GA104 GPU copy probe
 Updated: November 2, 2026
 
 Current checkpoint
 ------------------
-Built v90 after the request to continue iterating toward acceleration. Host
-checks and the XP x64 native driver build pass. No ISO was regenerated. The
-offline XP disk was not updated: the workspace blocks libguestfs FUSE binds,
-and sudo credentials and VFIO devices are unavailable here.
+User hardware log test_logs/v90-20261102-161211.log confirms INIT_DONE,
+COPY0 TSG/context/channel allocation, binding and scheduling. Class 0xc6b5
+still fails INVALID_CLASS (0x22). Changing engine type alone was insufficient.
+The log ends with a 640x480x32 VBE framebuffer; GPU execution is unverified.
+
+v91 selects AMPERE_DMA_COPY_B (0xc7b5), which NVIDIA 535's generated
+GA104 class table exposes (0xc6b5 is GA100). It then queries the channel's
+work-submit token and submits a bounded 256-byte scratch copy and completion
+semaphore via GPFIFO, USERD and the Ampere BAR0+0x30090 doorbell. A success
+log requires matching data and intact guards after the GPU completion value.
+This is a GPU execution probe; the XDDM display DLL still draws in software.
+Shutdown releases the RM client/channels before their DMA storage; unconfirmed
+teardown retains the backing pages. Host sanitizer tests cover completion,
+timeout, corrupt data/guards and failed teardown. All host checks and the
+native XP x64 build pass. No ISO generated; v91 is in dist_full and archived.
+Hardware v91 has not run: this workspace lacks VFIO devices and FUSE access.
+Run ./test_full_driver.sh on the GPU host. It now points vm_serial.log to the
+current archived log and correctly identifies v91 in the serial banner.
 
 Hardware logs from v88 prove RM INIT_DONE, client/device/subdevice allocation,
 scratch page registration, channel group and context share allocation. GPFIFO
@@ -29,13 +43,10 @@ the GPFIFO channel successfully. Binding to GRAPHICS and scheduling succeed.
 The next allocation, copy-engine class 0xc6b5, fails INVALID_CLASS (0x22).
 No GPU command has been submitted or completed.
 
-v90 changes the TSG and channel engine type and bind target to COPY0 (engine 9)
-before allocating class 0xc6b5. This addresses the specific GRAPHICS/COPY0
-class mismatch observed in v89. Host GSP mocks, RPC/firmware/VBIOS/VBE tests,
-and the native driver build pass. Hardware status is unknown because v90 could
-not be installed in the guest. No GPU copy completion or display acceleration
-is claimed. `test_full_driver.sh` now builds without generating an ISO and
-continues to use the existing ISO only as QEMU's CD device.
+v90 changed the TSG/channel/bind target to COPY0 before allocating 0xc6b5.
+The user's v90 log disproves the earlier claim that this alone addressed the
+class rejection. v91 corrects the actual GA104 copy class. No hardware GPU
+copy completion or desktop acceleration has yet been observed.
 
 Earlier v66 checkpoint (historical)
 ----------------------------------

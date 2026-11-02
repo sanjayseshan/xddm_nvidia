@@ -118,8 +118,8 @@ static BOOLEAN NvxGspControl(PNVX_DEVICE_EXTENSION dev,ULONG object,ULONG cmd,
     payload[5]=0; /* flags */
     if(bytes&&params) VideoPortMoveMemory(payload+6,(PVOID)params,bytes);
     if(!NvxGspCall(dev,76,payload,24+bytes)) return FALSE;
-    if(words[14]<56||words[20]!=payload[0]||words[21]!=object||
-       words[22]!=cmd||words[23]!=0) return FALSE;
+    if(words[14]<56+bytes||words[20]!=payload[0]||words[21]!=object||
+       words[22]!=cmd||words[23]!=0||words[24]!=bytes) return FALSE;
     return TRUE;
 }
 
@@ -196,8 +196,8 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
     /* 1. TSG (KEPLER_CHANNEL_GROUP_A = 0xA06C) on Device:
        NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS (20 bytes):
        hObjectError, hObjectEccError, hVASpace, engineType, bIsCallingContextVgpuPlugin.
-       Use COPY0 for this first executable channel: class 0xC6B5 is a copy
-       engine class and RM rejects it when attached to a GRAPHICS channel. */
+       Use COPY0 for the isolated scratch-copy test. NVIDIA 535's GA104
+       class table exposes AMPERE_DMA_COPY_B (0xC7B5), not GA100's 0xC6B5. */
     ULONG tsg[5]={0, 0, dev->GspVaSpaceHandle, 9, 0}; /* engineType = COPY0 */
     /* 2. Context Share (FERMI_CONTEXT_SHARE_A = 0x9067) on TSG:
        NV_CTXSHARE_ALLOCATION_PARAMETERS (12 bytes):
@@ -208,13 +208,13 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
     ULONG chan[90]={0};
     ULONG bindEngine=9; /* COPY0 */
     UCHAR schedEnable[2]={1, 0};
-    /* NVC0B5_ALLOCATION_PARAMETERS for AMPERE_DMA_COPY_A (0xC6B5): version=1, engineType=9 (COPY0). */
+    /* NVC0B5_ALLOCATION_PARAMETERS: version=1, engineType=COPY0. */
     ULONG ceParams[2]={1, 9};
     ULONG64 scratchPhys=dev->GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET;
     ULONG64 instPhys=scratchPhys+0x2000;
     ULONG64 userdPhys=scratchPhys+0x3200; /* USERD slot 1 in its 4KB page */
     ULONG64 mthdbufPhys=scratchPhys+0x4000;
-    ULONG mthdSize=0x1000;
+    ULONG mthdSize=0; /* Require the firmware's size; never guess for DMA storage. */
     ULONG ceMthdParam=0;
 
     /* Query CE fault method buffer size on Subdevice (NV2080_CTRL_CMD_CE_GET_FAULT_METHOD_BUFFER_SIZE) */
@@ -225,7 +225,8 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
             LogStr("NVX [RM]: queried CE fault method buffer size: ");LogHex(mthdSize);LogStr("\n");
         }
     }
-    if(!mthdSize||mthdSize>GSP_SCRATCH_SIZE-0x4000||!dev->GspScratchGpuVa) return FALSE;
+    /* Reserve [0x9000,0xd000) separately for commands/data/completion. */
+    if(!mthdSize||mthdSize>0x5000||!dev->GspScratchGpuVa) return FALSE;
 
     /* Allocate TSG on Device */
     if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0xa06c0001,0xa06c,tsg,sizeof(tsg))) {
@@ -294,7 +295,7 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
     dev->GspChannelHandle=0xc56f0001;
     LogStr("NVX [RM]: AMPERE_CHANNEL_GPFIFO_A allocated under TSG.\n");
 
-    /* Bind channel to GRAPHICS engine */
+    /* Bind channel to COPY0 engine. */
     if(!NvxGspControl(dev,dev->GspChannelHandle,0xa06f0104,&bindEngine,sizeof(bindEngine))) {
         LogStr("NVX [RM]: NVA06F_CTRL_CMD_BIND failed.\n");
         return FALSE;
@@ -308,15 +309,85 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
     }
     LogStr("NVX [RM]: channel scheduled.\n");
 
-    /* Allocate Copy Engine object AMPERE_DMA_COPY_A (0xC6B5) on Channel */
-    if(!NvxGspAlloc(dev,dev->GspChannelHandle,0xc6b50001,0xc6b5,ceParams,sizeof(ceParams))) {
-        LogStr("NVX [RM]: AMPERE_DMA_COPY_A allocation failed.\n");
+    if(!NvxGspAlloc(dev,dev->GspChannelHandle,0xc7b50001,0xc7b5,ceParams,sizeof(ceParams))) {
+        LogStr("NVX [RM]: AMPERE_DMA_COPY_B allocation failed.\n");
         return FALSE;
     }
-    dev->GspCopyEngineHandle=0xc6b50001;
-    LogStr("NVX [RM]: AMPERE_DMA_COPY_A allocated.\n");
+    dev->GspCopyEngineHandle=0xc7b50001;
+    LogStr("NVX [RM]: AMPERE_DMA_COPY_B allocated.\n");
 
     return TRUE;
+}
+
+static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
+{
+    /* C56F/C7B5 535 ABI. Scratch layout: GPFIFO 0..1fff, instance 2000,
+       USERD 3200, CE fault buffer 4000..8fff, push 9000, source a000,
+       destination b000, completion c000. No scanout/VRAM is touched. */
+    PUCHAR scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET;
+    volatile ULONG *userd=(volatile ULONG *)(scratch+0x3200);
+    volatile ULONG *dst=(volatile ULONG *)(scratch+0xb000);
+    volatile ULONG *fence=(volatile ULONG *)(scratch+0xc000);
+    PULONG src=(PULONG)(scratch+0xa000),push=(PULONG)(scratch+0x9000);
+    volatile ULONG64 *fifo=(volatile ULONG64 *)scratch;
+    ULONG token=0,n=0;
+    ULONG64 va=dev->GspScratchGpuVa,pushVa=va+0x9000;
+    const ULONG done=0x91c0ffee,guard=0xf17e55aa;
+    dev->GspCopyVerified=FALSE;
+    if(dev->Bar0Length<0x30094||!dev->GspCopyEngineHandle||!va) return FALSE;
+    if(!NvxGspControl(dev,dev->GspChannelHandle,0xc36f0108,&token,sizeof(token))) {
+        LogStr("NVX [COPY]: work-submit token unavailable; no commands submitted.\n");
+        return FALSE;
+    }
+    token=((const ULONG *)dev->RpcRxRecord)[26];
+    LogStr("NVX [COPY]: work-submit token=");LogHex(token);LogStr("\n");
+    if(userd[0x88/4]||userd[0x8c/4]) {
+        LogStr("NVX [COPY]: fresh channel has nonzero GP pointers; submission skipped.\n");
+        return FALSE;
+    }
+    for(ULONG i=0;i<64;i++) {src[i]=0x6d3a5000U^(i*0x10203U);dst[i]=~src[i];}
+    src[-1]=src[64]=guard;dst[-1]=dst[64]=guard;
+    fence[-1]=guard;fence[0]=0;fence[1]=guard;
+    /* Incrementing method packets on subchannel 0; SET_OBJECT uses class,
+       as in NVIDIA UVM's dedicated CE initialization, not the RM handle. */
+    push[n++]=0x20010000;push[n++]=0xc7b5;
+    push[n++]=0x20040100; /* OFFSET_IN_UPPER through OFFSET_OUT_LOWER */
+    push[n++]=(ULONG)((va+0xa000)>>32);push[n++]=(ULONG)(va+0xa000);
+    push[n++]=(ULONG)((va+0xb000)>>32);push[n++]=(ULONG)(va+0xb000);
+    push[n++]=0x20040104; /* PITCH_IN/OUT, LINE_LENGTH_IN, LINE_COUNT */
+    push[n++]=256;push[n++]=256;push[n++]=256;push[n++]=1;
+    push[n++]=0x200100c0;push[n++]=0x04000186; /* non-pipelined, pitch, flush, PLC disabled */
+    push[n++]=0x20030090; /* SET_SEMAPHORE_A/B/PAYLOAD */
+    push[n++]=(ULONG)((va+0xc000)>>32);push[n++]=(ULONG)(va+0xc000);push[n++]=done;
+    push[n++]=0x200100c0;push[n++]=0x0400000c; /* flushed one-word semaphore release */
+    fifo[0]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|((ULONG64)n<<42);
+    __sync_synchronize();userd[0x8c/4]=1;__sync_synchronize();
+    /* Ampere USERMODE window is BAR0+0x30000, NOT Volta's 0x810000. */
+    VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),token);
+    LogStr("NVX [COPY]: submitted 256-byte GPU copy and completion release.\n");
+    for(ULONG wait=0;wait<20000;wait++) {
+        if(fence[0]==done) {
+            __sync_synchronize();
+            for(ULONG i=0;i<64;i++) {
+                ULONG expected=0x6d3a5000U^(i*0x10203U);
+                if(dst[i]!=expected||src[i]!=expected) {
+                    LogStr("NVX [COPY]: completion arrived but data mismatch at word=");LogHex(i);LogStr("\n");
+                    return FALSE;
+                }
+            }
+            if(src[-1]!=guard||src[64]!=guard||dst[-1]!=guard||dst[64]!=guard||
+               fence[-1]!=guard||fence[1]!=guard) {
+                LogStr("NVX [COPY]: completion arrived but guard corrupted.\n");return FALSE;
+            }
+            dev->GspCopyVerified=TRUE;
+            LogStr("NVX [COPY]: GPU copy completed and verified; desktop drawing remains software.\n");
+            return TRUE;
+        }
+        VideoPortStallExecution(100);
+    }
+    LogStr("NVX [COPY]: completion timeout; GPGet=");LogHex(userd[0x88/4]);
+    LogStr(" GPPut=");LogHex(userd[0x8c/4]);LogStr(" fence=");LogHex(fence[0]);LogStr("\n");
+    return FALSE;
 }
 
 static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
@@ -341,8 +412,8 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
     if(!NvxGspRegisterScratch(dev)) return FALSE;
     if(!NvxGspMapScratch(dev)) return FALSE;
     if(!NvxGspAllocChannel(dev)) return FALSE;
-    LogStr("NVX [RM]: COPY0 channel and copy engine allocated; GPU execution still unverified.\n");
-    return TRUE;
+    LogStr("NVX [RM]: COPY0 channel and copy engine allocated; testing GPU execution.\n");
+    return NvxGspCopySmokeTest(dev);
 }
 
 static BOOLEAN NvxWait(PUCHAR bar0, ULONG reg, ULONG mask, ULONG expected,
@@ -1151,7 +1222,7 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
                 devExt->GspInitialized=TRUE;
                 LogStr("NVX [GSP]: RM INIT_DONE received; display channels still unavailable.\n");
                 if(!NvxGspCreateObjects(devExt,rxSequence))
-                    LogStr("NVX [RM]: object setup incomplete; acceleration unavailable.\n");
+                    LogStr("NVX [RM]: acceleration bring-up incomplete; software display retained.\n");
                 return TRUE;
             }
             continue;
@@ -1208,6 +1279,20 @@ VOID NvxGspShutdown(PVOID HwDeviceExtension) {
     PUCHAR bar0 = (PUCHAR)devExt->Bar0MmioVirtual;
 
     if (devExt->GspDmaVirtual) {
+        /* Resetting GSP/SEC2 alone does NOT stop a scheduled CE/PBDMA.
+           Tear down the RM client and its channels before freeing their
+           backing pages. If RM cannot confirm teardown, retain the DMA. */
+        if(devExt->GspInitialized&&devExt->GspClientHandle) {
+            ULONG release[4]={devExt->GspClientHandle,0,devExt->GspClientHandle,0};
+            const ULONG *reply=(const ULONG *)devExt->RpcRxRecord;
+            if(!NvxGspCall(devExt,10,release,sizeof(release))||reply[14]<48||
+               reply[20]!=release[0]||reply[21]!=0||reply[22]!=release[2]||reply[23]!=0) {
+                LogStr("NVX [GSP]: RM teardown unconfirmed; DMA backing retained for channel safety.\n");
+                return;
+            }
+            devExt->GspClientHandle=0;
+            LogStr("NVX [GSP]: RM client and channels released before DMA teardown.\n");
+        }
         if (bar0) {
             VideoPortWriteRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_ENGINE),1);
             VideoPortWriteRegisterUlong((PULONG)(bar0 + NV_PGSP_FALCON_ENGINE), 1); /* Halt Falcon */
@@ -1229,6 +1314,7 @@ VOID NvxGspShutdown(PVOID HwDeviceExtension) {
         devExt->CmdQueueVirtual = devExt->StatQueueVirtual = NULL;
         devExt->GspInitialized = FALSE;
         devExt->GspBootVerified = FALSE;
+        devExt->GspCopyVerified = FALSE;
 
         if (devExt->DmaAdapter) {
             VideoPortPutDmaAdapter(HwDeviceExtension, devExt->DmaAdapter);
