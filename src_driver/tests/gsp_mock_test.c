@@ -46,9 +46,9 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         ULONG write=q->WritePtr;
         PULONG packet=(PULONG)((PUCHAR)q+4096+write*4096);
         PULONG request=(PULONG)((PUCHAR)cmd+4096+(cmd->WritePtr-1)*4096);
-        ULONG alloc[44]={0};
+        ULONG alloc[160]={0},replyBytes;
         uint32_t f,r,s;
-        assert(cmd->WritePtr>=3&&cmd->WritePtr<=19);
+        assert(cmd->WritePtr>=3&&cmd->WritePtr<=20);
         assert(NvxDecodeRpc((PUCHAR)request,4096,&f,&r,&s));
         assert((f==103||f==76||f==4||f==14||f==10)&&s==cmd->WritePtr-1);
         if(f==4) {
@@ -110,18 +110,24 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(tables[2048]==((dev.GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET)>>4|0xd));
             assert(tables[2064]==0);
         }
-        memcpy(alloc,request+20,f==76?156:(f==14?56:16));
+        replyBytes=f==76?24+request[24]:(f==14?56:32);
+        assert(replyBytes<=sizeof(alloc));
+        memcpy(alloc,request+20,f==76?replyBytes:(f==14?56:16));
         if(f==76&&request[22]==0x20800110) memcpy((PUCHAR)alloc+28,"Mock RTX 3070",14);
         if(f==76&&request[22]==0x20802a08) {
             ULONG retSize=0x5000; /* Actual GA104 v90 firmware result. */
             memcpy((PUCHAR)alloc+24,&retSize,sizeof(retSize));
         }
-        if(f==76&&request[22]==0xc36f0108) alloc[6]=0xabc00001;
+        if(f==76&&request[22]==0xc36f0108) alloc[6]=0; /* 535 GSP returns zero external token. */
+        if(f==76&&request[22]==0x20800179) {
+            assert(request[24]==496&&request[26]==9);
+            alloc[6+62]=scenario==8?0xffffffffU:0x220000;
+        }
         if(f==10) {
             assert(request[20]==dev.GspClientHandle&&request[21]==0&&request[22]==dev.GspClientHandle);
             if(freeFailures) {alloc[3]=0x40;freeFailures--;}
         }
-        assert(NvxEncodeRpc((PUCHAR)packet,4096,f,write-1,alloc,f==76?156:(f==14?56:32)));
+        assert(NvxEncodeRpc((PUCHAR)packet,4096,f,write-1,alloc,replyBytes));
         packet[16]=0;packet[8]^=0xffffffffU;
         q->WritePtr=write+1;q->ReadPtr=cmd->WritePtr;
     }
@@ -130,7 +136,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         PULONG push=(PULONG)(scratch+0x9000),userd=(PULONG)(scratch+0x3200);
         ULONG64 entry=*(PULONG64)scratch;
         ULONG64 address=(entry&0xfffffffcULL)|((entry>>32&0xffULL)<<32);
-        assert(value==0xabc00001&&userd[0x8c/4]==1);
+        assert(value==0x40001&&userd[0x8c/4]==1);
         assert(address==dev.GspScratchGpuVa+0x9000&&(entry>>42)==20);
         assert(push[0]==0x20010000&&push[1]==0xc7b5);
         assert(push[2]==0x20040100&&push[3]==0&&push[4]==0x1000a000);
@@ -215,7 +221,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
 }
 int main(void)
 {
-    for(scenario=0;scenario<8;scenario++) {
+    for(scenario=0;scenario<9;scenario++) {
         memset(&dev,0,sizeof(dev));memset(regs,0,sizeof(regs));
         imemTransfers=dmemTransfers=cpuStarts=0;
         freeFailures=scenario==7?1:0;
@@ -225,11 +231,14 @@ int main(void)
         dev.VerifiedFrtsOffset=0x0ff00000ULL;
         dev.VerifiedVgaWorkspaceOffset=0x1fffe0000ULL;
         regs[0x1183a4/4]=8192;
+        regs[0x220008/4]=0x40000; /* doorbell selector 4 */
+        regs[0x220004/4]=0x80000b;
+        regs[0x220300/4]=0x80000000;
         regs[NV_PSEC_FALCON_CPUCTL/4]=(scenario==3) ? 0x50 : 0x10;
         assert(NvxGspInitSubsystem(&dev)==(scenario==0 || scenario>=3));
         assert(dev.GspInitialized==(scenario==0 || scenario>=3));
         if (dev.GspInitialized) {
-            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==23);
+            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==24);
             assert(dev.GspScratchGpuVa==0x10000000);
             assert(dev.GspClientHandle==0xc1d00001);
             assert(dev.GspDeviceHandle==0x80000001&&dev.GspSubdeviceHandle==0x20800001);

@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.91 GA104 GPU copy probe
+NVIDIA GA104 XDDM DRIVER — v1.0.0.92 physical runlist doorbell
 Updated: November 2, 2026
 
 Current checkpoint
@@ -18,9 +18,19 @@ Shutdown releases the RM client/channels before their DMA storage; unconfirmed
 teardown retains the backing pages. Host sanitizer tests cover completion,
 timeout, corrupt data/guards and failed teardown. All host checks and the
 native XP x64 build pass. No ISO generated; v91 is in dist_full and archived.
-Hardware v91 has not run: this workspace lacks VFIO devices and FUSE access.
-Run ./test_full_driver.sh on the GPU host. It now points vm_serial.log to the
-current archived log and correctly identifies v91 in the serial banner.
+Hardware v91 ran autonomously via ./test_full_driver.sh with escalated
+execution access (normal UID; no sudo). That execution mode exposes VFIO and
+allows the rootless guest updater; the earlier workspace-blocker report was
+incomplete. Log v91-20261102-162046.log proves C7B5 allocation. The GPU copy
+times out with GPGet=0, GPPut=1, fence=0, external work-submit token=0. ACPI
+shutdown completed. v92 derives the physical token from COPY0's queried
+runlist doorbell selector and fixed channel ID, matching Nouveau. Host checks
+pass; the first hardware run hit the intermittent sequencer poll failure and
+was shut down through ACPI. Four v92 attempts: three Windows boots stopped
+at that first poll, one exited in pre-boot KVM emulation. The physical-token
+path has not been reached on hardware. All responding guests received ACPI
+shutdown. Latest v91/v92 successful scanout mappings are 1920x1080x32 VBE. vm_serial.log
+now follows the live archived log. No ISO generated.
 
 Hardware logs from v88 prove RM INIT_DONE, client/device/subdevice allocation,
 scratch page registration, channel group and context share allocation. GPFIFO

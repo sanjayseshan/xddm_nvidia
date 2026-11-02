@@ -107,9 +107,9 @@ static BOOLEAN NvxGspAlloc(PNVX_DEVICE_EXTENSION dev,ULONG parent,ULONG object,
 static BOOLEAN NvxGspControl(PNVX_DEVICE_EXTENSION dev,ULONG object,ULONG cmd,
                             const void *params,ULONG bytes)
 {
-    ULONG payload[64]={0};
+    ULONG payload[134]={0};
     const ULONG *words=(const ULONG *)dev->RpcRxRecord;
-    if(bytes>128) return FALSE;
+    if(bytes>512) return FALSE;
     payload[0]=dev->GspClientHandle;
     payload[1]=object;
     payload[2]=cmd;
@@ -330,7 +330,7 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
     volatile ULONG *fence=(volatile ULONG *)(scratch+0xc000);
     PULONG src=(PULONG)(scratch+0xa000),push=(PULONG)(scratch+0x9000);
     volatile ULONG64 *fifo=(volatile ULONG64 *)scratch;
-    ULONG token=0,n=0;
+    ULONG token=0,n=0,runlistQuery[124]={0}; /* two arrays of 62 engines */
     ULONG64 va=dev->GspScratchGpuVa,pushVa=va+0x9000;
     const ULONG done=0x91c0ffee,guard=0xf17e55aa;
     dev->GspCopyVerified=FALSE;
@@ -340,7 +340,30 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
         return FALSE;
     }
     token=((const ULONG *)dev->RpcRxRecord)[26];
-    LogStr("NVX [COPY]: work-submit token=");LogHex(token);LogStr("\n");
+    LogStr("NVX [COPY]: RM work-submit token=");LogHex(token);LogStr("\n");
+    /* GSP's 535 kfifoGenerateWorkSubmitToken_GA100() generates an internal
+       token but returns its initially-zero external value. Nouveau uses
+       the physical runlist doorbell selector and the client-fixed ChID.
+       Our PAGE_FIXED flags reserve USERD page 0 / slot 1, i.e. ChID 1. */
+    runlistQuery[0]=9;
+    if(!NvxGspControl(dev,dev->GspSubdeviceHandle,0x20800179,runlistQuery,sizeof(runlistQuery))) {
+        LogStr("NVX [COPY]: COPY0 runlist query failed; no commands submitted.\n");return FALSE;
+    }
+    {
+        ULONG base=((const ULONG *)dev->RpcRxRecord)[26+62];
+        ULONG dbcfg,chcfg,enable;
+        if(!base||(base&0xfff)||dev->Bar0Length<0x304||base>dev->Bar0Length-0x304) {
+            LogStr("NVX [COPY]: invalid COPY0 runlist base=");LogHex(base);LogStr("\n");return FALSE;
+        }
+        dbcfg=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+base+8));
+        chcfg=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+base+4));
+        enable=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+base+0x300));
+        if(dbcfg==0xffffffffU||(dbcfg&0xffff0000U)==0xbadf0000U) return FALSE;
+        token=(dbcfg&0xffff0000U)|1;
+        LogStr("NVX [COPY]: physical runlist=");LogHex(base);LogStr(" dbcfg=");LogHex(dbcfg);
+        LogStr(" chcfg=");LogHex(chcfg);LogStr(" enable=");LogHex(enable);
+        LogStr(" token=");LogHex(token);LogStr("\n");
+    }
     if(userd[0x88/4]||userd[0x8c/4]) {
         LogStr("NVX [COPY]: fresh channel has nonzero GP pointers; submission skipped.\n");
         return FALSE;
