@@ -144,6 +144,27 @@ static BOOLEAN NvxGspRegisterScratch(PNVX_DEVICE_EXTENSION dev)
     LogStr("NVX [RM]: 64KB coherent scratch memory registered.\n");return TRUE;
 }
 
+static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
+{
+    /* NV_MEMORY_VIRTUAL_ALLOCATION_PARAMS: two U64, handle, padding. */
+    ULONG virtualMemory[6]={0x10000000,0,0x1000ffff,0,0,0};
+    /* NVOS46_PARAMETERS_v03_00: 56 bytes, dmaOffset at byte 40. */
+    ULONG map[14]={0};
+    const ULONG *reply=(const ULONG *)dev->RpcRxRecord;
+    virtualMemory[4]=dev->GspVaSpaceHandle;
+    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0x70000001,0x70,
+                   virtualMemory,sizeof(virtualMemory))) return FALSE;
+    dev->GspVirtualMemoryHandle=0x70000001;
+    map[0]=dev->GspClientHandle;map[1]=dev->GspDeviceHandle;
+    map[2]=dev->GspVirtualMemoryHandle;map[3]=dev->GspScratchMemoryHandle;
+    map[6]=GSP_SCRATCH_SIZE;map[8]=0x8000;map[10]=0x10000000;
+    if(!NvxGspCall(dev,14,map,sizeof(map))) return FALSE;
+    if(reply[14]<32+sizeof(map)||reply[20]!=map[0]||reply[21]!=map[1]||
+       reply[22]!=map[2]||reply[23]!=map[3]||reply[30]!=map[10]||reply[31]||reply[32]) return FALSE;
+    dev->GspScratchGpuVa=0x10000000;
+    LogStr("NVX [RM]: scratch memory mapped at GPU VA 0x10000000.\n");return TRUE;
+}
+
 static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
 {
     ULONG client[27]={0xc1d00001,0,0x0078766e};
@@ -162,6 +183,7 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
     dev->GspVaSpaceHandle=0x90f10001;
     LogStr("NVX [RM]: private GPU virtual address space allocated.\n");
     if(!NvxGspRegisterScratch(dev)) return FALSE;
+    if(!NvxGspMapScratch(dev)) return FALSE;
     LogStr("NVX [RM]: client, device and subdevice ready; rendering channels unavailable.\n");
     return TRUE;
 }
