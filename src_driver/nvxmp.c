@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.41
+ * Driver Version: 1.0.0.42
  */
 
 #include "miniport.h"
@@ -49,6 +49,7 @@ void LogHex(unsigned long long val) {
 }
 
 typedef struct _NVX_PROM_CONTEXT { PUCHAR Bar0; } NVX_PROM_CONTEXT;
+static UCHAR NvxFwsecDryRunImage[0x10000];
 
 static int NvxPromRead32(void *context, uint32_t offset, uint32_t *value)
 {
@@ -58,10 +59,84 @@ static int NvxPromRead32(void *context, uint32_t offset, uint32_t *value)
     return 1;
 }
 
+static int NvxPromCopy(NVX_PROM_CONTEXT *prom, uint32_t offset, PUCHAR dst, uint32_t size)
+{
+    uint32_t i,value=0,aligned=0xffffffffU;
+    for (i=0;i<size;i++) {
+        uint32_t current=(offset+i)&~3U;
+        if (current!=aligned) {
+            if (!NvxPromRead32(prom,current,&value)) return 0;
+            aligned=current;
+        }
+        dst[i]=(UCHAR)(value>>(8*((offset+i)&3U)));
+    }
+    return 1;
+}
+
+static uint32_t NvxCrc32(const UCHAR *data, uint32_t size)
+{
+    uint32_t crc=0xffffffffU,i;
+    for (i=0;i<size;i++) {
+        unsigned bit;crc^=data[i];
+        for (bit=0;bit<8;bit++) crc=(crc>>1)^((0U-(crc&1U))&0xedb88320U);
+    }
+    return crc^0xffffffffU;
+}
+
+static VOID NvxPut32(PUCHAR p,uint32_t value)
+{
+    p[0]=(UCHAR)value;p[1]=(UCHAR)(value>>8);p[2]=(UCHAR)(value>>16);p[3]=(UCHAR)(value>>24);
+}
+
+static VOID NvxDryRunFwsecStage(NVX_PROM_CONTEXT *prom,const NVX_FWSEC_INFO *info,
+                                const NVX_FRTS_LAYOUT *layout,uint32_t signatureOffset)
+{
+    uint32_t sigDst,mapper,cmd,baseCrc,stagedCrc,sigCrc;
+    PUCHAR image=NvxFwsecDryRunImage;
+    if (!prom||!info||!layout||!info->StoredSize||info->StoredSize>sizeof(NvxFwsecDryRunImage) ||
+        info->ImemLoadSize>info->StoredSize ||
+        info->PkcDataOffset>info->DmemLoadSize ||
+        !NvxPromCopy(prom,info->ImageOffset,image,info->StoredSize)) {
+        LogStr("NVX [FWSEC-STAGE]: invalid image bounds/read; execution blocked.\n");return;
+    }
+    baseCrc=NvxCrc32(image,info->StoredSize);
+    sigDst=info->ImemLoadSize+info->PkcDataOffset;
+    mapper=info->ImemLoadSize+info->DmemMapperOffset;
+    cmd=info->ImemLoadSize+info->CommandInOffset;
+    if (sigDst>info->StoredSize || 384U>info->StoredSize-sigDst ||
+        mapper>info->StoredSize || 64U>info->StoredSize-mapper ||
+        cmd>info->StoredSize || 44U>info->StoredSize-cmd ||
+        !NvxPromCopy(prom,signatureOffset,image+sigDst,384U)) {
+        LogStr("NVX [FWSEC-STAGE]: patch bounds/read invalid; execution blocked.\n");
+        VideoPortZeroMemory(image,sizeof(NvxFwsecDryRunImage));return;
+    }
+    sigCrc=NvxCrc32(image+sigDst,384U);
+    NvxPut32(image+mapper+0x2c,0x15U);
+    VideoPortZeroMemory(image+cmd,44U);
+    NvxPut32(image+cmd+0,1U);NvxPut32(image+cmd+4,24U);
+    NvxPut32(image+cmd+20,2U);
+    NvxPut32(image+cmd+24,1U);NvxPut32(image+cmd+28,20U);
+    NvxPut32(image+cmd+32,(uint32_t)(layout->FrtsOffset>>12));
+    NvxPut32(image+cmd+36,layout->FrtsSize4k);NvxPut32(image+cmd+40,2U);
+    stagedCrc=NvxCrc32(image,info->StoredSize);
+    LogStr("NVX [FWSEC-STAGE]: base_crc=");LogHex(baseCrc);
+    LogStr(" expected=");LogHex(info->ImageCrc32);
+    LogStr(" selected_sig_crc=");LogHex(sigCrc);
+    LogStr(" staged_crc=");LogHex(stagedCrc);LogStr("\n");
+    LogStr("NVX [FWSEC-STAGE]: sig_dmem=");LogHex(info->PkcDataOffset);
+    LogStr(" mapper_dmem=");LogHex(info->DmemMapperOffset);
+    LogStr(" init_cmd=0x15 cmd_dmem=");LogHex(info->CommandInOffset);
+    LogStr(" bytes=0x2C dry-run complete; no GPU writes.\n");
+    VideoPortZeroMemory(image,sizeof(NvxFwsecDryRunImage));
+}
+
 static VOID NvxProbeFwsecRom(PUCHAR bar0)
 {
     NVX_PROM_CONTEXT prom;
     NVX_FWSEC_INFO info;
+    NVX_FRTS_LAYOUT frtsLayout;
+    uint32_t selectedSignatureOffset=0;
+    int signatureSelected=0,frtsLayoutValid=0;
     int status;
     prom.Bar0=bar0;
     {
@@ -139,6 +214,7 @@ static VOID NvxProbeFwsecRom(PUCHAR bar0)
                 LogStr(" version=");LogHex(fuseVersion);
                 LogStr(" signature_index=");LogHex(signatureIndex);
                 LogStr(" signature_rom=");LogHex(signatureOffset);LogStr("\n");
+                selectedSignatureOffset=signatureOffset;signatureSelected=1;
             } else {
                 LogStr(" no compatible VBIOS signature\n");
             }
@@ -151,7 +227,6 @@ static VOID NvxProbeFwsecRom(PUCHAR bar0)
             uint32_t lockHi=VideoPortReadRegisterUlong((PULONG)(bar0+0x1fa830));
             uint32_t wpr2Lo=VideoPortReadRegisterUlong((PULONG)(bar0+0x1fa824));
             uint32_t wpr2Hi=VideoPortReadRegisterUlong((PULONG)(bar0+0x1fa828));
-            NVX_FRTS_LAYOUT layout;
             LogStr("NVX [FRTS]: regs fb=");LogHex(fbSize);
             LogStr(" workspace=");LogHex(workspace);
             LogStr(" lock_plm=");LogHex(lockPlm);
@@ -159,18 +234,21 @@ static VOID NvxProbeFwsecRom(PUCHAR bar0)
             LogStr(" lock_hi=");LogHex(lockHi);
             LogStr(" wpr2_lo=");LogHex(wpr2Lo);
             LogStr(" wpr2_hi=");LogHex(wpr2Hi);LogStr("\n");
-            if (NvxComputeFrtsLayout(fbSize,workspace,lockPlm,lockLo,lockHi,&layout)) {
-                LogStr("NVX [FRTS]: vga=");LogHex(layout.VgaWorkspaceOffset);
-                LogStr(" reserved=");LogHex(layout.VbiosReservedOffset);
-                LogStr(" wpr_end=");LogHex(layout.GspFwWprEnd);
-                LogStr(" frts=");LogHex(layout.FrtsOffset);
-                LogStr(" size4k=");LogHex(layout.FrtsSize4k);LogStr("\n");
+            if (NvxComputeFrtsLayout(fbSize,workspace,lockPlm,lockLo,lockHi,&frtsLayout)) {
+                frtsLayoutValid=1;
+                LogStr("NVX [FRTS]: vga=");LogHex(frtsLayout.VgaWorkspaceOffset);
+                LogStr(" reserved=");LogHex(frtsLayout.VbiosReservedOffset);
+                LogStr(" wpr_end=");LogHex(frtsLayout.GspFwWprEnd);
+                LogStr(" frts=");LogHex(frtsLayout.FrtsOffset);
+                LogStr(" size4k=");LogHex(frtsLayout.FrtsSize4k);LogStr("\n");
                 LogStr("NVX [FRTS]: dry-run cmd=0x15 bytes=0x2C input_capacity=");
                 LogHex(info.CommandInSize);
-                LogStr(" region_offset4k=");LogHex(layout.FrtsOffset>>12);
+                LogStr(" region_offset4k=");LogHex(frtsLayout.FrtsOffset>>12);
                 LogStr(" region_size4k=0x100 media=0x2\n");
             } else LogStr("NVX [FRTS]: layout invalid; execution remains blocked.\n");
         }
+        if (signatureSelected&&frtsLayoutValid)
+            NvxDryRunFwsecStage(&prom,&info,&frtsLayout,selectedSignatureOffset);
     }
 }
 
@@ -632,7 +710,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.41\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.42\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

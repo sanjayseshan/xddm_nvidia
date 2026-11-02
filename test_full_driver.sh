@@ -4,14 +4,14 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_RUN_LOG="$NVX_ARCHIVE/v41-$NVX_STAMP.log"
+NVX_RUN_LOG="$NVX_ARCHIVE/v42-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
 if [ -f "$NVX_ROOT/vm_serial.log" ]; then
-    cp "$NVX_ROOT/vm_serial.log" "$NVX_ARCHIVE/before-v41-$NVX_STAMP.log"
+    cp "$NVX_ROOT/vm_serial.log" "$NVX_ARCHIVE/before-v42-$NVX_STAMP.log"
 fi
 
-echo "==> Running host tests and building FRTS layout dry-run v41"
+echo "==> Running host tests and building FWSEC staging dry-run v42"
 if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
     sudo -u "$SUDO_USER" make -C "$NVX_ROOT/src_driver" check package-full
 else
@@ -60,7 +60,8 @@ finish() {
 trap finish EXIT
 
 echo "==> Launching VFIO VM. QEMU will not reboot after a guest crash."
-echo "==> At the QEMU monitor, use 'quit' after recording the screen/STOP code."
+echo "==> For a booted guest use 'system_powerdown' and wait for XP to exit."
+echo "==> Use 'quit' only for a pre-boot hang or failed graceful shutdown."
 NVX_DRIVER_ISO="$NVX_ROOT/nvx_driver_full.iso" \
 NVX_SERIAL_LOG="$NVX_RUN_LOG" \
     "$NVX_ROOT/run_vfio_vm.sh"

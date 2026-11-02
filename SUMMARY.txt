@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.41 FRTS layout dry-run / v1.0.0.33 verified display
+NVIDIA GA104 XDDM DRIVER — v1.0.0.42 FWSEC staging dry-run / v1.0.0.33 verified display
 Updated: November 1, 2026
 
 Latest hardware result
@@ -178,6 +178,18 @@ physical VRAM size, VGA workspace, MMU lock PLM/range, and current WPR2. It
 computes the protected 1MB FRTS placement and logs a dry-run 44-byte FRTS
 command against the verified 64-byte input buffer. Firmware execution remains
 disabled until this hardware-derived placement is confirmed.
+
+v41 hardware result and changes in v42
+--------------------------------------
+v41 passed on attempt 5 with 10 modes and 1920x1080x32. VRAM is 8GB. The valid
+MMU lock spans from 0x10000000 upward, so OpenRM's WPR end is 0x10000000 and
+the 1MB FRTS region is 0x0ff00000..0x0fffffff. The dry-run command is 44 bytes
+inside the verified 64-byte input buffer.
+
+v42 copies the 0xe900-byte FWSEC image from live PROM into a private driver
+buffer, verifies its original CRC, injects selected signature 2 at DMEM 0x5a4,
+patches mapper init command 0x15 and the exact FRTS input structure, then logs
+the staged CRC and clears the buffer. It performs no DMA or GPU writes.
 
 Important corrections
 ----------------------
