@@ -1,12 +1,14 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.99 VRAM layout discovery
+NVIDIA GA104 XDDM DRIVER — v1.0.0.100 firmware VRAM layout retrieved
 Updated: November 2, 2026
 
 Current checkpoint
 ------------------
-v99-20261102-165132.log repeats the verified GPU copy. Its read-only VRAM
-metadata query is rejected as invalid message format because its request
-payload is empty. Original 535 SDK gives static-info size 2168; next send
-that full zeroed request. Desktop drawing remains software.
+v100-20261102-170004.log retrieves the 2168-byte static config and verifies
+the GPU copy again. BAR1 PDB=0x6c0c000, BAR2=0x6e93000. Free ISO-capable
+VRAM region: 0x180000..0x3ddffff. The current WPR-end candidate guard excludes
+that lower region; next use the actual WPR interval and discover the active
+BAR1 framebuffer translation before any VRAM drawing. This version only reads
+layout metadata; desktop rendering remains software.
 
 v98 is the first hardware-verified GPU copy execution checkpoint.
 Log: test_logs/v98-20261102-164453.log.

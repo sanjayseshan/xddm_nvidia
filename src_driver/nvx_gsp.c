@@ -216,13 +216,19 @@ static BOOLEAN NvxGspGetFbLayout(PNVX_DEVICE_EXTENSION dev)
     /* Verified against 535 SDK types: GspStaticConfigInfo.fbRegionInfoParams
        is at 840, contains an 8-byte prefix and sixteen 48-byte entries.
        GET_GSP_STATIC_INFO is the same pointer-free RPC used by Nouveau. */
-    const ULONG infoOffset=840,entriesOffset=848,prefixSize=1616;
+    const ULONG infoOffset=840,entriesOffset=848;
+    ULONG request[542]={0}; /* sizeof(GspStaticConfigInfo) = 2168 in SDK 535. */
     const GSP_FW_WPR_META_V1 *wpr=(const void *)((PUCHAR)dev->GspDmaVirtual+GSP_WPR_META_OFFSET);
     ULONG count=0;
     ULONG64 freeBase=0,freeLimit=0;
     dev->GspFbLayoutValid=FALSE;dev->GspFbRegionCount=0;
     dev->GspFbFreeBase=dev->GspFbFreeLimit=0;
-    if(!NvxGspCall(dev,65,NULL,0)||((const ULONG *)dev->RpcRxRecord)[14]<32+prefixSize) return FALSE;
+    dev->GspBar1PageDirectory=dev->GspBar2PageDirectory=0;
+    if(!NvxGspCall(dev,65,request,sizeof(request))||((const ULONG *)dev->RpcRxRecord)[14]<32+sizeof(request)) return FALSE;
+    VideoPortMoveMemory(&dev->GspBar1PageDirectory,dev->RpcRxRecord+80+2088,8);
+    VideoPortMoveMemory(&dev->GspBar2PageDirectory,dev->RpcRxRecord+80+2096,8);
+    LogStr("NVX [FB]: firmware BAR1 page directory=");LogHex(dev->GspBar1PageDirectory);
+    LogStr(" BAR2=");LogHex(dev->GspBar2PageDirectory);LogStr("\n");
     VideoPortMoveMemory(&count,dev->RpcRxRecord+80+infoOffset,sizeof(count));
     if(!count||count>16) return FALSE;
     for(ULONG i=0;i<count;i++) {

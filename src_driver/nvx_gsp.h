@@ -322,6 +322,7 @@ typedef struct _NVX_DEVICE_EXTENSION {
     BOOLEAN GspFbLayoutValid;
     ULONG GspFbRegionCount;
     ULONG64 GspFbFreeBase,GspFbFreeLimit;
+    ULONG64 GspBar1PageDirectory,GspBar2PageDirectory;
     ULONG RpcTxSequence,RpcRxSequence;
     UCHAR RpcRxRecord[65536];
 } NVX_DEVICE_EXTENSION, *PNVX_DEVICE_EXTENSION;

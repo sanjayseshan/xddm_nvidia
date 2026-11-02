@@ -55,7 +55,11 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         assert(NvxDecodeRpc((PUCHAR)request,4096,&f,&r,&s));
         assert((f==103||f==76||f==4||f==14||f==10||f==65)&&s==cmd->WritePtr-1);
         if(f==65) {
-            UCHAR cfg[1616]={0};
+            UCHAR cfg[2168]={0};
+            assert(request[14]==32+2168);
+            for(ULONG i=0;i<542;i++) assert(request[20+i]==0);
+            ULONG64 bar1=0x1fa000000ULL,bar2=0x1fb000000ULL;
+            memcpy(cfg+2088,&bar1,8);memcpy(cfg+2096,&bar2,8);
             ULONG count=scenario==10?17:2;
             ULONG64 base=0,limit=0x0fffffff,reserved=0x10000000;
             memcpy(cfg+840,&count,4);
@@ -278,7 +282,10 @@ int main(void)
             assert(dev.GspCopyEngineHandle==0xc7b50001);
             assert(dev.GspCopyEngineType==11);
             assert(dev.GspFbLayoutValid==(scenario<9));
-            if(dev.GspFbLayoutValid) assert(dev.GspFbRegionCount==2&&dev.GspFbFreeBase==0x10000000&&dev.GspFbFreeLimit==0x1dfffffffULL);
+            if(dev.GspFbLayoutValid) {
+                assert(dev.GspFbRegionCount==2&&dev.GspFbFreeBase==0x10000000&&dev.GspFbFreeLimit==0x1dfffffffULL);
+                assert(dev.GspBar1PageDirectory==0x1fa000000ULL&&dev.GspBar2PageDirectory==0x1fb000000ULL);
+            }
             else assert(dev.GspFbFreeBase==0&&dev.GspFbFreeLimit==0);
             assert(dev.GspCopyVerified==(scenario==0||scenario==3||scenario==7||scenario>=9));
             assert(dev.GspAssertCount==7);
