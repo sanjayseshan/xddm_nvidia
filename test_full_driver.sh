@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="89"
+NVX_TEST_VERSION="90"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
@@ -12,11 +12,13 @@ if [ -f "$NVX_ROOT/vm_serial.log" ]; then
     cp "$NVX_ROOT/vm_serial.log" "$NVX_ARCHIVE/before-v$NVX_TEST_VERSION-$NVX_STAMP.log"
 fi
 
-echo "==> Running host tests and building no-block-bind FWSEC DMA v$NVX_TEST_VERSION"
+echo "==> Running host tests and building COPY0 channel v$NVX_TEST_VERSION (no ISO)"
 if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
-    sudo -u "$SUDO_USER" make -C "$NVX_ROOT/src_driver" check package-full
+    sudo -u "$SUDO_USER" make -C "$NVX_ROOT/src_driver" check full
+    sudo -u "$SUDO_USER" cp "$NVX_ROOT/src_driver/nvxmp.sys" "$NVX_ROOT/dist_full/nvxmp.sys"
 else
-    make -C "$NVX_ROOT/src_driver" check package-full
+    make -C "$NVX_ROOT/src_driver" check full
+    cp "$NVX_ROOT/src_driver/nvxmp.sys" "$NVX_ROOT/dist_full/nvxmp.sys"
 fi
 
 if ! cmp -s "$NVX_ROOT/dist/nvxdisp.dll" "$NVX_ROOT/dist_full/nvxdisp.dll"; then
@@ -44,7 +46,11 @@ finish() {
     if [ -f "$NVX_RUN_LOG" ]; then
         grep -E "Miniport Driver|\[SEC2\]|\[GSP\]|\[RESET\]" "$NVX_RUN_LOG" | tail -80 || true
         if grep -q 'RM INIT_DONE received' "$NVX_RUN_LOG"; then
-            echo "RESULT: RM INIT_DONE received; acceleration still requires channels and drawing."
+            if grep -q 'GPU copy completed and verified' "$NVX_RUN_LOG"; then
+                echo "RESULT: GPU copy completion verified."
+            else
+                echo "RESULT: RM INIT_DONE received; GPU execution is still unverified."
+            fi
         elif grep -q 'Bootstrap incomplete; staging retained' "$NVX_RUN_LOG"; then
             echo "RESULT: FWSEC passed but GSP bootstrap remains incomplete; inspect SEC2/GSP diagnostics."
         elif grep -q "NVX \[FWSEC-EXEC\]: FRTS initialized and WPR2 validated" "$NVX_RUN_LOG"; then
@@ -75,6 +81,6 @@ trap finish EXIT
 echo "==> Launching VFIO VM. QEMU will not reboot after a guest crash."
 echo "==> For a booted guest use 'system_powerdown' and wait for XP to exit."
 echo "==> Use 'quit' only for a pre-boot hang or failed graceful shutdown."
-NVX_DRIVER_ISO="$NVX_ROOT/nvx_driver_full.iso" \
+NVX_DRIVER_ISO="${NVX_DRIVER_ISO:-$NVX_ROOT/nvx_driver_full.iso}" \
 NVX_SERIAL_LOG="$NVX_RUN_LOG" \
     "$NVX_ROOT/run_vfio_vm.sh"

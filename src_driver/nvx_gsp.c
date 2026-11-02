@@ -196,8 +196,9 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
     /* 1. TSG (KEPLER_CHANNEL_GROUP_A = 0xA06C) on Device:
        NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS (20 bytes):
        hObjectError, hObjectEccError, hVASpace, engineType, bIsCallingContextVgpuPlugin.
-       On Ampere GA104, TSG headers are only supported on the Graphics runlist (NV2080_ENGINE_TYPE_GRAPHICS = 1). */
-    ULONG tsg[5]={0, 0, dev->GspVaSpaceHandle, 1, 0}; /* engineType = 1 (GRAPHICS) */
+       Use COPY0 for this first executable channel: class 0xC6B5 is a copy
+       engine class and RM rejects it when attached to a GRAPHICS channel. */
+    ULONG tsg[5]={0, 0, dev->GspVaSpaceHandle, 9, 0}; /* engineType = COPY0 */
     /* 2. Context Share (FERMI_CONTEXT_SHARE_A = 0x9067) on TSG:
        NV_CTXSHARE_ALLOCATION_PARAMETERS (12 bytes):
        hVASpace, flags, subctxId. */
@@ -205,7 +206,7 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
     /* 3. NV_CHANNEL_ALLOC_PARAMS for 535.113.01: 360 bytes (90 ULONGs).
        AMPERE_CHANNEL_GPFIFO_A (0xC56F) allocated under TSG parent with hContextShare. */
     ULONG chan[90]={0};
-    ULONG bindEngine=1; /* GRAPHICS */
+    ULONG bindEngine=9; /* COPY0 */
     UCHAR schedEnable[2]={1, 0};
     /* NVC0B5_ALLOCATION_PARAMETERS for AMPERE_DMA_COPY_A (0xC6B5): version=1, engineType=9 (COPY0). */
     ULONG ceParams[2]={1, 9};
@@ -251,7 +252,7 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
     chan[5]=0x00200120;
     chan[6]=dev->GspContextShareHandle; /* hContextShare = Context Share handle under TSG */
     chan[7]=0;                          /* hVASpace = 0 when hContextShare is set! */
-    chan[32]=1;                         /* engineType = NV2080_ENGINE_TYPE_GRAPHICS (1) */
+    chan[32]=9;                         /* engineType = NV2080_ENGINE_TYPE_COPY0 (9) */
     chan[34]=0;                         /* subDeviceId = 0 */
 
     /* All descriptors describe OS-owned coherent SYSTEM memory. */
@@ -298,7 +299,7 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
         LogStr("NVX [RM]: NVA06F_CTRL_CMD_BIND failed.\n");
         return FALSE;
     }
-    LogStr("NVX [RM]: channel bound to GRAPHICS.\n");
+    LogStr("NVX [RM]: channel bound to COPY0.\n");
 
     /* Schedule channel */
     if(!NvxGspControl(dev,dev->GspChannelHandle,0xa06f0103,schedEnable,sizeof(schedEnable))) {
@@ -340,7 +341,7 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
     if(!NvxGspRegisterScratch(dev)) return FALSE;
     if(!NvxGspMapScratch(dev)) return FALSE;
     if(!NvxGspAllocChannel(dev)) return FALSE;
-    LogStr("NVX [RM]: channel and copy engine allocated; GPU execution still unverified.\n");
+    LogStr("NVX [RM]: COPY0 channel and copy engine allocated; GPU execution still unverified.\n");
     return TRUE;
 }
 
