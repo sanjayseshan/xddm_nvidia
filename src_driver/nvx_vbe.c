@@ -86,7 +86,7 @@ BOOLEAN NvxVbeSetMode(PVOID extension, ULONG index)
     return TRUE;
 }
 
-BOOLEAN NvxVbeInitialize(PVOID extension)
+static BOOLEAN NvxVbeEnumerate(PVOID extension)
 {
     PNVX_DEVICE_EXTENSION dev=extension;
     NVX_INT10_INTERFACE api;
@@ -94,7 +94,7 @@ BOOLEAN NvxVbeInitialize(PVOID extension)
     VBE_INFO_BLOCK info;
     VBE_MODE_INFO mode;
     USHORT seg=0,off=0,list[512];
-    ULONG size=512,i,count=0,initial=0;
+    ULONG size=512,i,count=0;
     VP_STATUS status;
     BOOLEAN allocated=FALSE;
     dev->NumModes=0;
@@ -137,11 +137,28 @@ done:
         LogStr("NVX [VBE]: No verified linear modes; refusing guessed framebuffer geometry.\n");
         return FALSE;
     }
-    for(i=1;i<dev->NumModes;i++) {
-        const VIDEO_MODE_INFORMATION *m=&dev->Modes[i], *b=&dev->Modes[initial];
-        ULONG64 area=(ULONG64)m->VisScreenWidth*m->VisScreenHeight;
-        ULONG64 best=(ULONG64)b->VisScreenWidth*b->VisScreenHeight;
-        if(area<best || (area==best && m->BitsPerPlane>b->BitsPerPlane)) initial=i;
+    return TRUE;
+}
+
+BOOLEAN NvxVbeInitialize(PVOID extension)
+{
+    PNVX_DEVICE_EXTENSION dev=extension;
+    ULONG attempt;
+    for(attempt=0;attempt<2;attempt++) {
+        ULONG i,initial=0;
+        if(!NvxVbeEnumerate(extension)) return FALSE;
+        for(i=1;i<dev->NumModes;i++) {
+            const VIDEO_MODE_INFORMATION *m=&dev->Modes[i], *b=&dev->Modes[initial];
+            ULONG64 area=(ULONG64)m->VisScreenWidth*m->VisScreenHeight;
+            ULONG64 best=(ULONG64)b->VisScreenWidth*b->VisScreenHeight;
+            if(area<best || (area==best && m->BitsPerPlane>b->BitsPerPlane)) initial=i;
+        }
+        if(!NvxVbeSetMode(extension,initial)) return FALSE;
+        if(attempt==0 && dev->NumModes==4) {
+            LogStr("NVX [VBE]: Four-mode degraded list; retrying controller discovery after verified mode set.\n");
+            continue;
+        }
+        return TRUE;
     }
-    return NvxVbeSetMode(extension,initial);
+    return TRUE;
 }

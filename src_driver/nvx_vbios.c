@@ -226,6 +226,7 @@ int NvxParseFwsecRom(NVX_ROM_READ32 read32, void *context,
                 !rd8(&r,desc+38,&info->UcodeId)||
                 !rd8(&r,desc+39,&info->SignatureCount)||
                 !rd16(&r,desc+40,&info->SignatureVersions)) return NVX_VBIOS_BAD_DESCRIPTOR;
+            info->ValidationStage=1;
             info->SignaturesOffset=desc+44;
             info->SignaturesSize=info->DescriptorSize-44;
             if (!info->SignatureCount ||
@@ -240,16 +241,19 @@ int NvxParseFwsecRom(NVX_ROM_READ32 read32, void *context,
                 !add(info->DmemImageOffset,info->InterfaceOffset,info->BiosSize,&info->InterfaceImageOffset) ||
                 !add(info->InterfaceOffset,4U,info->DmemLoadSize,&interfaceEnd))
                 return NVX_VBIOS_BAD_DESCRIPTOR;
+            info->ValidationStage=2;
             if (!rd8(&r,info->InterfaceImageOffset,&info->InterfaceVersion)||
                 !rd8(&r,info->InterfaceImageOffset+1,&info->InterfaceHeaderSize)||
                 !rd8(&r,info->InterfaceImageOffset+2,&info->InterfaceEntrySize)||
                 !rd8(&r,info->InterfaceImageOffset+3,&info->InterfaceEntryCount))
                 return NVX_VBIOS_BAD_INTERFACE;
+            info->ValidationStage=3;
             if (info->InterfaceVersion!=1 || info->InterfaceHeaderSize<4 ||
                 info->InterfaceEntrySize<8 || info->InterfaceEntryCount<2 ||
                 !add(info->InterfaceOffset,info->InterfaceHeaderSize,
                      info->DmemLoadSize,&entryBase))
                 return NVX_VBIOS_BAD_INTERFACE;
+            info->ValidationStage=4;
             for (i=0; i<info->InterfaceEntryCount; i++) {
                 uint32_t entryOffset, entryImage, id, mapperOffset;
                 if (!add(entryBase,i*info->InterfaceEntrySize,
@@ -261,6 +265,7 @@ int NvxParseFwsecRom(NVX_ROM_READ32 read32, void *context,
                     return NVX_VBIOS_BAD_INTERFACE;
                 if (id==4) { info->DmemMapperOffset=mapperOffset; foundMapper=1; break; }
             }
+            if (foundMapper) info->ValidationStage=5;
             if (!foundMapper || !add(info->DmemImageOffset,info->DmemMapperOffset,
                                      info->BiosSize,&mapperImage) ||
                 !add(info->DmemMapperOffset,64U,info->DmemLoadSize,&mapperEnd) ||
@@ -275,6 +280,7 @@ int NvxParseFwsecRom(NVX_ROM_READ32 read32, void *context,
                 !range_fits(info->CommandInOffset,info->CommandInSize,info->DmemLoadSize)||
                 !range_fits(info->CommandOutOffset,info->CommandOutSize,info->DmemLoadSize))
                 return NVX_VBIOS_BAD_INTERFACE;
+            info->ValidationStage=6;
         } else {
             if (!u32at(&r,desc+16,&info->InterfaceOffset)||
                 !u32at(&r,desc+24,&info->ImemLoadSize)||

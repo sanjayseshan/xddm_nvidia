@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.37 FWSEC structure diagnostic / v1.0.0.33 verified display
+NVIDIA GA104 XDDM DRIVER — v1.0.0.38 recovery diagnostic / v1.0.0.33 verified display
 Updated: November 1, 2026
 
 Latest hardware result
@@ -128,6 +128,19 @@ application-interface header and entries, the required DMEM-mapper entry, and
 the mapper command-buffer bounds. It logs CRC32 identities for the signature
 table and stored image for repeatable read-only comparison. It still performs
 no Falcon, SEC2, GSP, or display-engine writes.
+
+v37 hardware result and changes in v38
+--------------------------------------
+v37 booted safely but the VBE controller exposed only four modes before any
+PROM parsing occurred; Windows therefore selected 800x600x32. The FWSEC parser
+reached its stricter application-interface validation and returned
+BAD_INTERFACE (-6), but v37 did not log which substage failed.
+
+v38 retries VBE controller discovery once when exactly the degraded four-mode
+list is observed, after first establishing a verified BIOS mode. It also logs
+the FWSEC validation stage and partial interface-header fields even on failure.
+This distinguishes a stale VFIO/VBIOS mode list from a driver parser failure.
+All GSP/SEC2 hardware writes remain gated.
 
 Important corrections
 ----------------------

@@ -3,7 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 static UCHAR low[0x100000];
-static ULONG current, scenario;
+static ULONG current, scenario, controllerCalls;
 static int frees, derefs;
 VOID LogStr(const char *s) { (void)s; }
 VOID LogHex(unsigned long long x) { (void)x; }
@@ -24,9 +24,15 @@ static VP_STATUS call(PVOID p,NVX_INT10_ARGS *a)
     if(a->Eax==0x4f00) {
         VBE_INFO_BLOCK *info=buffer;
         USHORT *list=(void *)(low+0x12080);
+        controllerCalls++;
         memcpy(info->VbeSignature,"VESA",4);info->VbeVersion=0x300;
         info->VideoModePtr=0x12000080; /* list inside the reused BIOS buffer */
-        list[0]=0x112;list[1]=0x115;list[2]=0x118;list[3]=0xffff;
+        list[0]=0x112;list[1]=0x115;list[2]=0x118;
+        if(scenario==4) {
+            list[3]=0x11b;
+            if(controllerCalls>1) { list[4]=0x177;list[5]=0xffff; }
+            else list[4]=0xffff;
+        } else list[3]=0xffff;
     } else {
         VBE_MODE_INFO *v=buffer;
         assert(a->Eax==0x4f01);
@@ -65,7 +71,7 @@ int main(void)
     assert(!NvxVbeSuccess(0,0xffff014f));
     assert(!NvxVbeSuccess(87,0x004f));
     for(scenario=0;scenario<4;scenario++) {
-        memset(&dev,0,sizeof(dev));current=3;frees=derefs=0;
+        memset(&dev,0,sizeof(dev));current=3;frees=derefs=0;controllerCalls=0;
         dev.PhysicalBar1.QuadPart=0xe0000000;dev.Bar1Length=0x10000000;
         assert(NvxVbeInitialize(&dev)==(scenario==0));
         if(scenario==1) { assert(!frees && !derefs && !dev.NumModes);continue; }
@@ -82,6 +88,10 @@ int main(void)
         assert(!NvxVbeSetMode(&dev,0) && dev.CurrentModeIndex==2 && dev.ActiveWidth==1920);
         scenario=0;
     }
+    scenario=4;memset(&dev,0,sizeof(dev));current=3;frees=derefs=0;controllerCalls=0;
+    dev.PhysicalBar1.QuadPart=0xe0000000;dev.Bar1Length=0x10000000;
+    assert(NvxVbeInitialize(&dev));
+    assert(controllerCalls==2&&frees==2&&derefs==2&&dev.NumModes==5);
     puts("VBE tests passed: AX status, BIOS buffer/list, real stride/depth/base, native mode, rejected modes and cleanup.");
     return 0;
 }

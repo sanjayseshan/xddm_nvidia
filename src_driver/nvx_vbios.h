@@ -47,6 +47,7 @@ typedef struct _NVX_FWSEC_INFO {
     uint8_t InterfaceHeaderSize;
     uint8_t InterfaceEntrySize;
     uint8_t InterfaceEntryCount;
+    uint8_t ValidationStage;
 } NVX_FWSEC_INFO;
 
 enum {
