@@ -6,6 +6,36 @@
 #define NVX_C67D_UPDATE_SPECIAL_HANDLING_INTERRUPT_RM (1U << 20)
 #define NVX_C67D_UPDATE_INHIBIT_INTERRUPTS (1U << 24)
 
+/* GA104 / C67D Core Methods */
+#define NVX_C67D_HEAD_SET_CONTROL_OUTPUT_RESOURCE(head) (0x2004U + (head) * 0x400U)
+#define NVX_C67D_HEAD_SET_PIXEL_CLOCK_FREQUENCY(head)   (0x200CU + (head) * 0x400U)
+#define NVX_C67D_HEAD_SET_PIXEL_CLOCK_CONFIGURATION(head) (0x201CU + (head) * 0x400U)
+#define NVX_C67D_HEAD_SET_PIXEL_CLOCK_FREQUENCY_MAX(head) (0x2028U + (head) * 0x400U)
+#define NVX_C67D_HEAD_SET_RASTER_SIZE(head)             (0x2064U + (head) * 0x400U)
+#define NVX_C67D_HEAD_SET_RASTER_SYNC_END(head)         (0x2068U + (head) * 0x400U)
+#define NVX_C67D_HEAD_SET_RASTER_BLANK_END(head)        (0x206CU + (head) * 0x400U)
+#define NVX_C67D_HEAD_SET_RASTER_BLANK_START(head)      (0x2070U + (head) * 0x400U)
+#define NVX_C67D_HEAD_SET_OVERSCAN_COLOR(head)          (0x2078U + (head) * 0x400U)
+#define NVX_C67D_HEAD_SET_MIN_FRAME_IDLE(head)          (0x2218U + (head) * 0x400U)
+
+#define NVX_C67D_SOR_SET_CONTROL(sor)                   (0x300U + (sor) * 0x20U)
+#define NVX_C67D_WINDOW_SET_CONTROL(win)                (0x1000U + (win) * 0x80U)
+
+#define NVX_C67D_UPDATE                                 0x200U
+#define NVX_C67D_SET_INTERLOCK_FLAGS                    0x218U
+#define NVX_C67D_SET_WINDOW_INTERLOCK_FLAGS             0x21CU
+
+/* GA104 / C67E Window Methods */
+#define NVX_C67E_SET_SIZE                               0x224U
+#define NVX_C67E_SET_STORAGE                            0x228U
+#define NVX_C67E_SET_PARAMS                             0x22CU
+#define NVX_C67E_SET_PLANAR_STORAGE(plane)              (0x230U + (plane) * 4U)
+#define NVX_C67E_SET_CONTEXT_DMA_ISO(plane)             (0x240U + (plane) * 4U)
+#define NVX_C67E_SET_OFFSET(plane)                      (0x260U + (plane) * 4U)
+#define NVX_C67E_SET_SIZE_IN                            0x298U
+#define NVX_C67E_SET_SIZE_OUT                           0x2A4U
+#define NVX_C67E_UPDATE                                 0x200U
+
 /* NVIDIA RM ctrl0073dfp.h, NV0073_CTRL_CMD_DFP_ASSIGN_SOR (0x731152).
  * NvBool is a 32-bit RM boolean; natural 4-byte alignment matches the wire
  * structure used by the GSP RM control RPC. */

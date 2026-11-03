@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.143
+ * Driver Version: 1.0.0.146
  */
 
 #include "miniport.h"
@@ -603,26 +603,165 @@ VP_STATUS HwVidGetVideoChildDescriptor(
     if(!ChildEnumInfo || !VideoChildType || !UId)
         return VIDEO_ENUM_INVALID_DEVICE;
     LogStr("NVX: HwVidGetVideoChildDescriptor ChildIndex: ");
-    LogHex(ChildEnumInfo->ChildIndex);LogStr("\n");
+    LogHex(ChildEnumInfo->ChildIndex);
+    LogStr(" IsSecondary: ");
+    LogHex(dev->IsSecondaryDisplay);
+    LogStr("\n");
     if(ChildEnumInfo->ChildIndex==0xffffffffUL) {
         *VideoChildType=VideoChip;*UId=0xffffffffUL;
         return VIDEO_ENUM_MORE_DEVICES;
     }
+
+    if (dev->IsSecondaryDisplay) {
+        /* Secondary adapter enumerates the second physical monitor (display 1) */
+        PNVX_DEVICE_EXTENSION prim = (PNVX_DEVICE_EXTENSION)dev->PrimaryDeviceExtension;
+        if (!prim || prim->MonitorCount < 2)
+            return VIDEO_ENUM_NO_MORE_DEVICES;
+
+        if (ChildEnumInfo->ChildIndex == 0) {
+            if (ChildEnumInfo->ACPIHwId != prim->MonitorIds[1])
+                return VIDEO_ENUM_INVALID_DEVICE;
+        } else if (ChildEnumInfo->ChildIndex != 1) {
+            return VIDEO_ENUM_NO_MORE_DEVICES;
+        }
+
+        if (!pChildDescriptor || ChildEnumInfo->ChildDescriptorSize < 128)
+            return VIDEO_ENUM_INVALID_DEVICE;
+
+        VideoPortMoveMemory(pChildDescriptor, prim->MonitorEdid[1], 128);
+        *VideoChildType = Monitor;
+        *UId = prim->MonitorIds[1];
+        LogStr("NVX [DUALVIEW]: Secondary enumerate monitor id=");
+        LogHex(*UId);
+        LogStr("\n");
+        return VIDEO_ENUM_MORE_DEVICES;
+    }
+
+    /* Primary adapter enumerates attached monitors */
     if(!ChildEnumInfo->ChildIndex) {
-        for(index=0;index<dev->MonitorCount;index++)
+        for(index=0; index<dev->MonitorCount; index++)
             if(dev->MonitorIds[index]==ChildEnumInfo->ACPIHwId) break;
         if(index==dev->MonitorCount) return VIDEO_ENUM_INVALID_DEVICE;
     } else {
-        index=ChildEnumInfo->ChildIndex-1;
-        if(index>=dev->MonitorCount) return VIDEO_ENUM_NO_MORE_DEVICES;
+        index = ChildEnumInfo->ChildIndex - 1;
+        if(index >= dev->MonitorCount) return VIDEO_ENUM_NO_MORE_DEVICES;
     }
     if(!pChildDescriptor || ChildEnumInfo->ChildDescriptorSize<128)
         return VIDEO_ENUM_INVALID_DEVICE;
     /* XP's monitor child descriptor is the validated base EDID block. */
     VideoPortMoveMemory(pChildDescriptor,dev->MonitorEdid[index],128);
     *VideoChildType=Monitor;*UId=dev->MonitorIds[index];
-    LogStr("NVX [DISPLAY]: enumerate monitor id=");LogHex(*UId);LogStr("\n");
+    LogStr("NVX [DISPLAY]: enumerate monitor id=");LogHex(*UId);
+    LogStr(" index=");LogHex(index);LogStr("\n");
     return VIDEO_ENUM_MORE_DEVICES;
+}
+
+static VOID NvxInitSecondaryDisplayModes(PNVX_DEVICE_EXTENSION sec) {
+    PNVX_DEVICE_EXTENSION prim;
+    VIDEO_MODE_INFORMATION *m;
+    ULONG idx = 0;
+    if (!sec || !sec->IsSecondaryDisplay || sec->NumModes > 0) return;
+    prim = (PNVX_DEVICE_EXTENSION)sec->PrimaryDeviceExtension;
+    if (!prim) return;
+
+    /* Mode 0: 2560x1440x32 @ 60Hz (Native 1440p for secondary DP monitor) */
+    m = &sec->Modes[idx];
+    VideoPortZeroMemory(m, sizeof(*m));
+    m->Length = sizeof(*m);
+    m->ModeIndex = idx;
+    m->VisScreenWidth = 2560;
+    m->VisScreenHeight = 1440;
+    m->ScreenStride = 2560 * 4; /* 10240 */
+    m->NumberOfPlanes = 1;
+    m->BitsPerPlane = 32;
+    m->Frequency = 60;
+    m->NumberRedBits = 8;
+    m->NumberGreenBits = 8;
+    m->NumberBlueBits = 8;
+    m->RedMask = 0x00FF0000;
+    m->GreenMask = 0x0000FF00;
+    m->BlueMask = 0x000000FF;
+    m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
+    m->VideoMemoryBitmapWidth = 2560;
+    m->VideoMemoryBitmapHeight = 1440;
+    sec->ModeFramebuffer[idx].QuadPart = prim->PhysicalBar1.QuadPart + 0x2000000ULL; /* +32MB */
+    idx++;
+
+    /* Mode 1: 1920x1080x32 @ 60Hz */
+    m = &sec->Modes[idx];
+    VideoPortZeroMemory(m, sizeof(*m));
+    m->Length = sizeof(*m);
+    m->ModeIndex = idx;
+    m->VisScreenWidth = 1920;
+    m->VisScreenHeight = 1080;
+    m->ScreenStride = 1920 * 4; /* 7680 */
+    m->NumberOfPlanes = 1;
+    m->BitsPerPlane = 32;
+    m->Frequency = 60;
+    m->NumberRedBits = 8;
+    m->NumberGreenBits = 8;
+    m->NumberBlueBits = 8;
+    m->RedMask = 0x00FF0000;
+    m->GreenMask = 0x0000FF00;
+    m->BlueMask = 0x000000FF;
+    m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
+    m->VideoMemoryBitmapWidth = 1920;
+    m->VideoMemoryBitmapHeight = 1080;
+    sec->ModeFramebuffer[idx].QuadPart = prim->PhysicalBar1.QuadPart + 0x2000000ULL; /* +32MB */
+    idx++;
+
+    /* Mode 2: 1280x720x32 @ 60Hz */
+    m = &sec->Modes[idx];
+    VideoPortZeroMemory(m, sizeof(*m));
+    m->Length = sizeof(*m);
+    m->ModeIndex = idx;
+    m->VisScreenWidth = 1280;
+    m->VisScreenHeight = 720;
+    m->ScreenStride = 1280 * 4; /* 5120 */
+    m->NumberOfPlanes = 1;
+    m->BitsPerPlane = 32;
+    m->Frequency = 60;
+    m->NumberRedBits = 8;
+    m->NumberGreenBits = 8;
+    m->NumberBlueBits = 8;
+    m->RedMask = 0x00FF0000;
+    m->GreenMask = 0x0000FF00;
+    m->BlueMask = 0x000000FF;
+    m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
+    m->VideoMemoryBitmapWidth = 1280;
+    m->VideoMemoryBitmapHeight = 720;
+    sec->ModeFramebuffer[idx].QuadPart = prim->PhysicalBar1.QuadPart + 0x2000000ULL; /* +32MB */
+    idx++;
+
+    /* Mode 3: 1024x768x32 @ 60Hz */
+    m = &sec->Modes[idx];
+    VideoPortZeroMemory(m, sizeof(*m));
+    m->Length = sizeof(*m);
+    m->ModeIndex = idx;
+    m->VisScreenWidth = 1024;
+    m->VisScreenHeight = 768;
+    m->ScreenStride = 1024 * 4; /* 4096 */
+    m->NumberOfPlanes = 1;
+    m->BitsPerPlane = 32;
+    m->Frequency = 60;
+    m->NumberRedBits = 8;
+    m->NumberGreenBits = 8;
+    m->NumberBlueBits = 8;
+    m->RedMask = 0x00FF0000;
+    m->GreenMask = 0x0000FF00;
+    m->BlueMask = 0x000000FF;
+    m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
+    m->VideoMemoryBitmapWidth = 1024;
+    m->VideoMemoryBitmapHeight = 720;
+    sec->ModeFramebuffer[idx].QuadPart = prim->PhysicalBar1.QuadPart + 0x2000000ULL; /* +32MB */
+    idx++;
+
+    sec->NumModes = idx;
+    sec->CurrentModeIndex = 0;
+    sec->ActiveBpp = 32;
+    LogStr("NVX [DUALVIEW]: Initialized secondary modes count: ");
+    LogHex(sec->NumModes);
+    LogStr(" preferred native 2560x1440x32\n");
 }
 
 VP_STATUS HwVidFindAdapter(
@@ -738,6 +877,33 @@ VP_STATUS HwVidFindAdapter(
     ConfigInfo->VdmPhysicalVideoMemoryAddress.QuadPart = 0;
     ConfigInfo->VdmPhysicalVideoMemoryLength = 0;
 
+    if (!devExt->IsSecondaryDisplay) {
+        devExt->SecondaryDeviceExtension = NULL;
+        status = VideoPortCreateSecondaryDisplay(
+            HwDeviceExtension,
+            &devExt->SecondaryDeviceExtension,
+            VIDEO_DUALVIEW_REMOVABLE
+        );
+        LogStr("NVX [DUALVIEW]: VideoPortCreateSecondaryDisplay status: ");
+        LogHex(status);
+        LogStr(" SecDevExt: ");
+        LogHex((unsigned long long)devExt->SecondaryDeviceExtension);
+        LogStr("\n");
+        if (status == NO_ERROR && devExt->SecondaryDeviceExtension) {
+            PNVX_DEVICE_EXTENSION sec = (PNVX_DEVICE_EXTENSION)devExt->SecondaryDeviceExtension;
+            sec->IsSecondaryDisplay = TRUE;
+            sec->PrimaryDeviceExtension = devExt;
+            sec->PhysicalBar0 = devExt->PhysicalBar0;
+            sec->Bar0Length = devExt->Bar0Length;
+            sec->PhysicalBar1 = devExt->PhysicalBar1;
+            sec->Bar1Length = devExt->Bar1Length;
+            sec->PciSlot = devExt->PciSlot;
+            sec->PciBusNumber = devExt->PciBusNumber;
+            sec->ActiveBpp = 32;
+            NvxInitSecondaryDisplayModes(sec);
+        }
+    }
+
     LogStr("NVX: HwVidFindAdapter returning NO_ERROR\n");
     return NO_ERROR;
 }
@@ -745,7 +911,17 @@ VP_STATUS HwVidFindAdapter(
 BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
     PNVX_DEVICE_EXTENSION devExt = (PNVX_DEVICE_EXTENSION)HwDeviceExtension;
 
-    LogStr("NVX: HwVidInitialize entered\n");
+    LogStr("NVX: HwVidInitialize entered, IsSecondary: ");
+    LogHex(devExt->IsSecondaryDisplay);
+    LogStr("\n");
+
+    if (devExt->IsSecondaryDisplay) {
+        NvxInitSecondaryDisplayModes(devExt);
+        LogStr("NVX [DUALVIEW]: Secondary initialized with ");
+        LogHex(devExt->NumModes);
+        LogStr(" modes\n");
+        return TRUE;
+    }
 
     /* Read real-mode information through VideoPort's INT10 service. Mapping
        physical address zero is not a substitute for its BIOS memory context. */
@@ -824,24 +1000,35 @@ BOOLEAN HwVidStartIO(
             status = ERROR_INSUFFICIENT_BUFFER;
             break;
         }
+        if (devExt->IsSecondaryDisplay && devExt->NumModes == 0) {
+            NvxInitSecondaryDisplayModes(devExt);
+        }
         numModes->NumModes = devExt->NumModes;
         numModes->ModeInformationLength = sizeof(VIDEO_MODE_INFORMATION);
         statusBlock->Information = sizeof(VIDEO_NUM_MODES);
         LogStr("NVX: IOCTL_VIDEO_QUERY_NUM_AVAIL_MODES -> ");
         LogHex(devExt->NumModes);
-        LogStr(" modes\n");
+        LogStr(" modes (IsSec=");
+        LogHex(devExt->IsSecondaryDisplay);
+        LogStr(")\n");
         break;
     }
 
     case IOCTL_VIDEO_QUERY_AVAIL_MODES: {
-        ULONG requiredSize = devExt->NumModes * sizeof(VIDEO_MODE_INFORMATION);
+        ULONG requiredSize;
+        if (devExt->IsSecondaryDisplay && devExt->NumModes == 0) {
+            NvxInitSecondaryDisplayModes(devExt);
+        }
+        requiredSize = devExt->NumModes * sizeof(VIDEO_MODE_INFORMATION);
         if (RequestPacket->OutputBufferLength < requiredSize) {
             status = ERROR_INSUFFICIENT_BUFFER;
             break;
         }
         VideoPortMoveMemory(RequestPacket->OutputBuffer, devExt->Modes, requiredSize);
         statusBlock->Information = requiredSize;
-        LogStr("NVX: IOCTL_VIDEO_QUERY_AVAIL_MODES returned successfully\n");
+        LogStr("NVX: IOCTL_VIDEO_QUERY_AVAIL_MODES returned successfully (IsSec=");
+        LogHex(devExt->IsSecondaryDisplay);
+        LogStr(")\n");
         break;
     }
 
@@ -849,6 +1036,12 @@ BOOLEAN HwVidStartIO(
         if (RequestPacket->OutputBufferLength < sizeof(VIDEO_MODE_INFORMATION)) {
             status = ERROR_INSUFFICIENT_BUFFER;
             break;
+        }
+        if (devExt->IsSecondaryDisplay && devExt->NumModes == 0) {
+            NvxInitSecondaryDisplayModes(devExt);
+        }
+        if (devExt->CurrentModeIndex >= devExt->NumModes) {
+            devExt->CurrentModeIndex = 0;
         }
         VideoPortMoveMemory(
             RequestPacket->OutputBuffer,
@@ -858,6 +1051,8 @@ BOOLEAN HwVidStartIO(
         statusBlock->Information = sizeof(VIDEO_MODE_INFORMATION);
         LogStr("NVX: IOCTL_VIDEO_QUERY_CURRENT_MODE index=");
         LogHex(devExt->CurrentModeIndex);
+        LogStr(" IsSec=");
+        LogHex(devExt->IsSecondaryDisplay);
         LogStr("\n");
         break;
     }
@@ -873,6 +1068,19 @@ BOOLEAN HwVidStartIO(
             status = ERROR_INVALID_PARAMETER;
             break;
         }
+
+        if (devExt->IsSecondaryDisplay) {
+            PNVX_DEVICE_EXTENSION prim = (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension;
+            devExt->CurrentModeIndex = requested;
+            LogStr("NVX [DUALVIEW]: Secondary mode set to index: ");
+            LogHex(requested);
+            LogStr("\n");
+            if (prim) {
+                (void)NvxNativeSetSecondaryScanout(prim);
+            }
+            break;
+        }
+
         if (!NvxVbeSetMode(HwDeviceExtension, requested)) {
             LogStr("NVX: VBE mode change failed; attempting previous mode.\n");
             if (!NvxVbeSetMode(HwDeviceExtension, devExt->CurrentModeIndex))
@@ -926,7 +1134,8 @@ BOOLEAN HwVidStartIO(
         LogStr("NVX: Mapping scanout physical ");
         LogHex(devExt->ModeFramebuffer[devExt->CurrentModeIndex].QuadPart);
         LogStr(" stride ");LogHex(devExt->Modes[devExt->CurrentModeIndex].ScreenStride);
-        LogStr(" bpp ");LogHex(devExt->ActiveBpp);LogStr("\n");
+        LogStr(" bpp ");LogHex(devExt->ActiveBpp);
+        LogStr(" IsSecondary: ");LogHex(devExt->IsSecondaryDisplay);LogStr("\n");
         LogStr("NVX: VideoPortMapMemory status: ");
         LogHex(status);
         LogStr(" Virtual: ");
@@ -939,8 +1148,15 @@ BOOLEAN HwVidStartIO(
             memInfo->FrameBufferBase = mappedVirtual;
             memInfo->FrameBufferLength = length;
             devExt->FramebufferVirtual = mappedVirtual;
-            (void)NvxGspDiscoverScanout(HwDeviceExtension,devExt->CurrentModeIndex);
-            (void)NvxGspInitDisplayChannels(HwDeviceExtension);
+            if (!devExt->IsSecondaryDisplay) {
+                (void)NvxGspDiscoverScanout(HwDeviceExtension,devExt->CurrentModeIndex);
+                (void)NvxGspInitDisplayChannels(HwDeviceExtension);
+            } else {
+                PNVX_DEVICE_EXTENSION prim = (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension;
+                if (prim) {
+                    (void)NvxNativeSetSecondaryScanout(prim);
+                }
+            }
             statusBlock->Information = sizeof(VIDEO_MEMORY_INFORMATION);
         }
         break;
@@ -958,6 +1174,19 @@ BOOLEAN HwVidStartIO(
             0
         );
         devExt->GspScanoutMapped=FALSE;
+        break;
+    }
+
+    case IOCTL_VIDEO_SWITCH_DUALVIEW: {
+        PULONG pSwitch = (PULONG)RequestPacket->InputBuffer;
+        ULONG switchVal = (pSwitch && RequestPacket->InputBufferLength >= sizeof(ULONG)) ? *pSwitch : 0;
+        LogStr("NVX [DUALVIEW]: IOCTL_VIDEO_SWITCH_DUALVIEW called with val=");
+        LogHex(switchVal);
+        LogStr(" IsSecondary=");
+        LogHex(devExt->IsSecondaryDisplay);
+        LogStr("\n");
+        devExt->DualViewAttached = (switchVal != 0);
+        status = NO_ERROR;
         break;
     }
 
@@ -1160,7 +1389,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.143 (deferred secondary DP training)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.146 (Head 1 SOR0 scanout + EDID model name)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));
