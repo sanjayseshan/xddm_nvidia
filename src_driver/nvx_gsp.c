@@ -1180,6 +1180,8 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     if (winN >= 900) winN = 0;
 
     /* 1. Program Window 2 DMA pushbuffer (C67E) */
+    NvxDisplayPushHeader(0x308,1,&header);
+    winPush[winN++]=header;winPush[winN++]=0; /* Non-tearing, no timestamp. */
     NvxDisplayPushHeader(NVX_C67E_SET_SIZE, 1, &header);
     winPush[winN++] = header;
     winPush[winN++] = (height << 16) | width;
@@ -1225,11 +1227,22 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     if (coreN >= 900) coreN = 0;
 
     /* 2. Program Core channel (C67D) for Head 1 and SOR */
-    /* Publish bounds only for the new secondary window. */
-    NvxDisplayPushHeader(0x1104,2,&header);
-    corePush[coreN++]=header;corePush[coreN++]=0x0f;corePush[coreN++]=0;
-    NvxDisplayPushHeader(0x1110,1,&header);
-    corePush[coreN++]=header;corePush[coreN++]=0x00107fff;
+    /* The core validates existing active windows too. Publish the standard
+       capability bounds without creating/reprogramming primary Window0. */
+    for(ULONG window=0;window<8;window++) {
+        NvxDisplayPushHeader(0x1004+window*0x80,2,&header);
+        corePush[coreN++]=header;corePush[coreN++]=0x0f;corePush[coreN++]=0;
+        NvxDisplayPushHeader(0x1010+window*0x80,1,&header);
+        corePush[coreN++]=header;corePush[coreN++]=0x00117fff;
+    }
+    for(ULONG head=0;head<4;head++) {
+        NvxDisplayPushHeader(0x2030+head*0x400,1,&header);
+        corePush[coreN++]=header;corePush[coreN++]=0x1014;
+    }
+    NvxDisplayPushHeader(NVX_C67D_HEAD_SET_CONTROL(1),1,&header);
+    corePush[coreN++]=header;corePush[coreN++]=0; /* Progressive, no lock pins. */
+    NvxDisplayPushHeader(0x2474,1,&header);
+    corePush[coreN++]=header;corePush[coreN++]=0; /* No second interlaced field. */
 
     NvxDisplayPushHeader(NVX_C67D_HEAD_SET_OVERSCAN_COLOR(1), 1, &header);
     corePush[coreN++] = header;
@@ -1250,10 +1263,6 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     NvxDisplayPushHeader(NVX_C67D_HEAD_SET_RASTER_BLANK_START(1), 1, &header);
     corePush[coreN++] = header;
     corePush[coreN++] = (vBlankStart << 16) | hBlankStart;
-
-    NvxDisplayPushHeader(NVX_C67D_HEAD_SET_MIN_FRAME_IDLE(1), 1, &header);
-    corePush[coreN++] = header;
-    corePush[coreN++] = (1U << 16) | 2U; /* trailing=1, leading=2 */
 
     NvxDisplayPushHeader(NVX_C67D_HEAD_SET_PIXEL_CLOCK_FREQUENCY(1), 1, &header);
     corePush[coreN++] = header;

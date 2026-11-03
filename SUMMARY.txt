@@ -1,3 +1,14 @@
+NVIDIA GA104 XDDM DRIVER — v1.0.0.157 core capability initialization
+Updated: November 3, 2026
+
+v157 publishes bounds for all windows/heads and explicit progressive control.
+Host sanitizer tests and cross build pass. Hardware log v157-20261103-152206.log
+rejects raster method 0x2474, then Core UPDATE with state error0x25. Primary
+Head0 active, four DP lanes locked; Head1 inactive, notifier unfinished.
+Secondary activation is NOT working. Primary VBE restored on failure.
+Next remove the unsupported raster method. Use log verification for monitor
+state; GET consumption alone is not display success or visual correctness.
+
 NVIDIA GA104 XDDM DRIVER — v1.0.0.156 Ampere window storage correction
 Updated: November 3, 2026
 
