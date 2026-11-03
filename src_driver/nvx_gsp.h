@@ -322,6 +322,9 @@ typedef struct _NVX_DEVICE_EXTENSION {
     BOOLEAN NativeDisplayAttempted,NativeDisplayChannelsReady;
     ULONG64 NativeDisplayInstance;
     ULONG NativeDisplayChannels[3];
+    ULONG NativeDisplayCorePut;
+    BOOLEAN NativeDisplayNotifierReady;
+    ULONG MonitorSor[8],MonitorProtocol[8];
     ULONG DisplayWindowMask;
     ULONG DisplayHeadCount;
     ULONG DisplayHeadMask;

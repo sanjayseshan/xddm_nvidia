@@ -11,6 +11,27 @@ typedef struct {
     uint8_t flags;
 } NVX_DISPLAY_TIMING;
 
+/* Volta+ display RAMHT: 8KB / 8-byte entries, channel tag and 10-bit
+ * XOR hash. Instance offsets are relative to the 64KB display block.
+ * Encoding reference: Nouveau r535_dmac_bind and GV100 display DMA. */
+static inline int NvxDisplayPushHeader(uint32_t method,uint32_t count,uint32_t *header)
+{
+    if(!header || !count || count>1023 || (method&3) || method>0x1ffc) return 0;
+    *header=(count<<18)|(method>>2);
+    return 1;
+}
+
+static inline int NvxDisplayRamhtEntry(uint32_t handle,uint32_t channel,
+    uint32_t offset,uint32_t client,uint32_t *slot,uint32_t entry[2])
+{
+    if(!handle || channel>15 || offset<0x2000 || offset>0xffe0 ||
+       (offset&15) || !slot || !entry) return 0;
+    *slot=(handle^(handle>>10)^(handle>>20)^(handle>>30)^(channel<<6))&1023;
+    entry[0]=handle;
+    entry[1]=(channel<<25)|(offset<<9)|(client&0x3fff);
+    return 1;
+}
+
 /* Decode a progressive, separate-sync EDID detailed timing descriptor.
  * An invalid descriptor must not become a hardware modeset request. */
 static inline int NvxDecodeDetailedTiming(const uint8_t *d,size_t length,

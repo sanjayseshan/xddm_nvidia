@@ -1,6 +1,26 @@
 NVIDIA GA104 XDDM DRIVER — v1.0.0.131 native display DMA bring-up
 Updated: November 3, 2026
 
+Latest change (v132): native update completion probe
+---------------------------------------------------
+v132 keeps the primary GDI/CE path unchanged and submits one no-op display
+UPDATE packet with a coherent notifier after the three native channels pass
+NOP DMA checks. The push headers now use the GA102 method/count encoding from
+the Nouveau C37B reference; the first trial encoded it incorrectly and is
+superseded. Host sanitizer tests cover header fields, RAMHT descriptor entries,
+and the mock completion path; the x64 driver builds without warnings.
+
+Corrected hardware log test_logs/v132-native-notifier-2.log: XP booted, GSP
+initialized, VBE SET_MODE 0x177 (1920x1080x32) succeeded, and core/window0/
+window2 each consumed their NOP words. The output query still reports the
+secondary connector (0x0200) with no SOR index (0xffffffff), while primary
+0x0800 is on SOR2. The no-op UPDATE did not complete: core GET stopped at 12
+and notifier stayed zero. Therefore v132 did not configure either head or
+enable the second output; the physical second monitor remains blank. ACPI
+powerdown completed and QEMU exited. Next, capture display interrupt and
+supervisor status around the stalled UPDATE. Do not issue head timing or link
+commands until the supervisor/completion path is understood.
+
 Latest change (v131): native display command channels
 -----------------------------------------------------
 After the user's host reboot, supplied log v130-20261103-112439.log shows XP

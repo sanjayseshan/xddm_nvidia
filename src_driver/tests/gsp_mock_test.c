@@ -55,6 +55,9 @@ static PUCHAR dmaPointer(ULONG64 va,ULONG bytes)
     if(va>=dev.GspScratchGpuVa && va-dev.GspScratchGpuVa<=GSP_SCRATCH_SIZE &&
        bytes<=GSP_SCRATCH_SIZE-(va-dev.GspScratchGpuVa))
         return (PUCHAR)dev.GspDmaVirtual+GSP_SCRATCH_OFFSET+(va-dev.GspScratchGpuVa);
+    if(va>=GSP_UPLOAD_GPU_VA && va-GSP_UPLOAD_GPU_VA<=0x10000 &&
+       bytes<=0x10000-(va-GSP_UPLOAD_GPU_VA))
+        return (PUCHAR)dev.GspDmaVirtual+GSP_UPLOAD_OFFSET+(va-GSP_UPLOAD_GPU_VA);
     assert(va>=dev.GspVramGpuVa && va-dev.GspVramGpuVa<=sizeof(gpuVram) &&
            bytes<=sizeof(gpuVram)-(va-dev.GspVramGpuVa));
     return gpuVram+(va-dev.GspVramGpuVa);
@@ -175,6 +178,10 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         replyBytes=f==76?24+request[24]:(f==14?56:32);
         assert(replyBytes<=sizeof(alloc));
         memcpy(alloc,request+20,f==76?replyBytes:(f==14?56:16));
+        if(f==76&&request[22]==0x73028b) {
+            assert(request[24]==56 && (request[27]==1 || request[27]==4));
+            alloc[8]=request[27]==1?1:2;alloc[9]=2;alloc[10]=request[27]==1?0:8;
+        }
         if(f==76&&request[22]==0x50700709) {
             assert(request[21]==0xc6700001 && request[24]==8);alloc[7]=3;
         }
@@ -261,6 +268,22 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
     if(off==0x680000 || off==0x690000 || off==0x692000) {
         ULONG channel=off==0x680000?0:(off==0x690000?1:2);
         PULONG buffer=(PULONG)((PUCHAR)dev.GspDmaVirtual+GSP_DISPLAY_PUSH_OFFSET+channel*0x1000);
+        if(off==0x680000 && value!=4) {
+            PULONG descriptor=(PULONG)(gpuVram+0x1ff2000);
+            PULONG entry=(PULONG)(gpuVram+0x1ff0000+0x117*8);
+            ULONG64 physical=dev.GspDmaPhysical.QuadPart+GSP_DISPLAY_PUSH_OFFSET+0x3000;
+            assert(value==15 && buffer[4]==0x40082 && buffer[5]==0xd1500001);
+            assert(buffer[6]==0x40083 && buffer[7]==0x1000);
+            assert(buffer[8]==0x80086 && !buffer[9] && !buffer[10]);
+            assert(buffer[11]==0x40080 && buffer[12]==1);
+            assert(buffer[13]==0x40083 && buffer[14]==0);
+            assert(entry[0]==0xd1500001 && entry[1]==0x400001);
+            assert(descriptor[0]==0x46 && descriptor[1]==physical>>8);
+            assert(!descriptor[2] && descriptor[3]==(physical+0xfff)>>8 && !descriptor[4]);
+            regs[off/4+1]=value;
+            if(scenario!=12) *(PULONG)((PUCHAR)dev.GspDmaVirtual+GSP_DISPLAY_PUSH_OFFSET+0x3000)=0x80000000;
+            return;
+        }
         assert(value==4);
         for(ULONG i=0;i<4;i++) assert(buffer[i]==0);
         if(scenario!=7) regs[off/4+1]=4; /* stall only the display channel */
@@ -416,7 +439,7 @@ static void test_reusable_queue(void) {
 
 int main(void)
 {
-    for(scenario=0;scenario<12;scenario++) {
+    for(scenario=0;scenario<13;scenario++) {
         memset(&dev,0,sizeof(dev));memset(regs,0,sizeof(regs));
         imemTransfers=dmemTransfers=cpuStarts=0;
         freeFailures=scenario==7?1:0;
@@ -443,22 +466,24 @@ int main(void)
                 assert(dev.DisplayActiveIds[0]==1 && dev.DisplayActiveIds[1]==0);
                 assert(dev.DisplayRoutableMask==5 && dev.DisplayHeadRoutingMap==0x10);
                 assert(dev.GspSupportedDisplays==5 && dev.GspConnectedDisplays==5);
-                assert(dev.MonitorCount==(ULONG)(scenario==0?2:1));
+                assert(dev.MonitorCount==(ULONG)(scenario==0 || scenario==12?2:1));
                 assert(dev.MonitorIds[0]==1 && dev.MonitorEdidBytes[0]==128);
                 if(scenario==0) assert(dev.MonitorIds[1]==4 && dev.MonitorEdid[1][19]==4);
             }
             if(dev.GspCopyVerified) {
                 memset(gpuVram+0x1ff0000,0xa5,0x10000);
-                assert(NvxGspInitDisplayChannels(&dev)==(scenario==0));
-                assert(dev.NativeDisplayChannelsReady==(scenario==0));
+                assert(NvxGspInitDisplayChannels(&dev)==(scenario==0 || scenario==12));
+                assert(dev.NativeDisplayChannelsReady==(scenario==0 || scenario==12));
                 assert(dev.NativeDisplayInstance==0x1ff0000);
-                if(scenario==0) {
+                assert(dev.NativeDisplayNotifierReady==(scenario==0));
+                if(scenario==0 || scenario==12) {
+                    assert(dev.MonitorSor[0]==1 && dev.MonitorProtocol[0]==0);
                     assert(dev.NativeDisplayChannels[0]==0xc6700100);
                     assert(dev.NativeDisplayChannels[1]==0xc6700101);
                     assert(dev.NativeDisplayChannels[2]==0xc6700102);
                 } else for(ULONG i=0;i<3;i++) assert(!dev.NativeDisplayChannels[i]);
                 ULONG sequence=dev.RpcTxSequence;
-                assert(NvxGspInitDisplayChannels(&dev)==(scenario==0));
+                assert(NvxGspInitDisplayChannels(&dev)==(scenario==0 || scenario==12));
                 assert(dev.RpcTxSequence==sequence); /* never allocate twice */
             }
             assert(dev.GspScratchGpuVa==0x10000000);
@@ -471,13 +496,13 @@ int main(void)
             assert(dev.GspChannelHandle==0xc56f0001);
             assert(dev.GspCopyEngineHandle==0xc7b50001);
             assert(dev.GspCopyEngineType==11);
-            assert(dev.GspFbLayoutValid==(scenario<9));
+            assert(dev.GspFbLayoutValid==((scenario<9 || scenario==12)));
             if(dev.GspFbLayoutValid) {
                 assert(dev.GspFbRegionCount==2&&dev.GspFbFreeBase==0x180000&&dev.GspFbFreeLimit==0x3ddffffULL);
                 assert(dev.GspBar1PageDirectory==0x1fa000000ULL&&dev.GspBar2PageDirectory==0x1fb000000ULL);
             }
             else assert(dev.GspFbFreeBase==0&&dev.GspFbFreeLimit==0);
-            assert(dev.GspCopyVerified==(scenario==0||scenario==3||scenario==7));
+            assert(dev.GspCopyVerified==(scenario==0||scenario==3||scenario==7||scenario==12));
             assert(dev.GspAssertCount==7);
             assert(dev.GspChannelFaulted==(scenario==4));
             if(scenario==0) {

@@ -833,6 +833,68 @@ static BOOLEAN NvxNativeFreeObject(PNVX_DEVICE_EXTENSION dev,ULONG parent,ULONG 
         reply[20]==release[0] && reply[21]==parent && reply[22]==handle && !reply[23];
 }
 
+/* Establish hardware completion before attempting any native head update. */
+static BOOLEAN NvxNativeVerifyNotifier(PNVX_DEVICE_EXTENSION dev)
+{
+    const ULONG handle=0xd1500001,descriptorOffset=0x2000;
+    ULONG descriptor[6]={0},n=4;
+    uint32_t entry[2],slot;
+    ULONG64 physical=dev->GspDmaPhysical.QuadPart+GSP_DISPLAY_PUSH_OFFSET+0x3000;
+    ULONG64 first=physical>>8,last=(physical+0xfff)>>8;
+    ULONG64 instanceVa=dev->GspVramGpuVa+dev->NativeDisplayInstance;
+    PULONG push=(PULONG)((PUCHAR)dev->GspDmaVirtual+GSP_DISPLAY_PUSH_OFFSET);
+    volatile ULONG *notify=(volatile ULONG *)((PUCHAR)dev->GspDmaVirtual+GSP_DISPLAY_PUSH_OFFSET+0x3000);
+    PUCHAR bar0=dev->Bar0MmioVirtual;
+    if(dev->GspDmaLength<GSP_DISPLAY_PUSH_OFFSET+0x4000) return FALSE;
+    VideoPortZeroMemory((PVOID)notify,0x1000);
+    /* Volta+ display DMA descriptor: coherent PCI, RW, 4KB pages.
+       Start/limit use 256-byte units; descriptor resides after 8KB RAMHT. */
+    descriptor[0]=0x46;
+    descriptor[1]=(ULONG)first;descriptor[2]=(ULONG)(first>>32);
+    descriptor[3]=(ULONG)last;descriptor[4]=(ULONG)(last>>32);
+    if(!NvxGspUpload(dev,instanceVa+descriptorOffset,descriptor,sizeof(descriptor))) return FALSE;
+    if(!NvxDisplayRamhtEntry(handle,0,descriptorOffset,dev->GspClientHandle,&slot,entry)) return FALSE;
+    if(!NvxGspUpload(dev,instanceVa+slot*8,entry,sizeof(entry))) return FALSE;
+    /* Each header carries the byte method offset and count in bits 27:18.
+       Core PUT remains a DWORD index. This update changes no head state. */
+    push[n++]=(1U<<18)|(0x208>>2);push[n++]=handle;
+    push[n++]=(1U<<18)|(0x20c>>2);push[n++]=0x1000; /* notifier enabled, offset zero */
+    push[n++]=(2U<<18)|(0x218>>2);push[n++]=0;push[n++]=0;
+    push[n++]=(1U<<18)|(0x200>>2);push[n++]=1; /* UPDATE with no interlocks */
+    push[n++]=(1U<<18)|(0x20c>>2);push[n++]=0;
+    __sync_synchronize();
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x680000),n);
+    for(ULONG wait=0;wait<10000;wait++) {
+        ULONG get=VideoPortReadRegisterUlong((PULONG)(bar0+0x680004));
+        __sync_synchronize();
+        if(get!=0xffffffff && (get&0x3ff)==n && (notify[0]>>30)==2) {
+            dev->NativeDisplayCorePut=n;
+            dev->NativeDisplayNotifierReady=TRUE;
+            LogStr("NVX [NATIVE]: core UPDATE notifier completed, GET=");LogHex(get);
+            LogStr(" status=");LogHex(notify[0]);LogStr("; head timings unchanged.\n");return TRUE;
+        }
+        VideoPortStallExecution(100);
+    }
+    LogStr("NVX [NATIVE]: core UPDATE completion unconfirmed GET=");
+    LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x680004)));
+    LogStr(" notifier=");LogHex(notify[0]);LogStr("; native modeset disabled.\n");
+    return FALSE;
+}
+
+static VOID NvxNativeReadOutputInfo(PNVX_DEVICE_EXTENSION dev)
+{
+    for(ULONG monitor=0;monitor<dev->MonitorCount;monitor++) {
+        /* RM 535 OR_GET_INFO: 40-byte prefix, u64 VBIOS, two bools, pad. */
+        ULONG params[14]={0,dev->MonitorIds[monitor]},*reply=(ULONG *)dev->RpcRxRecord;
+        if(!NvxGspControl(dev,dev->GspDisplayHandle,0x73028b,params,sizeof(params))) continue;
+        dev->MonitorSor[monitor]=reply[28];
+        dev->MonitorProtocol[monitor]=reply[30];
+        LogStr("NVX [OUTPUT]: display=");LogHex(dev->MonitorIds[monitor]);
+        LogStr(" index=");LogHex(reply[28]);LogStr(" type=");LogHex(reply[29]);
+        LogStr(" protocol=");LogHex(reply[30]);LogStr(" litByVbios=");LogHex(reply[38]&255);LogStr("\n");
+    }
+}
+
 /* Deliberately only NOPs: GET progress proves DMA fetch, not a modeset. */
 BOOLEAN NvxGspInitDisplayChannels(PVOID extension)
 {
@@ -905,6 +967,8 @@ BOOLEAN NvxGspInitDisplayChannels(PVOID extension)
         }
     }
     dev->NativeDisplayChannelsReady=TRUE;
+    NvxNativeReadOutputInfo(dev);
+    (void)NvxNativeVerifyNotifier(dev);
     LogStr("NVX [NATIVE]: core and windows 0/2 DMA verified; head timings unchanged.\n");
     return TRUE;
 failed:

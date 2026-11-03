@@ -20,5 +20,24 @@ int main(void)
     assert(!NvxDecodeDetailedTiming(d,sizeof(d),&t));
     assert(!NvxDecodeDetailedTiming(d,17,&t));
     memset(d,0,sizeof(d));assert(!NvxDecodeDetailedTiming(d,sizeof(d),&t));
+    {
+        uint32_t slot=0,entry[2]={0},header=0;
+        assert(NvxDisplayPushHeader(0x208,1,&header) && header==0x40082);
+        assert(NvxDisplayPushHeader(0x218,2,&header) && header==0x80086);
+        assert(NvxDisplayPushHeader(0x200,1,&header) && header==0x40080);
+        assert(!NvxDisplayPushHeader(0x209,1,&header));
+        assert(!NvxDisplayPushHeader(0x2000,1,&header));
+        assert(!NvxDisplayPushHeader(0x200,0,&header));
+        assert(NvxDisplayRamhtEntry(0xd1500001,0,0x2000,0xc1d00001,&slot,entry));
+        assert(slot==0x117);
+        assert(entry[0]==0xd1500001 && entry[1]==0x400001);
+        assert(NvxDisplayRamhtEntry(0xd1500001,3,0x2020,0xc1d00001,&slot,entry));
+        assert(entry[1]==0x06404001);
+        assert(!NvxDisplayRamhtEntry(1,16,0x2000,1,&slot,entry));
+        assert(!NvxDisplayRamhtEntry(0,0,0x2000,1,&slot,entry));
+        assert(!NvxDisplayRamhtEntry(1,0,0x1000,1,&slot,entry));
+        assert(!NvxDisplayRamhtEntry(1,0,0x2001,1,&slot,entry));
+        assert(!NvxDisplayRamhtEntry(1,0,0x10000,1,&slot,entry));
+    }
     puts("Display timing tests passed: 1080p60 totals/sync/clock, interlace, malformed sync, truncation and empty descriptor.");
 }
