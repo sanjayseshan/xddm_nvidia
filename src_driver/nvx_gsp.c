@@ -1064,7 +1064,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     PUCHAR bar0;
     PULONG corePush, winPush;
     ULONG coreN = 0, winN = 0;
-    uint32_t header;
+    uint32_t header=0;
     NVX_DISPLAY_TIMING *t;
     NVX_DP_CONFIG_STREAM_PARAMS stream={0};
     ULONG width, height, pitch;
@@ -1202,7 +1202,14 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
                     LogStr("NVX [PRIMARY-STATE]: method=");LogHex(methods[i]);
                     LogStr(" armed=");LogHex(value);LogStr("\n");
                     if((value&0xffff0000)==0xbadf0000 || value==0xffffffff) return FALSE;
-                    NvxDisplayPushHeader(methods[i],1,&header);
+                    /* VBE leaves optional display-ID and max-clock methods
+                       unset, and selects external-packet Window0 implicitly.
+                       Native DMA must name the sink and select no packet window. */
+                    if(methods[i]==0x2004) value=(value&0x03ffffffU)|0xfc000000U;
+                    if(methods[i]==0x2020) value=dev->MonitorIds[0];
+                    if(methods[i]==0x2028 && !value)
+                        value=VideoPortReadRegisterUlong((PULONG)(bar0+0x68a00c));
+                    if(!NvxDisplayPushHeader(methods[i],1,&header)) return FALSE;
                     corePush[coreN++]=header;corePush[coreN++]=value;
                 }
                 {
@@ -1210,7 +1217,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
                     ULONG value=VideoPortReadRegisterUlong((PULONG)(bar0+0x688000+method));
                     LogStr("NVX [PRIMARY-STATE]: SOR control=");LogHex(value);LogStr("\n");
                     if(!value || (value&0xffff0000)==0xbadf0000 || value==0xffffffff) return FALSE;
-                    NvxDisplayPushHeader(method,1,&header);
+                    if(!NvxDisplayPushHeader(method,1,&header)) return FALSE;
                     corePush[coreN++]=header;corePush[coreN++]=value;
                 }
             }

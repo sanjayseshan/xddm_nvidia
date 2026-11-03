@@ -18,6 +18,12 @@ if pgrep -f "qemu-system.*${NVX_QCOW}" >/dev/null; then
     echo "Refusing to update a disk used by a running VM." >&2
     exit 1
 fi
+# QEMU may use a relative image path or be hidden from pgrep's namespace.
+# qemu-img checks the actual image lock before starting a writable appliance.
+if ! qemu-img info "$NVX_QCOW" >/dev/null; then
+    echo "Refusing to update a locked or unreadable XP disk." >&2
+    exit 1
+fi
 for file in "$NVX_PACKAGE/nvxmp.sys" "$NVX_PACKAGE/nvxdisp.dll"; do
     [ -f "$file" ] || { echo "Missing package file: $file" >&2; exit 1; }
 done

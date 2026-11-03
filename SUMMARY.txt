@@ -1,3 +1,18 @@
+NVIDIA GA104 XDDM DRIVER — v1.0.0.161 normalized VBE handoff
+Updated: November 3, 2026
+
+Normalizes primary external-packet window toNONE and fills displayId/maxClock.
+Adds an image-lock check before writable guestmount (relative QEMU paths had
+escaped pgrep). Host sanitizer tests/build pass, warning fixed.
+Log v161-20261103-153741.log: primary in degraded BIOS mode; raw replay no
+longer faults method2004, but UPDATE rejects state0x10. Head0 remains active
+with DP lanes locked, Head1 inactive. Native core needs consistent primary
+window/head configuration instead of partial VBE state inheritance.
+Next explicit native Window0/Head0 plus Window2/Head1 modeset, ownership
+committed separately. Also fix secondary upload addressing: DDI hardcodes
+primary GPU VA, secondary miniport rejects uploads, current CE aperture
+ends at32MB where the secondary image begins.
+
 NVIDIA GA104 XDDM DRIVER — v1.0.0.160 primary state handoff probe
 Updated: November 3, 2026
 
