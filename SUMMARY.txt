@@ -1,5 +1,5 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 3, 2026 (v166 physical retry tested)
+Updated: November 3, 2026 (v167 copy path needs correction)
 
 Confirmed baseline: v164 works on the test EVGA RTX 3070 XC3 Ultra LHR with
 two physical displays. The primary runs at 1920x1080 and the secondary at
@@ -11,22 +11,23 @@ dual-head scanout and GPU DMA presentation. v165 adds a GPU solid-fill path;
 the user confirmed the desktop appears normal during the physical v165 test.
 GDI drawing is still mostly software-rendered on the CPU.
 
-Current development: v166 batches full-width, tightly packed PATCOPY fill rows
-into fewer CE submissions on 32-bit screen bitmaps. Partial-width and clipped
-PATCOPY fills retain the v165 per-row path; other ROPs continue through GDI.
-The GDI shadow and presentation cache are updated after successful fills.
-Compilation and host tests pass. The first v166 hardware boot reported
-secondary activation failure and a primary VBE fallback (800x600). The tested
-candidate was narrowed back to PATCOPY and changes only submission batching
-for tightly packed full-width rectangles. The retry log
-`test_logs/v166-20261103-170750.log` shows both heads active with 1920x1080 and
-2560x1440 surfaces, 378 GPU fill submissions, and a full-screen 14.7 MB fill
-completed as one submission. The user reports correct resolution with slight
-desktop artifacts remaining. Batching is exercised; its performance benefit
-has not been measured. The v165 physical test log records GSP `INIT_DONE`, both
-heads active, 1,657 GPU solid-fill submissions, and 673 GPU uploads; the user
-confirmed a normal-looking desktop. Most GDI drawing remains software
-rendered. OpenGL, Direct3D, and 3D acceleration are not implemented.
+Current confirmed 2D path: v166 batches full-width, tightly packed PATCOPY
+rows into fewer CE submissions. The log `test_logs/v166-20261103-170750.log`
+shows both heads active at 1920x1080 and 2560x1440, 378 GPU fill submissions,
+and a full-screen 14.7 MB fill completed as one submission. The user reports
+correct resolution with slight desktop artifacts remaining. Batching is
+exercised; its performance benefit has not been measured.
+
+Current development: v167 added same-PDEV 32-bit GPU `CopyBits` with software
+fallbacks for clipped, translated, and unsafe overlapping copies. The miniport
+bounds copy source and destination ranges to the active framebuffer. The
+physical run `test_logs/v167-20261103-171423.log` reached native 1920x1080 and
+2560x1440 output and recorded 10,000 GPU copy submissions. The user observed
+orange rectangles while dragging windows. The per-row submission approach is
+too aggressive and v167 is not accepted as a clean desktop build. v168 will
+restrict copies to larger non-overlapping rectangles and use a single pitched
+multi-row CE operation; smaller or overlapping moves will use the GDI fallback.
+OpenGL, Direct3D, and 3D acceleration are not implemented.
 High-refresh modes such as 120 Hz and other GPU models, boards, connectors, and
 monitor combinations are not validated.
 
@@ -41,6 +42,10 @@ Milestones:
   not yet measured.
 - v166: batches tightly packed full-width PATCOPY rows into fewer GPU queue
   submissions; retry restored both displays, with slight artifacts remaining.
+- v167: adds a bounded same-surface GPU CopyBits path for supported 32-bit
+  screen copies; first run showed orange rectangles and excessive small copies.
+- v168: planned narrower CopyBits path using one pitched submission per larger
+  non-overlapping rectangle.
 
 Validation: the v164 hardware log recorded active Head 0 and Head 1, completed
 display-update notifiers, four-lane DisplayPort link locks, 1920x1080 and

@@ -203,6 +203,83 @@ DrvCopyBits(
     RECTL *prclDest,
     POINTL *pptlSrc)
 {
+    PPDEV ppdev;
+    NVX_ACCEL_COPY_PARAMS params;
+    ULONG width, height, rowBytes, ulTemp, row;
+    ULONG srcX, srcY, dstX, dstY, y, x, index, sourceIndex, targetIndex;
+    BOOL overlaps;
+
+    /* Accelerate same-primary-surface copies when the surface is already
+       coherent. Keep unsupported clips/translations on the GDI path. */
+    ppdev = (PPDEV)(psoDest ? psoDest->dhpdev : NULL);
+    if (ppdev && psoDest && psoSrc && prclDest && pptlSrc &&
+        ppdev->PresentationValid && ppdev->BitsPerPixel == 32 &&
+        psoDest->dhpdev == (DHPDEV)ppdev && psoSrc->dhpdev == (DHPDEV)ppdev &&
+        psoDest->iType == STYPE_BITMAP && psoSrc->iType == STYPE_BITMAP &&
+        psoDest->pvBits == ppdev->ScreenPtr && psoSrc->pvBits == ppdev->ScreenPtr &&
+        psoDest->iBitmapFormat == BMF_32BPP && psoSrc->iBitmapFormat == BMF_32BPP &&
+        psoDest->lDelta > 0 && psoSrc->lDelta > 0 &&
+        (ULONG)psoDest->lDelta == ppdev->ScreenDelta &&
+        (ULONG)psoSrc->lDelta == ppdev->ScreenDelta && !pco && !pxlo &&
+        prclDest->left >= 0 && prclDest->top >= 0 &&
+        prclDest->right <= (LONG)ppdev->ScreenWidth &&
+        prclDest->bottom <= (LONG)ppdev->ScreenHeight &&
+        pptlSrc->x >= 0 && pptlSrc->y >= 0 &&
+        prclDest->right > prclDest->left && prclDest->bottom > prclDest->top) {
+        width = (ULONG)(prclDest->right - prclDest->left);
+        height = (ULONG)(prclDest->bottom - prclDest->top);
+        srcX = (ULONG)pptlSrc->x;
+        srcY = (ULONG)pptlSrc->y;
+        dstX = (ULONG)prclDest->left;
+        dstY = (ULONG)prclDest->top;
+        if (srcX <= ppdev->ScreenWidth && width <= ppdev->ScreenWidth - srcX &&
+            srcY <= ppdev->ScreenHeight && height <= ppdev->ScreenHeight - srcY &&
+            width <= 0x003FFFFFUL) {
+            rowBytes = width * 4;
+            overlaps = srcX < dstX + width && dstX < srcX + width &&
+                srcY < dstY + height && dstY < srcY + height;
+            /* CE overlap behavior is not assumed for horizontal overlap. */
+            if (!overlaps || srcX == dstX) {
+                for (row = 0; row < height; ++row) {
+                    y = (dstY > srcY) ? (height - 1 - row) : row;
+                    params.SrcGpuVa = ppdev->ScreenGpuVaBase +
+                        (ULONG64)(srcY + y) * ppdev->ScreenDelta + (ULONG64)srcX * 4;
+                    params.DstGpuVa = ppdev->ScreenGpuVaBase +
+                        (ULONG64)(dstY + y) * ppdev->ScreenDelta + (ULONG64)dstX * 4;
+                    params.Bytes = rowBytes;
+                    if (EngDeviceIoControl(ppdev->hDriver, IOCTL_NVX_ACCEL_COPY,
+                                           &params, sizeof(params), NULL, 0, &ulTemp))
+                        break;
+                }
+                if (row == height) {
+                    PULONG shadow = (PULONG)ppdev->ScreenPtr;
+                    PULONG presented = (PULONG)ppdev->PresentedPixels;
+                    for (row = 0; row < height; ++row) {
+                        y = (dstY > srcY) ? (height - 1 - row) : row;
+                        sourceIndex = (srcY + y) * (ppdev->ScreenDelta / 4) + srcX;
+                        targetIndex = (dstY + y) * (ppdev->ScreenDelta / 4) + dstX;
+                        if (dstX > srcX && overlaps) {
+                            for (x = width; x > 0; --x) {
+                                index = x - 1;
+                                shadow[targetIndex + index] = shadow[sourceIndex + index];
+                                presented[targetIndex + index] = shadow[sourceIndex + index];
+                            }
+                        } else {
+                            for (x = 0; x < width; ++x) {
+                                shadow[targetIndex + x] = shadow[sourceIndex + x];
+                                presented[targetIndex + x] = shadow[sourceIndex + x];
+                            }
+                        }
+                    }
+                    ppdev->AccelCopies++;
+                    return TRUE;
+                }
+                /* Partial CE copies are repaired by the software fallback. */
+                ppdev->PresentationValid = FALSE;
+            }
+        }
+    }
+
     BOOL result = EngCopyBits(psoDest,psoSrc,pco,pxlo,prclDest,pptlSrc);
     if (result && psoDest && psoDest->dhpdev)
         return NvxUploadSurfaceRect((PPDEV)psoDest->dhpdev,psoDest,prclDest,

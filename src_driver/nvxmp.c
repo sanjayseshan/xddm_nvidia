@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.166
+ * Driver Version: 1.0.0.167
  */
 
 #include "miniport.h"
@@ -1300,21 +1300,41 @@ BOOLEAN HwVidStartIO(
 
     case IOCTL_NVX_ACCEL_COPY: {
         PNVX_ACCEL_COPY_PARAMS params = (PNVX_ACCEL_COPY_PARAMS)RequestPacket->InputBuffer;
+        PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
         static ULONG s_copyCount = 0;
+        ULONG64 base,surfaceBytes,srcOffset,dstOffset;
         if (!params || RequestPacket->InputBufferLength < sizeof(NVX_ACCEL_COPY_PARAMS)) {
             status = ERROR_INVALID_PARAMETER;
             break;
         }
-        if (!devExt->GspCopyVerified) {
+        if (!engine || !engine->GspCopyVerified || engine->GspChannelFaulted ||
+            !params->Bytes || params->Bytes>0x01000000UL || (params->Bytes&3) ||
+            devExt->CurrentModeIndex>=devExt->NumModes) {
             status = ERROR_NOT_SUPPORTED;
             break;
         }
-        if (NvxGspSubmitCopy(HwDeviceExtension, params->DstGpuVa, params->SrcGpuVa, params->Bytes)) {
+        base=engine->GspVramGpuVa+(devExt->IsSecondaryDisplay?0x2000000ULL:0x200000ULL);
+        surfaceBytes=(ULONG64)devExt->Modes[devExt->CurrentModeIndex].ScreenStride*
+            devExt->Modes[devExt->CurrentModeIndex].VisScreenHeight;
+        if (params->SrcGpuVa<base || params->DstGpuVa<base ||
+            params->SrcGpuVa-base>surfaceBytes || params->DstGpuVa-base>surfaceBytes ||
+            params->Bytes>surfaceBytes-(params->SrcGpuVa-base) ||
+            params->Bytes>surfaceBytes-(params->DstGpuVa-base) ||
+            ((params->SrcGpuVa-base)&3) || ((params->DstGpuVa-base)&3)) {
+            status=ERROR_INVALID_PARAMETER;
+            break;
+        }
+        srcOffset=params->SrcGpuVa-base;
+        dstOffset=params->DstGpuVa-base;
+        if (NvxGspSubmitCopy(engine, params->DstGpuVa, params->SrcGpuVa, params->Bytes)) {
             status = NO_ERROR;
             statusBlock->Information = sizeof(NVX_ACCEL_COPY_PARAMS);
             s_copyCount++;
             if ((s_copyCount <= 5) || (s_copyCount % 100 == 0)) {
                 LogStr("NVX [ACCEL]: GPU Copy #"); LogHex(s_copyCount);
+                LogStr(" srcOffset=");LogHex(srcOffset);
+                LogStr(" dstOffset=");LogHex(dstOffset);
                 LogStr(" bytes "); LogHex(params->Bytes); LogStr("\n");
             }
         } else {
@@ -1514,7 +1534,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.166 (Batched GDI Solid Fill, DualView)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.167 (GDI CopyBits Acceleration, DualView)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

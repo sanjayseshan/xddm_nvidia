@@ -8,9 +8,12 @@ output on two displays attached to an EVGA GeForce RTX 3070 XC3 Ultra LHR:
 The last hardware-confirmed build, v165, adds an experimental GPU-rendered
 solid rectangle fill for a narrow `DrvBitBlt` case. It passed host-side checks,
 ran on the physical RTX 3070, and the user confirmed the desktop looks normal.
-The current v166 development build batches full-width PATCOPY rows into fewer
-GPU queue submissions. Its latest physical run restored both expected display
-modes and exercised a full-screen fill; slight desktop artifacts remain.
+The latest tested v166 run restored both expected display modes and exercised
+a full-screen GPU fill; slight desktop artifacts remain. The v167 development
+build added same-surface GPU CopyBits, but its first physical test produced
+orange rectangles while dragging windows and excessive small copy submissions.
+Do not treat v167 as a validated desktop build; the current work narrows this
+path.
 
 ## Project overview
 
@@ -20,15 +23,15 @@ NVIDIA GSP firmware and configures native display heads. A GSP-managed GPU copy
 engine uploads desktop framebuffer changes to separate scanout buffers for
 each display.
 
-Most GDI rasterization still happens in software on the CPU. The v166
-development build batches contiguous rows for full-width opaque `PATCOPY`
-fills into fewer GPU copy-engine submissions when the target is a 32-bit
-screen bitmap with tightly packed rows. Partial-width fills retain the v165
-per-row path. It mirrors fills into the GDI shadow for correct fallback
-behavior. Other GDI operations continue through Windows software rendering
-and are uploaded to scanout. This remains a limited 2D acceleration path, not
-a complete accelerated GDI driver. OpenGL, Direct3D, video decoding, and 3D
-acceleration are not implemented.
+Most GDI rasterization still happens in software on the CPU. The v166 path
+batches contiguous rows for full-width opaque `PATCOPY` fills into fewer GPU
+copy-engine submissions on tightly packed 32-bit screen bitmaps. The v167
+experiment submitted same-surface `CopyBits` copies, but produced orange
+rectangles during dragging and reached 10,000 small GPU copy submissions. v168
+narrows this path to large, non-overlapping rectangles with pitched multi-row
+DMA; other cases will remain on software GDI. This remains limited 2D
+acceleration, not a complete accelerated GDI driver. OpenGL, Direct3D, video
+decoding, and 3D acceleration are not implemented.
 
 The v165 physical run and its log evidence are recorded in [SUMMARY.txt](SUMMARY.txt).
 The matching NVIDIA firmware source and checksums are documented in
