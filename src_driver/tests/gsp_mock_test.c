@@ -511,7 +511,7 @@ int main(void)
         if (dev.GspInitialized) {
             assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==
                    (ULONG)((scenario==4?30:28)+(dev.GspCopyVerified?15:0)+dev.MonitorCount+
-                           (scenario==12?5:0)));
+                           (scenario==12?4:0)));
             if(dev.GspCopyVerified) {
                 assert(dev.GspDisplayHandle==0x73000001);
                 assert(dev.NativeDisplayHandle==0xc6700001 && dev.NativeDisplayCaps==3);
@@ -523,7 +523,9 @@ int main(void)
                 assert(dev.MonitorCount==(ULONG)(scenario==0 || scenario==12?2:1));
                 assert(dev.MonitorIds[0]==1 && dev.MonitorEdidBytes[0]==128);
                 if(scenario==0) assert(dev.MonitorIds[1]==4 && dev.MonitorEdid[1][19]==4);
-                if(scenario==12) assert(dev.MonitorSor[1]==3 && dpLinkTrained);
+                if(scenario==12)
+                    assert(dev.MonitorSor[1]==3 && !dpLinkTrained &&
+                           dev.SecondaryDpTrainReady && dev.SecondaryDpDisplayId==4);
             }
             if(dev.GspCopyVerified) {
                 memset(gpuVram+0x1ff0000,0xa5,0x10000);
@@ -537,6 +539,11 @@ int main(void)
                     assert(dev.NativeDisplayChannels[1]==0xc6700101);
                     assert(dev.NativeDisplayChannels[2]==0xc6700102);
                 } else for(ULONG i=0;i<3;i++) assert(!dev.NativeDisplayChannels[i]);
+                if(scenario==12) {
+                    assert(!dpLinkTrained && !dev.SecondaryDpTrainingAttempted);
+                    NvxGspTrainSecondaryDpLink(&dev);
+                    assert(dpLinkTrained && dev.SecondaryDpTrainingAttempted);
+                }
                 ULONG sequence=dev.RpcTxSequence;
                 assert(NvxGspInitDisplayChannels(&dev)==(scenario==0 || scenario==12));
                 assert(dev.RpcTxSequence==sequence); /* never allocate twice */

@@ -1211,34 +1211,11 @@ static VOID NvxGspReadDpLinkInfo(PNVX_DEVICE_EXTENSION dev,ULONG displayId,ULONG
         LogStr("NVX [DP]: DPCD AUX capability read failed for display=");LogHex(displayId);LogStr("\n");
     }
 
-    /* RM performs the standard clock-recovery/channel-equalization sequence.
-       Only the newly assigned secondary is targeted; never retrain the active
-       primary link. HBR2 x4 is the sink's reported maximum (DPCD 0x14, 4 lanes). */
-    if(dpcdReady) {
-        NVX_DP_CTRL_PARAMS train={0};
-        train.displayId=displayId;
-        train.cmd=NVX_DP_CTRL_SET_LANE_COUNT|NVX_DP_CTRL_SET_LINK_BW;
-        train.data=NVX_DP_CTRL_DATA_LANE_COUNT_4|NVX_DP_CTRL_DATA_LINK_BW_HBR2;
-        if(enhancedFraming) {
-            train.cmd|=NVX_DP_CTRL_SET_ENHANCED_FRAMING;
-            train.data|=NVX_DP_CTRL_DATA_ENHANCED_FRAMING;
-        }
-        if(NvxGspControl(dev,dev->GspDisplayHandle,NVX_CTRL_CMD_DP_CTRL,
-                         &train,sizeof(train))) {
-            reply=(const ULONG *)dev->RpcRxRecord;
-            {
-                const NVX_DP_CTRL_PARAMS *result=(const NVX_DP_CTRL_PARAMS *)(reply+26);
-                LogStr("NVX [DP]: RM link-training err=");LogHex(result->err);
-                LogStr(" retryMs=");LogHex(result->retryTimeMs);
-                LogStr(" lanes/bandwidth data=");LogHex(result->data);LogStr("\n");
-            }
-        } else {
-            LogStr("NVX [DP]: RM link training failed for secondary display=");
-            LogHex(displayId);LogStr("\n");
-        }
-    } else {
-        LogStr("NVX [DP]: link training skipped; sink capabilities are insufficient or unavailable.\n");
-    }
+    dev->SecondaryDpDisplayId=displayId;
+    dev->SecondaryDpTrainReady=dpcdReady;
+    dev->SecondaryDpEnhancedFraming=enhancedFraming;
+    if(!dpcdReady)
+        LogStr("NVX [DP]: deferred link training unavailable; sink capabilities are insufficient.\n");
 
     link[1]=displayId;
     if(NvxGspControl(dev,dev->GspDisplayHandle,NVX_CTRL_CMD_DP_GET_LINK_CONFIG,
@@ -1249,6 +1226,45 @@ static VOID NvxGspReadDpLinkInfo(PNVX_DEVICE_EXTENSION dev,ULONG displayId,ULONG
     } else {
         LogStr("NVX [DP]: current link configuration unavailable for display=");
         LogHex(displayId);LogStr("\n");
+    }
+}
+
+/* Run after the primary mode is programmed so a secondary-link transition
+   cannot leave the working VBE primary in its bootstrap resolution. */
+VOID NvxGspTrainSecondaryDpLink(PVOID HwDeviceExtension)
+{
+    PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    NVX_DP_CTRL_PARAMS train={0};
+    ULONG link[4]={0};
+    const ULONG *reply;
+    if(!dev || !dev->SecondaryDpTrainReady || dev->SecondaryDpTrainingAttempted ||
+       !dev->SecondaryDpDisplayId || !dev->GspDisplayHandle) return;
+    dev->SecondaryDpTrainingAttempted=TRUE;
+    train.displayId=dev->SecondaryDpDisplayId;
+    train.cmd=NVX_DP_CTRL_SET_LANE_COUNT|NVX_DP_CTRL_SET_LINK_BW;
+    train.data=NVX_DP_CTRL_DATA_LANE_COUNT_4|NVX_DP_CTRL_DATA_LINK_BW_HBR2;
+    if(dev->SecondaryDpEnhancedFraming) {
+        train.cmd|=NVX_DP_CTRL_SET_ENHANCED_FRAMING;
+        train.data|=NVX_DP_CTRL_DATA_ENHANCED_FRAMING;
+    }
+    if(NvxGspControl(dev,dev->GspDisplayHandle,NVX_CTRL_CMD_DP_CTRL,
+                     &train,sizeof(train))) {
+        const NVX_DP_CTRL_PARAMS *result;
+        reply=(const ULONG *)dev->RpcRxRecord;
+        result=(const NVX_DP_CTRL_PARAMS *)(reply+26);
+        LogStr("NVX [DP]: deferred RM link-training err=");LogHex(result->err);
+        LogStr(" retryMs=");LogHex(result->retryTimeMs);
+        LogStr(" lanes/bandwidth data=");LogHex(result->data);LogStr("\n");
+    } else {
+        LogStr("NVX [DP]: deferred RM link training failed for display=");
+        LogHex(dev->SecondaryDpDisplayId);LogStr("\n");
+    }
+    link[1]=dev->SecondaryDpDisplayId;
+    if(NvxGspControl(dev,dev->GspDisplayHandle,NVX_CTRL_CMD_DP_GET_LINK_CONFIG,
+                     link,sizeof(link))) {
+        reply=(const ULONG *)dev->RpcRxRecord;
+        LogStr("NVX [DP]: post-training link lanes=");LogHex(reply[28]);
+        LogStr(" rate=");LogHex(reply[29]);LogStr("\n");
     }
 }
 

@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.142
+ * Driver Version: 1.0.0.143
  */
 
 #include "miniport.h"
@@ -883,6 +883,17 @@ BOOLEAN HwVidStartIO(
         LogStr("NVX: Mode switched to index: ");
         LogHex(requested);
         LogStr("\n");
+        if (devExt->Modes[requested].VisScreenWidth >= 1920 &&
+            devExt->Modes[requested].VisScreenHeight >= 1080 &&
+            devExt->SecondaryDpTrainReady &&
+            !devExt->SecondaryDpTrainingAttempted) {
+            NvxGspTrainSecondaryDpLink(HwDeviceExtension);
+            /* RM link training can reset display state; reassert the working
+               primary VBE mode after it so the secondary cannot leave XP in
+               the bootstrap resolution. */
+            if (!NvxVbeSetMode(HwDeviceExtension, requested))
+                LogStr("NVX [DP]: primary VBE mode restore after link training failed.\n");
+        }
         break;
     }
 
@@ -1149,7 +1160,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.142 (secondary DP link training)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.143 (deferred secondary DP training)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

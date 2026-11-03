@@ -325,6 +325,8 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG NativeDisplayCorePut;
     BOOLEAN NativeDisplayNotifierReady;
     ULONG MonitorSor[8],MonitorProtocol[8];
+    ULONG SecondaryDpDisplayId;
+    BOOLEAN SecondaryDpTrainReady,SecondaryDpEnhancedFraming,SecondaryDpTrainingAttempted;
     ULONG DisplayWindowMask;
     ULONG DisplayHeadCount;
     ULONG DisplayHeadMask;
@@ -374,6 +376,7 @@ VOID LogHex(unsigned long long val);
 /* GSP Engine entrypoints */
 BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension);
 BOOLEAN NvxGspInitDisplayChannels(PVOID HwDeviceExtension);
+VOID NvxGspTrainSecondaryDpLink(PVOID HwDeviceExtension);
 BOOLEAN NvxGspDiscoverScanout(PVOID HwDeviceExtension,ULONG modeIndex);
 BOOLEAN NvxGspSubmitCopy(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,ULONG bytes);
 BOOLEAN NvxGspSubmitFill(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG bytes);
