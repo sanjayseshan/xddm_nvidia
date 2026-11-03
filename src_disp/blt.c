@@ -7,7 +7,7 @@
 #include "driver.h"
 
 /*
- * First GPU-rendered XDDM primitive: a solid PATCOPY to the primary bitmap.
+ * GPU-rendered XDDM solid PATCOPY fills on the primary bitmap.
  * GDI keeps an authoritative system-memory shadow, while the GPU copy engine
  * writes the corresponding scanout pixels directly. Unsupported operations
  * continue through EngBitBlt and the normal upload path.
@@ -18,18 +18,21 @@ NvxTrySolidPatCopy(PPDEV ppdev, SURFOBJ *pso, CLIPOBJ *pco,
 {
     NVX_ACCEL_FILL_PARAMS params;
     RECTL rect;
-    ULONG color, ulTemp, rowBytes;
+    ULONG color, ulTemp, rowBytes, rowsPerBatch, rows, batchBytes;
     LONG y, x;
     PULONG shadow, presented;
 
-    if (!ppdev || !pso || !pbo || !prcl || !ppdev->PresentationValid ||
+    if (!ppdev || !pso || !prcl || !ppdev->PresentationValid ||
         ppdev->BitsPerPixel != 32 || pso->dhpdev != (DHPDEV)ppdev ||
         pso->iType != STYPE_BITMAP || pso->pvBits != ppdev->ScreenPtr ||
         pso->iBitmapFormat != BMF_32BPP || pso->lDelta <= 0 ||
-        (ULONG)pso->lDelta != ppdev->ScreenDelta || rop4 != 0xF0F0 ||
+        (ULONG)pso->lDelta != ppdev->ScreenDelta ||
         (pco && pco->iDComplexity == DC_COMPLEX))
         return FALSE;
 
+    /* Keep the proven path restricted to PATCOPY; other ROPs use GDI. */
+    if (rop4 != 0xF0F0 || !pbo)
+        return FALSE;
     color = BRUSHOBJ_ulGetBrushColor(pbo);
     if (color == CLR_INVALID)
         return FALSE;
@@ -57,19 +60,48 @@ NvxTrySolidPatCopy(PPDEV ppdev, SURFOBJ *pso, CLIPOBJ *pco,
     shadow = (PULONG)ppdev->ScreenPtr;
     presented = (PULONG)ppdev->PresentedPixels;
     params.Color = color;
-    params.Bytes = rowBytes;
-    for (y = rect.top; y < rect.bottom; ++y) {
-        params.DstGpuVa = ppdev->ScreenGpuVaBase +
-            (ULONG64)(ULONG)y * ppdev->ScreenDelta + (ULONG64)(ULONG)rect.left * 4;
-        if (EngDeviceIoControl(ppdev->hDriver, IOCTL_NVX_ACCEL_FILL,
-                               &params, sizeof(params), NULL, 0, &ulTemp)) {
-            /* A partial GPU operation is repaired by the standard full diff upload. */
-            ppdev->PresentationValid = FALSE;
-            return FALSE;
+    if (rect.left == 0 && rect.right == (LONG)ppdev->ScreenWidth &&
+        (ULONG64)ppdev->ScreenWidth * 4 == ppdev->ScreenDelta) {
+        /* Full-width rows are contiguous in VRAM. Batch them to reduce CE
+           queue submissions for fills such as a desktop-wide clear. */
+        rowsPerBatch = 0x01000000UL / ppdev->ScreenDelta;
+        if (!rowsPerBatch)
+            rowsPerBatch = 1;
+        for (y = rect.top; y < rect.bottom;) {
+            rows = (ULONG)(rect.bottom - y);
+            if (rows > rowsPerBatch)
+                rows = rowsPerBatch;
+            batchBytes = rows * ppdev->ScreenDelta;
+            params.DstGpuVa = ppdev->ScreenGpuVaBase +
+                (ULONG64)(ULONG)y * ppdev->ScreenDelta;
+            params.Bytes = batchBytes;
+            if (EngDeviceIoControl(ppdev->hDriver, IOCTL_NVX_ACCEL_FILL,
+                                   &params, sizeof(params), NULL, 0, &ulTemp)) {
+                ppdev->PresentationValid = FALSE;
+                return FALSE;
+            }
+            for (x = 0; x < (LONG)(batchBytes / 4); ++x) {
+                ULONG index = (ULONG)y * (ppdev->ScreenDelta / 4) + (ULONG)x;
+                shadow[index] = color;
+                presented[index] = color;
+            }
+            y += (LONG)rows;
         }
-        for (x = rect.left; x < rect.right; ++x) {
-            shadow[(ULONG)y * (ppdev->ScreenDelta / 4) + (ULONG)x] = color;
-            presented[(ULONG)y * (ppdev->ScreenDelta / 4) + (ULONG)x] = color;
+    } else {
+        params.Bytes = rowBytes;
+        for (y = rect.top; y < rect.bottom; ++y) {
+            params.DstGpuVa = ppdev->ScreenGpuVaBase +
+                (ULONG64)(ULONG)y * ppdev->ScreenDelta + (ULONG64)(ULONG)rect.left * 4;
+            if (EngDeviceIoControl(ppdev->hDriver, IOCTL_NVX_ACCEL_FILL,
+                                   &params, sizeof(params), NULL, 0, &ulTemp)) {
+                /* A partial GPU operation is repaired by the standard full diff upload. */
+                ppdev->PresentationValid = FALSE;
+                return FALSE;
+            }
+            for (x = rect.left; x < rect.right; ++x) {
+                shadow[(ULONG)y * (ppdev->ScreenDelta / 4) + (ULONG)x] = color;
+                presented[(ULONG)y * (ppdev->ScreenDelta / 4) + (ULONG)x] = color;
+            }
         }
     }
     ppdev->AccelFills++;
