@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="141"
+NVX_TEST_VERSION="142"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
@@ -12,7 +12,7 @@ if [ -f "$NVX_ROOT/vm_serial.log" ]; then
     cp "$NVX_ROOT/vm_serial.log" "$NVX_ARCHIVE/before-v$NVX_TEST_VERSION-$NVX_STAMP.log"
 fi
 
-echo "==> Running host tests and building GA104 DP-capability-ABI-fix v$NVX_TEST_VERSION (no ISO)"
+echo "==> Running host tests and building GA104 secondary-DP-link-training v$NVX_TEST_VERSION (no ISO)"
 if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
     sudo -u "$SUDO_USER" make -C "$NVX_ROOT/src_driver" check full
     sudo -u "$SUDO_USER" cp "$NVX_ROOT/src_driver/nvxmp.sys" "$NVX_ROOT/dist_full/nvxmp.sys"

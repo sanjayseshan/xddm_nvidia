@@ -11,6 +11,7 @@ static UCHAR gpuMemory[0x10000];
 static UCHAR gpuVram[0x2000000];
 static NVX_DEVICE_EXTENSION dev;
 static int scenario, imemTransfers, dmemTransfers, cpuStarts,freeFailures;
+static BOOLEAN dpLinkTrained;
 static ULONG regoff(PULONG p) { return (ULONG)((PUCHAR)p-(PUCHAR)regs); }
 static void gpuWrite64(ULONG offset,ULONG64 value) {memcpy(gpuMemory+offset,&value,8);}
 VOID LogStr(const char *s) {
@@ -194,6 +195,16 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(scenario==12 && request[24]==56 && request[27]==3);
             alloc[8]=3;alloc[9]=3; /* HBR2, DP 1.2 + 1.4 */
         }
+        if(f==76&&request[22]==NVX_CTRL_CMD_DP_CTRL) {
+            assert(scenario==12 && request[24]==28 && request[27]==4);
+            assert(request[28]==(NVX_DP_CTRL_SET_LANE_COUNT|
+                                 NVX_DP_CTRL_SET_LINK_BW|
+                                 NVX_DP_CTRL_SET_ENHANCED_FRAMING));
+            assert(request[29]==(NVX_DP_CTRL_DATA_LANE_COUNT_4|
+                                 NVX_DP_CTRL_DATA_LINK_BW_HBR2|
+                                 NVX_DP_CTRL_DATA_ENHANCED_FRAMING));
+            dpLinkTrained=TRUE;
+        }
         if(f==76&&request[22]==NVX_CTRL_CMD_DP_AUXCH_CTRL) {
             assert(scenario==12 && request[24]==48 && request[27]==4);
             assert(request[29]==9 && request[30]==0 && request[35]==3);
@@ -202,7 +213,8 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         }
         if(f==76&&request[22]==NVX_CTRL_CMD_DP_GET_LINK_CONFIG) {
             assert(scenario==12 && request[24]==16 && request[27]==4);
-            alloc[8]=4;alloc[9]=0x14;
+            if(dpLinkTrained) { alloc[8]=4;alloc[9]=0x14; }
+            else { alloc[8]=0;alloc[9]=6; }
         }
         if(f==76&&request[22]==0x50700709) {
             assert(request[21]==0xc6700001 && request[24]==8);alloc[7]=3;
@@ -499,7 +511,7 @@ int main(void)
         if (dev.GspInitialized) {
             assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==
                    (ULONG)((scenario==4?30:28)+(dev.GspCopyVerified?15:0)+dev.MonitorCount+
-                           (scenario==12?4:0)));
+                           (scenario==12?5:0)));
             if(dev.GspCopyVerified) {
                 assert(dev.GspDisplayHandle==0x73000001);
                 assert(dev.NativeDisplayHandle==0xc6700001 && dev.NativeDisplayCaps==3);
@@ -511,7 +523,7 @@ int main(void)
                 assert(dev.MonitorCount==(ULONG)(scenario==0 || scenario==12?2:1));
                 assert(dev.MonitorIds[0]==1 && dev.MonitorEdidBytes[0]==128);
                 if(scenario==0) assert(dev.MonitorIds[1]==4 && dev.MonitorEdid[1][19]==4);
-                if(scenario==12) assert(dev.MonitorSor[1]==3);
+                if(scenario==12) assert(dev.MonitorSor[1]==3 && dpLinkTrained);
             }
             if(dev.GspCopyVerified) {
                 memset(gpuVram+0x1ff0000,0xa5,0x10000);

@@ -15,6 +15,7 @@ int main(void)
     assert(offsetof(NVX_DP_AUX_CTRL_PARAMS,data)==20);
     assert(offsetof(NVX_DP_AUX_CTRL_PARAMS,size)==36);
     assert(NVX_CTRL_CMD_DP_AUXCH_CTRL==0x00731341U);
+    assert(NVX_CTRL_CMD_DP_CTRL==0x00731343U);
     assert(NVX_CTRL_CMD_DP_GET_LINK_CONFIG==0x00731360U);
     assert(NVX_CTRL_CMD_DP_GET_CAPS==0x00731369U);
     assert(sizeof(NVX_DP_DSC_CAPS)==28);
@@ -22,6 +23,11 @@ int main(void)
     assert(offsetof(NVX_DP_GET_CAPS_PARAMS,maxLinkRate)==8);
     assert(offsetof(NVX_DP_GET_CAPS_PARAMS,dpVersionsSupported)==12);
     assert(offsetof(NVX_DP_GET_CAPS_PARAMS,dsc)==28);
+    assert(sizeof(NVX_DP_CTRL_PARAMS)==28);
+    assert(NVX_DP_CTRL_SET_LANE_COUNT==1 && NVX_DP_CTRL_SET_LINK_BW==2);
+    assert(NVX_DP_CTRL_SET_ENHANCED_FRAMING==0x80);
+    assert(NVX_DP_CTRL_DATA_LINK_BW_HBR2==0x1400);
+    assert(NVX_DP_CTRL_DATA_ENHANCED_FRAMING==0x40000);
     assert(NVX_C67D_UPDATE_SPECIAL_HANDLING_INTERRUPT_RM == 0x00100000U);
     assert(NVX_C67D_UPDATE_INHIBIT_INTERRUPTS == 0x01000000U);
     /* 1920x1080p60, 148.5MHz, totals 2200x1125, +H/+V. */

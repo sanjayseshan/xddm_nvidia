@@ -1,5 +1,28 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.141 DP capability ABI fix
+NVIDIA GA104 XDDM DRIVER — v1.0.0.142 secondary DP link training
 Updated: November 3, 2026
+
+Latest change (v142): train the assigned secondary DisplayPort link
+------------------------------------------------------------------
+After validating the DPCD, v142 requests standard RM-managed link training on
+only the inactive secondary output, using four lanes at HBR2 (5.4 Gb/s) with
+enhanced framing when advertised. It uses NVIDIA's DP_CTRL ABI so RM performs
+clock recovery and channel equalization; it does not issue raw AUX writes or
+change the active primary link. Host tests validate the 28-byte ABI, request
+fields, and post-training link query. Sanitizer tests and the warning-free x64
+build pass. Hardware log test_logs/v142-20261103-124016.log confirms RM reports
+no link-training errors and reads back four lanes at HBR2. The primary's 1080p
+VBE request also succeeds. Link training alone does not enable the second head
+or provide scanout; the second monitor remains unconfirmed for this run and
+needs a head/surface update.
+
+Hardware result (v141): corrected DP capability query
+------------------------------------------------------
+test_logs/v141-20261103-123448.log shows the 56-byte DP_GET_CAPS call succeeds:
+SOR0 is HBR3-capable, supports DP 1.2/1.4, and the secondary sink advertises
+DP 1.2, HBR2, and four lanes. The current link remains at zero lanes because
+v141 did not train it. VBE SET_MODE 0x177 succeeded at 1080p; the user confirmed
+the primary was correct and the second monitor blank in v140. v141 was shut
+down through ACPI powerdown.
 
 Latest change (v141): fix the DP transmitter-capabilities ABI
 -------------------------------------------------------------

@@ -1167,8 +1167,7 @@ static VOID NvxGspPlanHeads(PNVX_DEVICE_EXTENSION dev)
         NvxGspNativeDisplayRoot(dev);
 }
 
-/* Read transmitter/sink DP limits after RM has routed the secondary. No AUX
-   writes or link-training requests are issued by this diagnostic. */
+/* Read transmitter/sink DP limits after RM has routed the secondary. */
 static VOID NvxGspReadDpLinkInfo(PNVX_DEVICE_EXTENSION dev,ULONG displayId,ULONG sor)
 {
     NVX_DP_GET_CAPS_PARAMS caps={0};
@@ -1176,6 +1175,7 @@ static VOID NvxGspReadDpLinkInfo(PNVX_DEVICE_EXTENSION dev,ULONG displayId,ULONG
     NVX_DP_AUX_CTRL_PARAMS aux={0};
     const ULONG *reply;
     const NVX_DP_AUX_CTRL_PARAMS *auxResult;
+    BOOLEAN dpcdReady=FALSE,enhancedFraming=FALSE;
     caps.sorIndex=sor;
     if(NvxGspControl(dev,dev->GspDisplayHandle,NVX_CTRL_CMD_DP_GET_CAPS,
                      &caps,sizeof(caps))) {
@@ -1200,12 +1200,44 @@ static VOID NvxGspReadDpLinkInfo(PNVX_DEVICE_EXTENSION dev,ULONG displayId,ULONG
             LogStr(" maxRate=");LogHex(auxResult->data[1]);
             LogStr(" laneCaps=");LogHex(auxResult->data[2]);
             LogStr(" downspread=");LogHex(auxResult->data[3]);LogStr("\n");
+            if(auxResult->data[0]>=0x12 && (auxResult->data[2]&0x1f)>=4 &&
+               auxResult->data[1]>=0x14) dpcdReady=TRUE;
+            enhancedFraming=(auxResult->data[2]&0x80)!=0;
         } else {
             LogStr("NVX [DP]: DPCD read not acknowledged size=");LogHex(auxResult->size);
             LogStr(" reply=");LogHex(auxResult->replyType);LogStr("\n");
         }
     } else {
         LogStr("NVX [DP]: DPCD AUX capability read failed for display=");LogHex(displayId);LogStr("\n");
+    }
+
+    /* RM performs the standard clock-recovery/channel-equalization sequence.
+       Only the newly assigned secondary is targeted; never retrain the active
+       primary link. HBR2 x4 is the sink's reported maximum (DPCD 0x14, 4 lanes). */
+    if(dpcdReady) {
+        NVX_DP_CTRL_PARAMS train={0};
+        train.displayId=displayId;
+        train.cmd=NVX_DP_CTRL_SET_LANE_COUNT|NVX_DP_CTRL_SET_LINK_BW;
+        train.data=NVX_DP_CTRL_DATA_LANE_COUNT_4|NVX_DP_CTRL_DATA_LINK_BW_HBR2;
+        if(enhancedFraming) {
+            train.cmd|=NVX_DP_CTRL_SET_ENHANCED_FRAMING;
+            train.data|=NVX_DP_CTRL_DATA_ENHANCED_FRAMING;
+        }
+        if(NvxGspControl(dev,dev->GspDisplayHandle,NVX_CTRL_CMD_DP_CTRL,
+                         &train,sizeof(train))) {
+            reply=(const ULONG *)dev->RpcRxRecord;
+            {
+                const NVX_DP_CTRL_PARAMS *result=(const NVX_DP_CTRL_PARAMS *)(reply+26);
+                LogStr("NVX [DP]: RM link-training err=");LogHex(result->err);
+                LogStr(" retryMs=");LogHex(result->retryTimeMs);
+                LogStr(" lanes/bandwidth data=");LogHex(result->data);LogStr("\n");
+            }
+        } else {
+            LogStr("NVX [DP]: RM link training failed for secondary display=");
+            LogHex(displayId);LogStr("\n");
+        }
+    } else {
+        LogStr("NVX [DP]: link training skipped; sink capabilities are insufficient or unavailable.\n");
     }
 
     link[1]=displayId;

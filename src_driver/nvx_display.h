@@ -38,6 +38,7 @@ _Static_assert(offsetof(NVX_DFP_ASSIGN_SOR_PARAMS,flags)==76,"DFP_ASSIGN_SOR fla
 
 /* ctrl0073dp.h read-only DisplayPort controls used before link training. */
 #define NVX_CTRL_CMD_DP_AUXCH_CTRL 0x00731341U
+#define NVX_CTRL_CMD_DP_CTRL 0x00731343U
 #define NVX_CTRL_CMD_DP_GET_LINK_CONFIG 0x00731360U
 #define NVX_CTRL_CMD_DP_GET_CAPS 0x00731369U
 typedef struct {
@@ -70,6 +71,22 @@ _Static_assert(sizeof(NVX_DP_GET_CAPS_PARAMS)==56,"DP GET_CAPS RM ABI");
 _Static_assert(offsetof(NVX_DP_GET_CAPS_PARAMS,maxLinkRate)==8,"DP GET_CAPS rate offset");
 _Static_assert(offsetof(NVX_DP_GET_CAPS_PARAMS,dpVersionsSupported)==12,"DP GET_CAPS version offset");
 _Static_assert(offsetof(NVX_DP_GET_CAPS_PARAMS,dsc)==28,"DP GET_CAPS DSC offset");
+typedef struct {
+    uint32_t subDeviceInstance;
+    uint32_t displayId;
+    uint32_t cmd;
+    uint32_t data;
+    uint32_t err;
+    uint32_t retryTimeMs;
+    uint32_t eightLaneDpcdBaseAddr;
+} NVX_DP_CTRL_PARAMS;
+_Static_assert(sizeof(NVX_DP_CTRL_PARAMS)==28,"DP CTRL RM ABI");
+#define NVX_DP_CTRL_SET_LANE_COUNT (1U<<0)
+#define NVX_DP_CTRL_SET_LINK_BW (1U<<1)
+#define NVX_DP_CTRL_SET_ENHANCED_FRAMING (1U<<7)
+#define NVX_DP_CTRL_DATA_LANE_COUNT_4 4U
+#define NVX_DP_CTRL_DATA_LINK_BW_HBR2 (0x14U<<8)
+#define NVX_DP_CTRL_DATA_ENHANCED_FRAMING (1U<<18)
 typedef struct {
     uint32_t subDeviceInstance;
     uint32_t displayId;
