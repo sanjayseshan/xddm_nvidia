@@ -64,7 +64,8 @@ typedef struct _PDEV
     ULONG    RedMask;
     ULONG    GreenMask;
     ULONG    BlueMask;
-    PVOID    ScreenPtr;
+    PVOID    ScreenPtr; /* coherent GDI desktop bitmap */
+    PVOID    MappedFramebuffer;
     HPALETTE DefaultPalette;
     PALETTEENTRY *PaletteEntries;
     ULONG    iDitherFormat;

@@ -1,5 +1,24 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.120 framebuffer readback diagnostic
+NVIDIA GA104 XDDM DRIVER — v1.0.0.121 coherent desktop bitmap
 Updated: November 3, 2026
+
+Latest change (v121)
+--------------------
+v120 still showed rectangles/corruption (user confirmed) and shut down through
+XP; its log ends with HookedPowerDispatch. The readback mismatches exposed an
+additional design flaw: GDI was using BAR1 as its authoritative bitmap, while
+successful GPU fills/copies did not update those CPU-visible pixels. Masked
+blits, text, and destination-dependent raster operations could therefore read
+invalid or stale pixels.
+
+v121 allocates a zeroed system-memory primary bitmap. GDI rasterizes every
+operation there first; solid fills then execute through CE, while text, masked
+blits, and screen copies publish the resulting bitmap rows via CE uploads.
+Screen copies use the coherent bitmap to preserve overlap semantics and avoid
+stale VRAM sources. The BAR1 mapping is retained only for diagnostic readback
+and released separately from the bitmap. Host tests/build pass. Hardware
+validation: second boot test_logs/v121-20261103-102333.log reached the
+desktop workload; user reports rectangles/missing text remain. ACPI shutdown
+completed and the log ends with HookedPowerDispatch.
 
 Current checkpoint
 ------------------

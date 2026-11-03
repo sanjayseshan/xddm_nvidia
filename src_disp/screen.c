@@ -431,7 +431,20 @@ DrvEnableSurface(
         return NULL;
     }
 
-    ppdev->ScreenPtr = VideoMemoryInfo.FrameBufferBase;
+    ppdev->MappedFramebuffer = VideoMemoryInfo.FrameBufferBase;
+    /* BAR1 readback is unreliable after GSP initialization. Keep authoritative
+       GDI pixels in ordinary system memory and present them through CE DMA. */
+    if (!ppdev->ScreenDelta || ppdev->ScreenHeight > (~0UL / ppdev->ScreenDelta))
+    {
+        DrvDisableSurface(dhpdev);
+        return NULL;
+    }
+    ppdev->ScreenPtr = EngAllocMem(0, ppdev->ScreenDelta * ppdev->ScreenHeight, ALLOC_TAG);
+    if (!ppdev->ScreenPtr) {
+        DrvDisableSurface(dhpdev);
+        return NULL;
+    }
+    memset(ppdev->ScreenPtr, 0, ppdev->ScreenDelta * ppdev->ScreenHeight);
 
     switch (ppdev->BitsPerPixel)
     {
@@ -439,19 +452,21 @@ DrvEnableSurface(
         case 16: BitmapType = BMF_16BPP; break;
         case 24: BitmapType = BMF_24BPP; break;
         case 32: BitmapType = BMF_32BPP; break;
-        default: return NULL;
+        default: DrvDisableSurface(dhpdev); return NULL;
     }
 
     ppdev->iDitherFormat = BitmapType;
     ScreenSize.cx = ppdev->ScreenWidth;
     ScreenSize.cy = ppdev->ScreenHeight;
 
-    /* Create GDI-managed bitmap directly on top of the physical framebuffer mapping */
+    /* Create the primary GDI bitmap on coherent system memory. */
     hSurface = (HSURF)EngCreateBitmap(ScreenSize, ppdev->ScreenDelta, BitmapType,
                                       (ppdev->ScreenDelta > 0) ? BMF_TOPDOWN : 0,
                                       ppdev->ScreenPtr);
-    if (!hSurface)
+    if (!hSurface) {
+        DrvDisableSurface(dhpdev);
         return NULL;
+    }
 
     /* Keep the GDI hooks: on v109 the unhooked primary surface stayed black. */
     flHooks = HOOK_BITBLT | HOOK_COPYBITS | HOOK_TEXTOUT | HOOK_SYNCHRONIZE;
@@ -459,6 +474,7 @@ DrvEnableSurface(
     if (!EngAssociateSurface(hSurface, ppdev->hDevEng, flHooks))
     {
         EngDeleteSurface(hSurface);
+        DrvDisableSurface(dhpdev);
         return NULL;
     }
 
@@ -480,10 +496,12 @@ DrvDisableSurface(
         ppdev->hSurfEng = NULL;
     }
 
-    VideoMemory.RequestedVirtualAddress = ppdev->ScreenPtr;
+    VideoMemory.RequestedVirtualAddress = ppdev->MappedFramebuffer;
     EngDeviceIoControl(ppdev->hDriver, IOCTL_VIDEO_UNMAP_VIDEO_MEMORY,
                        &VideoMemory, sizeof(VIDEO_MEMORY), NULL, 0, &ulTemp);
+    if (ppdev->ScreenPtr) EngFreeMem(ppdev->ScreenPtr);
     ppdev->ScreenPtr = NULL;
+    ppdev->MappedFramebuffer = NULL;
 }
 
 BOOL APIENTRY

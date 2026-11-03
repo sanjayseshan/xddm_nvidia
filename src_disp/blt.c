@@ -76,125 +76,11 @@ DrvCopyBits(
     RECTL *prclDest,
     POINTL *pptlSrc)
 {
-    PPDEV ppdev;
-    ULONG ulTemp;
-    NVX_ACCEL_COPY_PARAMS copyParams;
-    LONG width, height;
-    LONG bytesPerPixel;
-    LONG y;
-
-    if (!psoDest || !psoDest->dhpdev)
-        return EngCopyBits(psoDest, psoSrc, pco, pxlo, prclDest, pptlSrc);
-
-    ppdev = (PPDEV)psoDest->dhpdev;
-
-    if (NVX_SOFTWARE_SCANOUT_DIAGNOSTIC)
-        return EngCopyBits(psoDest,psoSrc,pco,pxlo,prclDest,pptlSrc);
-
-    /*
-     * Check if this is a screen-to-screen blit within the primary surface:
-     * - Dest and Src must be the primary surface (same dhpdev)
-     * - No color translation (pxlo is NULL or trivial)
-     * - Trivial clipping (CLIPOBJ is NULL or DCO_ALL)
-     */
-    if (psoSrc && psoSrc->dhpdev == (DHPDEV)ppdev &&
-        (!pxlo || (pxlo->flXlate & XO_TRIVIAL)) &&
-        (!pco || pco->iDComplexity == DC_TRIVIAL))
-    {
-        width = prclDest->right - prclDest->left;
-        height = prclDest->bottom - prclDest->top;
-
-        if (width > 0 && height > 0)
-        {
-            bytesPerPixel = (ppdev->BitsPerPixel + 7) / 8;
-
-            /* Check if we can do full rectangle or line-by-line copy */
-            if (width * bytesPerPixel == (LONG)ppdev->ScreenDelta &&
-                prclDest->left == 0 && pptlSrc->x == 0)
-            {
-                /* Contiguous multi-line copy */
-                copyParams.DstGpuVa = ppdev->ScreenGpuVaBase +
-                    (ULONG64)prclDest->top * ppdev->ScreenDelta;
-                copyParams.SrcGpuVa = ppdev->ScreenGpuVaBase +
-                    (ULONG64)pptlSrc->y * ppdev->ScreenDelta;
-                copyParams.Bytes = width * height * bytesPerPixel;
-
-                if (!EngDeviceIoControl(ppdev->hDriver, IOCTL_NVX_ACCEL_COPY,
-                                        &copyParams, sizeof(copyParams),
-                                        NULL, 0, &ulTemp))
-                {
-                    ppdev->AccelCopies++;
-                    return TRUE;
-                }
-            }
-            else
-            {
-                /* Scanline-by-scanline copy */
-                /* Handle vertical direction to prevent overlap corruption */
-                LONG lineBytes = width * bytesPerPixel;
-                BOOL success = TRUE;
-
-                if (prclDest->top <= pptlSrc->y)
-                {
-                    /* Top to bottom */
-                    for (y = 0; y < height; y++)
-                    {
-                        copyParams.DstGpuVa = ppdev->ScreenGpuVaBase +
-                            (ULONG64)(prclDest->top + y) * ppdev->ScreenDelta +
-                            (ULONG64)prclDest->left * bytesPerPixel;
-                        copyParams.SrcGpuVa = ppdev->ScreenGpuVaBase +
-                            (ULONG64)(pptlSrc->y + y) * ppdev->ScreenDelta +
-                            (ULONG64)pptlSrc->x * bytesPerPixel;
-                        copyParams.Bytes = lineBytes;
-
-                        if (EngDeviceIoControl(ppdev->hDriver, IOCTL_NVX_ACCEL_COPY,
-                                               &copyParams, sizeof(copyParams),
-                                               NULL, 0, &ulTemp))
-                        {
-                            success = FALSE;
-                            break;
-                        }
-                    }
-                }
-                else
-                {
-                    /* Bottom to top */
-                    for (y = height - 1; y >= 0; y--)
-                    {
-                        copyParams.DstGpuVa = ppdev->ScreenGpuVaBase +
-                            (ULONG64)(prclDest->top + y) * ppdev->ScreenDelta +
-                            (ULONG64)prclDest->left * bytesPerPixel;
-                        copyParams.SrcGpuVa = ppdev->ScreenGpuVaBase +
-                            (ULONG64)(pptlSrc->y + y) * ppdev->ScreenDelta +
-                            (ULONG64)pptlSrc->x * bytesPerPixel;
-                        copyParams.Bytes = lineBytes;
-
-                        if (EngDeviceIoControl(ppdev->hDriver, IOCTL_NVX_ACCEL_COPY,
-                                               &copyParams, sizeof(copyParams),
-                                               NULL, 0, &ulTemp))
-                        {
-                            success = FALSE;
-                            break;
-                        }
-                    }
-                }
-
-                if (success)
-                {
-                    ppdev->AccelCopies++;
-                    return TRUE;
-                }
-            }
-        }
-    }
-
-    /* Render in GDI first, then publish the changed primary-surface rows. */
-    {
-        BOOL result=EngCopyBits(psoDest,psoSrc,pco,pxlo,prclDest,pptlSrc);
-        if(result)
-            (void)NvxUploadSurfaceRect(ppdev,psoDest,prclDest,NVX_UPLOAD_KIND_COPYBITS);
-        return result;
-    }
+    BOOL result = EngCopyBits(psoDest,psoSrc,pco,pxlo,prclDest,pptlSrc);
+    if (result && psoDest && psoDest->dhpdev)
+        return NvxUploadSurfaceRect((PPDEV)psoDest->dhpdev,psoDest,prclDest,
+                                    NVX_UPLOAD_KIND_COPYBITS);
+    return result;
 }
 
 /*
@@ -232,6 +118,10 @@ DrvBitBlt(
     if (NVX_SOFTWARE_SCANOUT_DIAGNOSTIC)
         return EngBitBlt(psoTrg,psoSrc,psoMask,pco,pxlo,prclTrg,pptlSrc,
                          pptlMask,pbo,pptlBrush,rop4);
+    /* Every operation must update the authoritative bitmap before GPU work. */
+    if (!EngBitBlt(psoTrg,psoSrc,psoMask,pco,pxlo,prclTrg,pptlSrc,
+                   pptlMask,pbo,pptlBrush,rop4))
+        return FALSE;
     bytesPerPixel = (ppdev->BitsPerPixel + 7) / 8;
     width = prclTrg->right - prclTrg->left;
     height = prclTrg->bottom - prclTrg->top;
@@ -313,22 +203,8 @@ DrvBitBlt(
             }
         }
 
-        /*
-         * 2. Check for Screen-to-Screen Copy (SRCCOPY, rop4 == 0xCCCC)
-         */
-        if (rop4 == 0xCCCC && psoSrc && psoSrc->dhpdev == (DHPDEV)ppdev &&
-            (!pxlo || (pxlo->flXlate & XO_TRIVIAL)))
-        {
-            return DrvCopyBits(psoTrg, psoSrc, pco, pxlo, prclTrg, pptlSrc);
-        }
     }
 
-    /* Fallback to software EngBitBlt for masked blits, icons, glyphs, complex ROPs */
-    {
-        BOOL result=EngBitBlt(psoTrg,psoSrc,psoMask,pco,pxlo,
-                              prclTrg,pptlSrc,pptlMask,pbo,pptlBrush,rop4);
-        if(result)
-            (void)NvxUploadSurfaceRect(ppdev,psoTrg,prclTrg,NVX_UPLOAD_KIND_BITBLT);
-        return result;
-    }
+    /* Present pixels already rasterized into the coherent bitmap. */
+    return NvxUploadSurfaceRect(ppdev,psoTrg,prclTrg,NVX_UPLOAD_KIND_BITBLT);
 }
