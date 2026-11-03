@@ -71,7 +71,11 @@
 #define GSP_SCRATCH_OFFSET             0x02F00000ULL
 #define GSP_SCRATCH_SIZE               0x10000UL
 #define GSP_PAGE_TABLES_OFFSET         0x02E00000ULL
-#define GSP_PAGE_TABLES_SIZE           0x7000UL
+#define GSP_PAGE_TABLES_SIZE           0x8000UL
+#define GSP_UPLOAD_OFFSET              0x02600000ULL
+#define GSP_UPLOAD_SIZE                0x00800000UL
+#define GSP_UPLOAD_GPU_VA              0x22000000ULL
+#define GSP_UPLOAD_MAX_BYTES           0x0000F000UL
 
 #pragma pack(push, 1)
 /* Libos Init Argument */
@@ -348,6 +352,7 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension);
 BOOLEAN NvxGspDiscoverScanout(PVOID HwDeviceExtension,ULONG modeIndex);
 BOOLEAN NvxGspSubmitCopy(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,ULONG bytes);
 BOOLEAN NvxGspSubmitFill(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG bytes);
+BOOLEAN NvxGspUpload(PVOID HwDeviceExtension,ULONG64 dstVa,const void *src,ULONG bytes);
 
 VOID NvxGspShutdown(PVOID HwDeviceExtension);
 int NvxGspSequencerCore(void *context,unsigned int opcode);

@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.110
+ * Driver Version: 1.0.0.111
  */
 
 #include "miniport.h"
@@ -988,6 +988,40 @@ BOOLEAN HwVidStartIO(
         break;
     }
 
+    case IOCTL_NVX_ACCEL_UPLOAD: {
+        PNVX_ACCEL_UPLOAD_PARAMS params=(PNVX_ACCEL_UPLOAD_PARAMS)RequestPacket->InputBuffer;
+        static ULONG s_uploadCount=0;
+        ULONG headerBytes=FIELD_OFFSET(NVX_ACCEL_UPLOAD_PARAMS,Data);
+        ULONG required;
+        if(!params||RequestPacket->InputBufferLength<headerBytes) {
+            status=ERROR_INVALID_PARAMETER;
+            break;
+        }
+        if(params->Bytes==0||params->Bytes>GSP_UPLOAD_MAX_BYTES||
+           params->Bytes>((ULONG)~0U)-headerBytes) {
+            status=ERROR_INVALID_PARAMETER;
+            break;
+        }
+        required=headerBytes+params->Bytes;
+        if(RequestPacket->InputBufferLength!=required||!devExt->GspCopyVerified) {
+            status=ERROR_NOT_SUPPORTED;
+            break;
+        }
+        if(NvxGspUpload(HwDeviceExtension,params->DstGpuVa,params->Data,params->Bytes)) {
+            status=NO_ERROR;
+            statusBlock->Information=required;
+            s_uploadCount++;
+            if((s_uploadCount<=5)||(s_uploadCount%100==0)) {
+                LogStr("NVX [ACCEL]: GPU Upload #");LogHex(s_uploadCount);
+                LogStr(" dst=");LogHex(params->DstGpuVa);
+                LogStr(" bytes=");LogHex(params->Bytes);LogStr("\n");
+            }
+        } else {
+            status=ERROR_DEVICE_NOT_READY;
+        }
+        break;
+    }
+
     default:
         status = ERROR_INVALID_FUNCTION;
         break;
@@ -1051,7 +1085,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.110\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.111\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

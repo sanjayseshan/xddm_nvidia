@@ -6,6 +6,58 @@
 
 #include "driver.h"
 
+/* Upload software-rendered primary-surface rows through coherent DMA staging. */
+BOOL
+NvxUploadSurfaceRect(PPDEV ppdev, SURFOBJ *pso, RECTL *prcl)
+{
+    RECTL r;
+    LONG y;
+    ULONG bytesPerPixel, lineBytes, batchBytes, rowsPerBatch, rows, requestBytes, ulTemp;
+    PNVX_ACCEL_UPLOAD_PARAMS params;
+    BOOL success=TRUE;
+
+    if(!ppdev||!pso||!prcl||pso->dhpdev!=(DHPDEV)ppdev||
+       pso->iType!=STYPE_BITMAP||!pso->pvBits||pso->pvBits!=ppdev->ScreenPtr||
+       pso->iBitmapFormat!=BMF_32BPP||ppdev->BitsPerPixel!=32||
+       pso->lDelta<=0||(ULONG)pso->lDelta!=ppdev->ScreenDelta)
+        return FALSE;
+
+    r=*prcl;
+    if(r.left<0) r.left=0;
+    if(r.top<0) r.top=0;
+    if(r.right>(LONG)ppdev->ScreenWidth) r.right=(LONG)ppdev->ScreenWidth;
+    if(r.bottom>(LONG)ppdev->ScreenHeight) r.bottom=(LONG)ppdev->ScreenHeight;
+    if(r.left>=r.right||r.top>=r.bottom) return TRUE;
+
+    bytesPerPixel=4;
+    lineBytes=(ULONG)(r.right-r.left)*bytesPerPixel;
+    if(!lineBytes||lineBytes>NVX_ACCEL_UPLOAD_MAX_BYTES) return FALSE;
+    rowsPerBatch=NVX_ACCEL_UPLOAD_MAX_BYTES/lineBytes;
+    if(!rowsPerBatch) rowsPerBatch=1;
+    requestBytes=FIELD_OFFSET(NVX_ACCEL_UPLOAD_PARAMS,Data)+lineBytes*rowsPerBatch;
+    params=(PNVX_ACCEL_UPLOAD_PARAMS)EngAllocMem(0,requestBytes,ALLOC_TAG);
+    if(!params) return FALSE;
+
+    params->Reserved=0;
+    for(y=r.top;y<r.bottom;y+=(LONG)rowsPerBatch) {
+        rows=(ULONG)((r.bottom-y)<(LONG)rowsPerBatch?(r.bottom-y):(LONG)rowsPerBatch);
+        batchBytes=lineBytes*rows;
+        params->DstGpuVa=ppdev->ScreenGpuVaBase+
+            (ULONG64)(ULONG)y*ppdev->ScreenDelta+(ULONG64)(ULONG)r.left*bytesPerPixel;
+        params->Bytes=batchBytes;
+        memcpy(params->Data,(PUCHAR)pso->pvBits+(ULONG)y*(ULONG)pso->lDelta+
+               (ULONG)r.left*bytesPerPixel,batchBytes);
+        if(EngDeviceIoControl(ppdev->hDriver,IOCTL_NVX_ACCEL_UPLOAD,
+                              params,requestBytes,NULL,0,&ulTemp)) {
+            success=FALSE;
+            break;
+        }
+    }
+
+    EngFreeMem(params);
+    return success;
+}
+
 /*
  * DrvCopyBits:
  * Screen-to-screen bitmap copy acceleration.
@@ -128,8 +180,13 @@ DrvCopyBits(
         }
     }
 
-    /* Fallback to software EngCopyBits */
-    return EngCopyBits(psoDest, psoSrc, pco, pxlo, prclDest, pptlSrc);
+    /* Render in GDI first, then publish the changed primary-surface rows. */
+    {
+        BOOL result=EngCopyBits(psoDest,psoSrc,pco,pxlo,prclDest,pptlSrc);
+        if(result&&(!pco||pco->iDComplexity==DC_TRIVIAL))
+            (void)NvxUploadSurfaceRect(ppdev,psoDest,prclDest);
+        return result;
+    }
 }
 
 /*
@@ -256,6 +313,11 @@ DrvBitBlt(
     }
 
     /* Fallback to software EngBitBlt for masked blits, icons, glyphs, complex ROPs */
-    return EngBitBlt(psoTrg, psoSrc, psoMask, pco, pxlo,
-                     prclTrg, pptlSrc, pptlMask, pbo, pptlBrush, rop4);
+    {
+        BOOL result=EngBitBlt(psoTrg,psoSrc,psoMask,pco,pxlo,
+                              prclTrg,pptlSrc,pptlMask,pbo,pptlBrush,rop4);
+        if(result&&(!pco||pco->iDComplexity==DC_TRIVIAL))
+            (void)NvxUploadSurfaceRect(ppdev,psoTrg,prclTrg);
+        return result;
+    }
 }

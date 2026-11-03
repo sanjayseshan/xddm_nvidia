@@ -11,4 +11,5 @@ enum { NVX_MMU_OK=1,NVX_MMU_INVALID=0,NVX_MMU_ABSENT=-1,
 /* Pascal+ VER2 tables; only linear VRAM leaves and VRAM table pointers. */
 int NvxMmuTranslateVram(NVX_MMU_READ64,void *,uint64_t,uint64_t,uint64_t,
                         unsigned,NVX_MMU_MAPPING *);
+int NvxMmuCheckRange(uint64_t,uint64_t,uint64_t,uint64_t);
 #endif

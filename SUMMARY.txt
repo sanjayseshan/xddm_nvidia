@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.110 primary-surface recovery
+NVIDIA GA104 XDDM DRIVER — v1.0.0.111 staged GDI uploads
 Updated: November 2, 2026
 
 Current checkpoint
@@ -20,8 +20,13 @@ is back but still shows many rectangles. The BAR1 scanout translation remains
 unavailable. Next implement a bounded upload path for system-memory bitmap
 sources; see STATUS_FLOW_v110.txt.
 
-This version does not yet provide a validated accelerated desktop. Preserve
-the required GDI hooks while implementing and validating system-memory uploads.
+v111 adds a bounded coherent-DMA upload path for software-rendered fallback
+pixels and maps an 8MB staging area into the GSP copy engine. It uploads rows
+after EngBitBlt/EngCopyBits/EngTextOut while retaining the primary-surface hooks.
+Host tests/build and hardware validation are pending. See STATUS_FLOW_v111.txt.
+
+The desktop is not yet confirmed working. A successful GSP copy probe alone is
+not desktop acceleration; confirm visible icons, text, and window contents.
 
 Historical v106 checkpoint
 --------------------------

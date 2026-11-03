@@ -286,6 +286,7 @@ typedef struct _VIDEO_SHARE_MEMORY {
 /* Custom Miniport Hardware Acceleration IOCTLs */
 #define IOCTL_NVX_ACCEL_COPY             CTL_CODE(FILE_DEVICE_VIDEO, 0x200, METHOD_BUFFERED, FILE_ANY_ACCESS) /* 0x00230800 */
 #define IOCTL_NVX_ACCEL_FILL             CTL_CODE(FILE_DEVICE_VIDEO, 0x201, METHOD_BUFFERED, FILE_ANY_ACCESS) /* 0x00230804 */
+#define IOCTL_NVX_ACCEL_UPLOAD           CTL_CODE(FILE_DEVICE_VIDEO, 0x202, METHOD_BUFFERED, FILE_ANY_ACCESS) /* 0x00230808 */
 
 typedef struct _NVX_ACCEL_COPY_PARAMS {
     ULONG64 DstGpuVa;
@@ -298,6 +299,13 @@ typedef struct _NVX_ACCEL_FILL_PARAMS {
     ULONG   Color;
     ULONG   Bytes;
 } NVX_ACCEL_FILL_PARAMS, *PNVX_ACCEL_FILL_PARAMS;
+
+typedef struct _NVX_ACCEL_UPLOAD_PARAMS {
+    ULONG64 DstGpuVa;
+    ULONG   Bytes;
+    ULONG   Reserved;
+    UCHAR   Data[1];
+} NVX_ACCEL_UPLOAD_PARAMS, *PNVX_ACCEL_UPLOAD_PARAMS;
 
 typedef enum _BUS_DATA_TYPE {
     ConfigurationSpaceUndefined = -1,

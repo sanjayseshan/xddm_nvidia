@@ -1,5 +1,12 @@
 #include "nvx_mmu.h"
 #define ADDRESS_MASK UINT64_C(0x0000ffffffffffff)
+int NvxMmuCheckRange(uint64_t base,uint64_t length,uint64_t address,uint64_t bytes)
+{
+    if(!length||!bytes||address<base) return NVX_MMU_RANGE;
+    address-=base;
+    if(address>=length||bytes>length-address) return NVX_MMU_RANGE;
+    return NVX_MMU_OK;
+}
 static int read_entry(NVX_MMU_READ64 read,void *ctx,uint64_t bytes,uint64_t addr,uint64_t *entry)
 {
     if((addr&7)||bytes<8||addr>bytes-8) return NVX_MMU_RANGE;

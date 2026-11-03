@@ -21,6 +21,9 @@ typedef struct _VIDEOMEMORY VIDEOMEMORY;
 /* Custom Miniport Hardware Acceleration IOCTLs */
 #define IOCTL_NVX_ACCEL_COPY             CTL_CODE(FILE_DEVICE_VIDEO, 0x200, METHOD_BUFFERED, FILE_ANY_ACCESS) /* 0x00230800 */
 #define IOCTL_NVX_ACCEL_FILL             CTL_CODE(FILE_DEVICE_VIDEO, 0x201, METHOD_BUFFERED, FILE_ANY_ACCESS) /* 0x00230804 */
+#define IOCTL_NVX_ACCEL_UPLOAD           CTL_CODE(FILE_DEVICE_VIDEO, 0x202, METHOD_BUFFERED, FILE_ANY_ACCESS) /* 0x00230808 */
+#define NVX_ACCEL_UPLOAD_MAX_BYTES       0x0000F000UL
+#define NVX_ACCEL_UPLOAD_HEADER_BYTES    16UL
 
 typedef struct _NVX_ACCEL_COPY_PARAMS {
     ULONG64 DstGpuVa;
@@ -33,6 +36,13 @@ typedef struct _NVX_ACCEL_FILL_PARAMS {
     ULONG   Color;
     ULONG   Bytes;
 } NVX_ACCEL_FILL_PARAMS, *PNVX_ACCEL_FILL_PARAMS;
+
+typedef struct _NVX_ACCEL_UPLOAD_PARAMS {
+    ULONG64 DstGpuVa;
+    ULONG   Bytes;
+    ULONG   Reserved;
+    UCHAR   Data[1];
+} NVX_ACCEL_UPLOAD_PARAMS, *PNVX_ACCEL_UPLOAD_PARAMS;
 
 #define ALLOC_TAG 'XVND'
 
@@ -70,6 +80,7 @@ BOOL APIENTRY DrvAssertMode(DHPDEV dhpdev, BOOL bEnable);
 ULONG APIENTRY DrvGetModes(HANDLE hDriver, ULONG cjSize, DEVMODEW *pdm);
 BOOL APIENTRY DrvBitBlt(SURFOBJ *psoTrg, SURFOBJ *psoSrc, SURFOBJ *psoMask, CLIPOBJ *pco, XLATEOBJ *pxlo, RECTL *prclTrg, POINTL *pptlSrc, POINTL *pptlMask, BRUSHOBJ *pbo, POINTL *pptlBrush, ROP4 rop4);
 BOOL APIENTRY DrvCopyBits(SURFOBJ *psoDest, SURFOBJ *psoSrc, CLIPOBJ *pco, XLATEOBJ *pxlo, RECTL *prclDest, POINTL *pptlSrc);
+BOOL NvxUploadSurfaceRect(PPDEV ppdev, SURFOBJ *pso, RECTL *prcl);
 BOOL APIENTRY DrvTextOut(SURFOBJ *pso, STROBJ *pstro, FONTOBJ *pfo, CLIPOBJ *pco, RECTL *prclExtra, RECTL *prclOpaque, BRUSHOBJ *pboFore, BRUSHOBJ *pboOpaque, POINTL *pptlOrg, MIX mix);
 ULONG APIENTRY DrvDitherColor(DHPDEV dhpdev, ULONG iMode, ULONG rgb, ULONG *pul);
 BOOL APIENTRY DrvSetPalette(DHPDEV dhpdev, PALOBJ *ppalo, ULONG fl, ULONG iStart, ULONG cColors);

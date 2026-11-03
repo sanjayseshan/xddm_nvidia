@@ -193,7 +193,9 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
     ULONG setDirectory[8]={0};
     ULONG64 physical=dev->GspDmaPhysical.QuadPart+GSP_PAGE_TABLES_OFFSET;
     PULONG64 tables=(PULONG64)((PUCHAR)dev->GspDmaVirtual+GSP_PAGE_TABLES_OFFSET);
-    if(dev->GspDmaLength<GSP_PAGE_TABLES_OFFSET+GSP_PAGE_TABLES_SIZE||(physical&4095)) return FALSE;
+    if(dev->GspDmaLength<GSP_PAGE_TABLES_OFFSET+GSP_PAGE_TABLES_SIZE||
+       dev->GspDmaLength<GSP_UPLOAD_OFFSET+GSP_UPLOAD_SIZE||
+       (physical&4095)) return FALSE;
     VideoPortZeroMemory(tables,GSP_PAGE_TABLES_SIZE);
     /* PDEs: coherent-system aperture, volatile, next-table address >> 4. */
     tables[0]=((physical+0x1000)>>4)|0xc;
@@ -214,6 +216,21 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
         tables[2560+pdIndex*2+1]=0;
         for(ULONG page=0;page<32;page++)
             lpt[page]=((((ULONG64)slice*0x200000+(ULONG64)page*0x10000)>>4)|1);
+    }
+    /* Map an 8MB coherent upload staging region at CE VA 0x22000000. Four
+       additional 2MB LPT slices use 64KB sysmem leaves, matching the scratch
+       PTE encoding. The physical range is intentionally between the GSP shared
+       queues and the page-table pool, outside firmware/image/queue storage. */
+    for(ULONG slice=16;slice<20;slice++) {
+        ULONG64 *lpt=(ULONG64 *)((PUCHAR)tables+0x7000+(slice-16)*0x100);
+        ULONG64 lptPhysical=physical+0x7000+(slice-16)*0x100;
+        tables[2560+slice*2]=(lptPhysical>>4)|0xc;
+        tables[2560+slice*2+1]=0;
+        for(ULONG page=0;page<32;page++) {
+            ULONG64 pagePhysical=dev->GspDmaPhysical.QuadPart+GSP_UPLOAD_OFFSET+
+                (ULONG64)(slice-16)*0x200000+(ULONG64)page*0x10000;
+            lpt[page]=(pagePhysical>>4)|0xd;
+        }
     }
     dev->GspVramGpuVa=0x20000000ULL;
     dev->GspVramMapBytes=0x2000000ULL;
@@ -757,6 +774,19 @@ BOOLEAN NvxGspSubmitFill(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG
     LogStr(" GPPut=");LogHex(userd[0x8c/4]);LogStr("\n");
     dev->GspChannelFaulted=TRUE;
     return FALSE;
+}
+
+BOOLEAN NvxGspUpload(PVOID HwDeviceExtension,ULONG64 dstVa,const void *src,ULONG bytes)
+{
+    PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    if(!dev||!src||!bytes||bytes>GSP_UPLOAD_MAX_BYTES||
+       !dev->GspInitialized||!dev->GspCopyVerified||dev->GspChannelFaulted||
+       !dev->GspDmaVirtual||!dev->GspVramGpuVa) return FALSE;
+    if(NvxMmuCheckRange(dev->GspVramGpuVa,dev->GspVramMapBytes,dstVa,bytes)!=NVX_MMU_OK)
+        return FALSE;
+    VideoPortMoveMemory((PUCHAR)dev->GspDmaVirtual+GSP_UPLOAD_OFFSET,(PVOID)src,bytes);
+    __sync_synchronize();
+    return NvxGspSubmitCopy(HwDeviceExtension,dstVa,GSP_UPLOAD_GPU_VA,bytes);
 }
 
 static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)

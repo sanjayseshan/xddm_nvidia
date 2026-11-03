@@ -15,6 +15,10 @@ static uint64_t pte(uint64_t addr) {return (addr>>4)|1;}
 int main(void)
 {
     NVX_MMU_MAPPING m;
+    assert(NvxMmuCheckRange(0x20000000,0x2000000,0x20000000,4)==NVX_MMU_OK);
+    assert(NvxMmuCheckRange(0x20000000,0x2000000,0x21ffffff,1)==NVX_MMU_OK);
+    assert(NvxMmuCheckRange(0x20000000,0x2000000,0x21ffffff,2)==NVX_MMU_RANGE);
+    assert(NvxMmuCheckRange(0x20000000,0x2000000,0x1fffffff,4)==NVX_MMU_RANGE);
     uint64_t va=0x246789,bytes=0x20000000;
     memset(mem,0,sizeof(mem));
     mem[0x1000/8]=ptr(0x2000);mem[0x2000/8]=ptr(0x3000);mem[0x3000/8]=ptr(0x4000);
