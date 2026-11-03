@@ -22,7 +22,10 @@ NvxUploadSurfaceRect(PPDEV ppdev, SURFOBJ *pso, RECTL *prcl, ULONG kind)
        pso->lDelta<=0||(ULONG)pso->lDelta!=ppdev->ScreenDelta)
         return FALSE;
 
-    r=*prcl;
+    /* v123: publish the whole authoritative bitmap to isolate missed dirty
+       bounds and direct GDI writes from pixel production. */
+    r.left=0; r.top=0;
+    r.right=(LONG)ppdev->ScreenWidth; r.bottom=(LONG)ppdev->ScreenHeight;
     if(r.left<0) r.left=0;
     if(r.top<0) r.top=0;
     if(r.right>(LONG)ppdev->ScreenWidth) r.right=(LONG)ppdev->ScreenWidth;
@@ -102,109 +105,10 @@ DrvBitBlt(
     POINTL *pptlBrush,
     ROP4 rop4)
 {
-    PPDEV ppdev;
-    ULONG ulTemp;
-    LONG width, height;
-    LONG bytesPerPixel;
-    LONG y;
-
-    if (!psoTrg || !psoTrg->dhpdev)
-    {
-        return EngBitBlt(psoTrg, psoSrc, psoMask, pco, pxlo,
-                         prclTrg, pptlSrc, pptlMask, pbo, pptlBrush, rop4);
-    }
-
-    ppdev = (PPDEV)psoTrg->dhpdev;
-    if (NVX_SOFTWARE_SCANOUT_DIAGNOSTIC)
-        return EngBitBlt(psoTrg,psoSrc,psoMask,pco,pxlo,prclTrg,pptlSrc,
-                         pptlMask,pbo,pptlBrush,rop4);
-    /* Every operation must update the authoritative bitmap before GPU work. */
-    if (!EngBitBlt(psoTrg,psoSrc,psoMask,pco,pxlo,prclTrg,pptlSrc,
-                   pptlMask,pbo,pptlBrush,rop4))
-        return FALSE;
-    bytesPerPixel = (ppdev->BitsPerPixel + 7) / 8;
-    width = prclTrg->right - prclTrg->left;
-    height = prclTrg->bottom - prclTrg->top;
-
-    if (width <= 0 || height <= 0)
-        return TRUE;
-
-    /*
-     * NEVER accelerate when there is a mask (psoMask != NULL):
-     * Icons, transparent cursors, text glyphs use psoMask.
-     * Acceleration should only handle unmasked, trivial-clipping operations!
-     */
-    if (!psoMask && (!pco || pco->iDComplexity == DC_TRIVIAL))
-    {
-        /*
-         * 1. Check for Solid Color Fills:
-         * BLACKNESS (rop4 == 0x0000)
-         * WHITENESS (rop4 == 0xFFFF)
-         * PATCOPY   (rop4 == 0xF0F0 with solid brush)
-         * Only accelerate if brush is actually solid (iSolidColor != 0xFFFFFFFF)
-         */
-        if (rop4 == 0x0000 || rop4 == 0xFFFF ||
-            (rop4 == 0xF0F0 && pbo && pbo->iSolidColor != 0xFFFFFFFF))
-        {
-            NVX_ACCEL_FILL_PARAMS fillParams;
-            ULONG fillColor = 0;
-
-            if (rop4 == 0x0000)
-                fillColor = 0x00000000;
-            else if (rop4 == 0xFFFF)
-                fillColor = 0xFFFFFFFF;
-            else
-                fillColor = pbo->iSolidColor;
-
-            /* Check if contiguous multi-line fill (e.g. desktop background clear) */
-            if (width * bytesPerPixel == (LONG)ppdev->ScreenDelta && prclTrg->left == 0)
-            {
-                fillParams.DstGpuVa = ppdev->ScreenGpuVaBase +
-                    (ULONG64)prclTrg->top * ppdev->ScreenDelta;
-                fillParams.Color = fillColor;
-                fillParams.Bytes = width * height * bytesPerPixel;
-
-                if (!EngDeviceIoControl(ppdev->hDriver, IOCTL_NVX_ACCEL_FILL,
-                                        &fillParams, sizeof(fillParams),
-                                        NULL, 0, &ulTemp))
-                {
-                    ppdev->AccelFills++;
-                    return TRUE;
-                }
-            }
-            else if (width >= 8 && height >= 2)
-            {
-                /* Scanline-by-scanline fill for non-trivial rectangles (>= 8px wide) */
-                LONG lineBytes = width * bytesPerPixel;
-                BOOL success = TRUE;
-
-                for (y = 0; y < height; y++)
-                {
-                    fillParams.DstGpuVa = ppdev->ScreenGpuVaBase +
-                        (ULONG64)(prclTrg->top + y) * ppdev->ScreenDelta +
-                        (ULONG64)prclTrg->left * bytesPerPixel;
-                    fillParams.Color = fillColor;
-                    fillParams.Bytes = lineBytes;
-
-                    if (EngDeviceIoControl(ppdev->hDriver, IOCTL_NVX_ACCEL_FILL,
-                                           &fillParams, sizeof(fillParams),
-                                           NULL, 0, &ulTemp))
-                    {
-                        success = FALSE;
-                        break;
-                    }
-                }
-
-                if (success)
-                {
-                    ppdev->AccelFills++;
-                    return TRUE;
-                }
-            }
-        }
-
-    }
-
-    /* Present pixels already rasterized into the coherent bitmap. */
-    return NvxUploadSurfaceRect(ppdev,psoTrg,prclTrg,NVX_UPLOAD_KIND_BITBLT);
+    BOOL result=EngBitBlt(psoTrg,psoSrc,psoMask,pco,pxlo,prclTrg,pptlSrc,
+                           pptlMask,pbo,pptlBrush,rop4);
+    if(result && psoTrg && psoTrg->dhpdev)
+        return NvxUploadSurfaceRect((PPDEV)psoTrg->dhpdev,psoTrg,prclTrg,
+                                    NVX_UPLOAD_KIND_BITBLT);
+    return result;
 }

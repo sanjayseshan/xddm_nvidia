@@ -591,7 +591,13 @@ DrvSetPointerShape(
     RECTL *prcl,
     FLONG fl)
 {
-    return EngSetPointerShape(pso, psoMask, psoColor, pxlo, xHot, yHot, x, y, prcl, fl);
+    ULONG result=EngSetPointerShape(pso,psoMask,psoColor,pxlo,xHot,yHot,x,y,prcl,fl);
+    if(pso && pso->dhpdev) {
+        PPDEV ppdev=(PPDEV)pso->dhpdev;
+        RECTL full={0,0,(LONG)ppdev->ScreenWidth,(LONG)ppdev->ScreenHeight};
+        (void)NvxUploadSurfaceRect(ppdev,pso,&full,NVX_UPLOAD_KIND_COPYBITS);
+    }
+    return result;
 }
 
 VOID APIENTRY
@@ -601,5 +607,10 @@ DrvMovePointer(
     LONG y,
     RECTL *prcl)
 {
-    EngMovePointer(pso, x, y, prcl);
+    EngMovePointer(pso,x,y,prcl);
+    if(pso && pso->dhpdev) {
+        PPDEV ppdev=(PPDEV)pso->dhpdev;
+        RECTL full={0,0,(LONG)ppdev->ScreenWidth,(LONG)ppdev->ScreenHeight};
+        (void)NvxUploadSurfaceRect(ppdev,pso,&full,NVX_UPLOAD_KIND_COPYBITS);
+    }
 }

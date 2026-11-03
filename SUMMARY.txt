@@ -1,8 +1,23 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.122 4KB upload staging mapping
+NVIDIA GA104 XDDM DRIVER — v1.0.0.123 complete bitmap presentation
 Updated: November 3, 2026
 
-Latest change (v122)
+Latest change (v123)
 --------------------
+User confirms v122 improved the screen, but corruption remains. It completed
+an XP power transition (HookedPowerDispatch). v123 presents the full coherent
+bitmap after hooked drawing and software cursor callbacks. The latter had no
+upload at all, leaving cursor changes invisible or stale. Direct CE fills are
+bypassed for this diagnostic so every pixel follows the verified upload path.
+This trades throughput for isolation of dirty-bounds and fill-path issues.
+Host tests/build pass. Hardware log v123-20261103-103119.log reaches desktop
+uploads. Physical icon check pending. This diagnostic is slow: padding in the
+800x600 stride prevents row batching; v124 will copy padding with full-width
+spans so synchronous submissions can be batched. Keep the 4KB staging fix and
+GDI shadow bitmap. User clarified v122 had missing icons (including Start),
+low resolution, and lag, rather than the former widespread text corruption.
+
+Previous v122 change
+-------------------
 v121 DMA base was 0x06214000: only 4KB aligned. The desktop upload staging
 used 64KB GPU page-table leaves, discarding the low physical address bits.
 v122 replaces those leaves with 4KB PTEs for the 64KB active staging window.
