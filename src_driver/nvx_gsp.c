@@ -954,7 +954,6 @@ static BOOLEAN NvxNativeVerifyNotifier(PNVX_DEVICE_EXTENSION dev)
 
 static VOID NvxNativeReadOutputInfo(PNVX_DEVICE_EXTENSION dev)
 {
-    ULONG litIndex = 0xffffffffUL;
     for(ULONG monitor=0;monitor<dev->MonitorCount;monitor++)
         dev->MonitorSor[monitor]=0xffffffffUL;
     for(ULONG monitor=0;monitor<dev->MonitorCount;monitor++) {
@@ -963,37 +962,9 @@ static VOID NvxNativeReadOutputInfo(PNVX_DEVICE_EXTENSION dev)
         if(!NvxGspControl(dev,dev->GspDisplayHandle,0x73028b,params,sizeof(params))) continue;
         dev->MonitorSor[monitor]=reply[28];
         dev->MonitorProtocol[monitor]=reply[30];
-        if (reply[38] & 255) litIndex = monitor;
         LogStr("NVX [OUTPUT]: display=");LogHex(dev->MonitorIds[monitor]);
         LogStr(" index=");LogHex(reply[28]);LogStr(" type=");LogHex(reply[29]);
         LogStr(" protocol=");LogHex(reply[30]);LogStr(" litByVbios=");LogHex(reply[38]&255);LogStr("\n");
-    }
-    if (litIndex > 0 && litIndex < dev->MonitorCount) {
-        ULONG tempId = dev->MonitorIds[0];
-        ULONG tempBytes = dev->MonitorEdidBytes[0];
-        UCHAR tempEdid[2048];
-        NVX_DISPLAY_TIMING tempTiming = dev->MonitorTiming[0];
-        ULONG tempSor = dev->MonitorSor[0];
-        ULONG tempProt = dev->MonitorProtocol[0];
-
-        VideoPortMoveMemory(tempEdid, dev->MonitorEdid[0], sizeof(tempEdid));
-
-        dev->MonitorIds[0] = dev->MonitorIds[litIndex];
-        dev->MonitorEdidBytes[0] = dev->MonitorEdidBytes[litIndex];
-        VideoPortMoveMemory(dev->MonitorEdid[0], dev->MonitorEdid[litIndex], sizeof(tempEdid));
-        dev->MonitorTiming[0] = dev->MonitorTiming[litIndex];
-        dev->MonitorSor[0] = dev->MonitorSor[litIndex];
-        dev->MonitorProtocol[0] = dev->MonitorProtocol[litIndex];
-
-        dev->MonitorIds[litIndex] = tempId;
-        dev->MonitorEdidBytes[litIndex] = tempBytes;
-        VideoPortMoveMemory(dev->MonitorEdid[litIndex], tempEdid, sizeof(tempEdid));
-        dev->MonitorTiming[litIndex] = tempTiming;
-        dev->MonitorSor[litIndex] = tempSor;
-        dev->MonitorProtocol[litIndex] = tempProt;
-
-        LogStr("NVX [DISPLAY]: swapped primary litByVbios monitor to index 0 (id=");
-        LogHex(dev->MonitorIds[0]); LogStr(")\n");
     }
 }
 
@@ -1084,6 +1055,67 @@ failed:
     return FALSE;
 }
 
+/* Wake DPCD sink power state (0x600 = D0) and power up RM Main Link transmitter (0x731356) */
+VOID NvxGspWakeSecondaryDpSink(PVOID HwDeviceExtension)
+{
+    static BOOLEAN s_sinkWoken = FALSE;
+    PNVX_DEVICE_EXTENSION dev = (PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    NVX_DP_AUX_CTRL_PARAMS aux = {0};
+    NVX_DP_MAIN_LINK_CTRL_PARAMS ml = {0};
+    const ULONG *reply;
+    const NVX_DP_AUX_CTRL_PARAMS *auxResult;
+    ULONG displayId;
+
+    if (!dev || !dev->GspDisplayHandle) return;
+    if (s_sinkWoken) return;
+    s_sinkWoken = TRUE;
+    displayId = dev->SecondaryDpDisplayId;
+    if (!displayId && dev->MonitorCount > 1) {
+        displayId = dev->MonitorIds[1];
+    }
+    if (!displayId) return;
+
+    /* 1. Wake DP sink: Write DPCD 0x00600 (SET_POWER) = 0x01 (D0: Normal Operation) */
+    aux.subDeviceInstance = 0;
+    aux.displayId = displayId;
+    aux.addrOnly = 0;
+    aux.cmd = (NVX_DP_AUX_TYPE_AUX << 3) | NVX_DP_AUX_WRITE;
+    aux.addr = 0x600;
+    aux.size = 0; /* 0 means 1 byte per RM AUX ABI */
+    aux.data[0] = 0x01; /* DP_SET_POWER_D0 */
+
+    for (int retry = 0; retry < 5; retry++) {
+        if (NvxGspControl(dev, dev->GspDisplayHandle, NVX_CTRL_CMD_DP_AUXCH_CTRL,
+                         &aux, sizeof(aux))) {
+            reply = (const ULONG *)dev->RpcRxRecord;
+            auxResult = (const NVX_DP_AUX_CTRL_PARAMS *)(reply + 26);
+            if (auxResult->replyType == NVX_DP_AUX_REPLY_ACK) {
+                LogStr("NVX [DP]: sink wake (DPCD 0x600 = D0) ACKed display=");
+                LogHex(displayId); LogStr("\n");
+                break;
+            } else {
+                LogStr("NVX [DP]: sink wake (DPCD 0x600 = D0) reply=");
+                LogHex(auxResult->replyType); LogStr(" retry="); LogHex(retry); LogStr("\n");
+            }
+        }
+        VideoPortStallExecution(1000);
+    }
+    VideoPortStallExecution(2000); /* 2ms sink PLL stabilization */
+
+    /* 2. Power up Main Link transmitter via RM control 0x731356 */
+    ml.subDeviceInstance = 0;
+    ml.displayId = displayId;
+    ml.ctrl = NVX_DP_MAIN_LINK_CTRL_POWER_STATE_POWERUP; /* 1 */
+    if (NvxGspControl(dev, dev->GspDisplayHandle, NVX_CTRL_CMD_DP_MAIN_LINK_CTRL,
+                     &ml, sizeof(ml))) {
+        LogStr("NVX [DP]: RM Main Link power-up completed for display=");
+        LogHex(displayId); LogStr("\n");
+    } else {
+        LogStr("NVX [DP]: RM Main Link power-up failed for display=");
+        LogHex(displayId); LogStr("\n");
+    }
+}
+
 BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
 {
     PNVX_DEVICE_EXTENSION dev = (PNVX_DEVICE_EXTENSION)extension;
@@ -1116,28 +1148,86 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
         return FALSE;
     }
 
-    width = t->hActive ? t->hActive : 2560;
-    height = t->vActive ? t->vActive : 1440;
-    pitch = width * 4;
+    NvxGspWakeSecondaryDpSink(dev);
+
+    {
+        PNVX_DEVICE_EXTENSION secDev = (PNVX_DEVICE_EXTENSION)dev->SecondaryDeviceExtension;
+        ULONG reqMode = secDev ? secDev->CurrentModeIndex : 0;
+        if (secDev && reqMode < secDev->NumModes) {
+            width = secDev->Modes[reqMode].VisScreenWidth;
+            height = secDev->Modes[reqMode].VisScreenHeight;
+            pitch = secDev->Modes[reqMode].ScreenStride;
+        } else {
+            width = t->hActive ? t->hActive : 2560;
+            height = t->vActive ? t->vActive : 1440;
+            pitch = width * 4;
+        }
+    }
     vramOffset = 0x2000000ULL; /* +32MB into BAR1 */
 
-    if (t->hTotal > width && t->vTotal > height && t->pixelClockHz) {
-        hTotal = t->hTotal;
-        vTotal = t->vTotal;
-        hSyncEnd = t->hSyncEnd;
-        vSyncEnd = t->vSyncEnd;
-        hBlankStart = t->hActive;
-        vBlankStart = t->vActive;
-        pixelClockHz = t->pixelClockHz;
+    if (width == 2560 && height == 1440) {
+        if (t->hTotal > width && t->vTotal > height && t->pixelClockHz) {
+            hTotal = t->hTotal;
+            vTotal = t->vTotal;
+            hSyncEnd = t->hSyncEnd;
+            vSyncEnd = t->vSyncEnd;
+            hBlankStart = t->hActive;
+            vBlankStart = t->vActive;
+            pixelClockHz = t->pixelClockHz;
+        } else {
+            /* Default 2560x1440 CVT-RB @ 60Hz */
+            hTotal = 2720;
+            vTotal = 1481;
+            hSyncEnd = 2640;
+            vSyncEnd = 1448;
+            hBlankStart = 2560;
+            vBlankStart = 1440;
+            pixelClockHz = 241500000;
+        }
+    } else if (width == 1920 && height == 1080) {
+        /* Standard 1080p60 */
+        hTotal = 2200;
+        vTotal = 1125;
+        hSyncEnd = 2052;
+        vSyncEnd = 1088;
+        hBlankStart = 1920;
+        vBlankStart = 1080;
+        pixelClockHz = 148500000;
+    } else if (width == 1280 && height == 720) {
+        /* Standard 720p60 */
+        hTotal = 1650;
+        vTotal = 750;
+        hSyncEnd = 1390;
+        vSyncEnd = 725;
+        hBlankStart = 1280;
+        vBlankStart = 720;
+        pixelClockHz = 74250000;
+    } else if (width == 1024 && height == 768) {
+        /* Standard 1024x768@60 */
+        hTotal = 1344;
+        vTotal = 806;
+        hSyncEnd = 1184;
+        vSyncEnd = 774;
+        hBlankStart = 1024;
+        vBlankStart = 768;
+        pixelClockHz = 65000000;
+    } else if (width == 800 && height == 600) {
+        /* Standard 800x600@60 */
+        hTotal = 1056;
+        vTotal = 628;
+        hSyncEnd = 968;
+        vSyncEnd = 605;
+        hBlankStart = 800;
+        vBlankStart = 600;
+        pixelClockHz = 40000000;
     } else {
-        /* Default 2560x1440 CVT-RB @ 60Hz */
-        hTotal = 2720;
-        vTotal = 1481;
-        hSyncEnd = 2640;
-        vSyncEnd = 1448;
-        hBlankStart = 2560;
-        vBlankStart = 1440;
-        pixelClockHz = 241500000;
+        hTotal = width + 160;
+        vTotal = height + 41;
+        hSyncEnd = width + 80;
+        vSyncEnd = height + 8;
+        hBlankStart = width;
+        vBlankStart = height;
+        pixelClockHz = 148500000;
     }
 
     LogStr("NVX [NATIVE]: programming secondary scanout Head 1 on SOR=");
@@ -1161,7 +1251,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
 
     NvxDisplayPushHeader(NVX_C67E_SET_STORAGE, 1, &header);
     winPush[winN++] = header;
-    winPush[winN++] = 0; /* Pitch layout */
+    winPush[winN++] = 0x10; /* Pitch layout (NVC37E_SET_STORAGE_MEMORY_LAYOUT_PITCH) */
 
     NvxDisplayPushHeader(NVX_C67E_SET_PARAMS, 1, &header);
     winPush[winN++] = header;
@@ -1187,9 +1277,13 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     winPush[winN++] = header;
     winPush[winN++] = (height << 16) | width;
 
+    NvxDisplayPushHeader(NVX_C67E_SET_INTERLOCK_FLAGS, 1, &header);
+    winPush[winN++] = header;
+    winPush[winN++] = 1; /* bit 0 = INTERLOCK_WITH_CORE */
+
     NvxDisplayPushHeader(NVX_C67E_UPDATE, 1, &header);
     winPush[winN++] = header;
-    winPush[winN++] = 0;
+    winPush[winN++] = 1; /* RELEASE_ELV_TRUE */
 
     /* Read current GET/PUT for Core channel */
     coreN = VideoPortReadRegisterUlong((PULONG)(bar0 + 0x680000)) & 0x3ff;
@@ -1232,6 +1326,25 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     corePush[coreN++] = header;
     corePush[coreN++] = pixelClockHz;
 
+    /* Viewport Size In & Out */
+    NvxDisplayPushHeader(NVX_C67D_HEAD_SET_VIEWPORT_SIZE_IN(1), 1, &header);
+    corePush[coreN++] = header;
+    corePush[coreN++] = (height << 16) | width;
+
+    NvxDisplayPushHeader(NVX_C67D_HEAD_SET_VIEWPORT_SIZE_OUT(1), 1, &header);
+    corePush[coreN++] = header;
+    corePush[coreN++] = (height << 16) | width;
+
+    /* Head 1 Usage Bounds */
+    NvxDisplayPushHeader(NVX_C67D_HEAD_SET_HEAD_USAGE_BOUNDS(1), 1, &header);
+    corePush[coreN++] = header;
+    corePush[coreN++] = 0x1110;
+
+    /* Head 1 Display ID */
+    NvxDisplayPushHeader(NVX_C67D_HEAD_SET_DISPLAY_ID(1), 1, &header);
+    corePush[coreN++] = header;
+    corePush[coreN++] = dev->MonitorIds[1];
+
     /* Control output resource: 24bpp/32bpp, CRC complete raster, no ext packet window */
     NvxDisplayPushHeader(NVX_C67D_HEAD_SET_CONTROL_OUTPUT_RESOURCE(1), 1, &header);
     corePush[coreN++] = header;
@@ -1242,10 +1355,13 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     corePush[coreN++] = header;
     corePush[coreN++] = 1; /* OWNER_HEAD1 */
 
-    /* Connect SOR to Head 1: protocol DP_A (0x800) | owner Head 1 (0x2) */
-    NvxDisplayPushHeader(NVX_C67D_SOR_SET_CONTROL(sor), 1, &header);
-    corePush[coreN++] = header;
-    corePush[coreN++] = 0x0802;
+    /* Connect SOR to Head 1: protocol (dev->MonitorProtocol[1] << 8) | owner Head 1 (0x2) */
+    {
+        ULONG proto = dev->MonitorProtocol[1] ? dev->MonitorProtocol[1] : 9;
+        NvxDisplayPushHeader(NVX_C67D_SOR_SET_CONTROL(sor), 1, &header);
+        corePush[coreN++] = header;
+        corePush[coreN++] = (proto << 8) | 2;
+    }
 
     /* Interlock Core with Window 2 (bit 2) */
     NvxDisplayPushHeader(NVX_C67D_SET_WINDOW_INTERLOCK_FLAGS, 1, &header);
@@ -1255,7 +1371,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     /* Core UPDATE */
     NvxDisplayPushHeader(NVX_C67D_UPDATE, 1, &header);
     corePush[coreN++] = header;
-    corePush[coreN++] = 0;
+    corePush[coreN++] = 1;
 
     __sync_synchronize();
 
@@ -1279,7 +1395,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     LogHex(VideoPortReadRegisterUlong((PULONG)(bar0 + 0x680004)));
     LogStr(" winGET=");
     LogHex(VideoPortReadRegisterUlong((PULONG)(bar0 + 0x692004)));
-    LogStr("\n");
+    LogStr(" (target coreN="); LogHex(coreN); LogStr(" winN="); LogHex(winN); LogStr(")\n");
     return FALSE;
 }
 
@@ -1479,6 +1595,9 @@ VOID NvxGspTrainSecondaryDpLink(PVOID HwDeviceExtension)
     if(!dev || !dev->SecondaryDpTrainReady || dev->SecondaryDpTrainingAttempted ||
        !dev->SecondaryDpDisplayId || !dev->GspDisplayHandle) return;
     dev->SecondaryDpTrainingAttempted=TRUE;
+
+    NvxGspWakeSecondaryDpSink(dev);
+
     train.displayId=dev->SecondaryDpDisplayId;
     train.cmd=NVX_DP_CTRL_SET_LANE_COUNT|NVX_DP_CTRL_SET_LINK_BW;
     train.data=NVX_DP_CTRL_DATA_LANE_COUNT_4|NVX_DP_CTRL_DATA_LINK_BW_HBR2;
@@ -1608,6 +1727,44 @@ static VOID NvxGspDiscoverDisplays(PNVX_DEVICE_EXTENSION dev)
     NvxNativeReadOutputInfo(dev);
     NvxGspPlanHeads(dev);
     NvxGspAssignSecondarySor(dev);
+
+    if (dev->DisplayActiveIds[0] && dev->MonitorCount > 1 && dev->MonitorIds[0] != dev->DisplayActiveIds[0]) {
+        ULONG primIdx = 0;
+        for (ULONG m = 1; m < dev->MonitorCount; m++) {
+            if (dev->MonitorIds[m] == dev->DisplayActiveIds[0]) {
+                primIdx = m;
+                break;
+            }
+        }
+        if (primIdx > 0) {
+            ULONG tempId = dev->MonitorIds[0];
+            ULONG tempBytes = dev->MonitorEdidBytes[0];
+            UCHAR tempEdid[2048];
+            NVX_DISPLAY_TIMING tempTiming = dev->MonitorTiming[0];
+            ULONG tempSor = dev->MonitorSor[0];
+            ULONG tempProt = dev->MonitorProtocol[0];
+
+            VideoPortMoveMemory(tempEdid, dev->MonitorEdid[0], sizeof(tempEdid));
+
+            dev->MonitorIds[0] = dev->MonitorIds[primIdx];
+            dev->MonitorEdidBytes[0] = dev->MonitorEdidBytes[primIdx];
+            VideoPortMoveMemory(dev->MonitorEdid[0], dev->MonitorEdid[primIdx], sizeof(tempEdid));
+            dev->MonitorTiming[0] = dev->MonitorTiming[primIdx];
+            dev->MonitorSor[0] = dev->MonitorSor[primIdx];
+            dev->MonitorProtocol[0] = dev->MonitorProtocol[primIdx];
+
+            dev->MonitorIds[primIdx] = tempId;
+            dev->MonitorEdidBytes[primIdx] = tempBytes;
+            VideoPortMoveMemory(dev->MonitorEdid[primIdx], tempEdid, sizeof(tempEdid));
+            dev->MonitorTiming[primIdx] = tempTiming;
+            dev->MonitorSor[primIdx] = tempSor;
+            dev->MonitorProtocol[primIdx] = tempProt;
+
+            LogStr("NVX [DISPLAY]: swapped primary active Head 0 monitor to index 0 (id=");
+            LogHex(dev->MonitorIds[0]); LogStr(" SOR="); LogHex(dev->MonitorSor[0]);
+            LogStr(" secId="); LogHex(dev->MonitorIds[primIdx]); LogStr(" secSOR="); LogHex(dev->MonitorSor[primIdx]); LogStr(")\n");
+        }
+    }
 }
 
 static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)

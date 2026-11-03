@@ -207,9 +207,18 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         }
         if(f==76&&request[22]==NVX_CTRL_CMD_DP_AUXCH_CTRL) {
             assert(scenario==12 && request[24]==48 && request[27]==4);
-            assert(request[29]==9 && request[30]==0 && request[35]==3);
-            alloc[11]=0x00841414; /* DPCD 1.4, HBR2, 4 lanes, no downspread. */
-            alloc[15]=4;alloc[16]=NVX_DP_AUX_REPLY_ACK;
+            if(request[29]==9 && request[30]==0 && request[35]==3) {
+                alloc[11]=0x00841414; /* DPCD 1.4, HBR2, 4 lanes, no downspread. */
+                alloc[15]=4;alloc[16]=NVX_DP_AUX_REPLY_ACK;
+            } else if(request[29]==8 && request[30]==0x600 && request[35]==0) {
+                alloc[15]=1;alloc[16]=NVX_DP_AUX_REPLY_ACK;
+            } else {
+                assert(0 && "Unexpected AUX request");
+            }
+        }
+        if(f==76&&request[22]==NVX_CTRL_CMD_DP_MAIN_LINK_CTRL) {
+            assert(scenario==12 && request[24]==12 && request[27]==4);
+            assert(request[28]==NVX_DP_MAIN_LINK_CTRL_POWER_STATE_POWERUP);
         }
         if(f==76&&request[22]==NVX_CTRL_CMD_DP_GET_LINK_CONFIG) {
             assert(scenario==12 && request[24]==16 && request[27]==4);

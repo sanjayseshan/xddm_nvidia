@@ -1,5 +1,38 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.143 defer secondary DP training
+NVIDIA GA104 XDDM DRIVER — v1.0.0.150 DualView Child State & Dynamic Scanout Stride
 Updated: November 3, 2026
+
+Latest change (v150): DualView child state management, native 1440p detection, and dynamic scanout stride
+----------------------------------------------------------------------------------------------------------
+1. DualView Child State Management (IOCTL_VIDEO_GET_CHILD_STATE 0x230480):
+   Windows XP queries child display relationships across primary and secondary adapters via
+   IOCTL_VIDEO_GET_CHILD_STATE. Previously unhandled (returning ERROR_INVALID_FUNCTION), Windows
+   could not attach the secondary monitor EDID and fell back to a generic "Plug and Play Monitor"
+   capped at 1080p. v150 implements the IOCTL handler:
+   - Primary adapter returns VIDEO_CHILD_ACTIVE for Dell (0x0800), and VIDEO_CHILD_ACTIVE |
+     VIDEO_CHILD_DETACHED for Lenovo (0x0200).
+   - Secondary adapter returns VIDEO_CHILD_ACTIVE for Lenovo (0x0200).
+   Result: Windows XP successfully detected the Lenovo Legion R27qe at its native 2560x1440
+   resolution, presenting the 1440p resolution option in Display Properties.
+
+2. Dynamic Scanout Stride & Raster Synchronization:
+   When Windows selected 1080p (Mode 1), the previous driver hardcoded Window 2 hardware scanout
+   to 2560x1440 pitch 10240, creating a pitch/geometry mismatch against GDI's 7680-byte surface.
+   v150 reads secDev->CurrentModeIndex in NvxNativeSetSecondaryScanout and dynamically programs
+   both Window 2 size/stride (width, height, ScreenStride >> 6) and Head 1 raster timings
+   (pixel clock, blanking, sync, totals) matching whatever resolution is set (1440p, 1080p, etc.).
+
+3. Pushbuffer Execution Verification:
+   Removed experimental unsupported C67D head control methods that stalled the EVO core engine.
+   Both Window 2 and Core DMA pushbuffers were verified fully consumed by hardware with zero timeouts:
+   - Secondary set to Mode 1 (1920x1080): coreGET=0x60, winGET=0x18; coreGET=0x84, winGET=0x2C.
+   - Secondary switched by user to Mode 0 (2560x1440): coreGET=0xCC, winGET=0x54 consumed cleanly.
+
+4. Physical Status & Next Steps:
+   Hardware serial logs (test_logs/v150-20261103-143838.log) confirm successful 4-lane HBR2 link training
+   (err=0 data=0x00041404), sink DPCD wake (0x600 = D0), Main Link power-up, and mode switch to 1440p.
+   The user confirmed the Lenovo monitor is detected at 1440p, but physically remains in standby.
+   Next step is DP stream unblanking / Main Stream Attribute (MSA) generation via RM control to transition
+   the link from idle pattern to active raster transport. All background tasks cleanly stopped.
 
 Latest change (v143): defer secondary link training until after primary mode set
 -------------------------------------------------------------------------------

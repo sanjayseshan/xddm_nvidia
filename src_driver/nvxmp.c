@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.146
+ * Driver Version: 1.0.0.150
  */
 
 #include "miniport.h"
@@ -619,7 +619,10 @@ VP_STATUS HwVidGetVideoChildDescriptor(
             return VIDEO_ENUM_NO_MORE_DEVICES;
 
         if (ChildEnumInfo->ChildIndex == 0) {
-            if (ChildEnumInfo->ACPIHwId != prim->MonitorIds[1])
+            if (ChildEnumInfo->ACPIHwId != 0 &&
+                ChildEnumInfo->ACPIHwId != prim->MonitorIds[1] &&
+                ChildEnumInfo->ACPIHwId != 1 &&
+                ChildEnumInfo->ACPIHwId != 2)
                 return VIDEO_ENUM_INVALID_DEVICE;
         } else if (ChildEnumInfo->ChildIndex != 1) {
             return VIDEO_ENUM_NO_MORE_DEVICES;
@@ -752,7 +755,30 @@ static VOID NvxInitSecondaryDisplayModes(PNVX_DEVICE_EXTENSION sec) {
     m->BlueMask = 0x000000FF;
     m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
     m->VideoMemoryBitmapWidth = 1024;
-    m->VideoMemoryBitmapHeight = 720;
+    m->VideoMemoryBitmapHeight = 768;
+    sec->ModeFramebuffer[idx].QuadPart = prim->PhysicalBar1.QuadPart + 0x2000000ULL; /* +32MB */
+    idx++;
+
+    /* Mode 4: 800x600x32 @ 60Hz */
+    m = &sec->Modes[idx];
+    VideoPortZeroMemory(m, sizeof(*m));
+    m->Length = sizeof(*m);
+    m->ModeIndex = idx;
+    m->VisScreenWidth = 800;
+    m->VisScreenHeight = 600;
+    m->ScreenStride = 800 * 4; /* 3200 */
+    m->NumberOfPlanes = 1;
+    m->BitsPerPlane = 32;
+    m->Frequency = 60;
+    m->NumberRedBits = 8;
+    m->NumberGreenBits = 8;
+    m->NumberBlueBits = 8;
+    m->RedMask = 0x00FF0000;
+    m->GreenMask = 0x0000FF00;
+    m->BlueMask = 0x000000FF;
+    m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
+    m->VideoMemoryBitmapWidth = 800;
+    m->VideoMemoryBitmapHeight = 600;
     sec->ModeFramebuffer[idx].QuadPart = prim->PhysicalBar1.QuadPart + 0x2000000ULL; /* +32MB */
     idx++;
 
@@ -1190,6 +1216,63 @@ BOOLEAN HwVidStartIO(
         break;
     }
 
+    case IOCTL_VIDEO_GET_CHILD_STATE: {
+        PULONG childPtr = (PULONG)RequestPacket->InputBuffer;
+        PULONG statePtr = (PULONG)RequestPacket->OutputBuffer;
+        ULONG childId;
+        ULONG state = VIDEO_CHILD_ACTIVE;
+        PNVX_DEVICE_EXTENSION prim = devExt->IsSecondaryDisplay ?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension : devExt;
+        ULONG mon0 = (prim && prim->MonitorCount >= 1) ? prim->MonitorIds[0] : 0x0800;
+        ULONG mon1 = (prim && prim->MonitorCount >= 2) ? prim->MonitorIds[1] : 0x0200;
+        BOOLEAN isLenovo, isDell;
+
+        if (RequestPacket->InputBufferLength < sizeof(ULONG) ||
+            RequestPacket->OutputBufferLength < sizeof(ULONG) ||
+            !childPtr || !statePtr) {
+            status = ERROR_INSUFFICIENT_BUFFER;
+            break;
+        }
+
+        childId = *childPtr;
+        LogStr("NVX [DUALVIEW]: IOCTL_VIDEO_GET_CHILD_STATE child=");
+        LogHex(childId);
+        LogStr(" IsSec=");
+        LogHex(devExt->IsSecondaryDisplay);
+        LogStr("\n");
+
+        isLenovo = (childId == 2 || childId == mon1);
+        isDell = (childId == 1 || childId == mon0);
+
+        if (devExt->IsSecondaryDisplay) {
+            /* Secondary adapter: Child 2 (Lenovo) is active; Child 1 (Dell) is inactive */
+            if (isDell) {
+                state = 0;
+            } else {
+                state = VIDEO_CHILD_ACTIVE;
+            }
+        } else {
+            /* Primary adapter: Child 1 (Dell) is active; Child 2 (Lenovo) is detached to DualView */
+            if (isLenovo) {
+                state = VIDEO_CHILD_ACTIVE | VIDEO_CHILD_DETACHED;
+            } else {
+                state = VIDEO_CHILD_ACTIVE;
+            }
+        }
+
+        *statePtr = state;
+        statusBlock->Information = sizeof(ULONG);
+        status = NO_ERROR;
+        break;
+    }
+
+    case IOCTL_VIDEO_VALIDATE_CHILD_STATE_CONFIGURATION:
+    case IOCTL_VIDEO_SET_CHILD_STATE_CONFIGURATION: {
+        statusBlock->Information = 0;
+        status = NO_ERROR;
+        break;
+    }
+
     case IOCTL_VIDEO_RESET_DEVICE:
     case IOCTL_VIDEO_SET_COLOR_REGISTERS:
         status = NO_ERROR;
@@ -1389,7 +1472,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.146 (Head 1 SOR0 scanout + EDID model name)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.150 (DualView Child State, Dynamic Scanout Stride & Head Control)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

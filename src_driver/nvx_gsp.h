@@ -381,6 +381,7 @@ VOID LogHex(unsigned long long val);
 BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension);
 BOOLEAN NvxGspInitDisplayChannels(PVOID HwDeviceExtension);
 BOOLEAN NvxNativeSetSecondaryScanout(PVOID HwDeviceExtension);
+VOID NvxGspWakeSecondaryDpSink(PVOID HwDeviceExtension);
 VOID NvxGspTrainSecondaryDpLink(PVOID HwDeviceExtension);
 BOOLEAN NvxGspDiscoverScanout(PVOID HwDeviceExtension,ULONG modeIndex);
 BOOLEAN NvxGspSubmitCopy(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,ULONG bytes);

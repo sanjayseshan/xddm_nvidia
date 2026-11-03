@@ -8,15 +8,38 @@
 
 /* GA104 / C67D Core Methods */
 #define NVX_C67D_HEAD_SET_CONTROL_OUTPUT_RESOURCE(head) (0x2004U + (head) * 0x400U)
+#define NVX_C67D_HEAD_SET_CONTROL(head)                 (0x2008U + (head) * 0x400U)
 #define NVX_C67D_HEAD_SET_PIXEL_CLOCK_FREQUENCY(head)   (0x200CU + (head) * 0x400U)
 #define NVX_C67D_HEAD_SET_PIXEL_CLOCK_CONFIGURATION(head) (0x201CU + (head) * 0x400U)
+#define NVX_C67D_HEAD_SET_DISPLAY_ID(head)              (0x2020U + (head) * 0x400U)
 #define NVX_C67D_HEAD_SET_PIXEL_CLOCK_FREQUENCY_MAX(head) (0x2028U + (head) * 0x400U)
+#define NVX_C67D_HEAD_SET_HEAD_USAGE_BOUNDS(head)       (0x2030U + (head) * 0x400U)
+#define NVX_C67D_HEAD_SET_VIEWPORT_POINT_IN(head)       (0x2048U + (head) * 0x400U)
+#define NVX_C67D_HEAD_SET_VIEWPORT_SIZE_IN(head)        (0x204CU + (head) * 0x400U)
+#define NVX_C67D_HEAD_SET_VIEWPORT_SIZE_OUT(head)       (0x2058U + (head) * 0x400U)
+#define NVX_C67D_HEAD_SET_VIEWPORT_POINT_OUT_ADJUST(head) (0x205CU + (head) * 0x400U)
 #define NVX_C67D_HEAD_SET_RASTER_SIZE(head)             (0x2064U + (head) * 0x400U)
 #define NVX_C67D_HEAD_SET_RASTER_SYNC_END(head)         (0x2068U + (head) * 0x400U)
 #define NVX_C67D_HEAD_SET_RASTER_BLANK_END(head)        (0x206CU + (head) * 0x400U)
 #define NVX_C67D_HEAD_SET_RASTER_BLANK_START(head)      (0x2070U + (head) * 0x400U)
 #define NVX_C67D_HEAD_SET_OVERSCAN_COLOR(head)          (0x2078U + (head) * 0x400U)
 #define NVX_C67D_HEAD_SET_MIN_FRAME_IDLE(head)          (0x2218U + (head) * 0x400U)
+
+#ifndef IOCTL_VIDEO_GET_CHILD_STATE
+#define IOCTL_VIDEO_GET_CHILD_STATE                     0x00230480U
+#endif
+#ifndef IOCTL_VIDEO_VALIDATE_CHILD_STATE_CONFIGURATION
+#define IOCTL_VIDEO_VALIDATE_CHILD_STATE_CONFIGURATION  0x00230484U
+#endif
+#ifndef IOCTL_VIDEO_SET_CHILD_STATE_CONFIGURATION
+#define IOCTL_VIDEO_SET_CHILD_STATE_CONFIGURATION       0x00230488U
+#endif
+#ifndef VIDEO_CHILD_ACTIVE
+#define VIDEO_CHILD_ACTIVE                              0x00000001U
+#endif
+#ifndef VIDEO_CHILD_DETACHED
+#define VIDEO_CHILD_DETACHED                            0x00000002U
+#endif
 
 #define NVX_C67D_SOR_SET_CONTROL(sor)                   (0x300U + (sor) * 0x20U)
 #define NVX_C67D_WINDOW_SET_CONTROL(win)                (0x1000U + (win) * 0x80U)
@@ -35,6 +58,7 @@
 #define NVX_C67E_SET_SIZE_IN                            0x298U
 #define NVX_C67E_SET_SIZE_OUT                           0x2A4U
 #define NVX_C67E_UPDATE                                 0x200U
+#define NVX_C67E_SET_INTERLOCK_FLAGS                    0x370U
 
 /* NVIDIA RM ctrl0073dfp.h, NV0073_CTRL_CMD_DFP_ASSIGN_SOR (0x731152).
  * NvBool is a 32-bit RM boolean; natural 4-byte alignment matches the wire
@@ -133,7 +157,19 @@ _Static_assert(offsetof(NVX_DP_AUX_CTRL_PARAMS,data)==20,"DP AUX data offset");
 _Static_assert(offsetof(NVX_DP_AUX_CTRL_PARAMS,size)==36,"DP AUX size offset");
 #define NVX_DP_AUX_TYPE_AUX 1U
 #define NVX_DP_AUX_READ 1U
+#define NVX_DP_AUX_WRITE 0U
 #define NVX_DP_AUX_REPLY_ACK 0U
+
+#define NVX_CTRL_CMD_DP_MAIN_LINK_CTRL 0x00731356U
+#define NVX_DP_MAIN_LINK_CTRL_POWER_STATE_POWERUP 1U
+#define NVX_DP_MAIN_LINK_CTRL_POWER_STATE_POWERDOWN 0U
+
+typedef struct {
+    uint32_t subDeviceInstance;
+    uint32_t displayId;
+    uint32_t ctrl;
+} NVX_DP_MAIN_LINK_CTRL_PARAMS;
+_Static_assert(sizeof(NVX_DP_MAIN_LINK_CTRL_PARAMS)==12,"DP MAIN_LINK_CTRL RM ABI");
 
 typedef struct {
     uint32_t pixelClockHz;
