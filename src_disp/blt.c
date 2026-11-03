@@ -8,7 +8,7 @@
 
 /* Upload software-rendered primary-surface rows through coherent DMA staging. */
 BOOL
-NvxUploadSurfaceRect(PPDEV ppdev, SURFOBJ *pso, RECTL *prcl)
+NvxUploadSurfaceRect(PPDEV ppdev, SURFOBJ *pso, RECTL *prcl, ULONG kind)
 {
     RECTL r;
     LONG y;
@@ -42,7 +42,7 @@ NvxUploadSurfaceRect(PPDEV ppdev, SURFOBJ *pso, RECTL *prcl)
     params=(PNVX_ACCEL_UPLOAD_PARAMS)EngAllocMem(0,requestBytes,ALLOC_TAG);
     if(!params) return FALSE;
 
-    params->Reserved=0;
+    params->Reserved=kind;
     for(y=r.top;y<r.bottom;y+=(LONG)rowsPerBatch) {
         rows=(ULONG)((r.bottom-y)<(LONG)rowsPerBatch?(r.bottom-y):(LONG)rowsPerBatch);
         batchBytes=lineBytes*rows;
@@ -189,7 +189,7 @@ DrvCopyBits(
     {
         BOOL result=EngCopyBits(psoDest,psoSrc,pco,pxlo,prclDest,pptlSrc);
         if(result)
-            (void)NvxUploadSurfaceRect(ppdev,psoDest,prclDest);
+            (void)NvxUploadSurfaceRect(ppdev,psoDest,prclDest,NVX_UPLOAD_KIND_COPYBITS);
         return result;
     }
 }
@@ -322,7 +322,7 @@ DrvBitBlt(
         BOOL result=EngBitBlt(psoTrg,psoSrc,psoMask,pco,pxlo,
                               prclTrg,pptlSrc,pptlMask,pbo,pptlBrush,rop4);
         if(result)
-            (void)NvxUploadSurfaceRect(ppdev,psoTrg,prclTrg);
+            (void)NvxUploadSurfaceRect(ppdev,psoTrg,prclTrg,NVX_UPLOAD_KIND_BITBLT);
         return result;
     }
 }

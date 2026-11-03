@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.115
+ * Driver Version: 1.0.0.116
  */
 
 #include "miniport.h"
@@ -990,14 +990,15 @@ BOOLEAN HwVidStartIO(
 
     case IOCTL_NVX_ACCEL_UPLOAD: {
         PNVX_ACCEL_UPLOAD_PARAMS params=(PNVX_ACCEL_UPLOAD_PARAMS)RequestPacket->InputBuffer;
-        static ULONG s_uploadCount=0;
+        static ULONG s_uploadKinds[4]={0,0,0,0};
         ULONG headerBytes=FIELD_OFFSET(NVX_ACCEL_UPLOAD_PARAMS,Data);
         ULONG required;
         if(!params||RequestPacket->InputBufferLength<headerBytes) {
             status=ERROR_INVALID_PARAMETER;
             break;
         }
-        if(params->Bytes==0||params->Bytes>GSP_UPLOAD_MAX_BYTES||
+        if(params->Reserved>NVX_UPLOAD_KIND_TEXTOUT||
+           params->Bytes==0||params->Bytes>GSP_UPLOAD_MAX_BYTES||
            params->Bytes>((ULONG)~0U)-headerBytes) {
             status=ERROR_INVALID_PARAMETER;
             break;
@@ -1010,9 +1011,10 @@ BOOLEAN HwVidStartIO(
         if(NvxGspUpload(HwDeviceExtension,params->DstGpuVa,params->Data,params->Bytes)) {
             status=NO_ERROR;
             statusBlock->Information=required;
-            s_uploadCount++;
-            if((s_uploadCount<=5)||(s_uploadCount%100==0)) {
-                LogStr("NVX [ACCEL]: GPU Upload #");LogHex(s_uploadCount);
+            s_uploadKinds[params->Reserved]++;
+            if((s_uploadKinds[params->Reserved]<=3)||(s_uploadKinds[params->Reserved]%100==0)) {
+                LogStr("NVX [ACCEL]: GPU Upload kind=");LogHex(params->Reserved);
+                LogStr(" #");LogHex(s_uploadKinds[params->Reserved]);
                 LogStr(" dst=");LogHex(params->DstGpuVa);
                 LogStr(" bytes=");LogHex(params->Bytes);LogStr("\n");
             }
@@ -1085,7 +1087,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.115\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.116\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));
