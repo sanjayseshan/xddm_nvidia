@@ -1,3 +1,17 @@
+NVIDIA GA104 XDDM DRIVER — v1.0.0.160 primary state handoff probe
+Updated: November 3, 2026
+
+Copies armed primary raster/viewport/SOR into new core assembly before first
+UPDATE; verification now requires both heads active. Host tests/build pass.
+Log v160-20261103-153517.log: armed primary raster is1080p60, SOR2=0801,
+pclk148500000; VBE has displayId0, pclkMax0, outputResource40. Hardware
+rejects copied outputResource40 (method2004 argument error20): it selects
+ext-packet Window0, which the new core does not own. Thus raw VBE state
+cannot simply be replayed. Next normalize external packet window toNONE,
+set known primary display ID0800 and max pixel clock. Native attempt aborted
+before secondary full modeset; VBE fallback requested. Both heads were
+inactive at error verification (before fallback); dual success not claimed.
+
 NVIDIA GA104 XDDM DRIVER — v1.0.0.159 separate ownership commit
 Updated: November 3, 2026
 

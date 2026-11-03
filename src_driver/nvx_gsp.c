@@ -1030,7 +1030,7 @@ VOID NvxGspWakeSecondaryDpSink(PVOID HwDeviceExtension)
 /* Check actual RM routing and sink link lock, not just pushbuffer fetch. */
 static BOOLEAN NvxGspVerifyDisplays(PNVX_DEVICE_EXTENSION dev)
 {
-    BOOLEAN secondaryActive=FALSE;
+    BOOLEAN primaryActive=FALSE,secondaryActive=FALSE;
     for(ULONG head=0;head<2;head++) {
         ULONG active[4]={0,head,0,0};
         ULONG id=0;
@@ -1038,6 +1038,7 @@ static BOOLEAN NvxGspVerifyDisplays(PNVX_DEVICE_EXTENSION dev)
         id=((const ULONG *)dev->RpcRxRecord)[29];
         LogStr("NVX [DISPLAY-VERIFY]: head=");LogHex(head);
         LogStr(" activeDisplay=");LogHex(id);LogStr("\n");
+        if(head==0 && id==dev->MonitorIds[0]) primaryActive=TRUE;
         if(head==1 && id==dev->SecondaryDpDisplayId) secondaryActive=TRUE;
         if(id) {
             NVX_DP_AUX_CTRL_PARAMS aux={0};
@@ -1053,7 +1054,8 @@ static BOOLEAN NvxGspVerifyDisplays(PNVX_DEVICE_EXTENSION dev)
             } else if(head==1) secondaryActive=FALSE;
         }
     }
-    return secondaryActive && !dev->NativeDisplayFaulted;
+    LogStr("NVX [DISPLAY-VERIFY]: bothHeadsActive=");LogHex(primaryActive&&secondaryActive);LogStr("\n");
+    return primaryActive && secondaryActive && !dev->NativeDisplayFaulted;
 }
 
 BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
@@ -1186,6 +1188,32 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
         if(owner!=1) {
             coreN=NvxDisplayGetWords(VideoPortReadRegisterUlong((PULONG)(bar0+0x680000)));
             if(coreN>=900) return FALSE;
+            /* New core channels start with default assembly state. Seed the
+               primary from its armed state before committing secondary ownership.
+               Only documented C67D head methods and the primary SOR are copied. */
+            {
+                static const ULONG methods[]={0x2000,0x2004,0x2008,0x200c,0x201c,
+                    0x2020,0x2024,0x2028,0x2030,0x2048,0x204c,0x2058,0x205c,
+                    0x2064,0x2068,0x206c,0x2070,0x2078};
+                ULONG primarySor=dev->MonitorSor[0];
+                if(primarySor>=4 || primarySor==sor) return FALSE;
+                for(ULONG i=0;i<sizeof(methods)/sizeof(methods[0]);i++) {
+                    ULONG value=VideoPortReadRegisterUlong((PULONG)(bar0+0x688000+methods[i]));
+                    LogStr("NVX [PRIMARY-STATE]: method=");LogHex(methods[i]);
+                    LogStr(" armed=");LogHex(value);LogStr("\n");
+                    if((value&0xffff0000)==0xbadf0000 || value==0xffffffff) return FALSE;
+                    NvxDisplayPushHeader(methods[i],1,&header);
+                    corePush[coreN++]=header;corePush[coreN++]=value;
+                }
+                {
+                    ULONG method=NVX_C67D_SOR_SET_CONTROL(primarySor);
+                    ULONG value=VideoPortReadRegisterUlong((PULONG)(bar0+0x688000+method));
+                    LogStr("NVX [PRIMARY-STATE]: SOR control=");LogHex(value);LogStr("\n");
+                    if(!value || (value&0xffff0000)==0xbadf0000 || value==0xffffffff) return FALSE;
+                    NvxDisplayPushHeader(method,1,&header);
+                    corePush[coreN++]=header;corePush[coreN++]=value;
+                }
+            }
             NvxDisplayPushHeader(NVX_C67D_WINDOW_SET_CONTROL(2),1,&header);
             corePush[coreN++]=header;corePush[coreN++]=1;
             NvxDisplayPushHeader(0x208,2,&header);
