@@ -8,7 +8,7 @@
 
 static ULONG regs[0x1000000/4];
 static UCHAR gpuMemory[0x10000];
-static UCHAR gpuVram[0x2000000];
+static UCHAR gpuVram[0x4000000];
 static NVX_DEVICE_EXTENSION dev;
 static int scenario, imemTransfers, dmemTransfers, cpuStarts,freeFailures;
 static BOOLEAN dpLinkTrained;
@@ -156,12 +156,15 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(tables[2064]==0);
             assert(tables[1025]==((physical+0x5000)>>4|0xc));
             assert(tables[2560]==((physical+0x6000)>>4|0xc));
-            assert(tables[3072]==1); /* VRAM physical page zero, valid aperture */
-            assert(tables[3583]==(((ULONG64)0x1ff0000>>4)|1));
-            assert(tables[2560+16*2]==0);
-            assert(tables[2560+16*2+1]==((physical+0x7000)>>4|0xc));
+            assert(tables[3072]==0); /* Reserved low VRAM is deliberately unmapped. */
+            assert(tables[4095]==0);
+            assert(tables[3072+32]==(dev.GspFbLayoutValid?((0x200000ULL>>4)|1):0));
+            assert(tables[2560+16*2]==((physical+0x7000)>>4|0xc));
+            assert(tables[3583]==(dev.GspFbLayoutValid?(((ULONG64)0x1ff0000>>4)|1):0));
+            assert(tables[2560+32*2]==0);
+            assert(tables[2560+32*2+1]==((physical+0x8000)>>4|0xc));
             {
-                PULONG64 upload=(PULONG64)((PUCHAR)tables+0x7000);
+                PULONG64 upload=(PULONG64)((PUCHAR)tables+0x8000);
                 assert(upload[0]==((dev.GspDmaPhysical.QuadPart+GSP_UPLOAD_OFFSET)>>4|0xd));
                 assert(upload[15]==((dev.GspDmaPhysical.QuadPart+GSP_UPLOAD_OFFSET+0xf000)>>4|0xd));
                 assert(upload[16]==0);
@@ -549,6 +552,16 @@ int main(void)
             assert(dev.GspCopyVerified==(scenario==0||scenario==3||scenario==7||scenario==12));
             assert(dev.GspAssertCount==7);
             assert(dev.GspChannelFaulted==(scenario==4));
+            if(scenario==0) {
+                UCHAR pixels[512];
+                for(ULONG i=0;i<sizeof(pixels);i++) pixels[i]=(UCHAR)(i*17+3);
+                assert(NvxGspUpload(&dev,dev.GspVramGpuVa+0x200000,pixels,sizeof(pixels)));
+                assert(!memcmp(gpuVram+0x200000,pixels,sizeof(pixels)));
+                assert(NvxGspUpload(&dev,dev.GspVramGpuVa+0x2000000,pixels,sizeof(pixels)));
+                assert(!memcmp(gpuVram+0x2000000,pixels,sizeof(pixels)));
+                assert(!NvxGspUpload(&dev,dev.GspVramGpuVa,pixels,sizeof(pixels)));
+                assert(!NvxGspUpload(&dev,dev.GspVramGpuVa+0x3de0000,pixels,sizeof(pixels)));
+            }
             if(scenario==0) {
                 dev.PhysicalBar1.QuadPart=0xe0000000;
                 dev.NumModes=1;dev.ModeFramebuffer[0]=dev.PhysicalBar1;

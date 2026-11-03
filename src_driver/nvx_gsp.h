@@ -72,11 +72,11 @@
 #define GSP_SCRATCH_OFFSET             0x02F00000ULL
 #define GSP_SCRATCH_SIZE               0x10000UL
 #define GSP_PAGE_TABLES_OFFSET         0x02E00000ULL
-#define GSP_PAGE_TABLES_SIZE           0x8000UL
+#define GSP_PAGE_TABLES_SIZE           0x9000UL
 #define GSP_DISPLAY_PUSH_OFFSET        0x02E10000ULL
 #define GSP_UPLOAD_OFFSET              0x02600000ULL
 #define GSP_UPLOAD_SIZE                0x00800000UL
-#define GSP_UPLOAD_GPU_VA              0x22000000ULL
+#define GSP_UPLOAD_GPU_VA              0x24000000ULL
 #define GSP_UPLOAD_MAX_BYTES           0x0000F000UL
 
 #pragma pack(push, 1)

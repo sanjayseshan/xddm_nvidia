@@ -215,28 +215,31 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
         tables[2048+i]=((dev->GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET+i*4096)>>4)|0xd;
     /* VA 0x20000000 selects level-2 index 1, so it needs a second PD0 page.
        Its paired PD0 entries point to a 64KB LPT and 4KB SPT. Each 256-byte
-       LPT covers one 2MB VA slice. Map VRAM physical 0..32MB in CE VA space. */
+       LPT covers one 2MB VA slice. Map VRAM physical 0..64MB in CE VA space. */
     tables[1025]=((physical+0x5000)>>4)|0xc;
-    for(ULONG slice=0;slice<16;slice++) {
+    for(ULONG slice=0;slice<32;slice++) {
         ULONG64 *lpt=(ULONG64 *)((PUCHAR)tables+0x6000+slice*0x100);
         ULONG pdIndex=slice;
         tables[2560+pdIndex*2]=((physical+0x6000+slice*0x100)>>4)|0xc;
         tables[2560+pdIndex*2+1]=0;
-        for(ULONG page=0;page<32;page++)
-            lpt[page]=((((ULONG64)slice*0x200000+(ULONG64)page*0x10000)>>4)|1);
+        for(ULONG page=0;page<32;page++) {
+            ULONG64 address=(ULONG64)slice*0x200000+(ULONG64)page*0x10000;
+            if(address>=dev->GspFbFreeBase && address+0xffff<=dev->GspFbFreeLimit)
+                lpt[page]=(address>>4)|1;
+        }
     }
     /* DMA allocations are only 4KB aligned. 64KB leaves silently discard
        low physical address bits and read unrelated bytes on real XP boots.
        One SPT maps the 64KB staging window used by bounded upload requests. */
-    tables[2560+16*2]=0;
-    tables[2560+16*2+1]=((physical+0x7000)>>4)|0xc;
+    tables[2560+32*2]=0;
+    tables[2560+32*2+1]=((physical+0x8000)>>4)|0xc;
     for(ULONG page=0;page<16;page++) {
         ULONG64 pagePhysical=dev->GspDmaPhysical.QuadPart+GSP_UPLOAD_OFFSET+
             (ULONG64)page*0x1000;
-        tables[3584+page]=(pagePhysical>>4)|0xd;
+        tables[4096+page]=(pagePhysical>>4)|0xd;
     }
     dev->GspVramGpuVa=0x20000000ULL;
-    dev->GspVramMapBytes=0x2000000ULL;
+    dev->GspVramMapBytes=0x4000000ULL;
     __sync_synchronize();
     setDirectory[0]=(ULONG)physical;setDirectory[1]=(ULONG)(physical>>32);
     setDirectory[2]=4; /* top-level 49-bit directory has four entries */
@@ -779,7 +782,7 @@ BOOLEAN NvxGspSubmitFill(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG
     return FALSE;
 }
 
-BOOLEAN NvxGspUpload(PVOID HwDeviceExtension,ULONG64 dstVa,const void *src,ULONG bytes)
+static BOOLEAN NvxGspUploadUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,const void *src,ULONG bytes)
 {
     PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
     if(!dev||!src||!bytes||bytes>GSP_UPLOAD_MAX_BYTES||
@@ -787,27 +790,50 @@ BOOLEAN NvxGspUpload(PVOID HwDeviceExtension,ULONG64 dstVa,const void *src,ULONG
        !dev->GspDmaVirtual||!dev->GspVramGpuVa) return FALSE;
     if(NvxMmuCheckRange(dev->GspVramGpuVa,dev->GspVramMapBytes,dstVa,bytes)!=NVX_MMU_OK)
         return FALSE;
+    {
+        ULONG64 offset=dstVa-dev->GspVramGpuVa;
+        if(!dev->GspFbLayoutValid || offset<dev->GspFbFreeBase ||
+           offset>dev->GspFbFreeLimit || bytes-1>dev->GspFbFreeLimit-offset) return FALSE;
+    }
     VideoPortMoveMemory((PUCHAR)dev->GspDmaVirtual+GSP_UPLOAD_OFFSET,(PVOID)src,bytes);
     __sync_synchronize();
     if(!NvxGspSubmitCopy(HwDeviceExtension,dstVa,GSP_UPLOAD_GPU_VA,bytes))
         return FALSE;
     /* Verify the real staging path, not just the separately mapped scratch. */
     {
-        static ULONG verifiedUploads=0;
-        if(verifiedUploads<3) {
+        static ULONG verifiedUploads[2]={0,0};
+        ULONG adapter=(dstVa-dev->GspVramGpuVa)>=0x2000000ULL;
+        if(verifiedUploads[adapter]<3) {
             ULONG count=bytes<256?bytes:256, mismatches=0;
             PUCHAR readback=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET+0xa000;
             if(!NvxGspSubmitCopy(HwDeviceExtension,dev->GspScratchGpuVa+0xa000,dstVa,count))
                 return FALSE;
             for(ULONG i=0;i<count;i++)
                 if(readback[i]!=((const UCHAR *)src)[i]) mismatches++;
-            verifiedUploads++;
-            LogStr("NVX [UPLOAD-CHECK]: GPU readback bytes=");LogHex(count);
+            verifiedUploads[adapter]++;
+            LogStr("NVX [UPLOAD-CHECK]: dst=");LogHex(dstVa);
+            LogStr(" GPU readback bytes=");LogHex(count);
             LogStr(" mismatches=");LogHex(mismatches);LogStr("\n");
             if(mismatches) return FALSE;
         }
     }
     return TRUE;
+}
+
+/* Two XDDM adapters share one coherent staging buffer and CE queue. */
+BOOLEAN NvxGspUpload(PVOID extension,ULONG64 dstVa,const void *src,ULONG bytes)
+{
+    static volatile ULONG busy=0;
+    BOOLEAN result;
+    ULONG wait;
+    for(wait=0;wait<20000;wait++) {
+        if(!__sync_lock_test_and_set(&busy,1)) break;
+        VideoPortStallExecution(10);
+    }
+    if(wait==20000) return FALSE;
+    result=NvxGspUploadUnlocked(extension,dstVa,src,bytes);
+    __sync_lock_release(&busy);
+    return result;
 }
 
 /* Display DMA uses physical push buffers and a display-owned instance block,
@@ -1130,7 +1156,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     volatile ULONG *notifier;
     ULONG counts[2],n,wait;
     ULONG widths[2],heights[2],pitches[2];
-    const ULONG offsets[2]={0,0x2000000};
+    const ULONG offsets[2]={0x200000,0x2000000};
     const ULONG users[2]={1,3};
     const ULONG windowIds[2]={0,2};
     const ULONG channels[2]={1,2};
@@ -1634,8 +1660,8 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
     dev->GspVaSpaceHandle=0x90f10001;
     LogStr("NVX [RM]: private GPU virtual address space allocated.\n");
     if(!NvxGspRegisterScratch(dev)) return FALSE;
-    if(!NvxGspMapScratch(dev)) return FALSE;
     if(!NvxGspGetFbLayout(dev)) LogStr("NVX [FB]: static VRAM layout unavailable; retaining system-memory copy probe.\n");
+    if(!NvxGspMapScratch(dev)) return FALSE;
     if(!NvxGspSelectCopyEngine(dev)) return FALSE;
     if(!NvxGspAllocChannel(dev)) return FALSE;
     LogStr("NVX [RM]: dedicated channel and copy engine allocated; testing GPU execution.\n");

@@ -208,7 +208,7 @@ DrvEnablePDEV(
         return NULL;
 
     ppdev->hDriver = hDriver;
-    ppdev->ScreenGpuVaBase = 0x20000000ULL; /* CE GPU VA base for VRAM 0..32MB */
+    ppdev->ScreenGpuVaBase = 0; /* Queried after the adapter is mapped. */
 
     ModeCount = GetAvailableModes(hDriver, &ModeInfo, &ModeInfoSize);
     if (ModeCount == 0)
@@ -445,6 +445,12 @@ DrvEnableSurface(
         return NULL;
     }
 
+    if(EngDeviceIoControl(ppdev->hDriver,IOCTL_NVX_SCANOUT_GPU_VA,NULL,0,
+                          &ppdev->ScreenGpuVaBase,sizeof(ppdev->ScreenGpuVaBase),&ulTemp)
+       || ulTemp!=sizeof(ppdev->ScreenGpuVaBase) || !ppdev->ScreenGpuVaBase) {
+        DrvDisableSurface(dhpdev);
+        return NULL;
+    }
     ppdev->MappedFramebuffer = VideoMemoryInfo.FrameBufferBase;
     /* BAR1 readback is unreliable after GSP initialization. Keep authoritative
        GDI pixels in ordinary system memory and present them through CE DMA. */

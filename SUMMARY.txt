@@ -1,3 +1,21 @@
+NVIDIA GA104 XDDM DRIVER — v1.0.0.163 independent accelerated framebuffer uploads
+Updated: November 3, 2026
+
+Native primary moved to free VRAM2MB, secondary32MB. CE map extended64MB;
+reserved VRAM pages remain unmapped, free layout queried before page creation.
+Upload staging moved VA24000000 to avoid secondary VA22000000 collision.
+DDI queries per-adapter VA20200000/22000000; secondary upload IOCTL uses
+primary shared CE, with serialized staging and surface bounds. Both primary
+and secondary mock uploads checked; reserved/out-of-range uploads refused.
+Native primary mode reassertions avoid BIOS once dual-native is active.
+Host sanitizer tests and builds pass (DDI retains pre-existing cast/tag warnings).
+Log v163-20261103-154802.log: ownership notifier80000000; both EDID heads and
+full-size surfaces programmed. Both Window channels reject UPDATE with state
+error0x2d, so full notifier unfinished. Secondary GPU pixel upload readbacks
+at22000000/2200f000/2201e000 all have zero mismatches. Independent desktop
+uploads work; dual scanout is NOT yet confirmed. Next isolate differences
+from v159 successful Window2 update (format/extra composition/plane methods).
+
 NVIDIA GA104 XDDM DRIVER — v1.0.0.162 explicit native dual-head state
 Updated: November 3, 2026
 
