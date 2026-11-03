@@ -1,6 +1,22 @@
 NVIDIA GA104 XDDM DRIVER — v1.0.0.130 verified native mode-set recovery
 Updated: November 3, 2026
 
+Post-reset hardware test (November 3)
+-------------------------------------
+User ran corrected helper successfully: kernel bridge reset_subordinate returned
+success. This did not establish a usable GPU. First v130 launch reported
+"vfio: Unable to power on device, stuck in D3" twice; guest serial log stayed
+empty. Host lspci then returned invalid header type 7f. A queued ACPI shutdown
+was processed once QEMU became responsive but no guest booted, so monitor quit
+was used for the pre-boot process. Cleanup took additional time. A second
+launch failed opening VFIO group 13 with Device or resource busy during cleanup.
+After both processes exited and disk unlocked, a third launch again remained
+pre-boot with empty log; GPU power_state reported D3cold despite runtime_status
+active. No XP driver code ran in these attempts. Kernel reset success therefore
+must not be described as restored BIOS modes, 1080p, or dual display success.
+Logs: test_logs/v130-after-bridge-reset{,-retry,-retry2}.log (empty guest logs).
+No new driver version has been installed; v130 remains in the XP image.
+
 Reset helper correction (November 3)
 -------------------------------------
 User-authenticated reset attempt failed selecting per-function "bus" with
