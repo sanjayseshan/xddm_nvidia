@@ -1,5 +1,13 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.164 both native heads active
+NVIDIA GA104 XDDM DRIVER — v1.0.0.164 working dual-display baseline
 Updated: November 3, 2026
+
+USER CONFIRMATION: "v164 worked" (November 3, 2026). Retain v164 as the
+working dual-monitor baseline. Primary1920x1080 and secondary2560x1440
+native heads have completed UPDATE notifiers and locked DP links; independent
+GPU framebuffer uploads are verified. Desktop GDI rasterization remains in
+software with GPU DMA presentation; this is not a completed 3D driver.
+No v165 changes were made. Additional sink/pipeline logging below is optional
+future work, not a blocker to the user-confirmed v164 result.
 
 Restores accepted v159 window sequence (ARGB format, composition bypass
 default, no extra plane/composition programming); state0x2d is gone.
