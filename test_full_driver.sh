@@ -20,11 +20,8 @@ else
     make -C "$NVX_ROOT/src_driver" check full
     cp "$NVX_ROOT/src_driver/nvxmp.sys" "$NVX_ROOT/dist_full/nvxmp.sys"
 fi
-cp "$NVX_ROOT/dist_full/nvxmp.sys" "$NVX_ROOT/build_versions/v$NVX_TEST_VERSION-nvxmp.sys"
-
 make -C "$NVX_ROOT/src_disp"
 cp "$NVX_ROOT/src_disp/nvxdisp.dll" "$NVX_ROOT/dist_full/nvxdisp.dll"
-cp "$NVX_ROOT/src_disp/nvxdisp.dll" "$NVX_ROOT/build_versions/v$NVX_TEST_VERSION-nvxdisp.dll"
 
 if [ ! -f "$NVX_ROOT/dist_full/nvxdisp.dll" ]; then
     echo "Refusing test: dist_full/nvxdisp.dll is missing." >&2

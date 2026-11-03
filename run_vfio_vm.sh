@@ -8,6 +8,14 @@ NVX_DRIVER_ISO="${NVX_DRIVER_ISO:-$SCRIPT_DIR/nvx_driver_full.iso}"
 NVX_SERIAL_LOG="${NVX_SERIAL_LOG:-$SCRIPT_DIR/vm_serial.log}"
 NVX_VM_MEMORY_MB="${NVX_VM_MEMORY_MB:-3072}"
 
+NVX_QEMU_CDROM_ARGS=()
+if [ -f "$NVX_DRIVER_ISO" ]; then
+    NVX_QEMU_CDROM_ARGS=(-cdrom "$NVX_DRIVER_ISO")
+    NVX_CDROM_STATUS="$NVX_DRIVER_ISO"
+else
+    NVX_CDROM_STATUS="not attached (optional)"
+fi
+
 if ! [[ "$NVX_VM_MEMORY_MB" =~ ^[0-9]+$ ]] || [ "$NVX_VM_MEMORY_MB" -lt 1024 ]; then
     echo "Error: NVX_VM_MEMORY_MB must be an integer of at least 1024." >&2
     exit 1
@@ -55,7 +63,7 @@ echo "=================================================================="
 echo " Starting Windows XP x64 VM with RTX 3070 VFIO Passthrough        "
 echo "=================================================================="
 echo "Display Output: Monitor plugged into the RTX 3070"
-echo "Driver CD attached: $NVX_DRIVER_ISO"
+echo "Driver CD: $NVX_CDROM_STATUS"
 echo "Serial log: $NVX_SERIAL_LOG"
 echo "Guest RAM: ${NVX_VM_MEMORY_MB} MB (memlock: ${NVX_MEMLOCK_KB} KB)"
 echo "Input: Dedicated Logitech Keyboard & Mouse (PS/2 mapping)"
@@ -71,7 +79,7 @@ qemu-system-x86_64 \
     -device vfio-pci,host=01:00.0,multifunction=on,x-vga=on,addr=02.0 \
     -device vfio-pci,host=01:00.1,addr=02.1 \
     -drive file=winxp_x64.qcow2,format=qcow2,if=ide \
-    -cdrom "$NVX_DRIVER_ISO" \
+    "${NVX_QEMU_CDROM_ARGS[@]}" \
     -object input-linux,id=logitech_kbd,evdev="$LOGITECH_KBD",grab_all=on,repeat=on \
     -object input-linux,id=logitech_mouse,evdev="$LOGITECH_MOUSE" \
     -serial "file:$NVX_SERIAL_LOG" \

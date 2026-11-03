@@ -5,12 +5,18 @@
 *.sys
 *.o
 *.a
+*.dll
 
 # Mutable hardware logs and local tools
 *.log
 /log
 /test_logs/
 /dist_probe/
+/dist/nvxmp.sys
+/dist/nvxdisp.dll
+/dist_full/nvxmp.sys
+/dist_full/nvxdisp.dll
+/build_versions/
 /nvx_driver_probe.iso
 /firmware/*.rom
 *.exe
@@ -31,7 +37,5 @@
 core
 *.core
 
-# Keep the required prebuilt XDDM display DLL and GSP firmware inputs.
-!dist/nvxdisp.dll
-!dist_full/nvxdisp.dll
+# Keep the matching GSP firmware input needed by the experimental build.
 !dist_full/gsp_ga104.bin
