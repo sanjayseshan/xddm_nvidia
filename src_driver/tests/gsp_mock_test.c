@@ -191,7 +191,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             if(scenario==12) { alloc[22]=4;alloc[23]=NVX_DFP_SOR_TYPE_SINGLE; }
         }
         if(f==76&&request[22]==NVX_CTRL_CMD_DP_GET_CAPS) {
-            assert(scenario==12 && request[24]==80 && request[27]==3);
+            assert(scenario==12 && request[24]==56 && request[27]==3);
             alloc[8]=3;alloc[9]=3; /* HBR2, DP 1.2 + 1.4 */
         }
         if(f==76&&request[22]==NVX_CTRL_CMD_DP_AUXCH_CTRL) {

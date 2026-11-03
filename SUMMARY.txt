@@ -1,15 +1,33 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.140 secondary DP link discovery
+NVIDIA GA104 XDDM DRIVER — v1.0.0.141 DP capability ABI fix
 Updated: November 3, 2026
 
-Latest change (v140): query secondary DisplayPort link capabilities
+Latest change (v141): fix the DP transmitter-capabilities ABI
+-------------------------------------------------------------
+The v140 hardware log exposed an RM status 0x3a (invalid parameter structure)
+for DP_GET_CAPS. The wire ABI uses byte-sized NvBool fields and is 56 bytes;
+v140 sent an incorrect 80-byte array. v141 defines the exact NVIDIA Open GPU
+Module structure, asserts its size and key offsets, and updates the mock RPC
+test to require the 56-byte request. Host sanitizer tests and the warning-free
+x64 build pass. Hardware log test_logs/v141-20261103-123448.log confirms
+DP_GET_CAPS now succeeds: SOR0 is HBR3-capable and supports DP 1.2/1.4. The
+secondary sink reports DP 1.2, HBR2, and four lanes; transmitter link remains
+at zero lanes because it is not yet trained. VBE SET_MODE 0x177 succeeded at
+1080p. The user confirmed v140's primary works at 1080p while the secondary
+remains blank; v141 still has no link training or second-head scanout. QEMU
+exited through ACPI powerdown.
+
+Hardware result (v140): assign secondary SOR and query its DP link
 -----------------------------------------------------------------
-v140 extends the successful v139 secondary SOR assignment with read-only
-queries for transmitter DP capabilities, sink DPCD revision/rate/lane limits
-over AUX, and current transmitter lane/rate. It performs no AUX writes and no
-link training, head update, or scanout change. Host sanitizer tests assert the
-RM control ABIs and mock a successful SOR0 assignment followed by all three
-DP queries; the warning-free x64 build passes. The v139 guest is still running
-and holding the QCOW, so v140 has not been installed or hardware-tested yet.
+test_logs/v140-20261103-122833.log confirms XP booted at 1920x1080x32 (VBE
+SET_MODE 0x177 succeeded), both 0x0200 and 0x0800 connectors returned valid
+EDIDs, and the primary 0x0800 remained on SOR2. RM assigned the inactive
+secondary 0x0200 to free SOR0 without changing the active head. AUX DPCD read
+succeeded (revision 1.2, max rate code 0x14, four-lane capability); the current
+link reports zero lanes, as expected before the output is enabled. The DP
+transmitter-capability query failed with status 0x3a, which led to the v141 ABI
+fix. No head timing, scanout, or link-training commands were issued, so v140
+does not yet drive the second display. The user confirmed the physical primary
+works at 1080p and the second remains blank. QEMU exited through ACPI powerdown.
 
 Latest hardware change (v139): assign a free SOR to the secondary connector
 -----------------------------------------------------------------

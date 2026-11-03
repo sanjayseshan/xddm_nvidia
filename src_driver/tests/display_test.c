@@ -17,6 +17,11 @@ int main(void)
     assert(NVX_CTRL_CMD_DP_AUXCH_CTRL==0x00731341U);
     assert(NVX_CTRL_CMD_DP_GET_LINK_CONFIG==0x00731360U);
     assert(NVX_CTRL_CMD_DP_GET_CAPS==0x00731369U);
+    assert(sizeof(NVX_DP_DSC_CAPS)==28);
+    assert(sizeof(NVX_DP_GET_CAPS_PARAMS)==56);
+    assert(offsetof(NVX_DP_GET_CAPS_PARAMS,maxLinkRate)==8);
+    assert(offsetof(NVX_DP_GET_CAPS_PARAMS,dpVersionsSupported)==12);
+    assert(offsetof(NVX_DP_GET_CAPS_PARAMS,dsc)==28);
     assert(NVX_C67D_UPDATE_SPECIAL_HANDLING_INTERRUPT_RM == 0x00100000U);
     assert(NVX_C67D_UPDATE_INHIBIT_INTERRUPTS == 0x01000000U);
     /* 1920x1080p60, 148.5MHz, totals 2200x1125, +H/+V. */

@@ -1171,13 +1171,14 @@ static VOID NvxGspPlanHeads(PNVX_DEVICE_EXTENSION dev)
    writes or link-training requests are issued by this diagnostic. */
 static VOID NvxGspReadDpLinkInfo(PNVX_DEVICE_EXTENSION dev,ULONG displayId,ULONG sor)
 {
-    ULONG caps[20]={0},link[4]={0};
+    NVX_DP_GET_CAPS_PARAMS caps={0};
+    ULONG link[4]={0};
     NVX_DP_AUX_CTRL_PARAMS aux={0};
     const ULONG *reply;
     const NVX_DP_AUX_CTRL_PARAMS *auxResult;
-    caps[1]=sor;
+    caps.sorIndex=sor;
     if(NvxGspControl(dev,dev->GspDisplayHandle,NVX_CTRL_CMD_DP_GET_CAPS,
-                     caps,sizeof(caps))) {
+                     &caps,sizeof(caps))) {
         reply=(const ULONG *)dev->RpcRxRecord;
         LogStr("NVX [DP]: transmitter SOR=");LogHex(sor);
         LogStr(" maxLinkRate=");LogHex(reply[28]);

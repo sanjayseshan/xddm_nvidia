@@ -41,6 +41,36 @@ _Static_assert(offsetof(NVX_DFP_ASSIGN_SOR_PARAMS,flags)==76,"DFP_ASSIGN_SOR fla
 #define NVX_CTRL_CMD_DP_GET_LINK_CONFIG 0x00731360U
 #define NVX_CTRL_CMD_DP_GET_CAPS 0x00731369U
 typedef struct {
+    uint8_t supported;
+    uint32_t encoderColorFormatMask;
+    uint32_t lineBufferSizeKB;
+    uint32_t rateBufferSizeKB;
+    uint32_t bitsPerPixelPrecision;
+    uint32_t maxNumHztSlices;
+    uint32_t lineBufferBitDepth;
+} NVX_DP_DSC_CAPS;
+typedef struct {
+    uint32_t subDeviceInstance;
+    uint32_t sorIndex;
+    uint32_t maxLinkRate;
+    uint32_t dpVersionsSupported;
+    uint32_t uhbrSupported;
+    uint8_t multistreamSupported;
+    uint8_t streamCloningEnabled;
+    uint8_t increasedWatermarkLimits;
+    uint8_t pc2Disabled;
+    uint8_t singleHeadMstSupported;
+    uint8_t fecSupported;
+    uint8_t trainPhyRepeater;
+    uint8_t overrideLinkBandwidth;
+    NVX_DP_DSC_CAPS dsc;
+} NVX_DP_GET_CAPS_PARAMS;
+_Static_assert(sizeof(NVX_DP_DSC_CAPS)==28,"DP DSC caps RM ABI");
+_Static_assert(sizeof(NVX_DP_GET_CAPS_PARAMS)==56,"DP GET_CAPS RM ABI");
+_Static_assert(offsetof(NVX_DP_GET_CAPS_PARAMS,maxLinkRate)==8,"DP GET_CAPS rate offset");
+_Static_assert(offsetof(NVX_DP_GET_CAPS_PARAMS,dpVersionsSupported)==12,"DP GET_CAPS version offset");
+_Static_assert(offsetof(NVX_DP_GET_CAPS_PARAMS,dsc)==28,"DP GET_CAPS DSC offset");
+typedef struct {
     uint32_t subDeviceInstance;
     uint32_t displayId;
     uint32_t addrOnly;
