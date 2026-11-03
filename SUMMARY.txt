@@ -1,5 +1,5 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 3, 2026 (v169 channel-order fix built; guest launch blocked)
+Updated: November 3, 2026 (v169 artifacts cleared in user test)
 
 Confirmed baseline: v164 works on the test EVGA RTX 3070 XC3 Ultra LHR with
 two physical displays. The primary runs at 1920x1080 and the secondary at
@@ -45,10 +45,10 @@ advertises XRGB masks (0x00RRGGBB). v168 passed brush values directly to the
 fill engine and shadow bitmap. v169 swaps red/blue channels before both writes
 and disables the fast path for unexpected channel masks. A host test covers
 red, green, blue, and a mixed color. The display driver, miniport, and host
-tests pass. `./test_full_driver.sh` packaged v169 but stopped before guest
-launch because libguestfs `supermin` exited with error status 1. The visual
-effect remains unverified; this is a diagnosis-driven candidate, not a
-confirmed fix.
+tests pass. The user tested v169 and confirms the orange artifacts are gone.
+The automated `./test_full_driver.sh` path still stops before guest launch on
+this host because libguestfs `supermin` exits with error status 1; that host
+tooling issue did not prevent the user-run v169 display check.
 High-refresh modes such as 120 Hz and other GPU models, boards, connectors, and
 monitor combinations are not validated.
 
@@ -71,9 +71,9 @@ Milestones:
   both native heads, but has zero CopyBits submissions. Orange drag artifacts
   remain; the new copy path has not yet been exercised by the desktop.
 - v169: converts COLORREF brush values to XRGB pixels in accelerated solid
-  fills; display and miniport builds plus host tests pass. Hardware launch was
-  blocked by libguestfs `supermin` before QEMU started; visual validation is
-  pending.
+  fills. Display and miniport builds plus host tests pass; user confirms the
+  orange drag artifacts are gone. The automated host test launcher remains
+  blocked by libguestfs `supermin` before QEMU starts.
 
 Validation: the v164 hardware log recorded active Head 0 and Head 1, completed
 display-update notifiers, four-lane DisplayPort link locks, 1920x1080 and

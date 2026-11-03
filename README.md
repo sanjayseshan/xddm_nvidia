@@ -1,18 +1,17 @@
 # NVIDIA GA104 XDDM driver for Windows XP x64
 
 This experimental driver brings up a Windows XP x64 desktop on NVIDIA Ampere
-GA104 hardware. The latest tested build, v168, brings up two displays attached
+GA104 hardware. The latest tested build, v169, brings up two displays attached
 to an EVGA GeForce RTX 3070 XC3 Ultra LHR at 1920×1080 primary and 2560×1440
-secondary. Orange artifacts remain when dragging windows.
+secondary. The user confirms the orange artifacts seen in v168 are gone in
+v169.
 
 The v168 hardware log confirms GSP initialization, both native display heads,
-and GPU solid-fill activity. The user reports orange artifacts during window
-dragging. The new pitched GPU `CopyBits` path was not exercised in that run
-(zero copy submissions). v169 converts GDI `COLORREF` values to the
-framebuffer's XRGB pixel order before accelerated solid fills; this targets a
-likely source of orange/blue color swaps and awaits hardware validation.
-Earlier v167 testing also showed excessive small copy submissions. See
-[SUMMARY.txt](SUMMARY.txt) for per-version findings.
+and GPU solid-fill activity. The v168 run showed orange artifacts while
+dragging windows. v169 converts GDI `COLORREF` values to the framebuffer's
+XRGB pixel order before accelerated solid fills, and the user confirms the
+artifacts are gone. Earlier v167 testing also showed excessive small copy
+submissions. See [SUMMARY.txt](SUMMARY.txt) for per-version findings.
 
 ## Project overview
 
@@ -29,8 +28,9 @@ experiment submitted same-surface `CopyBits` copies, but produced orange
 rectangles during dragging and reached 10,000 small GPU copy submissions. v168
 limits the new path to large, non-overlapping rectangles with pitched multi-row
 DMA in one GPU submission; other cases remain on software GDI. The v168 log
-recorded no GPU copy submissions, and the user still sees orange artifacts
-while dragging. This remains limited 2D acceleration, not a complete
+recorded no GPU copy submissions, so the copy path remains unverified. The v169
+solid-fill color conversion cleared the reported orange artifacts. This remains
+limited 2D acceleration, not a complete
 accelerated GDI driver. OpenGL, Direct3D, video decoding, and 3D acceleration
 are not implemented.
 
