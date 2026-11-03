@@ -142,8 +142,25 @@ static BOOLEAN NvxVbeEnumerate(PVOID extension, BOOLEAN recoverNative)
             if(NvxVbeSuccess(status,a.Eax) &&
                api.Read(api.Context,seg,off,&mode,sizeof(mode))==NO_ERROR &&
                mode.XResolution==1920 && mode.YResolution==1080 && mode.BitsPerPixel==32) {
-                if(AddMode(dev,0x177,&mode,info.VbeVersion))
-                    LogStr("NVX [VBE]: recovered BIOS-validated 1080p mode omitted from list.\n");
+                ULONG oldCount=dev->NumModes,oldIndex=dev->CurrentModeIndex;
+                LogStr("NVX [VBE]: native candidate attrs=");LogHex(mode.ModeAttributes);
+                LogStr(" pitch=");LogHex(mode.LinBytesPerScanLine);
+                LogStr(" base=");LogHex(mode.PhysBasePtr);LogStr("\n");
+                /* Some NVIDIA BIOSes clear only the advertised support bit
+                   when the mode is omitted. Keep every format/range check,
+                   and require an actual successful SET/CURRENT_MODE trial. */
+                mode.ModeAttributes|=1;
+                if(AddMode(dev,0x177,&mode,info.VbeVersion) && dev->NumModes>oldCount) {
+                    if(NvxVbeSetMode(extension,dev->NumModes-1)) {
+                        LogStr("NVX [VBE]: recovered 1080p with verified BIOS SET/CURRENT_MODE.\n");
+                    } else {
+                        dev->NumModes=oldCount;
+                        LogStr("NVX [VBE]: native mode-set refused; restoring fallback.\n");
+                        if(!NvxVbeSetMode(extension,oldIndex<oldCount?oldIndex:0)) {
+                            dev->NumModes=0;goto done;
+                        }
+                    }
+                } else LogStr("NVX [VBE]: native metadata fails format/aperture validation.\n");
             } else LogStr("NVX [VBE]: BIOS rejected direct 1080p query; retaining verified fallback.\n");
         }
     }

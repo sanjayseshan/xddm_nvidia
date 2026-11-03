@@ -1,8 +1,35 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.129 1080p recovery and native display root
+NVIDIA GA104 XDDM DRIVER — v1.0.0.130 verified native mode-set recovery
 Updated: November 3, 2026
 
-Latest change (v129)
+Latest change (v130)
 --------------------
+v130 logs the directly queried 1080p candidate attributes/pitch/base and tests
+whether a mode omitted by the BIOS can actually be set. It relaxes only the
+advertised-support bit for this trial; graphics/LFB, format, pitch, masks and
+BAR aperture bounds must still validate. The candidate is retained only after
+successful VBE SET_MODE and CURRENT_MODE verification. Failure removes it and
+restores a previously verified mode. Host tests cover a hidden-but-settable
+mode, BIOS metadata refusal, mode-set refusal, and fallback restoration.
+Host suite/build pass. Hardware log test_logs/v130-20261103-110702.log shows
+1080p candidate attrs=0xBE, pitch=7680 and base=0xE0000000. The BIOS refuses
+SET_MODE for this unadvertised mode; fallback restoration succeeds and primary
+remains 800x600. Do not claim that direct mode probing forces 1080p when this
+BIOS rejects it. The two additional boots v130-native-list-retry-1.log and
+v130-native-list-retry-2.log also reject 1080p. All three guests shut down
+normally, leaving the disk unlocked. RTX-only bus reset was attempted via
+sudo -n, but OS authentication refused it before any reset/configuration change.
+The read-only-checked reset_test_gpu.sh verifies this RTX 3070 LHR (10DE:2488),
+its isolated two-function VFIO group and idle device/disk before resetting the
+GPU bus, restoring reset-method preferences afterward. A user-authenticated
+sudo ./reset_test_gpu.sh is required to test whether a cold GPU reset restores
+normal BIOS modes. This is not a proven fix and does not implement dual-head
+scanout. Current guest is stopped; v130 is installed in the XP image.
+Desktop dual-head
+output is still unfinished: native root works, channels/scanout and XP
+DualView support remain required.
+
+Previous v129 change
+-------------------
 User requests desktop dual display and at least a 1080p primary. v129 probes
 BIOS mode 0x177 after a degraded four-mode-list retry, accepts only validated
 1920x1080x32 metadata, and prefers that format over saved 800x600 startup modes.

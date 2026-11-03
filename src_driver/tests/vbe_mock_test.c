@@ -37,7 +37,7 @@ static VP_STATUS call(PVOID p,NVX_INT10_ARGS *a)
         VBE_MODE_INFO *v=buffer;
         assert(a->Eax==0x4f01);
         if(scenario==6 && a->Ecx==0x177) {a->Eax=0x014f;return 0;}
-        v->ModeAttributes=0x91;v->NumberOfPlanes=1;v->MemoryModel=6;
+        v->ModeAttributes=(scenario>=5 && a->Ecx==0x177)?0x90:0x91;v->NumberOfPlanes=1;v->MemoryModel=6;
         v->BitsPerPixel=a->Ecx==0x112?24:32;
         v->XResolution=a->Ecx==0x112?640:a->Ecx==0x115?800:1920;
         v->YResolution=a->Ecx==0x112?480:a->Ecx==0x115?600:1080;
@@ -61,7 +61,10 @@ VP_STATUS VideoPortQueryServices(PVOID e,ULONG type,PVOID ptr)
 VP_STATUS VideoPortInt10(PVOID e,VIDEO_X86_BIOS_ARGUMENTS *a)
 {
     (void)e;
-    if(a->Eax==0x4f02) { if(scenario!=3) current=a->Ebx&0x3fff; }
+    if(a->Eax==0x4f02) {
+        if(scenario==7 && (a->Ebx&0x3fff)==0x177) {a->Eax=0x014f;return 0;}
+        if(scenario!=3) current=a->Ebx&0x3fff;
+    }
     else { assert(a->Eax==0x4f03);a->Ebx=current; }
     a->Eax=0xffff004f;return 0;
 }
@@ -93,7 +96,7 @@ int main(void)
     dev.PhysicalBar1.QuadPart=0xe0000000;dev.Bar1Length=0x10000000;
     assert(NvxVbeInitialize(&dev));
     assert(controllerCalls==2&&frees==2&&derefs==2&&dev.NumModes==5);
-    for(scenario=5;scenario<=6;scenario++) {
+    for(scenario=5;scenario<=7;scenario++) {
         memset(&dev,0,sizeof(dev));current=3;frees=derefs=0;controllerCalls=0;
         dev.PhysicalBar1.QuadPart=0xe0000000;dev.Bar1Length=0x10000000;
         assert(NvxVbeInitialize(&dev));
