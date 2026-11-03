@@ -61,7 +61,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         PULONG request=(PULONG)((PUCHAR)cmd+4096+(cmd->WritePtr-1)*4096);
         ULONG alloc[160]={0},replyBytes;
         uint32_t f,r,s;
-        assert(cmd->WritePtr>=3&&cmd->WritePtr<=25);
+        assert(cmd->WritePtr>=3&&cmd->WritePtr<=28);
         assert(NvxDecodeRpc((PUCHAR)request,4096,&f,&r,&s));
         assert((f==103||f==76||f==4||f==14||f==10||f==65)&&s==cmd->WritePtr-1);
         if(f==65) {
@@ -166,6 +166,14 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         replyBytes=f==76?24+request[24]:(f==14?56:32);
         assert(replyBytes<=sizeof(alloc));
         memcpy(alloc,request+20,f==76?replyBytes:(f==14?56:16));
+        if(f==76&&request[22]==0x730120) {
+            assert(request[21]==0x73000001 && request[24]==12);
+            alloc[7]=5; alloc[8]=5; /* two supported physical connectors */
+        }
+        if(f==76&&request[22]==0x730122) {
+            assert(request[21]==0x73000001 && request[24]==16 && request[28]==5);
+            alloc[8]=5; /* two attached monitors, no scanout creation */
+        }
         if(f==76&&request[22]==0x20800110) memcpy((PUCHAR)alloc+28,"Mock RTX 3070",14);
         if(f==76&&request[22]==0x20802a08) {
             ULONG retSize=0x5000; /* Actual GA104 v90 firmware result. */
@@ -338,7 +346,12 @@ int main(void)
         assert(NvxGspInitSubsystem(&dev)==(scenario==0 || scenario>=3));
         assert(dev.GspInitialized==(scenario==0 || scenario>=3));
         if (dev.GspInitialized) {
-            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==(scenario==4?30:28));
+            assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==
+                   (ULONG)((scenario==4?30:28)+(dev.GspCopyVerified?3:0)));
+            if(dev.GspCopyVerified) {
+                assert(dev.GspDisplayHandle==0x73000001);
+                assert(dev.GspSupportedDisplays==5 && dev.GspConnectedDisplays==5);
+            }
             assert(dev.GspScratchGpuVa==0x10000000);
             assert(dev.GspClientHandle==0xc1d00001);
             assert(dev.GspDeviceHandle==0x80000001&&dev.GspSubdeviceHandle==0x20800001);

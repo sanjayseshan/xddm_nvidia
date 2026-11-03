@@ -802,6 +802,39 @@ BOOLEAN NvxGspUpload(PVOID HwDeviceExtension,ULONG64 dstVa,const void *src,ULONG
     return TRUE;
 }
 
+/* NVIDIA ctrl0073system.h: discover physical connectors, independent of
+   scanout programming. Optional failure must preserve the v125 desktop. */
+static VOID NvxGspDiscoverDisplays(PNVX_DEVICE_EXTENSION dev)
+{
+    ULONG supported[3]={0,0,0};
+    ULONG connected[4]={0,0,0,0};
+    const ULONG *reply;
+    dev->GspSupportedDisplays=dev->GspConnectedDisplays=0;
+    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0x73000001,0x73,NULL,0)) {
+        LogStr("NVX [DISPLAY]: display-common allocation unavailable; single VBE scanout retained.\n");
+        return;
+    }
+    dev->GspDisplayHandle=0x73000001;
+    if(!NvxGspControl(dev,dev->GspDisplayHandle,0x730120,supported,sizeof(supported))) {
+        LogStr("NVX [DISPLAY]: connector support query unavailable.\n");
+        return;
+    }
+    reply=(const ULONG *)dev->RpcRxRecord;
+    dev->GspSupportedDisplays=reply[27];
+    LogStr("NVX [DISPLAY]: supported mask=");LogHex(dev->GspSupportedDisplays);
+    LogStr(" DDC mask=");LogHex(reply[28]);LogStr("\n");
+    if(!dev->GspSupportedDisplays) return;
+    connected[2]=dev->GspSupportedDisplays;
+    if(!NvxGspControl(dev,dev->GspDisplayHandle,0x730122,connected,sizeof(connected))) {
+        LogStr("NVX [DISPLAY]: connected-state query unavailable.\n");
+        return;
+    }
+    reply=(const ULONG *)dev->RpcRxRecord;
+    dev->GspConnectedDisplays=reply[28]&dev->GspSupportedDisplays;
+    LogStr("NVX [DISPLAY]: connected mask=");LogHex(dev->GspConnectedDisplays);
+    LogStr("; discovery only, additional heads not programmed.\n");
+}
+
 static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
 {
     ULONG client[27]={0xc1d00001,0,0x0078766e};
@@ -827,7 +860,9 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
     if(!NvxGspSelectCopyEngine(dev)) return FALSE;
     if(!NvxGspAllocChannel(dev)) return FALSE;
     LogStr("NVX [RM]: dedicated channel and copy engine allocated; testing GPU execution.\n");
-    return NvxGspCopySmokeTest(dev);
+    if(!NvxGspCopySmokeTest(dev)) return FALSE;
+    NvxGspDiscoverDisplays(dev);
+    return TRUE;
 }
 
 static BOOLEAN NvxWait(PUCHAR bar0, ULONG reg, ULONG mask, ULONG expected,

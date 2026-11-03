@@ -312,6 +312,9 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG GspAssertCount;
     ULONG GspClientHandle;
     ULONG GspDeviceHandle,GspSubdeviceHandle;
+    ULONG GspDisplayHandle;
+    ULONG GspSupportedDisplays;
+    ULONG GspConnectedDisplays;
     ULONG GspVaSpaceHandle;
     ULONG GspScratchMemoryHandle;
     ULONG GspVirtualMemoryHandle;

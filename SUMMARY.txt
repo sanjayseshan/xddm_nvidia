@@ -1,8 +1,30 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.125 changed-row desktop presentation
+NVIDIA GA104 XDDM DRIVER — v1.0.0.126 physical connector discovery
 Updated: November 3, 2026
 
-Latest change (v125)
+Latest change (v126)
 --------------------
+User reports a second monitor is not detected. v125 has no physical connector
+or hotplug discovery and one VBE scanout. HwVidGetVideoChildDescriptor is a
+placeholder returning one generic monitor for index zero, without EDID.
+Independent heads, Windows extended-desktop exposure, EDID-backed child
+enumeration and hotplug event handling remain unimplemented.
+
+v126 optionally allocates NVIDIA display-common class 0x73 after CE verification
+and queries supported display IDs (0x730120) and connected displays (0x730122).
+Failures are logged and do not change the v125 rendering path. No additional
+heads are programmed or claimed to Windows. Host regression covers two
+supported and attached connector IDs; host suite/build pass. Physical GPU query
+results: second v126 boot test_logs/v126-20261103-104635.log allocates class
+0x73 successfully, returns supported/DDC mask 0x7F00 and connected mask 0x0A00
+(two display IDs: 0x0200 and 0x0800). Both monitors are physically attached to
+the RTX 3070 (user confirmed). The GPU detects them; Windows exposure and
+independent head programming are still missing. The primary maps at 1080p.
+First boot had an empty pre-driver log and exited after ACPI; v125 shut down
+normally before installation. Next: per-display EDID and validated Windows
+child enumeration, followed by independent scanout/timing setup.
+
+Previous v125 change
+-------------------
 User confirms v124's 1080p display is correct, but still slow. This establishes
 visible desktop correctness for the coherent-bitmap + 4KB staging path; it does
 not establish responsive GPU rasterization or 3D support.
