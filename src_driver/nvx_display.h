@@ -199,6 +199,57 @@ static inline int NvxEncodeEvoRaster(const NVX_DISPLAY_TIMING *t,NVX_EVO_RASTER 
     return 1;
 }
 
+/* NVIDIA ctrl0073dp.h: byte-sized NvBool fields, natural 4-byte alignment. */
+#define NVX_CTRL_CMD_DP_CONFIG_STREAM 0x00731362U
+typedef struct {
+    uint32_t subDeviceInstance,head,sorIndex,dpLink;
+    uint8_t enableOverride,mst;
+    uint32_t singleHeadMultistreamMode,hBlankSym,vBlankSym,colorFormat;
+    uint8_t enableTwoHeadOneOr;
+    uint32_t mstReserved[7];
+    struct {
+        uint8_t enhancedFraming;
+        uint32_t tuSize,waterMark,actualPclkHz,linkClkFreqHz;
+        uint8_t audioOverRightPanel;
+        struct {
+            uint32_t activeCnt,activeFrac,activePolarity;
+            uint8_t mvidWarEnabled;
+            uint32_t actualPclkHz,linkClkFreqHz;
+        } legacy;
+    } sst;
+} NVX_DP_CONFIG_STREAM_PARAMS;
+_Static_assert(sizeof(NVX_DP_CONFIG_STREAM_PARAMS)==116,"DP stream RM ABI");
+_Static_assert(offsetof(NVX_DP_CONFIG_STREAM_PARAMS,hBlankSym)==24,"DP stream blank ABI");
+_Static_assert(offsetof(NVX_DP_CONFIG_STREAM_PARAMS,sst)==68,"DP stream SST ABI");
+/* RGB888, four-lane HBR2 transport. Auto-TU equations from NVIDIA DP library.
+   Reject unsupported bandwidth/blanking rather than overriding with guesses. */
+static inline int NvxDpBuildSst(const NVX_DISPLAY_TIMING *t,uint32_t sor,
+                                uint32_t link,NVX_DP_CONFIG_STREAM_PARAMS *p)
+{
+    const uint64_t clock=540000000,precision=100000;
+    uint64_t ratio,wf;
+    uint32_t minBlank,hb,vb,water;
+    NVX_EVO_RASTER raster;
+    if(!p || sor>=4 || link>1 || !NvxEncodeEvoRaster(t,&raster) ||
+       !t->pixelClockHz || t->hActive<=60 ||
+       (uint64_t)t->pixelClockHz*24>=clock*32) return 0;
+    ratio=(uint64_t)t->pixelClockHz*24*precision/(clock*32);
+    wf=ratio*64*(precision-ratio)/precision;
+    water=2+(2*(24*precision/32)+wf)/precision;
+    if(water<20) water=20;
+    if(water>39) return 0;
+    minBlank=(uint32_t)(9ULL*t->pixelClockHz/clock)+12;
+    if(t->hTotal-t->hActive<=minBlank) return 0;
+    hb=(uint32_t)((t->hTotal-t->hActive-minBlank)*clock/t->pixelClockHz);
+    vb=(uint32_t)((t->hActive-40)*clock/t->pixelClockHz);
+    if(hb<=7 || vb<=13) return 0;
+    p->head=1;p->sorIndex=sor;p->dpLink=link;p->enableOverride=1;
+    p->hBlankSym=hb-7;p->vBlankSym=vb-13;p->colorFormat=0;
+    p->sst.enhancedFraming=1;p->sst.tuSize=64;p->sst.waterMark=water;
+    p->sst.actualPclkHz=t->pixelClockHz;p->sst.linkClkFreqHz=(uint32_t)clock;
+    return 1;
+}
+
 /* Volta+ display RAMHT: 8KB / 8-byte entries, channel tag and 10-bit
  * XOR hash. Instance offsets are relative to the 64KB display block.
  * Encoding reference: Nouveau r535_dmac_bind and GV100 display DMA. */

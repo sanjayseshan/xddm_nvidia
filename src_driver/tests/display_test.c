@@ -58,6 +58,17 @@ int main(void)
         NVX_DISPLAY_TIMING bad=t;bad.hSyncStart=bad.hActive;
         assert(!NvxEncodeEvoRaster(&bad,&r));
     }
+    {
+        NVX_DP_CONFIG_STREAM_PARAMS p={0};
+        assert(NvxDpBuildSst(&t,0,1,&p));
+        assert(p.head==1 && p.sorIndex==0 && p.dpLink==1 && p.enableOverride==1);
+        assert(p.sst.tuSize==64 && p.sst.waterMark==20);
+        assert(p.hBlankSym==960 && p.vBlankSym==6823);
+        assert(p.sst.actualPclkHz==148500000 && p.sst.linkClkFreqHz==540000000);
+        assert(!NvxDpBuildSst(&t,4,1,&p));
+        NVX_DISPLAY_TIMING bad=t;bad.pixelClockHz=1000000000;
+        assert(!NvxDpBuildSst(&bad,0,1,&p));
+    }
     unchanged=t; d[17]|=0x80;
     assert(!NvxDecodeDetailedTiming(d,sizeof(d),&t));
     assert(!memcmp(&t,&unchanged,sizeof(t)));

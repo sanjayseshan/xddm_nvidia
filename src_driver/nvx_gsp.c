@@ -1182,6 +1182,22 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
         hSyncEnd=raster.syncEnd&0xffff;vSyncEnd=raster.syncEnd>>16;
         hBlankStart=raster.blankStart&0xffff;vBlankStart=raster.blankStart>>16;
         hBlankEnd=raster.blankEnd&0xffff;vBlankEnd=raster.blankEnd>>16;
+        {
+            NVX_DP_CONFIG_STREAM_PARAMS stream={0};
+            ULONG protocol=dev->MonitorProtocol[1];
+            if((protocol!=8 && protocol!=9) ||
+               !NvxDpBuildSst(&mode,sor,protocol==9,&stream) ||
+               !NvxGspControl(dev,dev->GspDisplayHandle,NVX_CTRL_CMD_DP_CONFIG_STREAM,
+                              &stream,sizeof(stream))) {
+                LogStr("NVX [DP]: secondary SST stream configuration failed.\n");
+                return FALSE;
+            }
+            LogStr("NVX [DP]: secondary SST stream configured Head1 SOR=");LogHex(sor);
+            LogStr(" link=");LogHex(stream.dpLink);
+            LogStr(" hBlankSym=");LogHex(stream.hBlankSym);
+            LogStr(" vBlankSym=");LogHex(stream.vBlankSym);
+            LogStr(" watermark=");LogHex(stream.sst.waterMark);LogStr("\n");
+        }
     }
 
     /* A null ISO context disables the image. Bind a framebuffer DMA object
@@ -1356,6 +1372,14 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
         if (coreGet == coreN && winGet == winN) {
             LogStr("NVX [NATIVE]: secondary scanout methods consumed by hardware! coreGET=");
             LogHex(coreGet); LogStr(" winGET="); LogHex(winGet); LogStr("\n");
+            {
+                ULONG active[4]={0,1,0,0};
+                VideoPortStallExecution(50000);
+                if(NvxGspControl(dev,dev->GspDisplayHandle,0x730126,active,sizeof(active))) {
+                    const ULONG *reply=(const ULONG *)dev->RpcRxRecord;
+                    LogStr("NVX [NATIVE]: RM active display on Head1=");LogHex(reply[29]);LogStr("\n");
+                }
+            }
             return TRUE;
         }
         VideoPortStallExecution(100);
