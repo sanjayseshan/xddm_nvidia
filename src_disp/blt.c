@@ -32,7 +32,11 @@ NvxUploadSurfaceRect(PPDEV ppdev, SURFOBJ *pso, RECTL *prcl)
     bytesPerPixel=4;
     lineBytes=(ULONG)(r.right-r.left)*bytesPerPixel;
     if(!lineBytes||lineBytes>NVX_ACCEL_UPLOAD_MAX_BYTES) return FALSE;
-    rowsPerBatch=NVX_ACCEL_UPLOAD_MAX_BYTES/lineBytes;
+    /* The CE copy is linear: only adjacent rows with no pitch padding can be
+       coalesced. Partial-width spans must be submitted one row at a time so
+       the next row starts at ScreenDelta rather than immediately after pixels. */
+    rowsPerBatch=(r.left==0&&lineBytes==ppdev->ScreenDelta)
+        ?NVX_ACCEL_UPLOAD_MAX_BYTES/lineBytes:1;
     if(!rowsPerBatch) rowsPerBatch=1;
     requestBytes=FIELD_OFFSET(NVX_ACCEL_UPLOAD_PARAMS,Data)+lineBytes*rowsPerBatch;
     params=(PNVX_ACCEL_UPLOAD_PARAMS)EngAllocMem(0,requestBytes,ALLOC_TAG);

@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.114 clipped GDI uploads
+NVIDIA GA104 XDDM DRIVER — v1.0.0.115 pitch-safe GDI uploads
 Updated: November 2, 2026
 
 Current checkpoint
@@ -29,9 +29,13 @@ through 700, with no GPU timeout or bugcheck. This confirms sustained GPU copy
 execution of GDI fallback pixels, but no one has confirmed the visible desktop.
 This run selected 800x600x32 from four VBE modes. v114 publishes all GDI fallback bounds after complex clipping. Its hardware
 log records 1,689 upload IOCTLs, success milestones through 1,600, no faults,
-and clean ACPI shutdown. The physical monitor result is still unconfirmed;
-scanout remains 800x600x32. See STATUS_FLOW_v111.txt through
-STATUS_FLOW_v114.txt.
+and clean ACPI shutdown. The user confirms v113 had major corruption and v114 still showed rectangles.
+Root cause found: v114 batched partial-width rows as contiguous data, ignoring
+framebuffer pitch. v115 restricts batching to full-stride spans; partial rows
+are copied separately. v115 retries full-stride uploads only and the successful retry selects 1920x1080
+and records 3,373 upload calls (milestones through 3,300) without GPU faults.
+The guest remains up; its physical display check is pending. See
+STATUS_FLOW_v111.txt through STATUS_FLOW_v115.txt.
 
 The desktop is not yet confirmed working. A successful GSP copy probe alone is
 not desktop acceleration; confirm visible icons, text, and window contents.
