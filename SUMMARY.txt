@@ -1,3 +1,17 @@
+NVIDIA GA104 XDDM DRIVER — v1.0.0.159 separate ownership commit
+Updated: November 3, 2026
+
+Fixed Core UPDATE error0x25: Window2 owner must be changed in a separate
+non-interlocked UPDATE before window/head modeset (Nouveau disp.c documents
+this hardware restriction). Cleared inherited cursor interlocks too.
+Host sanitizer tests/build pass. Log v159-20261103-153309.log: ownership
+notifier80000000, Window2 owner1, full update notifier80000000, Head1 active
+on0x0200 and four DP lanes locked. No CMDre errors. BUT Head0 becomes
+inactive, so this is not successful dual display. Core initial assembly
+state does not retain the VBE primary routing; next preserve its armed
+state before first native UPDATE. Secondary drawing also needs a verified
+upload aperture at VRAM32MB (current CE aperture only covers0..32MB).
+
 NVIDIA GA104 XDDM DRIVER — v1.0.0.158 remove unsupported raster method
 Updated: November 3, 2026
 

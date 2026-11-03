@@ -1175,6 +1175,40 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     corePush = (PULONG)((PUCHAR)dev->GspDmaVirtual + GSP_DISPLAY_PUSH_OFFSET);
     winPush = (PULONG)((PUCHAR)dev->GspDmaVirtual + GSP_DISPLAY_PUSH_OFFSET + 0x2000);
 
+    /* Ownership changes must not share an UPDATE with window interlocks.
+       See Nouveau disp.c assign_windows: the hardware rejects that transition.
+       Commit only Window2 ownership here, preserving the VBE primary state. */
+    {
+        volatile ULONG *notifier=(volatile ULONG *)((PUCHAR)dev->GspDmaVirtual+
+                                     GSP_DISPLAY_PUSH_OFFSET+0x3000);
+        ULONG owner=VideoPortReadRegisterUlong((PULONG)(bar0+0x681100))&0xf;
+        LogStr("NVX [NATIVE]: Window2 prior owner=");LogHex(owner);LogStr("\n");
+        if(owner!=1) {
+            coreN=NvxDisplayGetWords(VideoPortReadRegisterUlong((PULONG)(bar0+0x680000)));
+            if(coreN>=900) return FALSE;
+            NvxDisplayPushHeader(NVX_C67D_WINDOW_SET_CONTROL(2),1,&header);
+            corePush[coreN++]=header;corePush[coreN++]=1;
+            NvxDisplayPushHeader(0x208,2,&header);
+            corePush[coreN++]=header;corePush[coreN++]=0xd1500001;corePush[coreN++]=0x1000;
+            NvxDisplayPushHeader(NVX_C67D_SET_INTERLOCK_FLAGS,2,&header);
+            corePush[coreN++]=header;corePush[coreN++]=0;corePush[coreN++]=0;
+            NvxDisplayPushHeader(NVX_C67D_UPDATE,1,&header);
+            corePush[coreN++]=header;corePush[coreN++]=1;
+            __sync_synchronize();
+            VideoPortWriteRegisterUlong((PULONG)(bar0+0x680000),NvxDisplayPutBytes(coreN));
+            for(wait=0;wait<2000 && (notifier[0]>>30)!=2;wait++)
+                VideoPortStallExecution(100);
+            LogStr("NVX [DISPLAY-VERIFY]: ownership updateNotifier=");LogHex(notifier[0]);
+            LogStr(" Window2 owner=");
+            LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x689100))&0xf);LogStr("\n");
+            if((notifier[0]>>30)!=2) {
+                (void)NvxGspVerifyDisplays(dev);
+                return FALSE;
+            }
+            VideoPortZeroMemory((PVOID)notifier,16);
+        }
+    }
+
     /* Read current GET/PUT for Window 2 channel */
     winN = NvxDisplayGetWords(VideoPortReadRegisterUlong((PULONG)(bar0 + 0x692000)));
     if (winN >= 900) winN = 0;
@@ -1298,10 +1332,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     corePush[coreN++] = header;
     corePush[coreN++] = 0xFC000041;
 
-    /* Assign Window 2 to Head 1 */
-    NvxDisplayPushHeader(NVX_C67D_WINDOW_SET_CONTROL(2), 1, &header);
-    corePush[coreN++] = header;
-    corePush[coreN++] = 1; /* OWNER_HEAD1 */
+    /* Window2 ownership was committed separately, without window interlocks. */
 
     /* Connect SOR to Head 1: protocol (dev->MonitorProtocol[1] << 8) | owner Head 1 (0x2) */
     {
@@ -1311,6 +1342,9 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
         corePush[coreN++] = (proto << 8) | 2;
     }
 
+    /* Clear inherited cursor interlocks; interlock only with Window2. */
+    NvxDisplayPushHeader(NVX_C67D_SET_INTERLOCK_FLAGS,1,&header);
+    corePush[coreN++]=header;corePush[coreN++]=0;
     /* Interlock Core with Window 2 (bit 2) */
     NvxDisplayPushHeader(NVX_C67D_SET_WINDOW_INTERLOCK_FLAGS, 1, &header);
     corePush[coreN++] = header;
