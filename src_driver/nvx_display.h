@@ -260,6 +260,10 @@ static inline int NvxDisplayPushHeader(uint32_t method,uint32_t count,uint32_t *
     return 1;
 }
 
+/* MMIO pointer packing follows Nouveau NV507C PUT/GET PTR bits 11:2. */
+static inline uint32_t NvxDisplayPutBytes(uint32_t words) { return words<<2; }
+static inline uint32_t NvxDisplayGetWords(uint32_t raw) { return (raw>>2)&1023; }
+
 static inline int NvxDisplayRamhtEntry(uint32_t handle,uint32_t channel,
     uint32_t offset,uint32_t client,uint32_t *slot,uint32_t entry[2])
 {

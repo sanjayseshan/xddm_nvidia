@@ -1,3 +1,21 @@
+NVIDIA GA104 XDDM DRIVER — v1.0.0.154 DMA pointer packing and RM error events
+Updated: November 3, 2026
+
+v154 fixes MMIO display PUT/GET packing to byte offsets (Nouveau NV507C PTR),
+while buffer bookkeeping remains DWORDs. The core notifier now FINISHES with
+0x80000000 for the first time, confirming actual command execution. It also
+consumes bounded OS_ERROR_LOG messages instead of blocking the RPC queue; a
+mock-injected diagnostic tests continued processing of the expected reply.
+Hardware log: test_logs/v154-20261103-151312.log (user-launched retry; first
+151231 log is empty). Actual errors: Window user channel3 method0x228 data0x10
+is rejected, then Core UPDATE reports a state error. C67E lacks the pitch-layout
+bit; C57E supports it. Head1 remains inactive and SST override is rejected.
+USER: both v153 and v154 leave both screens off. This is a regression versus
+v151 primary working/secondary standby. XP/QEMU shut down by user.
+Next isolate native setup from VBE Window0 and remove the empty global UPDATE
+probe, and try the compatible C57E pitched window for secondary Window2 only.
+Do not describe GET advancement as successful scanout.
+
 NVIDIA GA104 XDDM DRIVER — v1.0.0.153 corrected EVO method headers
 Updated: November 3, 2026
 

@@ -74,9 +74,16 @@ static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
             decoded!=elements||sequence!=dev->RpcRxSequence) return FALSE;
         LogStr("NVX [RM]: reply function=");LogHex(function);
         LogStr(" result=");LogHex(result);LogStr("\n");
-        if(!result && (function==0x101b||function==0x100c||function==0x1004)) {
+        if(!result && (function==0x101b||function==0x100c||function==0x1004||function==0x1006)) {
             const ULONG *words=(const ULONG *)dev->RpcRxRecord;
-            if(function==0x101b) {
+            if(function==0x1006) {
+                char message[257];
+                if(words[14]<300) return FALSE;
+                VideoPortMoveMemory(message,(PVOID)(words+23),256);message[256]=0;
+                LogStr("NVX [RM ERROR]: type=");LogHex(words[20]);
+                LogStr(" runlist=");LogHex(words[21]);LogStr(" channel=");LogHex(words[22]);
+                LogStr(" message=");LogStr(message);LogStr("\n");
+            } else if(function==0x101b) {
                 if(words[14]<36) return FALSE;
                 dev->GspAssertCount=words[20];
                 LogStr("NVX [RM]: firmware assertion count=");LogHex(words[20]);LogStr("\n");
@@ -912,10 +919,10 @@ static BOOLEAN NvxNativeVerifyNotifier(PNVX_DEVICE_EXTENSION dev)
         push[n++]=header;push[n++]=0x00001014;
     }
     __sync_synchronize();
-    VideoPortWriteRegisterUlong((PULONG)(bar0+0x680000),n);
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x680000),NvxDisplayPutBytes(n));
     for(ULONG wait=0;wait<2000;wait++) {
         ULONG get=VideoPortReadRegisterUlong((PULONG)(bar0+0x680004));
-        if(get!=0xffffffff && (get&0x3ff)==n) break;
+        if(get!=0xffffffff && NvxDisplayGetWords(get)==n) break;
         if(wait==1999) {
             LogStr("NVX [NATIVE]: core window-bounds init stalled GET=");
             LogHex(get);LogStr("; update disabled.\n");return FALSE;
@@ -924,7 +931,7 @@ static BOOLEAN NvxNativeVerifyNotifier(PNVX_DEVICE_EXTENSION dev)
     }
     LogStr("NVX [NATIVE]: C67D core capability bounds consumed GET=");LogHex(n);LogStr("\n");
     /* Each header carries the byte method offset and count in bits 27:18.
-       Core PUT remains a DWORD index. This update changes no head state. */
+       MMIO PUT is the byte offset of the next DWORD. This update changes no head state. */
     push[n++]=(1U<<18)|0x208;push[n++]=handle;
     push[n++]=(1U<<18)|0x20c;push[n++]=0x1000; /* notifier enabled, offset zero */
     push[n++]=(2U<<18)|0x218;push[n++]=0;push[n++]=0;
@@ -932,11 +939,11 @@ static BOOLEAN NvxNativeVerifyNotifier(PNVX_DEVICE_EXTENSION dev)
     push[n++]=NVX_C67D_UPDATE_INHIBIT_INTERRUPTS;
     NvxNativeLogDisplayStatus(dev,"before-update");
     __sync_synchronize();
-    VideoPortWriteRegisterUlong((PULONG)(bar0+0x680000),n);
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x680000),NvxDisplayPutBytes(n));
     for(ULONG wait=0;wait<10000;wait++) {
         ULONG get=VideoPortReadRegisterUlong((PULONG)(bar0+0x680004));
         __sync_synchronize();
-        if(get!=0xffffffff && (get&0x3ff)==n && (notify[0]>>30)==2) {
+        if(get!=0xffffffff && NvxDisplayGetWords(get)==n && (notify[0]>>30)==2) {
             dev->NativeDisplayCorePut=n;
             dev->NativeDisplayNotifierReady=TRUE;
             LogStr("NVX [NATIVE]: core UPDATE completed, GET=");LogHex(get);
@@ -1022,12 +1029,12 @@ BOOLEAN NvxGspInitDisplayChannels(PVOID extension)
         args.instance=instances[channel];
         if(!NvxGspAlloc(dev,dev->NativeDisplayHandle,handle,classes[channel],&args,sizeof(args))) goto failed;
         dev->NativeDisplayChannels[channel]=handle;
-        /* PUT/GET are DWORD indices, not byte offsets. Four zero NOP words. */
+        /* MMIO PUT/GET pack the DWORD pointer into bits 11:2. */
         __sync_synchronize();
-        VideoPortWriteRegisterUlong((PULONG)(bar0+offsets[channel]),4);
+        VideoPortWriteRegisterUlong((PULONG)(bar0+offsets[channel]),NvxDisplayPutBytes(4));
         for(ULONG wait=0;wait<2000;wait++) {
             ULONG get=VideoPortReadRegisterUlong((PULONG)(bar0+offsets[channel]+4));
-            if(get!=0xffffffff && (get&0x3ff)==4) {
+            if(get!=0xffffffff && NvxDisplayGetWords(get)==4) {
                 LogStr("NVX [NATIVE]: DMA NOP consumed class=");LogHex(classes[channel]);
                 LogStr(" instance=");LogHex(instances[channel]);LogStr(" GET=");LogHex(get);LogStr("\n");
                 break;
@@ -1225,7 +1232,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     winPush = (PULONG)((PUCHAR)dev->GspDmaVirtual + GSP_DISPLAY_PUSH_OFFSET + 0x2000);
 
     /* Read current GET/PUT for Window 2 channel */
-    winN = VideoPortReadRegisterUlong((PULONG)(bar0 + 0x692000)) & 0x3ff;
+    winN = NvxDisplayGetWords(VideoPortReadRegisterUlong((PULONG)(bar0 + 0x692000)));
     if (winN >= 900) winN = 0;
 
     /* 1. Program Window 2 DMA pushbuffer (C67E) */
@@ -1270,7 +1277,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     winPush[winN++] = 1; /* RELEASE_ELV_TRUE */
 
     /* Read current GET/PUT for Core channel */
-    coreN = VideoPortReadRegisterUlong((PULONG)(bar0 + 0x680000)) & 0x3ff;
+    coreN = NvxDisplayGetWords(VideoPortReadRegisterUlong((PULONG)(bar0 + 0x680000)));
     if (coreN >= 900) coreN = 0;
 
     /* 2. Program Core channel (C67D) for Head 1 and SOR */
@@ -1360,13 +1367,13 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     __sync_synchronize();
 
     /* Kick off Window 2 DMA first, then Core DMA */
-    VideoPortWriteRegisterUlong((PULONG)(bar0 + 0x692000), winN);
-    VideoPortWriteRegisterUlong((PULONG)(bar0 + 0x680000), coreN);
+    VideoPortWriteRegisterUlong((PULONG)(bar0 + 0x692000), NvxDisplayPutBytes(winN));
+    VideoPortWriteRegisterUlong((PULONG)(bar0 + 0x680000), NvxDisplayPutBytes(coreN));
 
     /* Wait for execution */
     for (wait = 0; wait < 2000; wait++) {
-        ULONG coreGet = VideoPortReadRegisterUlong((PULONG)(bar0 + 0x680004)) & 0x3ff;
-        ULONG winGet = VideoPortReadRegisterUlong((PULONG)(bar0 + 0x692004)) & 0x3ff;
+        ULONG coreGet = NvxDisplayGetWords(VideoPortReadRegisterUlong((PULONG)(bar0 + 0x680004)));
+        ULONG winGet = NvxDisplayGetWords(VideoPortReadRegisterUlong((PULONG)(bar0 + 0x692004)));
         if (coreGet == coreN && winGet == winN) {
             LogStr("NVX [NATIVE]: secondary scanout methods consumed by hardware! coreGET=");
             LogHex(coreGet); LogStr(" winGET="); LogHex(winGet); LogStr("\n");

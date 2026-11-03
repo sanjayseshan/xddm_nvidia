@@ -176,6 +176,13 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             packet[16]=0;packet[8]^=0xffffffffU;
             write++;packet=(PULONG)((PUCHAR)q+4096+write*4096);
         }
+        if(f==76 && request[22]==NVX_CTRL_CMD_DP_GET_CAPS && scenario==12) {
+            ULONG error[67]={0x1a,0,3};
+            memcpy((PUCHAR)error+12,"mock display diagnostic",24);
+            assert(NvxEncodeRpc((PUCHAR)packet,4096,0x1006,write-1,error,sizeof(error)));
+            packet[16]=0;packet[8]^=0xffffffffU;
+            write++;packet=(PULONG)((PUCHAR)q+4096+write*4096);
+        }
         replyBytes=f==76?24+request[24]:(f==14?56:32);
         assert(replyBytes<=sizeof(alloc));
         memcpy(alloc,request+20,f==76?replyBytes:(f==14?56:16));
@@ -309,6 +316,8 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         q->WritePtr=write+1;q->ReadPtr=cmd->WritePtr;
     }
     if(off==0x680000 || off==0x690000 || off==0x692000) {
+        ULONG rawValue=value;
+        assert(!(value&3));value>>=2;
         ULONG channel=off==0x680000?0:(off==0x690000?1:2);
         PULONG buffer=(PULONG)((PUCHAR)dev.GspDmaVirtual+GSP_DISPLAY_PUSH_OFFSET+channel*0x1000);
         if(off==0x680000 && value!=4) {
@@ -323,7 +332,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
                     assert(NvxDisplayPushHeader(0x1010+window*0x80,1,&header));
                     assert(buffer[index++]==header && buffer[index++]==0x00107fff);
                 }
-                assert(index==44);regs[off/4+1]=value;return;
+                assert(index==44);regs[off/4+1]=rawValue;return;
             }
             if(value==52) {
                 ULONG index=44,header;
@@ -331,7 +340,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
                     assert(NvxDisplayPushHeader(0x2030+head*0x400,1,&header));
                     assert(buffer[index++]==header && buffer[index++]==0x1014);
                 }
-                assert(index==52);regs[off/4+1]=value;return;
+                assert(index==52);regs[off/4+1]=rawValue;return;
             }
             assert(value==61 && buffer[52]==0x40208 && buffer[53]==0xd1500001);
             assert(buffer[54]==0x4020c && buffer[55]==0x1000);
@@ -341,13 +350,13 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(entry[0]==0xd1500001 && entry[1]==0x400001);
             assert(descriptor[0]==0x46 && descriptor[1]==physical>>8);
             assert(!descriptor[2] && descriptor[3]==(physical+0xfff)>>8 && !descriptor[4]);
-            regs[off/4+1]=value;
+            regs[off/4+1]=rawValue;
             if(scenario!=12) *(PULONG)((PUCHAR)dev.GspDmaVirtual+GSP_DISPLAY_PUSH_OFFSET+0x3000)=0x80000000;
             return;
         }
         assert(value==4);
         for(ULONG i=0;i<4;i++) assert(buffer[i]==0);
-        if(scenario!=7) regs[off/4+1]=4; /* stall only the display channel */
+        if(scenario!=7) regs[off/4+1]=16; /* stall only the display channel */
     }
     if(off==0x220490 && dev.GspGPPut>1) {
         PUCHAR scratch=(PUCHAR)dev.GspDmaVirtual+GSP_SCRATCH_OFFSET;
@@ -519,7 +528,7 @@ int main(void)
         if (dev.GspInitialized) {
             assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==
                    (ULONG)((scenario==4?30:28)+(dev.GspCopyVerified?15:0)+dev.MonitorCount+
-                           (scenario==12?4:0)));
+                           (scenario==12?5:0)));
             if(dev.GspCopyVerified) {
                 assert(dev.GspDisplayHandle==0x73000001);
                 assert(dev.NativeDisplayHandle==0xc6700001 && dev.NativeDisplayCaps==3);

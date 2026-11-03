@@ -4,6 +4,7 @@
 #include <string.h>
 int main(void)
 {
+    assert(NvxDisplayPutBytes(61)==244 && NvxDisplayGetWords(244)==61);
     assert(sizeof(NVX_DFP_ASSIGN_SOR_PARAMS)==80);
     assert(offsetof(NVX_DFP_ASSIGN_SOR_PARAMS,sorExcludeMask)==8);
     assert(offsetof(NVX_DFP_ASSIGN_SOR_PARAMS,slaveDisplayId)==12);
