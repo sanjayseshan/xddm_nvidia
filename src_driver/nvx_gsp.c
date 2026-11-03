@@ -83,6 +83,7 @@ static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
                 LogStr("NVX [RM ERROR]: type=");LogHex(words[20]);
                 LogStr(" runlist=");LogHex(words[21]);LogStr(" channel=");LogHex(words[22]);
                 LogStr(" message=");LogStr(message);LogStr("\n");
+                if(words[20]==0x38) dev->NativeDisplayFaulted=TRUE;
             } else if(function==0x101b) {
                 if(words[14]<36) return FALSE;
                 dev->GspAssertCount=words[20];
@@ -840,22 +841,6 @@ static BOOLEAN NvxNativeFreeObject(PNVX_DEVICE_EXTENSION dev,ULONG parent,ULONG 
         reply[20]==release[0] && reply[21]==parent && reply[22]==handle && !reply[23];
 }
 
-static VOID NvxNativeLogDisplayStatus(PNVX_DEVICE_EXTENSION dev,const char *phase)
-{
-    PUCHAR bar0=dev->Bar0MmioVirtual;
-    static const ULONG offsets[]={0x610010,0x610014,0x610020,0x610024,0x610030,
-                                  0x610078,0x610080,0x610084,0x611cf0,0x611db0};
-    static const char *names[]={"inst-ctrl","inst-base","intr0","intr1","super",
-                                "awake","core-exc","core-data","ctrl-mask","ctrl-enable"};
-    if(!bar0 || dev->Bar0Length<0x611db4) return;
-    LogStr("NVX [NATIVE]: display status ");LogStr(phase);LogStr(":");
-    for(ULONG i=0;i<sizeof(offsets)/sizeof(offsets[0]);i++) {
-        LogStr(" ");LogStr(names[i]);LogStr("=");
-        LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+offsets[i])));
-    }
-    LogStr("\n");
-}
-
 /* Nouveau's GV100+ display init wakes the engine through 0x610078 bit 0
    before publishing instance memory. Leave interrupt masks/enable untouched. */
 static BOOLEAN NvxNativeWakeDisplayEngine(PNVX_DEVICE_EXTENSION dev)
@@ -875,88 +860,6 @@ static BOOLEAN NvxNativeWakeDisplayEngine(PNVX_DEVICE_EXTENSION dev)
     after=VideoPortReadRegisterUlong(awake);
     LogStr(" after=");LogHex(after);LogStr("\n");
     return (after&1)!=0;
-}
-
-/* Establish hardware completion before attempting any native head update. */
-static BOOLEAN NvxNativeVerifyNotifier(PNVX_DEVICE_EXTENSION dev)
-{
-    const ULONG handle=0xd1500001,descriptorOffset=0x2000;
-    ULONG descriptor[6]={0},n=4;
-    uint32_t header;
-    uint32_t entry[2],slot;
-    ULONG64 physical=dev->GspDmaPhysical.QuadPart+GSP_DISPLAY_PUSH_OFFSET+0x3000;
-    ULONG64 first=physical>>8,last=(physical+0xfff)>>8;
-    ULONG64 instanceVa=dev->GspVramGpuVa+dev->NativeDisplayInstance;
-    PULONG push=(PULONG)((PUCHAR)dev->GspDmaVirtual+GSP_DISPLAY_PUSH_OFFSET);
-    volatile ULONG *notify=(volatile ULONG *)((PUCHAR)dev->GspDmaVirtual+GSP_DISPLAY_PUSH_OFFSET+0x3000);
-    PUCHAR bar0=dev->Bar0MmioVirtual;
-    if(dev->GspDmaLength<GSP_DISPLAY_PUSH_OFFSET+0x4000) return FALSE;
-    VideoPortZeroMemory((PVOID)notify,0x1000);
-    /* Volta+ display DMA descriptor: coherent PCI, RW, 4KB pages.
-       Start/limit use 256-byte units; descriptor resides after 8KB RAMHT. */
-    descriptor[0]=0x46;
-    descriptor[1]=(ULONG)first;descriptor[2]=(ULONG)(first>>32);
-    descriptor[3]=(ULONG)last;descriptor[4]=(ULONG)(last>>32);
-    if(!NvxGspUpload(dev,instanceVa+descriptorOffset,descriptor,sizeof(descriptor))) return FALSE;
-    if(!NvxDisplayRamhtEntry(handle,0,descriptorOffset,dev->GspClientHandle,&slot,entry)) return FALSE;
-    if(!NvxGspUpload(dev,instanceVa+slot*8,entry,sizeof(entry))) return FALSE;
-    /* Nouveau's C37D core init publishes format/usage bounds for each of the
-       eight windows before any core UPDATE. Keep this to capability bounds;
-       no window/head ownership or scanout state is assigned. */
-    for(ULONG window=0;window<8;window++) {
-        ULONG formatMethod=0x1004+window*0x80;
-        ULONG usageMethod=0x1010+window*0x80;
-        if(!NvxDisplayPushHeader(formatMethod,2,&header)) return FALSE;
-        push[n++]=header;push[n++]=0x0f;push[n++]=0;
-        if(!NvxDisplayPushHeader(usageMethod,1,&header)) return FALSE;
-        push[n++]=header;push[n++]=0x00107fff;
-    }
-    /* Mirror Nouveau's C67D head capability bounds (256x256 cursor, output
-       LUT and 2-tap scaler). These are limits, not active head state. */
-    for(ULONG head=0;head<4;head++) {
-        ULONG usageMethod=0x2030+head*0x400;
-        if(!NvxDisplayPushHeader(usageMethod,1,&header)) return FALSE;
-        push[n++]=header;push[n++]=0x00001014;
-    }
-    __sync_synchronize();
-    VideoPortWriteRegisterUlong((PULONG)(bar0+0x680000),NvxDisplayPutBytes(n));
-    for(ULONG wait=0;wait<2000;wait++) {
-        ULONG get=VideoPortReadRegisterUlong((PULONG)(bar0+0x680004));
-        if(get!=0xffffffff && NvxDisplayGetWords(get)==n) break;
-        if(wait==1999) {
-            LogStr("NVX [NATIVE]: core window-bounds init stalled GET=");
-            LogHex(get);LogStr("; update disabled.\n");return FALSE;
-        }
-        VideoPortStallExecution(100);
-    }
-    LogStr("NVX [NATIVE]: C67D core capability bounds consumed GET=");LogHex(n);LogStr("\n");
-    /* Each header carries the byte method offset and count in bits 27:18.
-       MMIO PUT is the byte offset of the next DWORD. This update changes no head state. */
-    push[n++]=(1U<<18)|0x208;push[n++]=handle;
-    push[n++]=(1U<<18)|0x20c;push[n++]=0x1000; /* notifier enabled, offset zero */
-    push[n++]=(2U<<18)|0x218;push[n++]=0;push[n++]=0;
-    push[n++]=(1U<<18)|0x200;
-    push[n++]=NVX_C67D_UPDATE_INHIBIT_INTERRUPTS;
-    NvxNativeLogDisplayStatus(dev,"before-update");
-    __sync_synchronize();
-    VideoPortWriteRegisterUlong((PULONG)(bar0+0x680000),NvxDisplayPutBytes(n));
-    for(ULONG wait=0;wait<10000;wait++) {
-        ULONG get=VideoPortReadRegisterUlong((PULONG)(bar0+0x680004));
-        __sync_synchronize();
-        if(get!=0xffffffff && NvxDisplayGetWords(get)==n && (notify[0]>>30)==2) {
-            dev->NativeDisplayCorePut=n;
-            dev->NativeDisplayNotifierReady=TRUE;
-            LogStr("NVX [NATIVE]: core UPDATE completed, GET=");LogHex(get);
-            LogStr(" notifier=");LogHex(notify[0]);LogStr("; head timings unchanged.\n");return TRUE;
-        }
-        VideoPortStallExecution(100);
-    }
-    LogStr("NVX [NATIVE]: core UPDATE completion unconfirmed GET=");
-    LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x680004)));
-    LogStr(" notifier=");LogHex(notify[0]);LogStr("\n");
-    NvxNativeLogDisplayStatus(dev,"after-timeout");
-    LogStr("NVX [NATIVE]: native modeset disabled.\n");
-    return FALSE;
 }
 
 static VOID NvxNativeReadOutputInfo(PNVX_DEVICE_EXTENSION dev)
@@ -980,7 +883,7 @@ BOOLEAN NvxGspInitDisplayChannels(PVOID extension)
 {
     PNVX_DEVICE_EXTENSION dev=extension;
     const ULONG offsets[3]={0x680000,0x690000,0x692000};
-    const ULONG classes[3]={0xc67d,0xc67e,0xc67e};
+    const ULONG classes[3]={0xc67d,0,0xc57e};
     const ULONG instances[3]={0,0,2};
     NVX_DISPLAY_INSTANCE_535 instance={0};
     PUCHAR bar0,scratch;
@@ -1015,6 +918,7 @@ BOOLEAN NvxGspInitDisplayChannels(PVOID extension)
     }
     LogStr("NVX [NATIVE]: verified 64KB display instance VRAM=");LogHex(base);LogStr("\n");
     for(ULONG channel=0;channel<3;channel++) {
+        if(channel==1) continue; /* Preserve the VBE primary Window 0. */
         NVX_DISPLAY_PUSH_535 push={0};
         NVX_DISPLAY_CHANNEL_535 args={0};
         ULONG handle=0xc6700100+channel;
@@ -1048,8 +952,8 @@ BOOLEAN NvxGspInitDisplayChannels(PVOID extension)
     }
     dev->NativeDisplayChannelsReady=TRUE;
     (void)NvxNativeWakeDisplayEngine(dev);
-    (void)NvxNativeVerifyNotifier(dev);
-    LogStr("NVX [NATIVE]: core and windows 0/2 DMA verified; head timings unchanged.\n");
+
+    LogStr("NVX [NATIVE]: core and secondary Window2 DMA verified; primary Window0 untouched.\n");
     return TRUE;
 failed:
     /* Avoid leaked live channels on partial allocation. Keep backing pinned
@@ -1123,6 +1027,35 @@ VOID NvxGspWakeSecondaryDpSink(PVOID HwDeviceExtension)
     }
 }
 
+/* Check actual RM routing and sink link lock, not just pushbuffer fetch. */
+static BOOLEAN NvxGspVerifyDisplays(PNVX_DEVICE_EXTENSION dev)
+{
+    BOOLEAN secondaryActive=FALSE;
+    for(ULONG head=0;head<2;head++) {
+        ULONG active[4]={0,head,0,0};
+        ULONG id=0;
+        if(!NvxGspControl(dev,dev->GspDisplayHandle,0x730126,active,sizeof(active))) return FALSE;
+        id=((const ULONG *)dev->RpcRxRecord)[29];
+        LogStr("NVX [DISPLAY-VERIFY]: head=");LogHex(head);
+        LogStr(" activeDisplay=");LogHex(id);LogStr("\n");
+        if(head==1 && id==dev->SecondaryDpDisplayId) secondaryActive=TRUE;
+        if(id) {
+            NVX_DP_AUX_CTRL_PARAMS aux={0};
+            aux.displayId=id;aux.cmd=9;aux.addr=0x202;aux.size=2;
+            if(NvxGspControl(dev,dev->GspDisplayHandle,NVX_CTRL_CMD_DP_AUXCH_CTRL,&aux,sizeof(aux))) {
+                const NVX_DP_AUX_CTRL_PARAMS *r=(const void *)((const ULONG *)dev->RpcRxRecord+26);
+                BOOLEAN locked=r->replyType==0 && r->size==3 &&
+                    (r->data[0]&0x77)==0x77 && (r->data[1]&0x77)==0x77 && (r->data[2]&1);
+                LogStr("NVX [DISPLAY-VERIFY]: display=");LogHex(id);
+                LogStr(" fourLaneLock=");LogHex(locked);
+                LogStr(" status=");LogHex(r->data[0]|(r->data[1]<<8)|(r->data[2]<<16));LogStr("\n");
+                if(head==1 && !locked) secondaryActive=FALSE;
+            } else if(head==1) secondaryActive=FALSE;
+        }
+    }
+    return secondaryActive && !dev->NativeDisplayFaulted;
+}
+
 BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
 {
     PNVX_DEVICE_EXTENSION dev = (PNVX_DEVICE_EXTENSION)extension;
@@ -1140,7 +1073,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
 
     if (!dev) return FALSE;
     bar0 = dev->Bar0MmioVirtual;
-    if (!bar0 || !dev->NativeDisplayChannelsReady) {
+    if (!bar0 || !dev->NativeDisplayChannelsReady || dev->NativeDisplayFaulted) {
         LogStr("NVX [NATIVE]: secondary scanout skipped: display channels not ready\n");
         return FALSE;
     }
@@ -1219,6 +1152,16 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
            !NvxGspUpload(dev,instanceVa+0x2020,desc,sizeof(desc)) ||
            !NvxGspUpload(dev,instanceVa+slot*8,entry,sizeof(entry))) return FALSE;
         LogStr("NVX [NATIVE]: Window 2 image DMA context bound, handle=0xd1500002\n");
+        {
+            ULONG notifyDesc[6]={0x46,0,0,0,0,0};
+            ULONG64 physical=dev->GspDmaPhysical.QuadPart+GSP_DISPLAY_PUSH_OFFSET+0x3000;
+            notifyDesc[1]=(ULONG)(physical>>8);notifyDesc[2]=(ULONG)(physical>>40);
+            notifyDesc[3]=(ULONG)((physical+0xfff)>>8);notifyDesc[4]=(ULONG)((physical+0xfff)>>40);
+            VideoPortZeroMemory((PUCHAR)dev->GspDmaVirtual+GSP_DISPLAY_PUSH_OFFSET+0x3000,0x1000);
+            if(!NvxDisplayRamhtEntry(0xd1500001,0,0x2000,dev->GspClientHandle,&slot,entry) ||
+               !NvxGspUpload(dev,instanceVa+0x2000,notifyDesc,sizeof(notifyDesc)) ||
+               !NvxGspUpload(dev,instanceVa+slot*8,entry,sizeof(entry))) return FALSE;
+        }
     }
 
     LogStr("NVX [NATIVE]: programming secondary scanout Head 1 on SOR=");
@@ -1281,6 +1224,12 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     if (coreN >= 900) coreN = 0;
 
     /* 2. Program Core channel (C67D) for Head 1 and SOR */
+    /* Publish bounds only for the new secondary window. */
+    NvxDisplayPushHeader(0x1104,2,&header);
+    corePush[coreN++]=header;corePush[coreN++]=0x0f;corePush[coreN++]=0;
+    NvxDisplayPushHeader(0x1110,1,&header);
+    corePush[coreN++]=header;corePush[coreN++]=0x00107fff;
+
     NvxDisplayPushHeader(NVX_C67D_HEAD_SET_OVERSCAN_COLOR(1), 1, &header);
     corePush[coreN++] = header;
     corePush[coreN++] = 0;
@@ -1359,6 +1308,8 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     corePush[coreN++] = header;
     corePush[coreN++] = (1U << 2);
 
+    NvxDisplayPushHeader(0x208,2,&header);
+    corePush[coreN++]=header;corePush[coreN++]=0xd1500001;corePush[coreN++]=0x1000;
     /* Core UPDATE */
     NvxDisplayPushHeader(NVX_C67D_UPDATE, 1, &header);
     corePush[coreN++] = header;
@@ -1377,24 +1328,24 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
         if (coreGet == coreN && winGet == winN) {
             LogStr("NVX [NATIVE]: secondary scanout methods consumed by hardware! coreGET=");
             LogHex(coreGet); LogStr(" winGET="); LogHex(winGet); LogStr("\n");
-            {
-                ULONG active[4]={0,1,0,0};
-                VideoPortStallExecution(50000);
-                if(NvxGspControl(dev,dev->GspDisplayHandle,0x730126,active,sizeof(active))) {
-                    const ULONG *reply=(const ULONG *)dev->RpcRxRecord;
-                    LogStr("NVX [NATIVE]: RM active display on Head1=");LogHex(reply[29]);LogStr("\n");
-                }
-            }
+            VideoPortStallExecution(50000);
             if(NvxGspControl(dev,dev->GspDisplayHandle,NVX_CTRL_CMD_DP_CONFIG_STREAM,
                              &stream,sizeof(stream)))
                 LogStr("NVX [DP]: post-update SST configuration accepted.\n");
             else
                 LogStr("NVX [DP]: post-update SST configuration rejected.\n");
-            return TRUE;
+            {
+                volatile ULONG *notifier=(volatile ULONG *)((PUCHAR)dev->GspDmaVirtual+GSP_DISPLAY_PUSH_OFFSET+0x3000);
+                BOOLEAN active=NvxGspVerifyDisplays(dev);
+                LogStr("NVX [DISPLAY-VERIFY]: updateNotifier=");LogHex(notifier[0]);
+                LogStr(" secondaryActiveAndLocked=");LogHex(active);LogStr("\n");
+                return active && (notifier[0]>>30)==2;
+            }
         }
         VideoPortStallExecution(100);
     }
 
+    (void)NvxGspVerifyDisplays(dev);
     LogStr("NVX [NATIVE]: secondary scanout wait timed out coreGET=");
     LogHex(VideoPortReadRegisterUlong((PULONG)(bar0 + 0x680004)));
     LogStr(" winGET=");

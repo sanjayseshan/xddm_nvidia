@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.154
+ * Driver Version: 1.0.0.155
  */
 
 #include "miniport.h"
@@ -1102,7 +1102,10 @@ BOOLEAN HwVidStartIO(
             LogHex(requested);
             LogStr("\n");
             if (prim) {
-                (void)NvxNativeSetSecondaryScanout(prim);
+                if(!NvxNativeSetSecondaryScanout(prim)) {
+                        LogStr("NVX [DISPLAY-VERIFY]: secondary activation failed; restoring primary VBE mode.\n");
+                        (void)NvxVbeSetMode(prim,prim->CurrentModeIndex);
+                    }
             }
             break;
         }
@@ -1180,7 +1183,10 @@ BOOLEAN HwVidStartIO(
             } else {
                 PNVX_DEVICE_EXTENSION prim = (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension;
                 if (prim) {
-                    (void)NvxNativeSetSecondaryScanout(prim);
+                    if(!NvxNativeSetSecondaryScanout(prim)) {
+                        LogStr("NVX [DISPLAY-VERIFY]: secondary activation failed; restoring primary VBE mode.\n");
+                        (void)NvxVbeSetMode(prim,prim->CurrentModeIndex);
+                    }
                 }
             }
             statusBlock->Information = sizeof(VIDEO_MEMORY_INFORMATION);
@@ -1472,7 +1478,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.154 (DualView Child State, Dynamic Scanout Stride & Head Control)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.155 (DualView Child State, Dynamic Scanout Stride & Head Control)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

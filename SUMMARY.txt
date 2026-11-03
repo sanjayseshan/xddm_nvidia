@@ -1,3 +1,16 @@
+NVIDIA GA104 XDDM DRIVER — v1.0.0.155 isolate secondary and verify activation
+Updated: November 3, 2026
+
+v155 stops allocating VBE's Window0 and removes the empty global UPDATE probe.
+It adds actual display verification (UPDATE notifier, active head and sink lane
+lock), stops repeated native attempts after Xid56, and restores primary VBE mode
+when activation fails. Host sanitizer tests/build pass. Hardware log:
+test_logs/v155-20261103-151706.log. C57E window allocation rejected (result0x22),
+so no secondary head update was issued. Primary was in degraded VBE 800x600;
+secondary remains unactivated. RPC teardown encountered unhandled event0x100f.
+Next retain C67E and omit the removed SET_STORAGE pitch bit, as Nouveau's
+wndwc67e_image_set does. Its pitched framebuffer uses DMA-context kind0.
+
 NVIDIA GA104 XDDM DRIVER — v1.0.0.154 DMA pointer packing and RM error events
 Updated: November 3, 2026
 

@@ -294,9 +294,9 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(request[28]==(ULONG)(dev.GspDmaPhysical.QuadPart+GSP_DISPLAY_PUSH_OFFSET+
                 (request[33]==0xc67d?0:(request[34]==0?1:2))*0x1000));
             assert(request[30]==0xfff && request[35]==1);
-            assert(request[33]==0xc67d || request[33]==0xc67e);
+            assert(request[33]==0xc67d || request[33]==0xc57e);
         }
-        if(f==103 && (request[23]==0xc67d || request[23]==0xc67e)) {
+        if(f==103 && (request[23]==0xc67d || request[23]==0xc57e)) {
             assert(request[21]==dev.NativeDisplayHandle && request[25]==32);
             assert(request[28]==(request[22]==0xc6700102?2:0));
             for(ULONG i=29;i<36;i++) assert(request[i]==0);
@@ -316,44 +316,9 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         q->WritePtr=write+1;q->ReadPtr=cmd->WritePtr;
     }
     if(off==0x680000 || off==0x690000 || off==0x692000) {
-        ULONG rawValue=value;
         assert(!(value&3));value>>=2;
         ULONG channel=off==0x680000?0:(off==0x690000?1:2);
         PULONG buffer=(PULONG)((PUCHAR)dev.GspDmaVirtual+GSP_DISPLAY_PUSH_OFFSET+channel*0x1000);
-        if(off==0x680000 && value!=4) {
-            PULONG descriptor=(PULONG)(gpuVram+0x1ff2000);
-            PULONG entry=(PULONG)(gpuVram+0x1ff0000+0x117*8);
-            ULONG64 physical=dev.GspDmaPhysical.QuadPart+GSP_DISPLAY_PUSH_OFFSET+0x3000;
-            if(value==44) {
-                ULONG index=4,header;
-                for(ULONG window=0;window<8;window++) {
-                    assert(NvxDisplayPushHeader(0x1004+window*0x80,2,&header));
-                    assert(buffer[index++]==header && buffer[index++]==0x0f && !buffer[index++]);
-                    assert(NvxDisplayPushHeader(0x1010+window*0x80,1,&header));
-                    assert(buffer[index++]==header && buffer[index++]==0x00107fff);
-                }
-                assert(index==44);regs[off/4+1]=rawValue;return;
-            }
-            if(value==52) {
-                ULONG index=44,header;
-                for(ULONG head=0;head<4;head++) {
-                    assert(NvxDisplayPushHeader(0x2030+head*0x400,1,&header));
-                    assert(buffer[index++]==header && buffer[index++]==0x1014);
-                }
-                assert(index==52);regs[off/4+1]=rawValue;return;
-            }
-            assert(value==61 && buffer[52]==0x40208 && buffer[53]==0xd1500001);
-            assert(buffer[54]==0x4020c && buffer[55]==0x1000);
-            assert(buffer[56]==0x80218 && !buffer[57] && !buffer[58]);
-            assert(buffer[59]==0x40200 &&
-                   buffer[60]==NVX_C67D_UPDATE_INHIBIT_INTERRUPTS);
-            assert(entry[0]==0xd1500001 && entry[1]==0x400001);
-            assert(descriptor[0]==0x46 && descriptor[1]==physical>>8);
-            assert(!descriptor[2] && descriptor[3]==(physical+0xfff)>>8 && !descriptor[4]);
-            regs[off/4+1]=rawValue;
-            if(scenario!=12) *(PULONG)((PUCHAR)dev.GspDmaVirtual+GSP_DISPLAY_PUSH_OFFSET+0x3000)=0x80000000;
-            return;
-        }
         assert(value==4);
         for(ULONG i=0;i<4;i++) assert(buffer[i]==0);
         if(scenario!=7) regs[off/4+1]=16; /* stall only the display channel */
@@ -549,11 +514,11 @@ int main(void)
                 assert(NvxGspInitDisplayChannels(&dev)==(scenario==0 || scenario==12));
                 assert(dev.NativeDisplayChannelsReady==(scenario==0 || scenario==12));
                 assert(dev.NativeDisplayInstance==0x1ff0000);
-                assert(dev.NativeDisplayNotifierReady==(scenario==0));
+                assert(!dev.NativeDisplayNotifierReady);
                 if(scenario==0 || scenario==12) {
                     assert(dev.MonitorSor[0]==1 && dev.MonitorProtocol[0]==0);
                     assert(dev.NativeDisplayChannels[0]==0xc6700100);
-                    assert(dev.NativeDisplayChannels[1]==0xc6700101);
+                    assert(!dev.NativeDisplayChannels[1]);
                     assert(dev.NativeDisplayChannels[2]==0xc6700102);
                 } else for(ULONG i=0;i<3;i++) assert(!dev.NativeDisplayChannels[i]);
                 if(scenario==12) {
