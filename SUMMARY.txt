@@ -1,5 +1,5 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.118 software scanout isolation
-Updated: November 2, 2026
+NVIDIA GA104 XDDM DRIVER — v1.0.0.120 framebuffer readback diagnostic
+Updated: November 3, 2026
 
 Current checkpoint
 ------------------
@@ -43,12 +43,27 @@ glyphs. The user confirms boxes/corruption remain. v118 keeps GDI hooks but disa
 fill/copy/upload drawing, isolating direct CPU writes to the VBE framebuffer.
 The user reports v118 produced a black screen/no signal in two boots, at
 800x600 and 1920x1080. The serial logs reached scanout mapping, but no CE
-drawing ran and BAR1 offset zero remained unmapped. v119 restores the stock
-0x500 GDI graphics capability flags and the GPU drawing path. See
-STATUS_FLOW_v118.txt and STATUS_FLOW_v119.txt.
+drawing ran and BAR1 offset zero remained unmapped. v119 restored the stock
+0x500 GDI graphics capability flags and GPU drawing path. The user reports
+v119 still displays boxes/corruption. Its log
+`test_logs/v119-20261103-095155.log` records 1920x1080x32, successful GSP copy
+smoke test, and changing text-upload payloads, while BAR1 offset zero remains
+unmapped. Successful upload submission does not prove those bytes reach the
+displayed framebuffer. v120 compares the first three successful text uploads
+against the same offsets through the CPU framebuffer mapping. The comparison
+is read-only and bounded by the current mode's framebuffer extent. v120
+booted but selected only 800x600x32 (four VBE modes enumerated). All three
+264-byte text-upload readbacks mismatched almost entirely: 225, 225, and 224
+bytes. BAR1 translation at offset zero is still unavailable. This confirms the
+GPU copy destination does not match bytes visible at the same offset in the
+CPU BAR1 mapping; the precise cause (BAR1 aperture mapping versus GPU VA to
+VRAM layout) remains to be isolated. Hardware log:
+`test_logs/v120-20261103-100211.log`. Full GSP/RM display initialization is
+still incomplete, and no usable accelerated desktop is confirmed.
 
 The desktop is not yet confirmed working. A successful GSP copy probe alone is
 not desktop acceleration; confirm visible icons, text, and window contents.
+See TESTING.md for the cumulative build and hardware results.
 
 Historical v106 checkpoint
 --------------------------

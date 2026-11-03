@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.119
+ * Driver Version: 1.0.0.120
  */
 
 #include "miniport.h"
@@ -991,6 +991,7 @@ BOOLEAN HwVidStartIO(
     case IOCTL_NVX_ACCEL_UPLOAD: {
         PNVX_ACCEL_UPLOAD_PARAMS params=(PNVX_ACCEL_UPLOAD_PARAMS)RequestPacket->InputBuffer;
         static ULONG s_uploadKinds[4]={0,0,0,0};
+        static ULONG s_fbCompareCount=0;
         ULONG headerBytes=FIELD_OFFSET(NVX_ACCEL_UPLOAD_PARAMS,Data);
         ULONG required;
         ULONG nonzeroPixels=0, pixelTransitions=0, payloadHash=2166136261UL;
@@ -1026,6 +1027,29 @@ BOOLEAN HwVidStartIO(
             status=NO_ERROR;
             statusBlock->Information=required;
             s_uploadKinds[params->Reserved]++;
+            /* Compare early text uploads through the CPU framebuffer mapping.
+             * The copy engine fence in NvxGspUpload has completed at this point.
+             */
+            if(params->Reserved==NVX_UPLOAD_KIND_TEXTOUT && s_fbCompareCount<3 &&
+               devExt->FramebufferVirtual && devExt->CurrentModeIndex<devExt->NumModes &&
+               params->DstGpuVa>=devExt->GspVramGpuVa) {
+                ULONG64 fbOffset=params->DstGpuVa-devExt->GspVramGpuVa;
+                VIDEO_MODE_INFORMATION *mode=&devExt->Modes[devExt->CurrentModeIndex];
+                ULONG64 fbBytes=(ULONG64)mode->ScreenStride*mode->VisScreenHeight;
+                if(fbOffset<=fbBytes && params->Bytes<=fbBytes-fbOffset) {
+                    volatile UCHAR *fb=(volatile UCHAR *)devExt->FramebufferVirtual+(ULONG)fbOffset;
+                    ULONG i, mismatches=0;
+                    for(i=0;i<params->Bytes;i++) {
+                        if(fb[i]!=params->Data[i]) mismatches++;
+                    }
+                    s_fbCompareCount++;
+                    LogStr("NVX [ACCEL]: FB readback #");LogHex(s_fbCompareCount);
+                    LogStr(" dst=" );LogHex(params->DstGpuVa);
+                    LogStr(" offset=");LogHex((ULONG)fbOffset);
+                    LogStr(" bytes=");LogHex(params->Bytes);
+                    LogStr(" mismatches=");LogHex(mismatches);LogStr("\n");
+                }
+            }
             if((s_uploadKinds[params->Reserved]<=3)||(s_uploadKinds[params->Reserved]%100==0)) {
                 LogStr("NVX [ACCEL]: GPU Upload kind=");LogHex(params->Reserved);
                 LogStr(" #");LogHex(s_uploadKinds[params->Reserved]);
@@ -1107,7 +1131,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.119 (restore stock GDI caps)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.120 (framebuffer readback diagnostic)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));
