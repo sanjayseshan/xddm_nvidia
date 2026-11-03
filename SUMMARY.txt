@@ -66,6 +66,18 @@ interrupt enable remains zero. The wake bit was not the missing initialization.
 No display timing or output state changed. Next, initialize the C67D core's
 window usage bounds as Nouveau does before testing UPDATE completion again.
 
+Latest change (v136): initialize C67D window bounds
+--------------------------------------------------
+v136 adds the eight core window format/usage-bound pairs used during Nouveau's
+display core initialization. Each window is limited to common RGB formats and
+the documented fetch/scaler bounds; no head mapping or surface is programmed.
+Host sanitizer suite and warning-free x64 build pass. Hardware log
+test_logs/v136-20261103-115555.log shows all 40 bound words consumed (GET=44),
+then the same UPDATE stall at GET=52 with a zero notifier. VBE mode 0x177 set
+succeeded on this boot, and the guest shut down cleanly via ACPI. Core window
+bounds alone are insufficient. Next, add Nouveau's per-head usage bounds to
+the same initialization sequence; still do not program timings or outputs.
+
 Latest change (v131): native display command channels
 -----------------------------------------------------
 After the user's host reboot, supplied log v130-20261103-112439.log shows XP

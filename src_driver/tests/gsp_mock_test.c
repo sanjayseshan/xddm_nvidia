@@ -272,12 +272,22 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             PULONG descriptor=(PULONG)(gpuVram+0x1ff2000);
             PULONG entry=(PULONG)(gpuVram+0x1ff0000+0x117*8);
             ULONG64 physical=dev.GspDmaPhysical.QuadPart+GSP_DISPLAY_PUSH_OFFSET+0x3000;
-            assert(value==15 && buffer[4]==0x40082 && buffer[5]==0xd1500001);
-            assert(buffer[6]==0x40083 && buffer[7]==0x1000);
-            assert(buffer[8]==0x80086 && !buffer[9] && !buffer[10]);
-            assert(buffer[11]==0x40080 &&
-                   buffer[12]==NVX_C67D_UPDATE_SPECIAL_HANDLING_INTERRUPT_RM);
-            assert(buffer[13]==0x40083 && buffer[14]==0);
+            if(value==44) {
+                ULONG index=4,header;
+                for(ULONG window=0;window<8;window++) {
+                    assert(NvxDisplayPushHeader(0x1004+window*0x80,2,&header));
+                    assert(buffer[index++]==header && buffer[index++]==0x0f && !buffer[index++]);
+                    assert(NvxDisplayPushHeader(0x1010+window*0x80,1,&header));
+                    assert(buffer[index++]==header && buffer[index++]==0x00107fff);
+                }
+                assert(index==44);regs[off/4+1]=value;return;
+            }
+            assert(value==55 && buffer[44]==0x40082 && buffer[45]==0xd1500001);
+            assert(buffer[46]==0x40083 && buffer[47]==0x1000);
+            assert(buffer[48]==0x80086 && !buffer[49] && !buffer[50]);
+            assert(buffer[51]==0x40080 &&
+                   buffer[52]==NVX_C67D_UPDATE_SPECIAL_HANDLING_INTERRUPT_RM);
+            assert(buffer[53]==0x40083 && buffer[54]==0);
             assert(entry[0]==0xd1500001 && entry[1]==0x400001);
             assert(descriptor[0]==0x46 && descriptor[1]==physical>>8);
             assert(!descriptor[2] && descriptor[3]==(physical+0xfff)>>8 && !descriptor[4]);

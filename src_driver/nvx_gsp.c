@@ -875,6 +875,7 @@ static BOOLEAN NvxNativeVerifyNotifier(PNVX_DEVICE_EXTENSION dev)
 {
     const ULONG handle=0xd1500001,descriptorOffset=0x2000;
     ULONG descriptor[6]={0},n=4;
+    uint32_t header;
     uint32_t entry[2],slot;
     ULONG64 physical=dev->GspDmaPhysical.QuadPart+GSP_DISPLAY_PUSH_OFFSET+0x3000;
     ULONG64 first=physical>>8,last=(physical+0xfff)>>8;
@@ -892,6 +893,29 @@ static BOOLEAN NvxNativeVerifyNotifier(PNVX_DEVICE_EXTENSION dev)
     if(!NvxGspUpload(dev,instanceVa+descriptorOffset,descriptor,sizeof(descriptor))) return FALSE;
     if(!NvxDisplayRamhtEntry(handle,0,descriptorOffset,dev->GspClientHandle,&slot,entry)) return FALSE;
     if(!NvxGspUpload(dev,instanceVa+slot*8,entry,sizeof(entry))) return FALSE;
+    /* Nouveau's C37D core init publishes format/usage bounds for each of the
+       eight windows before any core UPDATE. Keep this to capability bounds;
+       no window/head ownership or scanout state is assigned. */
+    for(ULONG window=0;window<8;window++) {
+        ULONG formatMethod=0x1004+window*0x80;
+        ULONG usageMethod=0x1010+window*0x80;
+        if(!NvxDisplayPushHeader(formatMethod,2,&header)) return FALSE;
+        push[n++]=header;push[n++]=0x0f;push[n++]=0;
+        if(!NvxDisplayPushHeader(usageMethod,1,&header)) return FALSE;
+        push[n++]=header;push[n++]=0x00107fff;
+    }
+    __sync_synchronize();
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x680000),n);
+    for(ULONG wait=0;wait<2000;wait++) {
+        ULONG get=VideoPortReadRegisterUlong((PULONG)(bar0+0x680004));
+        if(get!=0xffffffff && (get&0x3ff)==n) break;
+        if(wait==1999) {
+            LogStr("NVX [NATIVE]: core window-bounds init stalled GET=");
+            LogHex(get);LogStr("; update disabled.\n");return FALSE;
+        }
+        VideoPortStallExecution(100);
+    }
+    LogStr("NVX [NATIVE]: C67D core window bounds consumed GET=");LogHex(n);LogStr("\n");
     /* Each header carries the byte method offset and count in bits 27:18.
        Core PUT remains a DWORD index. This update changes no head state. */
     push[n++]=(1U<<18)|(0x208>>2);push[n++]=handle;
