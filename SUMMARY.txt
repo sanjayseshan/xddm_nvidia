@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.116 glyph-aware GDI uploads
+NVIDIA GA104 XDDM DRIVER — v1.0.0.117 text-payload diagnostics
 Updated: November 2, 2026
 
 Current checkpoint
@@ -34,9 +34,12 @@ Root cause found: v114 batched partial-width rows as contiguous data, ignoring
 framebuffer pitch. v115 restricts batching to full-stride spans; partial rows
 are copied separately. The user reports v115 is much closer: cursor box and window outlines are visible,
 but text is absent and black boxes remain. v116 computes bitmap glyph ink bounds and tags upload paths; its hardware log
-shows 600 successful DrvTextOut uploads among 26,113 total calls. It fell back
-to 800x600x32 in the successful run. Physical screen verification is pending.
-See STATUS_FLOW_v111.txt through STATUS_FLOW_v116.txt.
+shows 600 successful DrvTextOut uploads among 26,113 total calls. The user
+reports text is still absent or boxes remain. v117 hardware log test_logs/v117-20261102-224122.log records 26,600 upload
+IOCTLs and changing nonzero pixels in sampled DrvTextOut payloads (the first
+three have 21 adjacent pixel transitions each). Thus GDI produces changing
+text-path bytes, but this does not prove correct scanout coordinates or visible
+glyphs. Physical-screen result pending. See STATUS_FLOW_v117.txt.
 
 The desktop is not yet confirmed working. A successful GSP copy probe alone is
 not desktop acceleration; confirm visible icons, text, and window contents.

@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.116
+ * Driver Version: 1.0.0.117
  */
 
 #include "miniport.h"
@@ -993,6 +993,7 @@ BOOLEAN HwVidStartIO(
         static ULONG s_uploadKinds[4]={0,0,0,0};
         ULONG headerBytes=FIELD_OFFSET(NVX_ACCEL_UPLOAD_PARAMS,Data);
         ULONG required;
+        ULONG nonzeroPixels=0, pixelTransitions=0, payloadHash=2166136261UL;
         if(!params||RequestPacket->InputBufferLength<headerBytes) {
             status=ERROR_INVALID_PARAMETER;
             break;
@@ -1008,6 +1009,19 @@ BOOLEAN HwVidStartIO(
             status=ERROR_NOT_SUPPORTED;
             break;
         }
+        if(params->Reserved==NVX_UPLOAD_KIND_TEXTOUT) {
+            ULONG i, previous=0;
+            for(i=0;i<params->Bytes;i++) {
+                payloadHash^=params->Data[i];
+                payloadHash*=16777619UL;
+            }
+            for(i=0;i+sizeof(ULONG)<=params->Bytes;i+=sizeof(ULONG)) {
+                ULONG pixel=((PULONG)params->Data)[i/sizeof(ULONG)];
+                if(pixel!=0) nonzeroPixels++;
+                if(i&&pixel!=previous) pixelTransitions++;
+                previous=pixel;
+            }
+        }
         if(NvxGspUpload(HwDeviceExtension,params->DstGpuVa,params->Data,params->Bytes)) {
             status=NO_ERROR;
             statusBlock->Information=required;
@@ -1016,7 +1030,13 @@ BOOLEAN HwVidStartIO(
                 LogStr("NVX [ACCEL]: GPU Upload kind=");LogHex(params->Reserved);
                 LogStr(" #");LogHex(s_uploadKinds[params->Reserved]);
                 LogStr(" dst=");LogHex(params->DstGpuVa);
-                LogStr(" bytes=");LogHex(params->Bytes);LogStr("\n");
+                LogStr(" bytes=");LogHex(params->Bytes);
+                if(params->Reserved==NVX_UPLOAD_KIND_TEXTOUT) {
+                    LogStr(" nonzeroPixels=");LogHex(nonzeroPixels);
+                    LogStr(" transitions=");LogHex(pixelTransitions);
+                    LogStr(" hash=");LogHex(payloadHash);
+                }
+                LogStr("\n");
             }
         } else {
             status=ERROR_DEVICE_NOT_READY;
@@ -1087,7 +1107,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.116\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.117\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));
