@@ -179,6 +179,26 @@ typedef struct {
     uint8_t flags;
 } NVX_DISPLAY_TIMING;
 
+/* EVO raster origin is one pixel/line inside sync, not the active image. */
+typedef struct { uint32_t size,syncEnd,blankEnd,blankStart; } NVX_EVO_RASTER;
+static inline int NvxEncodeEvoRaster(const NVX_DISPLAY_TIMING *t,NVX_EVO_RASTER *r)
+{
+    uint32_t hx,vy;
+    if(!t || !r || !t->hActive || !t->vActive ||
+       t->hActive>=t->hSyncStart || t->hSyncStart>=t->hSyncEnd ||
+       t->hSyncEnd>t->hTotal || t->vActive>=t->vSyncStart ||
+       t->vSyncStart>=t->vSyncEnd || t->vSyncEnd>t->vTotal ||
+       t->hTotal>32767 || t->vTotal>32767) return 0;
+    hx=t->hTotal-t->hSyncStart-1;
+    vy=t->vTotal-t->vSyncStart-1;
+    r->size=(t->vTotal<<16)|t->hTotal;
+    r->syncEnd=((t->vSyncEnd-t->vSyncStart-1)<<16)|
+                (t->hSyncEnd-t->hSyncStart-1);
+    r->blankEnd=(vy<<16)|hx;
+    r->blankStart=((vy+t->vActive)<<16)|(hx+t->hActive);
+    return 1;
+}
+
 /* Volta+ display RAMHT: 8KB / 8-byte entries, channel tag and 10-bit
  * XOR hash. Instance offsets are relative to the 64KB display block.
  * Encoding reference: Nouveau r535_dmac_bind and GV100 display DMA. */

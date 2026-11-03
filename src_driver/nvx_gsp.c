@@ -1126,6 +1126,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     NVX_DISPLAY_TIMING *t;
     ULONG width, height, pitch;
     ULONG hTotal, vTotal, hSyncEnd, vSyncEnd, hBlankStart, vBlankStart, pixelClockHz;
+    ULONG hBlankEnd,vBlankEnd;
     ULONG64 vramOffset;
     ULONG sor, wait;
 
@@ -1165,69 +1166,38 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     }
     vramOffset = 0x2000000ULL; /* +32MB into BAR1 */
 
-    if (width == 2560 && height == 1440) {
-        if (t->hTotal > width && t->vTotal > height && t->pixelClockHz) {
-            hTotal = t->hTotal;
-            vTotal = t->vTotal;
-            hSyncEnd = t->hSyncEnd;
-            vSyncEnd = t->vSyncEnd;
-            hBlankStart = t->hActive;
-            vBlankStart = t->vActive;
-            pixelClockHz = t->pixelClockHz;
+    {
+        NVX_DISPLAY_TIMING mode={0};
+        NVX_EVO_RASTER raster;
+        if(t->hActive==width && t->vActive==height) mode=*t;
+        else if(width==1920 && height==1080) {
+            mode=(NVX_DISPLAY_TIMING){148500000,1920,2200,2008,2052,
+                                     1080,1125,1084,1089,60000,0x1e};
         } else {
-            /* Default 2560x1440 CVT-RB @ 60Hz */
-            hTotal = 2720;
-            vTotal = 1481;
-            hSyncEnd = 2640;
-            vSyncEnd = 1448;
-            hBlankStart = 2560;
-            vBlankStart = 1440;
-            pixelClockHz = 241500000;
+            LogStr("NVX [NATIVE]: no validated secondary timing for requested mode.\n");
+            return FALSE;
         }
-    } else if (width == 1920 && height == 1080) {
-        /* Standard 1080p60 */
-        hTotal = 2200;
-        vTotal = 1125;
-        hSyncEnd = 2052;
-        vSyncEnd = 1088;
-        hBlankStart = 1920;
-        vBlankStart = 1080;
-        pixelClockHz = 148500000;
-    } else if (width == 1280 && height == 720) {
-        /* Standard 720p60 */
-        hTotal = 1650;
-        vTotal = 750;
-        hSyncEnd = 1390;
-        vSyncEnd = 725;
-        hBlankStart = 1280;
-        vBlankStart = 720;
-        pixelClockHz = 74250000;
-    } else if (width == 1024 && height == 768) {
-        /* Standard 1024x768@60 */
-        hTotal = 1344;
-        vTotal = 806;
-        hSyncEnd = 1184;
-        vSyncEnd = 774;
-        hBlankStart = 1024;
-        vBlankStart = 768;
-        pixelClockHz = 65000000;
-    } else if (width == 800 && height == 600) {
-        /* Standard 800x600@60 */
-        hTotal = 1056;
-        vTotal = 628;
-        hSyncEnd = 968;
-        vSyncEnd = 605;
-        hBlankStart = 800;
-        vBlankStart = 600;
-        pixelClockHz = 40000000;
-    } else {
-        hTotal = width + 160;
-        vTotal = height + 41;
-        hSyncEnd = width + 80;
-        vSyncEnd = height + 8;
-        hBlankStart = width;
-        vBlankStart = height;
-        pixelClockHz = 148500000;
+        if(!NvxEncodeEvoRaster(&mode,&raster)) return FALSE;
+        hTotal=mode.hTotal;vTotal=mode.vTotal;pixelClockHz=mode.pixelClockHz;
+        hSyncEnd=raster.syncEnd&0xffff;vSyncEnd=raster.syncEnd>>16;
+        hBlankStart=raster.blankStart&0xffff;vBlankStart=raster.blankStart>>16;
+        hBlankEnd=raster.blankEnd&0xffff;vBlankEnd=raster.blankEnd>>16;
+    }
+
+    /* A null ISO context disables the image. Bind a framebuffer DMA object
+       to Window 2's user channel 3, separately from the core notifier. */
+    {
+        ULONG desc[6]={0x45,0,0,0,0,0};
+        uint32_t entry[2],slot;
+        ULONG64 bytes=(ULONG64)pitch*height;
+        ULONG64 instanceVa=dev->GspVramGpuVa+dev->NativeDisplayInstance;
+        if(!bytes || vramOffset<dev->GspFbFreeBase ||
+           vramOffset+bytes-1>dev->GspFbFreeLimit) return FALSE;
+        desc[3]=(ULONG)((vramOffset+bytes-1)>>8);
+        if(!NvxDisplayRamhtEntry(0xd1500002,3,0x2020,dev->GspClientHandle,&slot,entry) ||
+           !NvxGspUpload(dev,instanceVa+0x2020,desc,sizeof(desc)) ||
+           !NvxGspUpload(dev,instanceVa+slot*8,entry,sizeof(entry))) return FALSE;
+        LogStr("NVX [NATIVE]: Window 2 image DMA context bound, handle=0xd1500002\n");
     }
 
     LogStr("NVX [NATIVE]: programming secondary scanout Head 1 on SOR=");
@@ -1263,7 +1233,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
 
     NvxDisplayPushHeader(NVX_C67E_SET_CONTEXT_DMA_ISO(0), 1, &header);
     winPush[winN++] = header;
-    winPush[winN++] = 0;
+    winPush[winN++] = 0xd1500002;
 
     NvxDisplayPushHeader(NVX_C67E_SET_OFFSET(0), 1, &header);
     winPush[winN++] = header;
@@ -1304,7 +1274,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
 
     NvxDisplayPushHeader(NVX_C67D_HEAD_SET_RASTER_BLANK_END(1), 1, &header);
     corePush[coreN++] = header;
-    corePush[coreN++] = (vTotal << 16) | hTotal;
+    corePush[coreN++] = (vBlankEnd << 16) | hBlankEnd;
 
     NvxDisplayPushHeader(NVX_C67D_HEAD_SET_RASTER_BLANK_START(1), 1, &header);
     corePush[coreN++] = header;

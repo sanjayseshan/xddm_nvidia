@@ -1,4 +1,21 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.150 DualView Child State & Dynamic Scanout Stride
+NVIDIA GA104 XDDM DRIVER — v1.0.0.151 secondary raster and image DMA correction
+Updated: November 3, 2026
+
+Latest change (v151)
+-------------------
+Corrects two scanout errors in v150: EVO raster sync/blank coordinates must be
+relative to one pixel/line after sync start, and Window 2 requires a nonzero
+framebuffer DMA context (zero disables the image). The secondary uses an
+explicit framebuffer descriptor in display instance memory, bound to user
+channel 3 with handle 0xd1500002. The primary SOR/head configuration is unchanged.
+Only validated EDID timing or standard 1080p timing is accepted; guessed timings
+for other modes are rejected. Host sanitizer tests and warning-free build pass.
+Hardware log: test_logs/v151-20261103-150316.log. XP selects 1440p on secondary,
+link training succeeds, descriptor uploads succeed, and core/window pushbuffers
+advance. User confirms second monitor remains in standby; primary is correct. GET
+progress alone does not prove scanout. v150 baseline saved in commit 3dd3f2c before these changes.
+
+Previous baseline — v1.0.0.150 DualView Child State & Dynamic Scanout Stride
 Updated: November 3, 2026
 
 Latest change (v150): DualView child state management, native 1440p detection, and dynamic scanout stride

@@ -48,6 +48,16 @@ int main(void)
     assert(t.hTotal==2200 && t.vTotal==1125 && t.refreshMilliHz==60000);
     assert(t.hSyncStart==2008 && t.hSyncEnd==2052);
     assert(t.vSyncStart==1084 && t.vSyncEnd==1089);
+    {
+        NVX_EVO_RASTER r;
+        assert(NvxEncodeEvoRaster(&t,&r));
+        assert(r.size==((1125U<<16)|2200U));
+        assert(r.syncEnd==((4U<<16)|43U));
+        assert(r.blankEnd==((40U<<16)|191U));
+        assert(r.blankStart==((1120U<<16)|2111U));
+        NVX_DISPLAY_TIMING bad=t;bad.hSyncStart=bad.hActive;
+        assert(!NvxEncodeEvoRaster(&bad,&r));
+    }
     unchanged=t; d[17]|=0x80;
     assert(!NvxDecodeDetailedTiming(d,sizeof(d),&t));
     assert(!memcmp(&t,&unchanged,sizeof(t)));
