@@ -836,10 +836,10 @@ static BOOLEAN NvxNativeFreeObject(PNVX_DEVICE_EXTENSION dev,ULONG parent,ULONG 
 static VOID NvxNativeLogDisplayStatus(PNVX_DEVICE_EXTENSION dev,const char *phase)
 {
     PUCHAR bar0=dev->Bar0MmioVirtual;
-    static const ULONG offsets[]={0x610020,0x610024,0x610030,0x610080,0x610084,
-                                  0x611cf0,0x611db0};
-    static const char *names[]={"intr0","intr1","super","core-exc","core-data",
-                                "ctrl-mask","ctrl-enable"};
+    static const ULONG offsets[]={0x610010,0x610014,0x610020,0x610024,0x610030,
+                                  0x610078,0x610080,0x610084,0x611cf0,0x611db0};
+    static const char *names[]={"inst-ctrl","inst-base","intr0","intr1","super",
+                                "awake","core-exc","core-data","ctrl-mask","ctrl-enable"};
     if(!bar0 || dev->Bar0Length<0x611db4) return;
     LogStr("NVX [NATIVE]: display status ");LogStr(phase);LogStr(":");
     for(ULONG i=0;i<sizeof(offsets)/sizeof(offsets[0]);i++) {
@@ -847,6 +847,27 @@ static VOID NvxNativeLogDisplayStatus(PNVX_DEVICE_EXTENSION dev,const char *phas
         LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+offsets[i])));
     }
     LogStr("\n");
+}
+
+/* Nouveau's GV100+ display init wakes the engine through 0x610078 bit 0
+   before publishing instance memory. Leave interrupt masks/enable untouched. */
+static BOOLEAN NvxNativeWakeDisplayEngine(PNVX_DEVICE_EXTENSION dev)
+{
+    PUCHAR bar0=dev->Bar0MmioVirtual;
+    PULONG awake;
+    ULONG before,after;
+    if(!bar0 || dev->Bar0Length<0x61007c) return FALSE;
+    awake=(PULONG)(bar0+0x610078);
+    before=VideoPortReadRegisterUlong(awake);
+    LogStr("NVX [NATIVE]: display wake bit before=");LogHex(before);
+    if(before==0xffffffff || before==0xbadf5040) {
+        LogStr("; register unavailable, no write.\n");return FALSE;
+    }
+    if(!(before&1)) VideoPortWriteRegisterUlong(awake,before|1);
+    __sync_synchronize();
+    after=VideoPortReadRegisterUlong(awake);
+    LogStr(" after=");LogHex(after);LogStr("\n");
+    return (after&1)!=0;
 }
 
 /* Establish hardware completion before attempting any native head update. */
@@ -988,6 +1009,7 @@ BOOLEAN NvxGspInitDisplayChannels(PVOID extension)
         }
     }
     dev->NativeDisplayChannelsReady=TRUE;
+    (void)NvxNativeWakeDisplayEngine(dev);
     NvxNativeReadOutputInfo(dev);
     (void)NvxNativeVerifyNotifier(dev);
     LogStr("NVX [NATIVE]: core and windows 0/2 DMA verified; head timings unchanged.\n");

@@ -52,6 +52,20 @@ SOR. The XP guest shut down through ACPI. RM-handled UPDATE alone is not enough.
 Next, follow the Nouveau display-engine initialization order and enable only
 the display wake bit, then check whether the MMIO status registers become live.
 
+Latest change (v135): verify display-engine wake/instance state
+---------------------------------------------------------------
+v135 reads the display wake register and sets bit 0 only if it is clear and
+the register returns a valid value; it does not enable any interrupt source.
+Diagnostic snapshots now include display instance control/base and wake state.
+Host suite and x64 build pass. The first VFIO attempt ended before guest output;
+the retry booted normally and was shut down via ACPI. Log
+test_logs/v135-20261103-115130.log shows wake bit already 1, instance control
+0x9, and instance base 0x1ff (the registered 64KB block). The core channel still
+stops at GET=12; interrupt/supervisor/core-error reads remain 0xBADF5040 and
+interrupt enable remains zero. The wake bit was not the missing initialization.
+No display timing or output state changed. Next, initialize the C67D core's
+window usage bounds as Nouveau does before testing UPDATE completion again.
+
 Latest change (v131): native display command channels
 -----------------------------------------------------
 After the user's host reboot, supplied log v130-20261103-112439.log shows XP
