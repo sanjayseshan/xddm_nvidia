@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="157"
+NVX_TEST_VERSION="158"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
@@ -49,6 +49,13 @@ finish() {
     echo
     echo "==> Result log: $NVX_RUN_LOG"
     if [ -f "$NVX_RUN_LOG" ]; then
+        echo "==> Display hardware verification"
+        if grep -q '\[DISPLAY-VERIFY\]' "$NVX_RUN_LOG"; then
+            grep '\[DISPLAY-VERIFY\]' "$NVX_RUN_LOG" | tail -12 || true
+            echo "DISPLAY RESULT: Inspect the latest head IDs, DP lane lock and UPDATE notifier above; GPU copy success alone does not verify scanout."
+        else
+            echo "DISPLAY RESULT: No display verification recorded; monitor activation is unverified."
+        fi
         grep -E "Miniport Driver|\[SEC2\]|\[GSP\]|\[RM\]|\[COPY\]|\[FB\]|\[FBMAP\]|\[RESET\]" "$NVX_RUN_LOG" | tail -80 || true
         if grep -q 'RM INIT_DONE received' "$NVX_RUN_LOG"; then
             if grep -q 'GPU copy completed and verified' "$NVX_RUN_LOG"; then

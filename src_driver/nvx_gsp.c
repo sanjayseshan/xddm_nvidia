@@ -1241,8 +1241,6 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     }
     NvxDisplayPushHeader(NVX_C67D_HEAD_SET_CONTROL(1),1,&header);
     corePush[coreN++]=header;corePush[coreN++]=0; /* Progressive, no lock pins. */
-    NvxDisplayPushHeader(0x2474,1,&header);
-    corePush[coreN++]=header;corePush[coreN++]=0; /* No second interlaced field. */
 
     NvxDisplayPushHeader(NVX_C67D_HEAD_SET_OVERSCAN_COLOR(1), 1, &header);
     corePush[coreN++] = header;

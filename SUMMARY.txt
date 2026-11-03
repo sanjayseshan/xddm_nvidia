@@ -1,3 +1,18 @@
+NVIDIA GA104 XDDM DRIVER — v1.0.0.158 remove unsupported raster method
+Updated: November 3, 2026
+
+v158 removes 0x2474, which C67D rejected. That method fault is gone.
+Host sanitizer tests and cross build pass; bash syntax check passes.
+Log: test_logs/v158-20261103-152436.log. Core UPDATE still faults with
+state error0x25; Head0 display0x0800 active with all four DP lanes locked,
+Head1 inactive, UPDATE notifier0. Primary VBE restoration requested.
+Dual display is NOT working. The test script now prints DISPLAY-VERIFY
+separately from GPU copy completion; do not conflate rendering with scanout.
+User requests autonomous log-based monitor verification, without repeated
+physical screen questions. Active head/link/notifier establish hardware
+activation, but do not alone establish correct visible desktop pixels.
+Next investigate Core UPDATE state0x25 against Nouveau initialization.
+
 NVIDIA GA104 XDDM DRIVER — v1.0.0.157 core capability initialization
 Updated: November 3, 2026
 
