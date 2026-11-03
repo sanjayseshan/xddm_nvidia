@@ -528,6 +528,9 @@ DrvDisableSurface(
                        &VideoMemory, sizeof(VIDEO_MEMORY), NULL, 0, &ulTemp);
     if (ppdev->ScreenPtr) EngFreeMem(ppdev->ScreenPtr);
     if (ppdev->PresentedPixels) EngFreeMem(ppdev->PresentedPixels);
+    if (ppdev->CopyScratch) EngFreeMem(ppdev->CopyScratch);
+    ppdev->CopyScratch=NULL;
+    ppdev->CopyScratchBytes=0;
     ppdev->PresentedPixels=NULL;
     ppdev->PresentationValid=FALSE;
     ppdev->ScreenPtr = NULL;

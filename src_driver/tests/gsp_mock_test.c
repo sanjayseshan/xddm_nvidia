@@ -439,7 +439,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
     }
 }
 static void test_reusable_queue(void) {
-    /* Test NvxGspSubmitCopy and NvxGspSubmitFill */
+    /* Test one-line copy, pitched 2D copy, and solid fill submissions. */
     NVX_DEVICE_EXTENSION dev_q;
     UCHAR *dma = malloc(0x3000000);
     memset(&dev_q, 0, sizeof(dev_q));
@@ -464,9 +464,22 @@ static void test_reusable_queue(void) {
     assert(dev_q.GspNextFence == 0x101);
 
     fence[0] = 0x101;
-    assert(NvxGspSubmitFill(&dev_q, 0x21000000, 0xff00ff00, 256));
+    assert(NvxGspSubmitCopy2D(&dev_q,0x21000000,0x1000a000,
+                              4096,4096,1024,4));
     assert(dev_q.GspGPPut == 3);
     assert(dev_q.GspNextFence == 0x102);
+    {
+        PULONG push=(PULONG)(scratch+0x9000+2*0x100);
+        assert(push[8] == 4096); /* input pitch */
+        assert(push[9] == 4096); /* output pitch */
+        assert(push[10] == 1024); /* bytes per line */
+        assert(push[11] == 4); /* line count */
+    }
+
+    fence[0] = 0x102;
+    assert(NvxGspSubmitFill(&dev_q, 0x21000000, 0xff00ff00, 256));
+    assert(dev_q.GspGPPut == 4);
+    assert(dev_q.GspNextFence == 0x103);
 
     /* Timeout scenario */
     fence[0] = 0x0;

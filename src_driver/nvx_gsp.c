@@ -678,7 +678,9 @@ static VOID NvxGspUnlockEngine(VOID)
     __sync_lock_release(&NvxGspEngineBusy);
 }
 
-static BOOLEAN NvxGspSubmitCopyUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,ULONG bytes)
+static BOOLEAN NvxGspSubmitCopyUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,
+                                        ULONG srcPitch,ULONG dstPitch,
+                                        ULONG bytesPerLine,ULONG lineCount)
 {
     PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
     PUCHAR scratch;
@@ -687,10 +689,16 @@ static BOOLEAN NvxGspSubmitCopyUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,UL
     PULONG push;
     volatile ULONG64 *fifo;
     ULONG slot,n=0,fenceVal;
+    ULONG64 srcSpan,dstSpan;
     ULONG64 va,pushVa;
 
     if(!dev||!dev->GspInitialized||!dev->GspCopyVerified||dev->GspChannelFaulted) return FALSE;
-    if(!bytes||bytes>0x1000000) return FALSE; /* Up to 16MB per submit */
+    if(!bytesPerLine||bytesPerLine>0x1000000||!lineCount||
+       srcPitch<bytesPerLine||dstPitch<bytesPerLine||
+       (bytesPerLine&3)||(srcPitch&3)||(dstPitch&3)) return FALSE;
+    srcSpan=(ULONG64)(lineCount-1)*srcPitch+bytesPerLine;
+    dstSpan=(ULONG64)(lineCount-1)*dstPitch+bytesPerLine;
+    if(srcSpan>0x1000000||dstSpan>0x1000000) return FALSE;
 
     scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET;
     userd=(volatile ULONG *)(scratch+0x3200);
@@ -709,7 +717,7 @@ static BOOLEAN NvxGspSubmitCopyUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,UL
     push[n++]=(ULONG)(srcVa>>32);push[n++]=(ULONG)srcVa;
     push[n++]=(ULONG)(dstVa>>32);push[n++]=(ULONG)dstVa;
     push[n++]=0x20048104; /* PITCH_IN/OUT, LINE_LENGTH, LINE_COUNT */
-    push[n++]=bytes;push[n++]=bytes;push[n++]=bytes;push[n++]=1;
+    push[n++]=srcPitch;push[n++]=dstPitch;push[n++]=bytesPerLine;push[n++]=lineCount;
     push[n++]=0x200180c0;push[n++]=0x04000186; /* LAUNCH_DMA */
     push[n++]=0x20038090; /* SET_SEMAPHORE_A/B/PAYLOAD */
     push[n++]=(ULONG)((va+0xc000)>>32);push[n++]=(ULONG)(va+0xc000);push[n++]=fenceVal;
@@ -740,9 +748,16 @@ static BOOLEAN NvxGspSubmitCopyUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,UL
 
 BOOLEAN NvxGspSubmitCopy(PVOID extension,ULONG64 dstVa,ULONG64 srcVa,ULONG bytes)
 {
+    return NvxGspSubmitCopy2D(extension,dstVa,srcVa,bytes,bytes,bytes,1);
+}
+
+BOOLEAN NvxGspSubmitCopy2D(PVOID extension,ULONG64 dstVa,ULONG64 srcVa,
+                           ULONG srcPitch,ULONG dstPitch,ULONG bytesPerLine,ULONG lineCount)
+{
     BOOLEAN result;
     if(!NvxGspLockEngine()) return FALSE;
-    result=NvxGspSubmitCopyUnlocked(extension,dstVa,srcVa,bytes);
+    result=NvxGspSubmitCopyUnlocked(extension,dstVa,srcVa,srcPitch,dstPitch,
+                                    bytesPerLine,lineCount);
     NvxGspUnlockEngine();
     return result;
 }
@@ -833,7 +848,8 @@ static BOOLEAN NvxGspUploadUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,const 
     }
     VideoPortMoveMemory((PUCHAR)dev->GspDmaVirtual+GSP_UPLOAD_OFFSET,(PVOID)src,bytes);
     __sync_synchronize();
-    if(!NvxGspSubmitCopyUnlocked(HwDeviceExtension,dstVa,GSP_UPLOAD_GPU_VA,bytes))
+    if(!NvxGspSubmitCopyUnlocked(HwDeviceExtension,dstVa,GSP_UPLOAD_GPU_VA,
+                                 bytes,bytes,bytes,1))
         return FALSE;
     /* Verify the real staging path, not just the separately mapped scratch. */
     {
@@ -842,7 +858,8 @@ static BOOLEAN NvxGspUploadUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,const 
         if(verifiedUploads[adapter]<3) {
             ULONG count=bytes<256?bytes:256, mismatches=0;
             PUCHAR readback=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET+0xa000;
-            if(!NvxGspSubmitCopyUnlocked(HwDeviceExtension,dev->GspScratchGpuVa+0xa000,dstVa,count))
+            if(!NvxGspSubmitCopyUnlocked(HwDeviceExtension,dev->GspScratchGpuVa+0xa000,dstVa,
+                                         count,count,count,1))
                 return FALSE;
             for(ULONG i=0;i<count;i++)
                 if(readback[i]!=((const UCHAR *)src)[i]) mismatches++;

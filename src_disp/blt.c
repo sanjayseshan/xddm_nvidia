@@ -206,8 +206,12 @@ DrvCopyBits(
     PPDEV ppdev;
     NVX_ACCEL_COPY_PARAMS params;
     ULONG width, height, rowBytes, ulTemp, row;
-    ULONG srcX, srcY, dstX, dstY, y, x, index, sourceIndex, targetIndex;
+    ULONG srcX, srcY, dstX, dstY, sourceIndex, targetIndex;
+    ULONG scratchBytes;
+    ULONG64 srcOffset, dstOffset, srcSpan, dstSpan;
+    PULONG shadow, presented;
     BOOL overlaps;
+    BOOL result;
 
     /* Accelerate same-primary-surface copies when the surface is already
        coherent. Keep unsupported clips/translations on the GDI path. */
@@ -234,53 +238,74 @@ DrvCopyBits(
         dstY = (ULONG)prclDest->top;
         if (srcX <= ppdev->ScreenWidth && width <= ppdev->ScreenWidth - srcX &&
             srcY <= ppdev->ScreenHeight && height <= ppdev->ScreenHeight - srcY &&
-            width <= 0x003FFFFFUL) {
+            width <= 0x003FFFFFUL && height >= 2) {
             rowBytes = width * 4;
             overlaps = srcX < dstX + width && dstX < srcX + width &&
                 srcY < dstY + height && dstY < srcY + height;
-            /* CE overlap behavior is not assumed for horizontal overlap. */
-            if (!overlaps || srcX == dstX) {
-                for (row = 0; row < height; ++row) {
-                    y = (dstY > srcY) ? (height - 1 - row) : row;
-                    params.SrcGpuVa = ppdev->ScreenGpuVaBase +
-                        (ULONG64)(srcY + y) * ppdev->ScreenDelta + (ULONG64)srcX * 4;
-                    params.DstGpuVa = ppdev->ScreenGpuVaBase +
-                        (ULONG64)(dstY + y) * ppdev->ScreenDelta + (ULONG64)dstX * 4;
-                    params.Bytes = rowBytes;
-                    if (EngDeviceIoControl(ppdev->hDriver, IOCTL_NVX_ACCEL_COPY,
-                                           &params, sizeof(params), NULL, 0, &ulTemp))
-                        break;
+            srcOffset = (ULONG64)srcY * ppdev->ScreenDelta + (ULONG64)srcX * 4;
+            dstOffset = (ULONG64)dstY * ppdev->ScreenDelta + (ULONG64)dstX * 4;
+            srcSpan = (ULONG64)(height - 1) * ppdev->ScreenDelta + rowBytes;
+            dstSpan = (ULONG64)(height - 1) * ppdev->ScreenDelta + rowBytes;
+            /* One pitched CE operation only for large disjoint rectangles.
+               Small and overlapping window moves stay on the GDI path. */
+            if (!overlaps &&
+                (srcOffset + srcSpan <= dstOffset || dstOffset + dstSpan <= srcOffset) &&
+                (ULONG64)rowBytes * height >= 4096 &&
+                srcSpan <= 0x01000000ULL && dstSpan <= 0x01000000ULL) {
+                params.SrcGpuVa = ppdev->ScreenGpuVaBase + srcOffset;
+                params.DstGpuVa = ppdev->ScreenGpuVaBase + dstOffset;
+                params.BytesPerLine = rowBytes;
+                params.SrcPitch = ppdev->ScreenDelta;
+                params.DstPitch = ppdev->ScreenDelta;
+                params.LineCount = height;
+                scratchBytes = rowBytes * height;
+                if (ppdev->CopyScratchBytes < scratchBytes) {
+                    if (ppdev->CopyScratch)
+                        EngFreeMem(ppdev->CopyScratch);
+                    ppdev->CopyScratch = EngAllocMem(0, scratchBytes, ALLOC_TAG);
+                    ppdev->CopyScratchBytes = ppdev->CopyScratch ? scratchBytes : 0;
                 }
-                if (row == height) {
-                    PULONG shadow = (PULONG)ppdev->ScreenPtr;
-                    PULONG presented = (PULONG)ppdev->PresentedPixels;
+                if (!ppdev->CopyScratch)
+                    goto copybits_fallback;
+                shadow = (PULONG)ppdev->ScreenPtr;
+                presented = (PULONG)ppdev->PresentedPixels;
+                /* Save source pixels before changing either surface so the
+                   GDI fallback can still read the original source. */
+                for (row = 0; row < height; ++row) {
+                    sourceIndex = (srcY + row) * (ppdev->ScreenDelta / 4) + srcX;
+                    memcpy((PUCHAR)ppdev->CopyScratch + row * rowBytes,
+                           shadow + sourceIndex, rowBytes);
+                }
+                /* Make the software bitmap coherent before attempting DMA.
+                   On failure restore the source and let GDI perform the copy. */
+                for (row = 0; row < height; ++row) {
+                    targetIndex = (dstY + row) * (ppdev->ScreenDelta / 4) + dstX;
+                    memcpy(shadow + targetIndex,
+                           (PUCHAR)ppdev->CopyScratch + row * rowBytes, rowBytes);
+                }
+                if (!EngDeviceIoControl(ppdev->hDriver, IOCTL_NVX_ACCEL_COPY,
+                                        &params, sizeof(params), NULL, 0, &ulTemp)) {
                     for (row = 0; row < height; ++row) {
-                        y = (dstY > srcY) ? (height - 1 - row) : row;
-                        sourceIndex = (srcY + y) * (ppdev->ScreenDelta / 4) + srcX;
-                        targetIndex = (dstY + y) * (ppdev->ScreenDelta / 4) + dstX;
-                        if (dstX > srcX && overlaps) {
-                            for (x = width; x > 0; --x) {
-                                index = x - 1;
-                                shadow[targetIndex + index] = shadow[sourceIndex + index];
-                                presented[targetIndex + index] = shadow[sourceIndex + index];
-                            }
-                        } else {
-                            for (x = 0; x < width; ++x) {
-                                shadow[targetIndex + x] = shadow[sourceIndex + x];
-                                presented[targetIndex + x] = shadow[sourceIndex + x];
-                            }
-                        }
+                        targetIndex = (dstY + row) * (ppdev->ScreenDelta / 4) + dstX;
+                        memcpy(presented + targetIndex,
+                               (PUCHAR)ppdev->CopyScratch + row * rowBytes, rowBytes);
                     }
                     ppdev->AccelCopies++;
                     return TRUE;
                 }
-                /* Partial CE copies are repaired by the software fallback. */
+                /* An incomplete or failed CE transfer is repaired by upload. */
+                for (row = 0; row < height; ++row) {
+                    sourceIndex = (srcY + row) * (ppdev->ScreenDelta / 4) + srcX;
+                    memcpy(shadow + sourceIndex,
+                           (PUCHAR)ppdev->CopyScratch + row * rowBytes, rowBytes);
+                }
                 ppdev->PresentationValid = FALSE;
             }
         }
     }
 
-    BOOL result = EngCopyBits(psoDest,psoSrc,pco,pxlo,prclDest,pptlSrc);
+copybits_fallback:
+    result = EngCopyBits(psoDest,psoSrc,pco,pxlo,prclDest,pptlSrc);
     if (result && psoDest && psoDest->dhpdev)
         return NvxUploadSurfaceRect((PPDEV)psoDest->dhpdev,psoDest,prclDest,
                                     NVX_UPLOAD_KIND_COPYBITS);

@@ -1,5 +1,5 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 3, 2026 (v167 copy path needs correction)
+Updated: November 3, 2026 (v168 pitched CopyBits candidate)
 
 Confirmed baseline: v164 works on the test EVGA RTX 3070 XC3 Ultra LHR with
 two physical displays. The primary runs at 1920x1080 and the secondary at
@@ -18,16 +18,24 @@ and a full-screen 14.7 MB fill completed as one submission. The user reports
 correct resolution with slight desktop artifacts remaining. Batching is
 exercised; its performance benefit has not been measured.
 
-Current development: v167 added same-PDEV 32-bit GPU `CopyBits` with software
-fallbacks for clipped, translated, and unsafe overlapping copies. The miniport
-bounds copy source and destination ranges to the active framebuffer. The
-physical run `test_logs/v167-20261103-171423.log` reached native 1920x1080 and
-2560x1440 output and recorded 10,000 GPU copy submissions. The user observed
-orange rectangles while dragging windows. The per-row submission approach is
-too aggressive and v167 is not accepted as a clean desktop build. v168 will
-restrict copies to larger non-overlapping rectangles and use a single pitched
-multi-row CE operation; smaller or overlapping moves will use the GDI fallback.
-OpenGL, Direct3D, and 3D acceleration are not implemented.
+The v167 experiment added same-PDEV 32-bit GPU `CopyBits` with fallbacks for
+clipped, translated, and unsafe overlapping copies. The log
+`test_logs/v167-20261103-171423.log` reached native 1920x1080 and 2560x1440
+output and recorded 10,000 GPU copy submissions. The user saw orange
+rectangles while dragging windows, so v167 is not accepted as a clean desktop
+build.
+
+Current development: v168 restricts GPU copies to large, non-overlapping
+same-surface rectangles. It submits all rows through one pitched CE DMA
+operation, keeps the CPU shadow and presentation cache coherent, bounds both
+spans to the active framebuffer, and falls back to GDI for smaller, overlapping,
+clipped, or translated operations. It snapshots source pixels so the GDI
+fallback retains the original source if submission fails. A host GSP test
+checks emitted pitches, line size, and count. The display miniport and host
+test suite build successfully. Two attempts to run `./test_full_driver.sh`
+stopped before guest launch when libguestfs reported `/usr/bin/supermin exited
+with error status 1`; v168 has no hardware or visual validation yet. OpenGL,
+Direct3D, and 3D acceleration are not implemented.
 High-refresh modes such as 120 Hz and other GPU models, boards, connectors, and
 monitor combinations are not validated.
 
@@ -42,10 +50,12 @@ Milestones:
   not yet measured.
 - v166: batches tightly packed full-width PATCOPY rows into fewer GPU queue
   submissions; retry restored both displays, with slight artifacts remaining.
-- v167: adds a bounded same-surface GPU CopyBits path for supported 32-bit
-  screen copies; first run showed orange rectangles and excessive small copies.
-- v168: planned narrower CopyBits path using one pitched submission per larger
-  non-overlapping rectangle.
+- v167: adds a bounded same-surface GPU CopyBits path; first run showed orange
+  rectangles and excessive small copies while dragging windows.
+- v168: narrows CopyBits to larger non-overlapping rectangles, batches rows
+  in one pitched GPU copy submission, and snapshots the source for safe GDI
+  fallback. Build and host tests pass; hardware test blocked by libguestfs
+  supermin failure before VM launch.
 
 Validation: the v164 hardware log recorded active Head 0 and Head 1, completed
 display-update notifiers, four-lane DisplayPort link locks, 1920x1080 and

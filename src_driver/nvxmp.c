@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.167
+ * Driver Version: 1.0.0.168
  */
 
 #include "miniport.h"
@@ -1303,13 +1303,16 @@ BOOLEAN HwVidStartIO(
         PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
             (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
         static ULONG s_copyCount = 0;
-        ULONG64 base,surfaceBytes,srcOffset,dstOffset;
+        ULONG64 base,surfaceBytes,srcOffset,dstOffset,srcSpan,dstSpan;
         if (!params || RequestPacket->InputBufferLength < sizeof(NVX_ACCEL_COPY_PARAMS)) {
             status = ERROR_INVALID_PARAMETER;
             break;
         }
         if (!engine || !engine->GspCopyVerified || engine->GspChannelFaulted ||
-            !params->Bytes || params->Bytes>0x01000000UL || (params->Bytes&3) ||
+            !params->BytesPerLine || params->BytesPerLine>0x01000000UL ||
+            !params->LineCount || !params->SrcPitch || !params->DstPitch ||
+            params->SrcPitch<params->BytesPerLine || params->DstPitch<params->BytesPerLine ||
+            (params->BytesPerLine&3) || (params->SrcPitch&3) || (params->DstPitch&3) ||
             devExt->CurrentModeIndex>=devExt->NumModes) {
             status = ERROR_NOT_SUPPORTED;
             break;
@@ -1317,17 +1320,27 @@ BOOLEAN HwVidStartIO(
         base=engine->GspVramGpuVa+(devExt->IsSecondaryDisplay?0x2000000ULL:0x200000ULL);
         surfaceBytes=(ULONG64)devExt->Modes[devExt->CurrentModeIndex].ScreenStride*
             devExt->Modes[devExt->CurrentModeIndex].VisScreenHeight;
-        if (params->SrcGpuVa<base || params->DstGpuVa<base ||
-            params->SrcGpuVa-base>surfaceBytes || params->DstGpuVa-base>surfaceBytes ||
-            params->Bytes>surfaceBytes-(params->SrcGpuVa-base) ||
-            params->Bytes>surfaceBytes-(params->DstGpuVa-base) ||
+        srcSpan=(ULONG64)(params->LineCount-1)*params->SrcPitch+params->BytesPerLine;
+        dstSpan=(ULONG64)(params->LineCount-1)*params->DstPitch+params->BytesPerLine;
+        srcOffset=(params->SrcGpuVa>=base)?params->SrcGpuVa-base:surfaceBytes+1;
+        dstOffset=(params->DstGpuVa>=base)?params->DstGpuVa-base:surfaceBytes+1;
+        if (params->LineCount>0x10000UL || srcSpan>0x01000000ULL ||
+            dstSpan>0x01000000ULL || params->SrcGpuVa<base || params->DstGpuVa<base ||
+            srcOffset>surfaceBytes || dstOffset>surfaceBytes ||
+            srcSpan>surfaceBytes-srcOffset || dstSpan>surfaceBytes-dstOffset ||
             ((params->SrcGpuVa-base)&3) || ((params->DstGpuVa-base)&3)) {
             status=ERROR_INVALID_PARAMETER;
             break;
         }
-        srcOffset=params->SrcGpuVa-base;
-        dstOffset=params->DstGpuVa-base;
-        if (NvxGspSubmitCopy(engine, params->DstGpuVa, params->SrcGpuVa, params->Bytes)) {
+        /* The copy path rejects overlapping spans; CE overlap semantics are
+           not assumed for a multi-row DMA. */
+        if (srcOffset<dstOffset+dstSpan && dstOffset<srcOffset+srcSpan) {
+            status=ERROR_INVALID_PARAMETER;
+            break;
+        }
+        if (NvxGspSubmitCopy2D(engine,params->DstGpuVa,params->SrcGpuVa,
+                               params->SrcPitch,params->DstPitch,
+                               params->BytesPerLine,params->LineCount)) {
             status = NO_ERROR;
             statusBlock->Information = sizeof(NVX_ACCEL_COPY_PARAMS);
             s_copyCount++;
@@ -1335,7 +1348,8 @@ BOOLEAN HwVidStartIO(
                 LogStr("NVX [ACCEL]: GPU Copy #"); LogHex(s_copyCount);
                 LogStr(" srcOffset=");LogHex(srcOffset);
                 LogStr(" dstOffset=");LogHex(dstOffset);
-                LogStr(" bytes "); LogHex(params->Bytes); LogStr("\n");
+                LogStr(" bytesPerLine=");LogHex(params->BytesPerLine);
+                LogStr(" lines=");LogHex(params->LineCount);LogStr("\n");
             }
         } else {
             status = ERROR_DEVICE_NOT_READY;
@@ -1534,7 +1548,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.167 (GDI CopyBits Acceleration, DualView)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.168 (Pitched GDI CopyBits, DualView)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

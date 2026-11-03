@@ -29,9 +29,10 @@ copy-engine submissions on tightly packed 32-bit screen bitmaps. The v167
 experiment submitted same-surface `CopyBits` copies, but produced orange
 rectangles during dragging and reached 10,000 small GPU copy submissions. v168
 narrows this path to large, non-overlapping rectangles with pitched multi-row
-DMA; other cases will remain on software GDI. This remains limited 2D
-acceleration, not a complete accelerated GDI driver. OpenGL, Direct3D, video
-decoding, and 3D acceleration are not implemented.
+DMA in one GPU submission; other cases remain on software GDI. Physical
+validation is pending. This remains limited 2D acceleration, not a complete
+accelerated GDI driver. OpenGL, Direct3D, video decoding, and 3D acceleration
+are not implemented.
 
 The v165 physical run and its log evidence are recorded in [SUMMARY.txt](SUMMARY.txt).
 The matching NVIDIA firmware source and checksums are documented in

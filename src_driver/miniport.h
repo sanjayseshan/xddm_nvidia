@@ -298,7 +298,10 @@ typedef struct _VIDEO_SHARE_MEMORY {
 typedef struct _NVX_ACCEL_COPY_PARAMS {
     ULONG64 DstGpuVa;
     ULONG64 SrcGpuVa;
-    ULONG   Bytes;
+    ULONG   BytesPerLine;
+    ULONG   SrcPitch;
+    ULONG   DstPitch;
+    ULONG   LineCount;
 } NVX_ACCEL_COPY_PARAMS, *PNVX_ACCEL_COPY_PARAMS;
 
 typedef struct _NVX_ACCEL_FILL_PARAMS {

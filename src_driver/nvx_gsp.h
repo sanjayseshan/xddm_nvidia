@@ -387,6 +387,8 @@ VOID NvxGspWakeSecondaryDpSink(PVOID HwDeviceExtension);
 VOID NvxGspTrainSecondaryDpLink(PVOID HwDeviceExtension);
 BOOLEAN NvxGspDiscoverScanout(PVOID HwDeviceExtension,ULONG modeIndex);
 BOOLEAN NvxGspSubmitCopy(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,ULONG bytes);
+BOOLEAN NvxGspSubmitCopy2D(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,
+                           ULONG srcPitch,ULONG dstPitch,ULONG bytesPerLine,ULONG lineCount);
 BOOLEAN NvxGspSubmitFill(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG bytes);
 BOOLEAN NvxGspUpload(PVOID HwDeviceExtension,ULONG64 dstVa,const void *src,ULONG bytes);
 

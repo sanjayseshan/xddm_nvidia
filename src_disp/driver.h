@@ -34,7 +34,10 @@ typedef struct _VIDEOMEMORY VIDEOMEMORY;
 typedef struct _NVX_ACCEL_COPY_PARAMS {
     ULONG64 DstGpuVa;
     ULONG64 SrcGpuVa;
-    ULONG   Bytes;
+    ULONG   BytesPerLine;
+    ULONG   SrcPitch;
+    ULONG   DstPitch;
+    ULONG   LineCount;
 } NVX_ACCEL_COPY_PARAMS, *PNVX_ACCEL_COPY_PARAMS;
 
 typedef struct _NVX_ACCEL_FILL_PARAMS {
@@ -75,6 +78,8 @@ typedef struct _PDEV
     ULONG64  ScreenGpuVaBase; /* 0x20000000 */
     ULONG    AccelCopies;
     ULONG    AccelFills;
+    PVOID    CopyScratch; /* temporary source snapshot for safe CopyBits fallback */
+    ULONG    CopyScratchBytes;
 } PDEV, *PPDEV;
 
 /* DDI Prototypes */
