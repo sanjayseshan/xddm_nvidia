@@ -93,6 +93,19 @@ stalled at GET=0x3c with notifier zero. ACPI shutdown completed. Head bounds
 did not resolve the UPDATE stall; the secondary remains unassigned. This
 version has not been visually confirmed on the physical displays.
 
+Latest change (v138): inhibit interrupts for empty UPDATE probe
+----------------------------------------------------------------
+v138 changes only the empty core UPDATE's documented INHIBIT_INTERRUPTS bit
+and renames the capability-bound progress log. Host sanitizer suite and
+warning-free x64 build pass. Hardware log test_logs/v138-20261103-120404.log
+shows the full core capability sequence consumed (GET=0x34), then the channel
+stalled at the same UPDATE payload (GET=0x3c); notifier remains zero. This boot's
+VBE 1080p request was refused (EAX=0x14f), and the driver restored its 800x600
+fallback, confirming the intermittent BIOS mode limitation remains. The
+interrupt-inhibited probe did not resolve UPDATE; guest shut down cleanly.
+Next, inspect/validate the notifier context and RM display-channel setup rather
+than trying more UPDATE flags or enabling unhandled hardware interrupts.
+
 Latest change (v131): native display command channels
 -----------------------------------------------------
 After the user's host reboot, supplied log v130-20261103-112439.log shows XP

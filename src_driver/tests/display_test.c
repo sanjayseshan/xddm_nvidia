@@ -5,6 +5,7 @@
 int main(void)
 {
     assert(NVX_C67D_UPDATE_SPECIAL_HANDLING_INTERRUPT_RM == 0x00100000U);
+    assert(NVX_C67D_UPDATE_INHIBIT_INTERRUPTS == 0x01000000U);
     /* 1920x1080p60, 148.5MHz, totals 2200x1125, +H/+V. */
     uint8_t d[18]={0x02,0x3a,0x80,0x18,0x71,0x38,0x2d,0x40,
                    0x58,0x2c,0x45,0,0,0,0,0,0,0x1e};

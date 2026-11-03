@@ -4,6 +4,7 @@
 #include <stddef.h>
 
 #define NVX_C67D_UPDATE_SPECIAL_HANDLING_INTERRUPT_RM (1U << 20)
+#define NVX_C67D_UPDATE_INHIBIT_INTERRUPTS (1U << 24)
 
 typedef struct {
     uint32_t pixelClockHz;

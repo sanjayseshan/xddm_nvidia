@@ -294,7 +294,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(buffer[54]==0x40083 && buffer[55]==0x1000);
             assert(buffer[56]==0x80086 && !buffer[57] && !buffer[58]);
             assert(buffer[59]==0x40080 &&
-                   buffer[60]==NVX_C67D_UPDATE_SPECIAL_HANDLING_INTERRUPT_RM);
+                   buffer[60]==NVX_C67D_UPDATE_INHIBIT_INTERRUPTS);
             assert(buffer[61]==0x40083 && buffer[62]==0);
             assert(entry[0]==0xd1500001 && entry[1]==0x400001);
             assert(descriptor[0]==0x46 && descriptor[1]==physical>>8);

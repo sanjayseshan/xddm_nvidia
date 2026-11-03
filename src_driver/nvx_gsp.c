@@ -922,15 +922,15 @@ static BOOLEAN NvxNativeVerifyNotifier(PNVX_DEVICE_EXTENSION dev)
         }
         VideoPortStallExecution(100);
     }
-    LogStr("NVX [NATIVE]: C67D core window bounds consumed GET=");LogHex(n);LogStr("\n");
+    LogStr("NVX [NATIVE]: C67D core capability bounds consumed GET=");LogHex(n);LogStr("\n");
     /* Each header carries the byte method offset and count in bits 27:18.
        Core PUT remains a DWORD index. This update changes no head state. */
     push[n++]=(1U<<18)|(0x208>>2);push[n++]=handle;
     push[n++]=(1U<<18)|(0x20c>>2);push[n++]=0x1000; /* notifier enabled, offset zero */
     push[n++]=(2U<<18)|(0x218>>2);push[n++]=0;push[n++]=0;
     push[n++]=(1U<<18)|(0x200>>2);
-    push[n++]=NVX_C67D_UPDATE_SPECIAL_HANDLING_INTERRUPT_RM;
-    /* Request RM handling; no interlocks or head-state changes. */
+    push[n++]=NVX_C67D_UPDATE_INHIBIT_INTERRUPTS;
+    /* Suppress interrupts for this empty probe; no head-state changes. */
     push[n++]=(1U<<18)|(0x20c>>2);push[n++]=0;
     NvxNativeLogDisplayStatus(dev,"before-update");
     __sync_synchronize();
