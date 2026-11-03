@@ -47,6 +47,7 @@ NvxUploadSurfaceRect(PPDEV ppdev, SURFOBJ *pso, RECTL *prcl)
         params->Bytes=batchBytes;
         memcpy(params->Data,(PUCHAR)pso->pvBits+(ULONG)y*(ULONG)pso->lDelta+
                (ULONG)r.left*bytesPerPixel,batchBytes);
+        requestBytes=FIELD_OFFSET(NVX_ACCEL_UPLOAD_PARAMS,Data)+batchBytes;
         if(EngDeviceIoControl(ppdev->hDriver,IOCTL_NVX_ACCEL_UPLOAD,
                               params,requestBytes,NULL,0,&ulTemp)) {
             success=FALSE;

@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.112 batched GDI uploads
+NVIDIA GA104 XDDM DRIVER — v1.0.0.113 sustained GDI uploads
 Updated: November 2, 2026
 
 Current checkpoint
@@ -23,8 +23,12 @@ sources; see STATUS_FLOW_v110.txt.
 v111 completed host tests and submitted many uploads, but its per-row synchronous
 submission stream stopped progressing. v112 batches contiguous rows; host tests
 and hardware GSP initialization pass, but only five of 701 upload IOCTLs complete
-because partial batches declare an oversized input length. v113 fixes that check.
-See STATUS_FLOW_v111.txt and STATUS_FLOW_v112.txt.
+because partial batches declare an oversized input length. v113 sets each IOCTL length to header plus actual batch bytes. Hardware log
+v113-20261102-213910.log records 745 upload calls and success milestones
+through 700, with no GPU timeout or bugcheck. This confirms sustained GPU copy
+execution of GDI fallback pixels, but no one has confirmed the visible desktop.
+This run selected 800x600x32 from four VBE modes. See STATUS_FLOW_v111.txt
+through STATUS_FLOW_v113.txt.
 
 The desktop is not yet confirmed working. A successful GSP copy probe alone is
 not desktop acceleration; confirm visible icons, text, and window contents.
