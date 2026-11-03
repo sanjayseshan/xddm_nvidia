@@ -1,8 +1,46 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.127 EDID monitor enumeration
+NVIDIA GA104 XDDM DRIVER — v1.0.0.128 native display preflight
 Updated: November 3, 2026
 
-Latest change (v127)
+Latest change (v128)
 --------------------
+User requests enabling the second monitor. v128 adds validated progressive
+separate-sync EDID detailed-timing decoding plus head-count, head-mask,
+active-display and firmware head-routing queries. No modeset is submitted.
+Host tests cover 1080p60 timing fields and rejection of interlace, malformed
+sync, empty/truncated descriptors; GSP mock covers preserving an active primary
+and routing two displays to distinct heads. Host suite/build pass.
+
+Hardware log test_logs/v128-20261103-105639.log reports four heads (mask 0xF).
+Head 0 currently drives display ID 0x0800; heads 1-3 are inactive. Both attached
+displays remain routable (mask 0x0A00); headRoutingMap=1 assigns display 0x0200
+to head 1 and display 0x0800 to head 0. Preferred EDID detailed timings:
+0x0200 = 2560x1440, 241500000Hz pixel clock, 59950mHz frame rate;
+0x0800 = 1920x1080, 148500000Hz pixel clock, 60000mHz frame rate.
+These are supported preferred timings, not proof of active refresh rate.
+This v128 boot selected the degraded 800x600x32 VBE mode (index 3, pitch4096),
+not 1080p. That intermittent BIOS enumeration problem remains; EDID timing
+availability does not itself change the active VBE mode.
+
+SECOND SCREEN IS NOT ENABLED. The prerequisite routing plan is verified, but
+native display ownership and command submission are not implemented. Required
+work, following local Nouveau r535 display and NVIDIA NVKMS references:
+1. Reserve/initialize 64KB-aligned display instance memory and its RAMHT;
+   register through INTERNAL_DISPLAY_WRITE_INST_MEM (0x20800a49).
+2. Allocate GA102 display root and core/window channels, register coherent
+   pushbuffers via INTERNAL_DISPLAY_CHANNEL_PUSHBUFFER (0x20800a58), bind
+   valid DMA/notifier objects and verify command consumption/completion.
+3. Acquire/route the output resource, configure the physical link and timings,
+   scanout surface/window assignment and atomically commit both head states.
+   Preserve/restore console state when taking over from VBE.
+4. Implement per-view modes/framebuffers and XP VideoPortCreateSecondaryDisplay
+   with IOCTL_VIDEO_SWITCH_DUALVIEW so Windows can extend the desktop. Merely
+   enumerating monitor children is insufficient.
+Do not fake a second Windows view while it cannot drive a physical head.
+v127 remains the rollback baseline for two monitor devices and a responsive
+single-head desktop; v125 is the confirmed responsive 1080p rendering baseline.
+
+Previous v127 change
+-------------------
 v126 proved both RTX-connected monitors are detected by GSP (mask 0x0A00).
 v127 queries inline GET_EDID_V2 (0x730245) for each connected display, validates
 size/header/block count/checksums, and caches valid monitor descriptors.

@@ -2,6 +2,7 @@
 #define _NVX_GSP_H_
 
 #include "miniport.h"
+#include "nvx_display.h"
 
 #define MAX_NVX_MODES 32
 
@@ -315,6 +316,12 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG GspDisplayHandle;
     ULONG GspSupportedDisplays;
     ULONG GspConnectedDisplays;
+    ULONG DisplayHeadCount;
+    ULONG DisplayHeadMask;
+    ULONG DisplayActiveIds[4];
+    ULONG DisplayRoutableMask;
+    ULONG DisplayHeadRoutingMap;
+    NVX_DISPLAY_TIMING MonitorTiming[8];
     ULONG MonitorCount;
     ULONG MonitorIds[8];
     ULONG MonitorEdidBytes[8];

@@ -25,6 +25,8 @@ clean:
 
 .PHONY: check
 check:
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I. -o /tmp/nvx-display-test tests/display_test.c
+	ASAN_OPTIONS=detect_leaks=0 /tmp/nvx-display-test
 	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I. -o /tmp/nvx-mmu-test tests/mmu_test.c nvx_mmu.c
 	ASAN_OPTIONS=detect_leaks=0 /tmp/nvx-mmu-test
 	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I. -o /tmp/nvx-seq-test tests/seq_test.c nvx_seq.c

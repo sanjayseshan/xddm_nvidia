@@ -61,7 +61,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         PULONG request=(PULONG)((PUCHAR)cmd+4096+(cmd->WritePtr-1)*4096);
         ULONG alloc[528]={0},replyBytes;
         uint32_t f,r,s;
-        assert(cmd->WritePtr>=3&&cmd->WritePtr<=30);
+        assert(cmd->WritePtr>=3&&cmd->WritePtr<=37);
         assert(NvxDecodeRpc((PUCHAR)request,4096,&f,&r,&s));
         assert((f==103||f==76||f==4||f==14||f==10||f==65)&&s==cmd->WritePtr-1);
         if(f==65) {
@@ -166,6 +166,15 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         replyBytes=f==76?24+request[24]:(f==14?56:32);
         assert(replyBytes<=sizeof(alloc));
         memcpy(alloc,request+20,f==76?replyBytes:(f==14?56:16));
+        if(f==76&&request[22]==0x730102) alloc[8]=4;
+        if(f==76&&request[22]==0x730287) alloc[7]=15;
+        if(f==76&&request[22]==0x730126) {
+            assert(request[27]<4);alloc[9]=request[27]==0?1:0;
+        }
+        if(f==76&&request[22]==0x730125) {
+            assert(request[27]==5 && request[28]==1 && request[29]==0);
+            alloc[10]=0x10;
+        }
         if(f==76&&request[22]==0x730245) {
             UCHAR *edid=(UCHAR *)(alloc+10);
             assert(request[24]==2064 && request[28]==2048);
@@ -360,9 +369,12 @@ int main(void)
         assert(dev.GspInitialized==(scenario==0 || scenario>=3));
         if (dev.GspInitialized) {
             assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==
-                   (ULONG)((scenario==4?30:28)+(dev.GspCopyVerified?5:0)));
+                   (ULONG)((scenario==4?30:28)+(dev.GspCopyVerified?12:0)));
             if(dev.GspCopyVerified) {
                 assert(dev.GspDisplayHandle==0x73000001);
+                assert(dev.DisplayHeadCount==4 && dev.DisplayHeadMask==15);
+                assert(dev.DisplayActiveIds[0]==1 && dev.DisplayActiveIds[1]==0);
+                assert(dev.DisplayRoutableMask==5 && dev.DisplayHeadRoutingMap==0x10);
                 assert(dev.GspSupportedDisplays==5 && dev.GspConnectedDisplays==5);
                 assert(dev.MonitorCount==(ULONG)(scenario==0?2:1));
                 assert(dev.MonitorIds[0]==1 && dev.MonitorEdidBytes[0]==128);

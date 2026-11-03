@@ -3,7 +3,7 @@ set -eu
 cd "$(dirname "$0")/.."
 build_dir=$(mktemp -d /tmp/nvx-gsp-test.XXXXXX)
 trap 'rm -rf "$build_dir"' EXIT
-cp nvx_mmu.c nvx_mmu.h nvx_gsp.c nvx_fw.c nvx_fw.h nvx_rpc.c nvx_rpc.h nvx_seq.c nvx_seq.h bootloader_blob.h booter_load_blob.h tests/gsp_mock_test.c tests/host_videoport.h "$build_dir/"
+cp nvx_display.h nvx_mmu.c nvx_mmu.h nvx_gsp.c nvx_fw.c nvx_fw.h nvx_rpc.c nvx_rpc.h nvx_seq.c nvx_seq.h bootloader_blob.h booter_load_blob.h tests/gsp_mock_test.c tests/host_videoport.h "$build_dir/"
 sed 's/#include "miniport.h"/#include "host_videoport.h"/' nvx_gsp.h > "$build_dir/nvx_gsp.h"
 # Preserve firmware linker symbol names used by the production image.
 ld -r -b binary ../dist_full/gsp_ga104.bin -o "$build_dir/blob.o"

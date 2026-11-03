@@ -830,8 +830,61 @@ static VOID NvxGspReadMonitorEdid(PNVX_DEVICE_EXTENSION dev,ULONG displayId)
     i=dev->MonitorCount++;
     dev->MonitorIds[i]=displayId;dev->MonitorEdidBytes[i]=bytes;
     VideoPortMoveMemory(dev->MonitorEdid[i],(PVOID)edid,bytes);
+    for(ULONG dtd=54;dtd+18<=126;dtd+=18) {
+        if(NvxDecodeDetailedTiming(edid+dtd,18,&dev->MonitorTiming[i])) {
+            NVX_DISPLAY_TIMING *t=&dev->MonitorTiming[i];
+            LogStr("NVX [MODEPLAN]: display=");LogHex(displayId);
+            LogStr(" width=");LogHex(t->hActive);LogStr(" height=");LogHex(t->vActive);
+            LogStr(" clockHz=");LogHex(t->pixelClockHz);
+            LogStr(" refreshMilliHz=");LogHex(t->refreshMilliHz);LogStr("\n");
+            break;
+        }
+    }
     LogStr("NVX [DISPLAY]: valid EDID id=");LogHex(displayId);
     LogStr(" bytes=");LogHex(bytes);LogStr("\n");
+}
+
+/* Query routing without changing any output assignments or taking ownership. */
+static VOID NvxGspPlanHeads(PNVX_DEVICE_EXTENSION dev)
+{
+    ULONG heads[3]={0,0,0},mask[2]={0,0},route[5]={0,0,0,0,0};
+    const ULONG *reply;
+    if(!NvxGspControl(dev,dev->GspDisplayHandle,0x730102,heads,sizeof(heads))) return;
+    reply=(const ULONG *)dev->RpcRxRecord;
+    dev->DisplayHeadCount=reply[28];
+    if(!dev->DisplayHeadCount || dev->DisplayHeadCount>4) return;
+    if(!NvxGspControl(dev,dev->GspDisplayHandle,0x730287,mask,sizeof(mask))) return;
+    reply=(const ULONG *)dev->RpcRxRecord;
+    dev->DisplayHeadMask=reply[27]&((1UL<<dev->DisplayHeadCount)-1);
+    LogStr("NVX [MODEPLAN]: heads=");LogHex(dev->DisplayHeadCount);
+    LogStr(" mask=");LogHex(dev->DisplayHeadMask);LogStr("\n");
+    for(ULONG head=0;head<dev->DisplayHeadCount;head++) {
+        ULONG active[4]={0,head,0,0};
+        if(!(dev->DisplayHeadMask&(1UL<<head))) continue;
+        if(!NvxGspControl(dev,dev->GspDisplayHandle,0x730126,active,sizeof(active))) return;
+        reply=(const ULONG *)dev->RpcRxRecord;
+        dev->DisplayActiveIds[head]=reply[29];
+        route[2]|=reply[29];
+        LogStr("NVX [MODEPLAN]: active head=");LogHex(head);
+        LogStr(" display=");LogHex(reply[29]);LogStr("\n");
+    }
+    {
+        ULONG ordinal=0;
+        for(ULONG bit=0;bit<32;bit++) if(route[2]&(1UL<<bit)) {
+            if(ordinal>=8) return;
+            for(ULONG head=0;head<dev->DisplayHeadCount;head++)
+                if(dev->DisplayActiveIds[head]&(1UL<<bit)) route[3]|=head<<(ordinal*4);
+            ordinal++;
+        }
+    }
+    route[1]=dev->GspConnectedDisplays;
+    if(!NvxGspControl(dev,dev->GspDisplayHandle,0x730125,route,sizeof(route))) return;
+    reply=(const ULONG *)dev->RpcRxRecord;
+    dev->DisplayRoutableMask=reply[27]&dev->GspConnectedDisplays;
+    dev->DisplayHeadRoutingMap=reply[30];
+    LogStr("NVX [MODEPLAN]: routable=");LogHex(dev->DisplayRoutableMask);
+    LogStr(" headMap=");LogHex(dev->DisplayHeadRoutingMap);
+    LogStr("; no native modeset submitted.\n");
 }
 
 /* NVIDIA ctrl0073system.h: discover physical connectors, independent of
@@ -869,6 +922,7 @@ static VOID NvxGspDiscoverDisplays(PNVX_DEVICE_EXTENSION dev)
     for(ULONG bit=0;bit<32;bit++)
         if(dev->GspConnectedDisplays&(1UL<<bit))
             NvxGspReadMonitorEdid(dev,1UL<<bit);
+    NvxGspPlanHeads(dev);
 }
 
 static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
