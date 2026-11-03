@@ -1,5 +1,5 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 3, 2026 (v168 pitched CopyBits candidate)
+Updated: November 3, 2026 (v168 hardware run logged; visual check pending)
 
 Confirmed baseline: v164 works on the test EVGA RTX 3070 XC3 Ultra LHR with
 two physical displays. The primary runs at 1920x1080 and the secondary at
@@ -32,10 +32,12 @@ spans to the active framebuffer, and falls back to GDI for smaller, overlapping,
 clipped, or translated operations. It snapshots source pixels so the GDI
 fallback retains the original source if submission fails. A host GSP test
 checks emitted pitches, line size, and count. The display miniport and host
-test suite build successfully. Two attempts to run `./test_full_driver.sh`
-stopped before guest launch when libguestfs reported `/usr/bin/supermin exited
-with error status 1`; v168 has no hardware or visual validation yet. OpenGL,
-Direct3D, and 3D acceleration are not implemented.
+test suite build successfully. The user-run log `test_logs/v168-20261103-172522.log`
+shows GSP RM INIT_DONE, both heads active and four-lane link-locked at
+1920x1080 and 2560x1440, and successful GPU solid-fill activity. It contains no
+GPU CopyBits submissions, so this run did not exercise the new copy path. The
+visual result while dragging windows is pending. OpenGL, Direct3D, and 3D
+acceleration are not implemented.
 High-refresh modes such as 120 Hz and other GPU models, boards, connectors, and
 monitor combinations are not validated.
 
@@ -54,8 +56,9 @@ Milestones:
   rectangles and excessive small copies while dragging windows.
 - v168: narrows CopyBits to larger non-overlapping rectangles, batches rows
   in one pitched GPU copy submission, and snapshots the source for safe GDI
-  fallback. Build and host tests pass; hardware test blocked by libguestfs
-  supermin failure before VM launch.
+  fallback. Build and host tests pass; user-run hardware log confirms GSP and
+  both native heads, but has zero CopyBits submissions. Visual drag result
+  pending.
 
 Validation: the v164 hardware log recorded active Head 0 and Head 1, completed
 display-update notifiers, four-lane DisplayPort link locks, 1920x1080 and
