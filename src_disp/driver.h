@@ -27,8 +27,8 @@ typedef struct _VIDEOMEMORY VIDEOMEMORY;
 #define NVX_UPLOAD_KIND_BITBLT           2UL
 #define NVX_UPLOAD_KIND_TEXTOUT          3UL
 #define NVX_ACCEL_UPLOAD_HEADER_BYTES    16UL
-/* v118 isolates GDI/BAR1 scanout from the still-unverified CE destination map. */
-#define NVX_SOFTWARE_SCANOUT_DIAGNOSTIC  1
+/* Diagnostic mode is available for isolating direct BAR1 surface writes. */
+#define NVX_SOFTWARE_SCANOUT_DIAGNOSTIC  0
 
 typedef struct _NVX_ACCEL_COPY_PARAMS {
     ULONG64 DstGpuVa;

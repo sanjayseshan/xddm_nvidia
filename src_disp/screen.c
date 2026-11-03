@@ -332,7 +332,7 @@ DrvEnablePDEV(
     pGdiInfo->ulHTPatternSize           = HT_PATSIZE_4x4_M;
     pGdiInfo->flHTFlags                 = HT_FLAG_ADDITIVE_PRIMS;
 
-    pdi->flGraphicsCaps  = 0;
+    pdi->flGraphicsCaps  = GCAPS_OPAQUERECT | GCAPS_MONO_DITHER;
     pdi->lfDefaultFont   = SystemFont;
     pdi->lfAnsiVarFont   = AnsiVariableFont;
     pdi->lfAnsiFixFont   = AnsiFixedFont;
