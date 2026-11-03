@@ -135,8 +135,12 @@ and ISOs are intentionally excluded from version control.
 
 - **NVIDIA** for the GA10x GSP-RM and SEC2 firmware inputs and the published
   535.113.01 release.
-- **NVIDIA Open GPU Kernel Modules** and **Linux Nouveau** for public reference
-  material on GSP, memory management, copy engines, and native display methods.
+- [**NVIDIA Open GPU Kernel Modules**](https://github.com/NVIDIA/open-gpu-kernel-modules)
+  and [**Linux Nouveau**](https://gitlab.freedesktop.org/drm/nouveau) for
+  public reference material on GSP, memory management, copy engines, and native
+  display methods.
+- [**nvidia-macos-driver**](https://github.com/nullmoth/nvidia-macos-driver)
+  for an additional community reverse-engineering reference.
 - **GPT and Gemini** models assisted with code analysis, implementation, and
   debugging.
 - **Sanjay Seshan** performed the physical GPU and monitor tests and confirmed

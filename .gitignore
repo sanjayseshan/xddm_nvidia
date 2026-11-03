@@ -25,6 +25,7 @@
 
 # Generated/extracted third-party source trees and historical snapshots
 /open-gpu-kernel-modules/
+/nvidia-macos-driver/
 /linux-drm/
 /linux-nouveau-drm/
 /grub4dos-0.4.4/
