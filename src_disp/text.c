@@ -75,7 +75,7 @@ DrvTextOut(
     NvxIncludeRect(&uploadRect,prclExtra,&haveUploadRect);
     BOOL result=EngTextOut(pso,pstro,pfo,pco,prclExtra,prclOpaque,
                            pboFore,pboOpaque,pptlOrg,mix);
-    if(result&&pso&&pso->dhpdev&&pstro&&haveUploadRect) {
+    if(!NVX_SOFTWARE_SCANOUT_DIAGNOSTIC&&result&&pso&&pso->dhpdev&&pstro&&haveUploadRect) {
         PPDEV ppdev=(PPDEV)pso->dhpdev;
         (void)NvxUploadSurfaceRect(ppdev,pso,&uploadRect,NVX_UPLOAD_KIND_TEXTOUT);
     }

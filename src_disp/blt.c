@@ -88,6 +88,9 @@ DrvCopyBits(
 
     ppdev = (PPDEV)psoDest->dhpdev;
 
+    if (NVX_SOFTWARE_SCANOUT_DIAGNOSTIC)
+        return EngCopyBits(psoDest,psoSrc,pco,pxlo,prclDest,pptlSrc);
+
     /*
      * Check if this is a screen-to-screen blit within the primary surface:
      * - Dest and Src must be the primary surface (same dhpdev)
@@ -226,6 +229,9 @@ DrvBitBlt(
     }
 
     ppdev = (PPDEV)psoTrg->dhpdev;
+    if (NVX_SOFTWARE_SCANOUT_DIAGNOSTIC)
+        return EngBitBlt(psoTrg,psoSrc,psoMask,pco,pxlo,prclTrg,pptlSrc,
+                         pptlMask,pbo,pptlBrush,rop4);
     bytesPerPixel = (ppdev->BitsPerPixel + 7) / 8;
     width = prclTrg->right - prclTrg->left;
     height = prclTrg->bottom - prclTrg->top;

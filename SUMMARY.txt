@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.117 text-payload diagnostics
+NVIDIA GA104 XDDM DRIVER — v1.0.0.118 software scanout isolation
 Updated: November 2, 2026
 
 Current checkpoint
@@ -39,7 +39,13 @@ reports text is still absent or boxes remain. v117 hardware log test_logs/v117-2
 IOCTLs and changing nonzero pixels in sampled DrvTextOut payloads (the first
 three have 21 adjacent pixel transitions each). Thus GDI produces changing
 text-path bytes, but this does not prove correct scanout coordinates or visible
-glyphs. Physical-screen result pending. See STATUS_FLOW_v117.txt.
+glyphs. The user confirms boxes/corruption remain. v118 keeps GDI hooks but disables GPU
+fill/copy/upload drawing, isolating direct CPU writes to the VBE framebuffer.
+The user reports v118 produced a black screen/no signal in two boots, at
+800x600 and 1920x1080. The serial logs reached scanout mapping, but no CE
+drawing ran and BAR1 offset zero remained unmapped. v119 restores the stock
+0x500 GDI graphics capability flags and the GPU drawing path. See
+STATUS_FLOW_v118.txt and STATUS_FLOW_v119.txt.
 
 The desktop is not yet confirmed working. A successful GSP copy probe alone is
 not desktop acceleration; confirm visible icons, text, and window contents.
