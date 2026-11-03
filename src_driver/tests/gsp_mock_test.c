@@ -294,9 +294,9 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(request[28]==(ULONG)(dev.GspDmaPhysical.QuadPart+GSP_DISPLAY_PUSH_OFFSET+
                 (request[33]==0xc67d?0:(request[34]==0?1:2))*0x1000));
             assert(request[30]==0xfff && request[35]==1);
-            assert(request[33]==0xc67d || request[33]==0xc57e);
+            assert(request[33]==0xc67d || request[33]==0xc67e);
         }
-        if(f==103 && (request[23]==0xc67d || request[23]==0xc57e)) {
+        if(f==103 && (request[23]==0xc67d || request[23]==0xc67e)) {
             assert(request[21]==dev.NativeDisplayHandle && request[25]==32);
             assert(request[28]==(request[22]==0xc6700102?2:0));
             for(ULONG i=29;i<36;i++) assert(request[i]==0);

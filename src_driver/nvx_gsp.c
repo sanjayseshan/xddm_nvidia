@@ -883,7 +883,7 @@ BOOLEAN NvxGspInitDisplayChannels(PVOID extension)
 {
     PNVX_DEVICE_EXTENSION dev=extension;
     const ULONG offsets[3]={0x680000,0x690000,0x692000};
-    const ULONG classes[3]={0xc67d,0,0xc57e};
+    const ULONG classes[3]={0xc67d,0,0xc67e};
     const ULONG instances[3]={0,0,2};
     NVX_DISPLAY_INSTANCE_535 instance={0};
     PUCHAR bar0,scratch;
@@ -1090,6 +1090,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
         return FALSE;
     }
 
+    NvxGspTrainSecondaryDpLink(dev);
     NvxGspWakeSecondaryDpSink(dev);
 
     {
@@ -1185,7 +1186,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
 
     NvxDisplayPushHeader(NVX_C67E_SET_STORAGE, 1, &header);
     winPush[winN++] = header;
-    winPush[winN++] = 0x10; /* Pitch layout (NVC37E_SET_STORAGE_MEMORY_LAYOUT_PITCH) */
+    winPush[winN++] = 0; /* Ampere removed MEMORY_LAYOUT; DMA context kind0 is linear. */
 
     NvxDisplayPushHeader(NVX_C67E_SET_PARAMS, 1, &header);
     winPush[winN++] = header;

@@ -1,3 +1,18 @@
+NVIDIA GA104 XDDM DRIVER — v1.0.0.156 Ampere window storage correction
+Updated: November 3, 2026
+
+v156 uses supported C67E and removes obsolete SET_STORAGE pitch-layout bit,
+following Nouveau wndwc67e. Trains the secondary when its mode is requested,
+even if the primary BIOS mode list was degraded. Host sanitizer/build pass.
+Log test_logs/v156-20261103-151951.log: C67D/C67E allocate, prior Window3 method
+fault is gone. Core UPDATE still faults (Xid56 state error0x25). Verification
+reports primary Head0 display0x0800 active with four lanes locked (0x017777),
+Head1 inactive, notifier0. Primary 1080p VBE restoration returns AX=004f.
+No successful dual display yet. Next match Nouveau core initialization bounds
+for every window (including active primary Window0), without allocating its
+DMA channel or submitting an empty global UPDATE; only Window2 bounds were
+published by v156 and active primary state may fail core validation.
+
 NVIDIA GA104 XDDM DRIVER — v1.0.0.155 isolate secondary and verify activation
 Updated: November 3, 2026
 
