@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#define NVX_C67D_UPDATE_SPECIAL_HANDLING_INTERRUPT_RM (1U << 20)
+
 typedef struct {
     uint32_t pixelClockHz;
     uint32_t hActive,hTotal,hSyncStart,hSyncEnd;

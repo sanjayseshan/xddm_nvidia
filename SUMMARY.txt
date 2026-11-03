@@ -39,6 +39,19 @@ single-display path intact and the guest shut down cleanly. Next, test the
 NVIDIA-defined UPDATE special-handling mode that requests RM handling, without
 changing head/link state; keep the diagnostic snapshot in place.
 
+Latest change (v134): request RM-handled core UPDATE
+---------------------------------------------------
+v134 sets the documented C67D UPDATE special-handling field to INTERRUPT_RM
+and adds a host assertion for its bit position. It changes no head state and
+retains v133's read-only status snapshots. Host sanitizer tests and the x64
+build pass. Hardware log test_logs/v134-20261103-114801.log again shows VBE
+1080p set success and all three NOP channels consumed, but GET still stops at
+12 and the notifier stays zero. BAR0 status matches v133: interrupt status is
+0xBADF5040, display interrupt enable is zero, and the secondary output has no
+SOR. The XP guest shut down through ACPI. RM-handled UPDATE alone is not enough.
+Next, follow the Nouveau display-engine initialization order and enable only
+the display wake bit, then check whether the MMIO status registers become live.
+
 Latest change (v131): native display command channels
 -----------------------------------------------------
 After the user's host reboot, supplied log v130-20261103-112439.log shows XP
