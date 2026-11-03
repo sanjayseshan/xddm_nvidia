@@ -4,6 +4,13 @@
 #include <string.h>
 int main(void)
 {
+    assert(sizeof(NVX_DFP_ASSIGN_SOR_PARAMS)==80);
+    assert(offsetof(NVX_DFP_ASSIGN_SOR_PARAMS,sorExcludeMask)==8);
+    assert(offsetof(NVX_DFP_ASSIGN_SOR_PARAMS,slaveDisplayId)==12);
+    assert(offsetof(NVX_DFP_ASSIGN_SOR_PARAMS,sorAssignList)==24);
+    assert(offsetof(NVX_DFP_ASSIGN_SOR_PARAMS,sorAssignListWithTag)==40);
+    assert(offsetof(NVX_DFP_ASSIGN_SOR_PARAMS,flags)==76);
+    assert(NVX_CTRL_CMD_DFP_ASSIGN_SOR==0x00731152U);
     assert(NVX_C67D_UPDATE_SPECIAL_HANDLING_INTERRUPT_RM == 0x00100000U);
     assert(NVX_C67D_UPDATE_INHIBIT_INTERRUPTS == 0x01000000U);
     /* 1920x1080p60, 148.5MHz, totals 2200x1125, +H/+V. */

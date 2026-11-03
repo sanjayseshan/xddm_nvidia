@@ -956,6 +956,8 @@ static BOOLEAN NvxNativeVerifyNotifier(PNVX_DEVICE_EXTENSION dev)
 
 static VOID NvxNativeReadOutputInfo(PNVX_DEVICE_EXTENSION dev)
 {
+    for(ULONG monitor=0;monitor<dev->MonitorCount;monitor++)
+        dev->MonitorSor[monitor]=0xffffffffUL;
     for(ULONG monitor=0;monitor<dev->MonitorCount;monitor++) {
         /* RM 535 OR_GET_INFO: 40-byte prefix, u64 VBIOS, two bools, pad. */
         ULONG params[14]={0,dev->MonitorIds[monitor]},*reply=(ULONG *)dev->RpcRxRecord;
@@ -1041,7 +1043,6 @@ BOOLEAN NvxGspInitDisplayChannels(PVOID extension)
     }
     dev->NativeDisplayChannelsReady=TRUE;
     (void)NvxNativeWakeDisplayEngine(dev);
-    NvxNativeReadOutputInfo(dev);
     (void)NvxNativeVerifyNotifier(dev);
     LogStr("NVX [NATIVE]: core and windows 0/2 DMA verified; head timings unchanged.\n");
     return TRUE;
@@ -1166,6 +1167,68 @@ static VOID NvxGspPlanHeads(PNVX_DEVICE_EXTENSION dev)
         NvxGspNativeDisplayRoot(dev);
 }
 
+/* Ask RM to route the inactive connected DFP to an available SOR. Preserve
+   every SOR already serving an active head. This only changes RM's connector
+   routing plan; it does not link-train, modeset, or touch the primary scanout. */
+static VOID NvxGspAssignSecondarySor(PNVX_DEVICE_EXTENSION dev)
+{
+    NVX_DFP_ASSIGN_SOR_PARAMS params={0};
+    const NVX_DFP_ASSIGN_SOR_PARAMS *result;
+    const ULONG *reply;
+    ULONG target=0,excludeMask=0,activeSorMask=0,match=0,assignedSor=0xffffffffUL;
+    if(!dev->NativeDisplayHandle || !dev->GspDisplayHandle ||
+       !dev->MonitorCount || !dev->DisplayHeadCount) return;
+
+    for(ULONG monitor=0;monitor<dev->MonitorCount;monitor++) {
+        BOOLEAN active=FALSE;
+        for(ULONG head=0;head<dev->DisplayHeadCount;head++)
+            if(dev->DisplayActiveIds[head]&dev->MonitorIds[monitor]) active=TRUE;
+        if(active) {
+            if(dev->MonitorSor[monitor]>=4) {
+                LogStr("NVX [DISPLAY]: preserving active output with unknown SOR; secondary assignment skipped.\n");
+                return;
+            }
+            activeSorMask|=1UL<<dev->MonitorSor[monitor];
+        } else if(target==0 && dev->MonitorSor[monitor]==0xffffffffUL) {
+            target=dev->MonitorIds[monitor];
+        }
+        if(dev->MonitorSor[monitor]<4)
+            excludeMask|=1UL<<dev->MonitorSor[monitor];
+    }
+    if(!target || !activeSorMask) {
+        LogStr("NVX [DISPLAY]: no safely assignable inactive DFP/active SOR pair found.\n");
+        return;
+    }
+    params.subDeviceInstance=0;
+    params.displayId=target;
+    params.sorExcludeMask=(uint8_t)excludeMask;
+    params.flags=0; /* AUDIO_DEFAULT; do not constrain SOR choice by audio. */
+    LogStr("NVX [DISPLAY]: assigning inactive display=");LogHex(target);
+    LogStr(" excluding active SOR mask=");LogHex(excludeMask);LogStr("\n");
+    if(!NvxGspControl(dev,dev->GspDisplayHandle,NVX_CTRL_CMD_DFP_ASSIGN_SOR,
+                      &params,sizeof(params))) {
+        LogStr("NVX [DISPLAY]: RM SOR assignment failed; primary routing unchanged.\n");
+        return;
+    }
+    reply=(const ULONG *)dev->RpcRxRecord;
+    result=(const NVX_DFP_ASSIGN_SOR_PARAMS *)(reply+26);
+    for(ULONG sor=0;sor<4;sor++) {
+        ULONG mask=result->sorAssignListWithTag[sor].displayMask;
+        ULONG type=result->sorAssignListWithTag[sor].sorType;
+        LogStr("NVX [DISPLAY]: SOR=");LogHex(sor);LogStr(" displayMask=");
+        LogHex(mask);LogStr(" type=");LogHex(type);LogStr("\n");
+        if(mask&target) { match++;assignedSor=sor; }
+    }
+    if(match!=1 || assignedSor>=4 || (activeSorMask&(1UL<<assignedSor))) {
+        LogStr("NVX [DISPLAY]: RM result did not provide one distinct secondary SOR.\n");
+        return;
+    }
+    for(ULONG monitor=0;monitor<dev->MonitorCount;monitor++)
+        if(dev->MonitorIds[monitor]==target) dev->MonitorSor[monitor]=assignedSor;
+    LogStr("NVX [DISPLAY]: secondary connector assigned SOR=");LogHex(assignedSor);
+    LogStr("; head timing/link remain unchanged.\n");
+}
+
 /* NVIDIA ctrl0073system.h: discover physical connectors, independent of
    scanout programming. Optional failure must preserve the v125 desktop. */
 static VOID NvxGspDiscoverDisplays(PNVX_DEVICE_EXTENSION dev)
@@ -1201,7 +1264,9 @@ static VOID NvxGspDiscoverDisplays(PNVX_DEVICE_EXTENSION dev)
     for(ULONG bit=0;bit<32;bit++)
         if(dev->GspConnectedDisplays&(1UL<<bit))
             NvxGspReadMonitorEdid(dev,1UL<<bit);
+    NvxNativeReadOutputInfo(dev);
     NvxGspPlanHeads(dev);
+    NvxGspAssignSecondarySor(dev);
 }
 
 static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)

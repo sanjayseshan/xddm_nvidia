@@ -180,7 +180,15 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         memcpy(alloc,request+20,f==76?replyBytes:(f==14?56:16));
         if(f==76&&request[22]==0x73028b) {
             assert(request[24]==56 && (request[27]==1 || request[27]==4));
-            alloc[8]=request[27]==1?1:2;alloc[9]=2;alloc[10]=request[27]==1?0:8;
+            alloc[8]=request[27]==1?1:(scenario==12?0xffffffffU:2);
+            alloc[9]=2;alloc[10]=request[27]==1?0:8;
+        }
+        if(f==76&&request[22]==NVX_CTRL_CMD_DFP_ASSIGN_SOR) {
+            assert(request[21]==0x73000001 && request[24]==80);
+            assert(request[27]==4); /* Inactive connected output. */
+            assert((request[28]&2)!=0); /* Keep active SOR 1 away from it. */
+            assert(request[29]==0 && request[30]==0 && request[31]==0);
+            if(scenario==12) { alloc[22]=4;alloc[23]=NVX_DFP_SOR_TYPE_SINGLE; }
         }
         if(f==76&&request[22]==0x50700709) {
             assert(request[21]==0xc6700001 && request[24]==8);alloc[7]=3;
@@ -476,7 +484,8 @@ int main(void)
         assert(dev.GspInitialized==(scenario==0 || scenario>=3));
         if (dev.GspInitialized) {
             assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==
-                   (ULONG)((scenario==4?30:28)+(dev.GspCopyVerified?15:0)));
+                   (ULONG)((scenario==4?30:28)+(dev.GspCopyVerified?15:0)+dev.MonitorCount+
+                           (scenario==12?1:0)));
             if(dev.GspCopyVerified) {
                 assert(dev.GspDisplayHandle==0x73000001);
                 assert(dev.NativeDisplayHandle==0xc6700001 && dev.NativeDisplayCaps==3);
@@ -488,6 +497,7 @@ int main(void)
                 assert(dev.MonitorCount==(ULONG)(scenario==0 || scenario==12?2:1));
                 assert(dev.MonitorIds[0]==1 && dev.MonitorEdidBytes[0]==128);
                 if(scenario==0) assert(dev.MonitorIds[1]==4 && dev.MonitorEdid[1][19]==4);
+                if(scenario==12) assert(dev.MonitorSor[1]==3);
             }
             if(dev.GspCopyVerified) {
                 memset(gpuVram+0x1ff0000,0xa5,0x10000);

@@ -1,7 +1,27 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.131 native display DMA bring-up
+NVIDIA GA104 XDDM DRIVER — v1.0.0.139 secondary SOR assignment
 Updated: November 3, 2026
 
-Latest change (v132): native update completion probe
+Latest change (v139): assign a free SOR to the secondary connector
+-----------------------------------------------------------------
+v139 uses NVIDIA RM ctrl0073 DFP_ASSIGN_SOR (0x731152) for a connected,
+inactive display only after querying the current head and connector map. It
+excludes every SOR already assigned to a monitor and refuses the operation if
+the active output's SOR is unknown. The 80-byte RM ABI is asserted and covered
+by host tests. This changes connector routing only: it does not train the DP
+link, configure a head, submit a scanout surface, or alter the primary mode.
+
+Host sanitizer suite and warning-free x64 build pass. Hardware log
+test_logs/v139-20261103-122052.log confirms the RM call succeeded: active
+primary display 0x0800 remains on SOR2 (excluded with mask 0x4), and previously
+unassigned secondary 0x0200 receives SOR0. All four SOR map entries were read
+back from RM. The native C67D UPDATE still stalls at GET=0x3c, so neither head
+timings nor link state changed and this is not yet dual-monitor scanout. The
+serial run's VBE 1080p request was refused; v138 remains the latest visually
+confirmed 1080p-primary build. v139's physical screen result is unconfirmed.
+Next query target-sink DP capabilities/link defaults for SOR0, then establish
+a tested DP link and add the secondary head/window while preserving SOR2.
+
+Change (v132): native update completion probe
 ---------------------------------------------------
 v132 keeps the primary GDI/CE path unchanged and submits one no-op display
 UPDATE packet with a coherent notifier after the three native channels pass
@@ -21,7 +41,7 @@ powerdown completed and QEMU exited. Next, capture display interrupt and
 supervisor status around the stalled UPDATE. Do not issue head timing or link
 commands until the supervisor/completion path is understood.
 
-Latest change (v133): display interrupt/supervisor diagnostics
+Change (v133): display interrupt/supervisor diagnostics
 --------------------------------------------------------------
 v133 adds read-only BAR0 snapshots before the isolated core UPDATE and after
 its timeout. It records core interrupt status, supervisor state, channel error
@@ -39,7 +59,7 @@ single-display path intact and the guest shut down cleanly. Next, test the
 NVIDIA-defined UPDATE special-handling mode that requests RM handling, without
 changing head/link state; keep the diagnostic snapshot in place.
 
-Latest change (v134): request RM-handled core UPDATE
+Change (v134): request RM-handled core UPDATE
 ---------------------------------------------------
 v134 sets the documented C67D UPDATE special-handling field to INTERRUPT_RM
 and adds a host assertion for its bit position. It changes no head state and
@@ -52,7 +72,7 @@ SOR. The XP guest shut down through ACPI. RM-handled UPDATE alone is not enough.
 Next, follow the Nouveau display-engine initialization order and enable only
 the display wake bit, then check whether the MMIO status registers become live.
 
-Latest change (v135): verify display-engine wake/instance state
+Change (v135): verify display-engine wake/instance state
 ---------------------------------------------------------------
 v135 reads the display wake register and sets bit 0 only if it is clear and
 the register returns a valid value; it does not enable any interrupt source.
@@ -66,7 +86,7 @@ interrupt enable remains zero. The wake bit was not the missing initialization.
 No display timing or output state changed. Next, initialize the C67D core's
 window usage bounds as Nouveau does before testing UPDATE completion again.
 
-Latest change (v136): initialize C67D window bounds
+Change (v136): initialize C67D window bounds
 --------------------------------------------------
 v136 adds the eight core window format/usage-bound pairs used during Nouveau's
 display core initialization. Each window is limited to common RGB formats and
@@ -78,7 +98,7 @@ succeeded on this boot, and the guest shut down cleanly via ACPI. Core window
 bounds alone are insufficient. Next, add Nouveau's per-head usage bounds to
 the same initialization sequence; still do not program timings or outputs.
 
-Latest change (v137): initialize C67D head bounds
+Change (v137): initialize C67D head bounds
 ------------------------------------------------
 v137 adds all four head usage-bound methods alongside the eight window
 bounds, and corrects push-header validation to accept the C67D method-offset
@@ -101,10 +121,18 @@ warning-free x64 build pass. Hardware log test_logs/v138-20261103-120404.log
 shows the full core capability sequence consumed (GET=0x34), then the channel
 stalled at the same UPDATE payload (GET=0x3c); notifier remains zero. This boot's
 VBE 1080p request was refused (EAX=0x14f), and the driver restored its 800x600
-fallback, confirming the intermittent BIOS mode limitation remains. The
-interrupt-inhibited probe did not resolve UPDATE; guest shut down cleanly.
-Next, inspect/validate the notifier context and RM display-channel setup rather
-than trying more UPDATE flags or enabling unhandled hardware interrupts.
+fallback. The user subsequently confirmed that v138 displayed 1080p on the
+primary monitor; this successful visual result supersedes the failed mode-set
+in this particular serial retry. Keep v138 as the baseline; do not roll back
+to v131. The second monitor remains blank. The interrupt-inhibited probe did
+not resolve UPDATE; the secondary head is still not configured. The output
+query finds both displays and the mode plan routes the currently active head
+to 0x0800, but the secondary 0x0200 has no SOR assignment. Next, inspect and
+validate the notifier context and RM display-channel setup rather than trying
+more UPDATE flags or enabling unhandled hardware interrupts. A v131 restore was
+not performed: guestmount's libguestfs appliance crashed before copying files,
+and the QCOW image remains write-locked. Do not access the image until the VM
+is stopped and the lock is released.
 
 Latest change (v131): native display command channels
 -----------------------------------------------------

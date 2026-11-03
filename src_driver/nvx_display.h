@@ -6,6 +6,36 @@
 #define NVX_C67D_UPDATE_SPECIAL_HANDLING_INTERRUPT_RM (1U << 20)
 #define NVX_C67D_UPDATE_INHIBIT_INTERRUPTS (1U << 24)
 
+/* NVIDIA RM ctrl0073dfp.h, NV0073_CTRL_CMD_DFP_ASSIGN_SOR (0x731152).
+ * NvBool is a 32-bit RM boolean; natural 4-byte alignment matches the wire
+ * structure used by the GSP RM control RPC. */
+typedef struct {
+    uint32_t subDeviceInstance;
+    uint32_t displayId;
+    uint8_t sorExcludeMask;
+    uint8_t reserved0[3];
+    uint32_t slaveDisplayId;
+    uint32_t forceSublinkConfig;
+    uint32_t is2Head1Or;
+    uint32_t sorAssignList[4];
+    struct { uint32_t displayMask; uint32_t sorType; } sorAssignListWithTag[4];
+    uint8_t reservedSorMask;
+    uint8_t reserved1[3];
+    uint32_t flags;
+} NVX_DFP_ASSIGN_SOR_PARAMS;
+
+_Static_assert(sizeof(NVX_DFP_ASSIGN_SOR_PARAMS)==80,"DFP_ASSIGN_SOR RM ABI");
+_Static_assert(offsetof(NVX_DFP_ASSIGN_SOR_PARAMS,slaveDisplayId)==12,"DFP_ASSIGN_SOR slave offset");
+_Static_assert(offsetof(NVX_DFP_ASSIGN_SOR_PARAMS,sorAssignList)==24,"DFP_ASSIGN_SOR map offset");
+_Static_assert(offsetof(NVX_DFP_ASSIGN_SOR_PARAMS,sorAssignListWithTag)==40,"DFP_ASSIGN_SOR tagged map offset");
+_Static_assert(offsetof(NVX_DFP_ASSIGN_SOR_PARAMS,flags)==76,"DFP_ASSIGN_SOR flags offset");
+
+#define NVX_CTRL_CMD_DFP_ASSIGN_SOR 0x00731152U
+#define NVX_DFP_SOR_TYPE_NONE 0U
+#define NVX_DFP_SOR_TYPE_SINGLE 1U
+#define NVX_DFP_SOR_TYPE_2H1OR_PRIMARY 2U
+#define NVX_DFP_SOR_TYPE_2H1OR_SECONDARY 3U
+
 typedef struct {
     uint32_t pixelClockHz;
     uint32_t hActive,hTotal,hSyncStart,hSyncEnd;
