@@ -1,4 +1,4 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.111 staged GDI uploads
+NVIDIA GA104 XDDM DRIVER — v1.0.0.112 batched GDI uploads
 Updated: November 2, 2026
 
 Current checkpoint
@@ -20,10 +20,11 @@ is back but still shows many rectangles. The BAR1 scanout translation remains
 unavailable. Next implement a bounded upload path for system-memory bitmap
 sources; see STATUS_FLOW_v110.txt.
 
-v111 adds a bounded coherent-DMA upload path for software-rendered fallback
-pixels and maps an 8MB staging area into the GSP copy engine. It uploads rows
-after EngBitBlt/EngCopyBits/EngTextOut while retaining the primary-surface hooks.
-Host tests/build and hardware validation are pending. See STATUS_FLOW_v111.txt.
+v111 completed host tests and submitted many uploads, but its per-row synchronous
+submission stream stopped progressing. v112 batches contiguous rows; host tests
+and hardware GSP initialization pass, but only five of 701 upload IOCTLs complete
+because partial batches declare an oversized input length. v113 fixes that check.
+See STATUS_FLOW_v111.txt and STATUS_FLOW_v112.txt.
 
 The desktop is not yet confirmed working. A successful GSP copy probe alone is
 not desktop acceleration; confirm visible icons, text, and window contents.
