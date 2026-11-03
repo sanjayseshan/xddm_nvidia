@@ -36,6 +36,28 @@ _Static_assert(offsetof(NVX_DFP_ASSIGN_SOR_PARAMS,flags)==76,"DFP_ASSIGN_SOR fla
 #define NVX_DFP_SOR_TYPE_2H1OR_PRIMARY 2U
 #define NVX_DFP_SOR_TYPE_2H1OR_SECONDARY 3U
 
+/* ctrl0073dp.h read-only DisplayPort controls used before link training. */
+#define NVX_CTRL_CMD_DP_AUXCH_CTRL 0x00731341U
+#define NVX_CTRL_CMD_DP_GET_LINK_CONFIG 0x00731360U
+#define NVX_CTRL_CMD_DP_GET_CAPS 0x00731369U
+typedef struct {
+    uint32_t subDeviceInstance;
+    uint32_t displayId;
+    uint32_t addrOnly;
+    uint32_t cmd;
+    uint32_t addr;
+    uint8_t data[16];
+    uint32_t size;
+    uint32_t replyType;
+    uint32_t retryTimeMs;
+} NVX_DP_AUX_CTRL_PARAMS;
+_Static_assert(sizeof(NVX_DP_AUX_CTRL_PARAMS)==48,"DP AUX RM ABI");
+_Static_assert(offsetof(NVX_DP_AUX_CTRL_PARAMS,data)==20,"DP AUX data offset");
+_Static_assert(offsetof(NVX_DP_AUX_CTRL_PARAMS,size)==36,"DP AUX size offset");
+#define NVX_DP_AUX_TYPE_AUX 1U
+#define NVX_DP_AUX_READ 1U
+#define NVX_DP_AUX_REPLY_ACK 0U
+
 typedef struct {
     uint32_t pixelClockHz;
     uint32_t hActive,hTotal,hSyncStart,hSyncEnd;

@@ -190,6 +190,20 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(request[29]==0 && request[30]==0 && request[31]==0);
             if(scenario==12) { alloc[22]=4;alloc[23]=NVX_DFP_SOR_TYPE_SINGLE; }
         }
+        if(f==76&&request[22]==NVX_CTRL_CMD_DP_GET_CAPS) {
+            assert(scenario==12 && request[24]==80 && request[27]==3);
+            alloc[8]=3;alloc[9]=3; /* HBR2, DP 1.2 + 1.4 */
+        }
+        if(f==76&&request[22]==NVX_CTRL_CMD_DP_AUXCH_CTRL) {
+            assert(scenario==12 && request[24]==48 && request[27]==4);
+            assert(request[29]==9 && request[30]==0 && request[35]==3);
+            alloc[11]=0x00841414; /* DPCD 1.4, HBR2, 4 lanes, no downspread. */
+            alloc[15]=4;alloc[16]=NVX_DP_AUX_REPLY_ACK;
+        }
+        if(f==76&&request[22]==NVX_CTRL_CMD_DP_GET_LINK_CONFIG) {
+            assert(scenario==12 && request[24]==16 && request[27]==4);
+            alloc[8]=4;alloc[9]=0x14;
+        }
         if(f==76&&request[22]==0x50700709) {
             assert(request[21]==0xc6700001 && request[24]==8);alloc[7]=3;
         }
@@ -485,7 +499,7 @@ int main(void)
         if (dev.GspInitialized) {
             assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==
                    (ULONG)((scenario==4?30:28)+(dev.GspCopyVerified?15:0)+dev.MonitorCount+
-                           (scenario==12?1:0)));
+                           (scenario==12?4:0)));
             if(dev.GspCopyVerified) {
                 assert(dev.GspDisplayHandle==0x73000001);
                 assert(dev.NativeDisplayHandle==0xc6700001 && dev.NativeDisplayCaps==3);

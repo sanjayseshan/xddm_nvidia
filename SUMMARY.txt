@@ -1,7 +1,17 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.139 secondary SOR assignment
+NVIDIA GA104 XDDM DRIVER — v1.0.0.140 secondary DP link discovery
 Updated: November 3, 2026
 
-Latest change (v139): assign a free SOR to the secondary connector
+Latest change (v140): query secondary DisplayPort link capabilities
+-----------------------------------------------------------------
+v140 extends the successful v139 secondary SOR assignment with read-only
+queries for transmitter DP capabilities, sink DPCD revision/rate/lane limits
+over AUX, and current transmitter lane/rate. It performs no AUX writes and no
+link training, head update, or scanout change. Host sanitizer tests assert the
+RM control ABIs and mock a successful SOR0 assignment followed by all three
+DP queries; the warning-free x64 build passes. The v139 guest is still running
+and holding the QCOW, so v140 has not been installed or hardware-tested yet.
+
+Latest hardware change (v139): assign a free SOR to the secondary connector
 -----------------------------------------------------------------
 v139 uses NVIDIA RM ctrl0073 DFP_ASSIGN_SOR (0x731152) for a connected,
 inactive display only after querying the current head and connector map. It

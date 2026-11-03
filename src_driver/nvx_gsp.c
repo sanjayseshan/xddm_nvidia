@@ -1167,6 +1167,58 @@ static VOID NvxGspPlanHeads(PNVX_DEVICE_EXTENSION dev)
         NvxGspNativeDisplayRoot(dev);
 }
 
+/* Read transmitter/sink DP limits after RM has routed the secondary. No AUX
+   writes or link-training requests are issued by this diagnostic. */
+static VOID NvxGspReadDpLinkInfo(PNVX_DEVICE_EXTENSION dev,ULONG displayId,ULONG sor)
+{
+    ULONG caps[20]={0},link[4]={0};
+    NVX_DP_AUX_CTRL_PARAMS aux={0};
+    const ULONG *reply;
+    const NVX_DP_AUX_CTRL_PARAMS *auxResult;
+    caps[1]=sor;
+    if(NvxGspControl(dev,dev->GspDisplayHandle,NVX_CTRL_CMD_DP_GET_CAPS,
+                     caps,sizeof(caps))) {
+        reply=(const ULONG *)dev->RpcRxRecord;
+        LogStr("NVX [DP]: transmitter SOR=");LogHex(sor);
+        LogStr(" maxLinkRate=");LogHex(reply[28]);
+        LogStr(" versions=");LogHex(reply[29]);
+        LogStr(" UHBR=");LogHex(reply[30]);LogStr("\n");
+    } else {
+        LogStr("NVX [DP]: transmitter capability query failed for SOR=");LogHex(sor);LogStr("\n");
+    }
+
+    aux.displayId=displayId;
+    aux.cmd=(NVX_DP_AUX_TYPE_AUX<<3)|NVX_DP_AUX_READ;
+    aux.addr=0;aux.size=3; /* DPCD revision, max rate, lane count, downspread. */
+    if(NvxGspControl(dev,dev->GspDisplayHandle,NVX_CTRL_CMD_DP_AUXCH_CTRL,
+                     &aux,sizeof(aux))) {
+        reply=(const ULONG *)dev->RpcRxRecord;
+        auxResult=(const NVX_DP_AUX_CTRL_PARAMS *)(reply+26);
+        if(auxResult->replyType==NVX_DP_AUX_REPLY_ACK && auxResult->size==4) {
+            LogStr("NVX [DP]: DPCD rev=");LogHex(auxResult->data[0]);
+            LogStr(" maxRate=");LogHex(auxResult->data[1]);
+            LogStr(" laneCaps=");LogHex(auxResult->data[2]);
+            LogStr(" downspread=");LogHex(auxResult->data[3]);LogStr("\n");
+        } else {
+            LogStr("NVX [DP]: DPCD read not acknowledged size=");LogHex(auxResult->size);
+            LogStr(" reply=");LogHex(auxResult->replyType);LogStr("\n");
+        }
+    } else {
+        LogStr("NVX [DP]: DPCD AUX capability read failed for display=");LogHex(displayId);LogStr("\n");
+    }
+
+    link[1]=displayId;
+    if(NvxGspControl(dev,dev->GspDisplayHandle,NVX_CTRL_CMD_DP_GET_LINK_CONFIG,
+                     link,sizeof(link))) {
+        reply=(const ULONG *)dev->RpcRxRecord;
+        LogStr("NVX [DP]: current transmitter link lanes=");LogHex(reply[28]);
+        LogStr(" rate=");LogHex(reply[29]);LogStr("\n");
+    } else {
+        LogStr("NVX [DP]: current link configuration unavailable for display=");
+        LogHex(displayId);LogStr("\n");
+    }
+}
+
 /* Ask RM to route the inactive connected DFP to an available SOR. Preserve
    every SOR already serving an active head. This only changes RM's connector
    routing plan; it does not link-train, modeset, or touch the primary scanout. */
@@ -1227,6 +1279,7 @@ static VOID NvxGspAssignSecondarySor(PNVX_DEVICE_EXTENSION dev)
         if(dev->MonitorIds[monitor]==target) dev->MonitorSor[monitor]=assignedSor;
     LogStr("NVX [DISPLAY]: secondary connector assigned SOR=");LogHex(assignedSor);
     LogStr("; head timing/link remain unchanged.\n");
+    NvxGspReadDpLinkInfo(dev,target,assignedSor);
 }
 
 /* NVIDIA ctrl0073system.h: discover physical connectors, independent of
