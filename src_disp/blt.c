@@ -184,7 +184,7 @@ DrvCopyBits(
     /* Render in GDI first, then publish the changed primary-surface rows. */
     {
         BOOL result=EngCopyBits(psoDest,psoSrc,pco,pxlo,prclDest,pptlSrc);
-        if(result&&(!pco||pco->iDComplexity==DC_TRIVIAL))
+        if(result)
             (void)NvxUploadSurfaceRect(ppdev,psoDest,prclDest);
         return result;
     }
@@ -317,7 +317,7 @@ DrvBitBlt(
     {
         BOOL result=EngBitBlt(psoTrg,psoSrc,psoMask,pco,pxlo,
                               prclTrg,pptlSrc,pptlMask,pbo,pptlBrush,rop4);
-        if(result&&(!pco||pco->iDComplexity==DC_TRIVIAL))
+        if(result)
             (void)NvxUploadSurfaceRect(ppdev,psoTrg,prclTrg);
         return result;
     }
