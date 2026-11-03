@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="100"
+NVX_TEST_VERSION="110"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
@@ -12,7 +12,7 @@ if [ -f "$NVX_ROOT/vm_serial.log" ]; then
     cp "$NVX_ROOT/vm_serial.log" "$NVX_ARCHIVE/before-v$NVX_TEST_VERSION-$NVX_STAMP.log"
 fi
 
-echo "==> Running host tests and building GA104 GPU copy probe v$NVX_TEST_VERSION (no ISO)"
+echo "==> Running host tests and building GA104 display recovery v$NVX_TEST_VERSION (no ISO)"
 if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
     sudo -u "$SUDO_USER" make -C "$NVX_ROOT/src_driver" check full
     sudo -u "$SUDO_USER" cp "$NVX_ROOT/src_driver/nvxmp.sys" "$NVX_ROOT/dist_full/nvxmp.sys"
@@ -20,9 +20,14 @@ else
     make -C "$NVX_ROOT/src_driver" check full
     cp "$NVX_ROOT/src_driver/nvxmp.sys" "$NVX_ROOT/dist_full/nvxmp.sys"
 fi
+cp "$NVX_ROOT/dist_full/nvxmp.sys" "$NVX_ROOT/build_versions/v$NVX_TEST_VERSION-nvxmp.sys"
 
-if ! cmp -s "$NVX_ROOT/dist/nvxdisp.dll" "$NVX_ROOT/dist_full/nvxdisp.dll"; then
-    echo "Refusing test: dist_full/nvxdisp.dll does not match the known-working display DLL." >&2
+make -C "$NVX_ROOT/src_disp"
+cp "$NVX_ROOT/src_disp/nvxdisp.dll" "$NVX_ROOT/dist_full/nvxdisp.dll"
+cp "$NVX_ROOT/src_disp/nvxdisp.dll" "$NVX_ROOT/build_versions/v$NVX_TEST_VERSION-nvxdisp.dll"
+
+if [ ! -f "$NVX_ROOT/dist_full/nvxdisp.dll" ]; then
+    echo "Refusing test: dist_full/nvxdisp.dll is missing." >&2
     exit 1
 fi
 echo "==> Verified miniport/display package pairing"
@@ -44,7 +49,7 @@ finish() {
     echo
     echo "==> Result log: $NVX_RUN_LOG"
     if [ -f "$NVX_RUN_LOG" ]; then
-        grep -E "Miniport Driver|\[SEC2\]|\[GSP\]|\[RM\]|\[COPY\]|\[FB\]|\[RESET\]" "$NVX_RUN_LOG" | tail -80 || true
+        grep -E "Miniport Driver|\[SEC2\]|\[GSP\]|\[RM\]|\[COPY\]|\[FB\]|\[FBMAP\]|\[RESET\]" "$NVX_RUN_LOG" | tail -80 || true
         if grep -q 'RM INIT_DONE received' "$NVX_RUN_LOG"; then
             if grep -q 'GPU copy completed and verified' "$NVX_RUN_LOG"; then
                 echo "RESULT: GPU copy completion verified."

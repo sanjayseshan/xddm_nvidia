@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.100
+ * Driver Version: 1.0.0.110
  */
 
 #include "miniport.h"
@@ -911,6 +911,7 @@ BOOLEAN HwVidStartIO(
             memInfo->FrameBufferBase = mappedVirtual;
             memInfo->FrameBufferLength = length;
             devExt->FramebufferVirtual = mappedVirtual;
+            (void)NvxGspDiscoverScanout(HwDeviceExtension,devExt->CurrentModeIndex);
             statusBlock->Information = sizeof(VIDEO_MEMORY_INFORMATION);
         }
         break;
@@ -927,6 +928,7 @@ BOOLEAN HwVidStartIO(
             videoMemory->RequestedVirtualAddress,
             0
         );
+        devExt->GspScanoutMapped=FALSE;
         break;
     }
 
@@ -934,6 +936,57 @@ BOOLEAN HwVidStartIO(
     case IOCTL_VIDEO_SET_COLOR_REGISTERS:
         status = NO_ERROR;
         break;
+
+    case IOCTL_NVX_ACCEL_COPY: {
+        PNVX_ACCEL_COPY_PARAMS params = (PNVX_ACCEL_COPY_PARAMS)RequestPacket->InputBuffer;
+        static ULONG s_copyCount = 0;
+        if (!params || RequestPacket->InputBufferLength < sizeof(NVX_ACCEL_COPY_PARAMS)) {
+            status = ERROR_INVALID_PARAMETER;
+            break;
+        }
+        if (!devExt->GspCopyVerified) {
+            status = ERROR_NOT_SUPPORTED;
+            break;
+        }
+        if (NvxGspSubmitCopy(HwDeviceExtension, params->DstGpuVa, params->SrcGpuVa, params->Bytes)) {
+            status = NO_ERROR;
+            statusBlock->Information = sizeof(NVX_ACCEL_COPY_PARAMS);
+            s_copyCount++;
+            if ((s_copyCount <= 5) || (s_copyCount % 100 == 0)) {
+                LogStr("NVX [ACCEL]: GPU Copy #"); LogHex(s_copyCount);
+                LogStr(" bytes "); LogHex(params->Bytes); LogStr("\n");
+            }
+        } else {
+            status = ERROR_DEVICE_NOT_READY;
+        }
+        break;
+    }
+
+    case IOCTL_NVX_ACCEL_FILL: {
+        PNVX_ACCEL_FILL_PARAMS params = (PNVX_ACCEL_FILL_PARAMS)RequestPacket->InputBuffer;
+        static ULONG s_fillCount = 0;
+        if (!params || RequestPacket->InputBufferLength < sizeof(NVX_ACCEL_FILL_PARAMS)) {
+            status = ERROR_INVALID_PARAMETER;
+            break;
+        }
+        if (!devExt->GspCopyVerified) {
+            status = ERROR_NOT_SUPPORTED;
+            break;
+        }
+        if (NvxGspSubmitFill(HwDeviceExtension, params->DstGpuVa, params->Color, params->Bytes)) {
+            status = NO_ERROR;
+            statusBlock->Information = sizeof(NVX_ACCEL_FILL_PARAMS);
+            s_fillCount++;
+            if ((s_fillCount <= 5) || (s_fillCount % 100 == 0)) {
+                LogStr("NVX [ACCEL]: GPU Fill #"); LogHex(s_fillCount);
+                LogStr(" color "); LogHex(params->Color);
+                LogStr(" bytes "); LogHex(params->Bytes); LogStr("\n");
+            }
+        } else {
+            status = ERROR_DEVICE_NOT_READY;
+        }
+        break;
+    }
 
     default:
         status = ERROR_INVALID_FUNCTION;
@@ -998,7 +1051,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.100\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.110\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

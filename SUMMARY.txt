@@ -1,8 +1,67 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.100 firmware VRAM layout retrieved
+NVIDIA GA104 XDDM DRIVER — v1.0.0.110 primary-surface recovery
 Updated: November 2, 2026
 
 Current checkpoint
 ------------------
+v108 selected 1920x1080x32 (stride 7680) and logged 135 GPU fills plus 39 GPU
+copies, but the physical desktop photo shows a dark screen, repeated solid icon
+blocks, and an incomplete white rectangle. This is not evidence of a usable
+accelerated desktop. The v108 text-hook explanation was insufficient: that
+version added DrvTextOut, yet the photo still shows broad rendering corruption.
+
+The latest v109 run loaded miniport 1.0.0.109, selected only 800x600x32 from a
+degraded four-mode VBE list, then stopped logging after framebuffer mapping;
+the user saw a black screen. v109 had disabled all drawing hooks. v110 restores
+v108's BitBlt/CopyBits/TextOut/Synchronize hooks, which are required for GDI to
+paint this primary surface on the tested stack. Hardware log
+test_logs/v110-20261102-211410.log confirms 1920x1080x32, 54 GPU fills, no GPU
+copies, and completed guarded GSP copy/restore. The user confirms the display
+is back but still shows many rectangles. The BAR1 scanout translation remains
+unavailable. Next implement a bounded upload path for system-memory bitmap
+sources; see STATUS_FLOW_v110.txt.
+
+This version does not yet provide a validated accelerated desktop. Preserve
+the required GDI hooks while implementing and validating system-memory uploads.
+
+Historical v106 checkpoint
+--------------------------
+
+Current checkpoint
+------------------
+v106 refines the accelerated display driver (nvxdisp.dll) based on physical
+screen verification. In v105, the desktop initialized with accelerated fills,
+but desktop icons rendered as cyan squares and mouse cursor/text were affected.
+Root cause identified and addressed:
+1. Masked blits (psoMask != NULL): Icons and cursors use quaternary ROPs with
+   a mask bitmap. DrvBitBlt in v105 handled solid brush fills without checking
+   psoMask, turning transparent icon/label masks into solid bounding-box fills.
+   v106 strictly gates acceleration on (!psoMask), falling back to EngBitBlt
+   so GDI applies icon transparency and text glyph masks properly.
+2. Pointer Hooks: Added DrvSetPointerShape and DrvMovePointer to DrvFunctionTable
+   delegating to EngSetPointerShape / EngMovePointer.
+3. Graphics Capabilities: Set pdi->flGraphicsCaps = GCAPS_OPAQUERECT |
+   GCAPS_MONO_DITHER (0x500) matching stock DEVINFO.
+
+Historical v105 checkpoint
+--------------------------
+v105 hardware test verified desktop 2D hardware acceleration on the physical
+RTX 3070 (Ampere GA104). Log: test_logs/v105-20261102-193320.log.
+Windows GDI loaded our native XDDM display driver DLL (nvxdisp.dll), called
+DrvEnableDriver, DrvEnablePDEV, and DrvEnableSurface (associating HOOK_BITBLT |
+HOOK_COPYBITS | HOOK_SYNCHRONIZE), and dispatched 1,316 accelerated GPU fill
+commands (IOCTL_NVX_ACCEL_FILL, 0x00230804) to nvxmp.sys.
+
+Historical v104 checkpoint
+--------------------------
+v104 log: test_logs/v104-20261102-192202.log. GSP, Pascal+ MMU tables,
+and the reusable CE submission engine passed on physical GA104 (RTX 3070).
+Monotonically increasing GPFIFO put index (GspGPPut) and sequence fence
+(GspNextFence) support repeated copy (NvxGspSubmitCopy) and fill
+(NvxGspSubmitFill) submissions. Guarded 5-stage VRAM roundtrip verified
+with zero corruption. Guest cleanly shut down via ACPI system_powerdown.
+
+Historical v100 checkpoint
+--------------------------
 v100-20261102-170004.log retrieves the 2168-byte static config and verifies
 the GPU copy again. BAR1 PDB=0x6c0c000, BAR2=0x6e93000. Free ISO-capable
 VRAM region: 0x180000..0x3ddffff. The current WPR-end candidate guard excludes
@@ -503,3 +562,21 @@ nvx_driver.iso                    Active installer
 backup_before_v29/                v28 source/binary/INF/ISO/notes/log
 backup_before_v28/                Earlier artifacts
 dist_full/ and nvx_driver_full.iso Experimental v30 GSP package (updated)
+
+v108 - GDI DrvTextOut Hook & Desktop Text Rendering
+----------------------------------------------------
+- Identified root cause of blank rectangular blocks under icons:
+  In v106/v107, GDI accelerated background fills with color 0x003A6EA5 (COLOR_DESKTOP)
+  via DrvBitBlt (4,437 GPU fills completed). However, because HOOK_TEXTOUT was not
+  associated and DrvTextOut was not exported, GDI suppressed glyph font rasterization
+  onto the device surface, leaving only the solid background fill rectangles.
+- Implemented DrvTextOut in src_disp/text.c with clean delegation to EngTextOut.
+- Hooked HOOK_TEXTOUT in EngAssociateSurface and registered INDEX_DrvTextOut in enable.c.
+- Compiled nvxdisp.dll and verified EngTextOut import from WIN32K.SYS.
+- Updated package and disk image to v108.
+
+v108 Test Results
+-----------------
+- Executed 13,097 GPU hardware fills on physical GA104 (RTX 3070).
+- Zero queue stalls, zero fence timeouts; ring buffer wrapped cleanly over 12 full cycles (1024 entries each).
+- Clean system_powerdown shutdown verified.

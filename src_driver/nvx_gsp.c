@@ -11,6 +11,7 @@
 #include "nvx_fw.h"
 #include "nvx_rpc.h"
 #include "nvx_seq.h"
+#include "nvx_mmu.h"
 #include <stddef.h>
 #include "bootloader_blob.h"
 #include "booter_load_blob.h"
@@ -187,7 +188,8 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
 {
     /* GSP rejects MAP_MEMORY_DMA (v75: INVALID_FUNCTION). Use externally
        owned Pascal+ page tables and DMA_SET_PAGE_DIRECTORY, as Nouveau r535.
-       Five 4KB levels map only our coherent 64KB scratch at VA 0x10000000. */
+       The small-page tree maps scratch at 0x10000000; an LPT pool maps the
+       firmware-reported free VRAM window at 0x20000000. */
     ULONG setDirectory[8]={0};
     ULONG64 physical=dev->GspDmaPhysical.QuadPart+GSP_PAGE_TABLES_OFFSET;
     PULONG64 tables=(PULONG64)((PUCHAR)dev->GspDmaVirtual+GSP_PAGE_TABLES_OFFSET);
@@ -201,6 +203,20 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
     tables[1536+128*2+1]=((physical+0x4000)>>4)|0xc;
     for(ULONG i=0;i<16;i++)
         tables[2048+i]=((dev->GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET+i*4096)>>4)|0xd;
+    /* VA 0x20000000 selects level-2 index 1, so it needs a second PD0 page.
+       Its paired PD0 entries point to a 64KB LPT and 4KB SPT. Each 256-byte
+       LPT covers one 2MB VA slice. Map VRAM physical 0..32MB in CE VA space. */
+    tables[1025]=((physical+0x5000)>>4)|0xc;
+    for(ULONG slice=0;slice<16;slice++) {
+        ULONG64 *lpt=(ULONG64 *)((PUCHAR)tables+0x6000+slice*0x100);
+        ULONG pdIndex=slice;
+        tables[2560+pdIndex*2]=((physical+0x6000+slice*0x100)>>4)|0xc;
+        tables[2560+pdIndex*2+1]=0;
+        for(ULONG page=0;page<32;page++)
+            lpt[page]=((((ULONG64)slice*0x200000+(ULONG64)page*0x10000)>>4)|1);
+    }
+    dev->GspVramGpuVa=0x20000000ULL;
+    dev->GspVramMapBytes=0x2000000ULL;
     __sync_synchronize();
     setDirectory[0]=(ULONG)physical;setDirectory[1]=(ULONG)(physical>>32);
     setDirectory[2]=4; /* top-level 49-bit directory has four entries */
@@ -238,18 +254,89 @@ static BOOLEAN NvxGspGetFbLayout(PNVX_DEVICE_EXTENSION dev)
         LogStr("NVX [FB]: region=");LogHex(i);LogStr(" base=");LogHex(region.base);
         LogStr(" limit=");LogHex(region.limit);LogStr(" reserved=");LogHex(region.reserved);
         LogStr(" protected=");LogHex(region.protectedMemory);LogStr(" iso=");LogHex(region.iso);LogStr("\n");
-        if(!freeBase&&!region.reserved&&!region.protectedMemory&&region.compressed&&region.iso) {
-            ULONG64 base=region.base>wpr->GspFwWprEnd?region.base:wpr->GspFwWprEnd;
-            base=(base+0xffffULL)&~0xffffULL;
-            if(base<=region.limit&&region.limit-base>=0xffff) {freeBase=base;freeLimit=region.limit;}
+        if(!freeLimit&&!region.reserved&&!region.protectedMemory&&region.compressed&&region.iso) {
+            ULONG64 base=(region.base+0xffffULL)&~0xffffULL,limit=region.limit;
+            if(base<wpr->GspFwWprEnd&&limit>=wpr->GspFwWprStart) {
+                if(base<wpr->GspFwWprStart) limit=wpr->GspFwWprStart-1;
+                else base=(wpr->GspFwWprEnd+0xffffULL)&~0xffffULL;
+            }
+            if(base<=limit&&limit-base>=0xffff) {freeBase=base;freeLimit=limit;}
         }
     }
-    if(!freeBase) return FALSE;
     dev->GspFbRegionCount=count;dev->GspFbFreeBase=freeBase;dev->GspFbFreeLimit=freeLimit;
     dev->GspFbLayoutValid=TRUE;
     LogStr("NVX [FB]: available VRAM candidate base=");LogHex(freeBase);
     LogStr(" limit=");LogHex(freeLimit);LogStr("; discovery only, no VRAM writes.\n");
     return TRUE;
+}
+
+typedef struct { PNVX_DEVICE_EXTENSION dev; ULONG64 bytes; ULONG reads; } NVX_PRAMIN_CONTEXT;
+static int NvxPraminRead64(void *context,uint64_t address,uint64_t *value)
+{
+    NVX_PRAMIN_CONTEXT *ctx=context;
+    PUCHAR bar0=(PUCHAR)ctx->dev->Bar0MmioVirtual;
+    ULONG saved,lo,hi;
+    if(!value||(address&7)||ctx->bytes<8||address>ctx->bytes-8||
+       ctx->dev->Bar0Length<0x710000) return 0;
+    saved=VideoPortReadRegisterUlong((PULONG)(bar0+0x1700));
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x1700),(ULONG)(address>>16));
+    (void)VideoPortReadRegisterUlong((PULONG)(bar0+0x1700));
+    lo=VideoPortReadRegisterUlong((PULONG)(bar0+0x700000+(ULONG)(address&0xffff)));
+    hi=VideoPortReadRegisterUlong((PULONG)(bar0+0x700004+(ULONG)(address&0xffff)));
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x1700),saved);
+    (void)VideoPortReadRegisterUlong((PULONG)(bar0+0x1700));
+    *value=((uint64_t)hi<<32)|lo;
+    if(ctx->reads<12) {
+        LogStr("NVX [FBMAP]: PRAMIN[ ");LogHex(address);LogStr(" ]=");LogHex(*value);LogStr("\n");
+    }
+    ctx->reads++;
+    return *value!=UINT64_MAX;
+}
+
+BOOLEAN NvxGspDiscoverScanout(PVOID extension,ULONG index)
+{
+    PNVX_DEVICE_EXTENSION dev=extension;
+    const GSP_FW_WPR_META_V1 *wpr;
+    NVX_PRAMIN_CONTEXT context;
+    ULONG block;
+    ULONG64 instance,pdbRaw,pdb,offset,bytes,mapped=0,first=0;
+    unsigned bigShift;
+    dev->GspScanoutMapped=FALSE;
+    if(!dev->GspInitialized||!dev->GspCopyVerified||!dev->GspDmaVirtual||index>=dev->NumModes) return FALSE;
+    wpr=(const void *)((PUCHAR)dev->GspDmaVirtual+GSP_WPR_META_OFFSET);
+    bytes=(ULONG64)dev->Modes[index].ScreenStride*dev->Modes[index].VisScreenHeight;
+    if(!bytes||dev->ModeFramebuffer[index].QuadPart<dev->PhysicalBar1.QuadPart) return FALSE;
+    offset=dev->ModeFramebuffer[index].QuadPart-dev->PhysicalBar1.QuadPart;
+    if(offset>dev->Bar1Length||bytes>dev->Bar1Length-offset) return FALSE;
+    block=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x1704));
+    if(!(block&0x80000000U)||(block&0x70000000U)) return FALSE;
+    instance=(ULONG64)(block&0x0fffffffU)<<12;
+    context.dev=dev;context.bytes=wpr->FbSize;context.reads=0;
+    if(!NvxPraminRead64(&context,instance+0x200,&pdbRaw)) return FALSE;
+    LogStr("NVX [FBMAP]: BAR1 block=");LogHex(block);LogStr(" instance=");LogHex(instance);
+    LogStr(" pdbRaw=");LogHex(pdbRaw);LogStr(" firmware root=");LogHex(dev->GspBar1PageDirectory);LogStr("\n");
+    if((pdbRaw&3)||!(pdbRaw&0x400)) return FALSE;
+    pdb=pdbRaw&~0xfffULL;bigShift=(pdbRaw&0x800)?16:17;
+    while(mapped<bytes) {
+        NVX_MMU_MAPPING map;
+        ULONG64 chunk;
+        int status=NvxMmuTranslateVram(NvxPraminRead64,&context,pdb,offset+mapped,wpr->FbSize,bigShift,&map);
+        if(status!=NVX_MMU_OK||!map.writable) {
+            LogStr("NVX [FBMAP]: translation unavailable offset=");LogHex(offset+mapped);
+            LogStr(" status=");LogHex((ULONG)status);LogStr("\n");return FALSE;
+        }
+        if(!mapped) first=map.physical;
+        else if(map.physical!=first+mapped) {
+            LogStr("NVX [FBMAP]: noncontiguous scanout; GPU drawing remains disabled.\n");return FALSE;
+        }
+        chunk=(1ULL<<map.pageShift)-((offset+mapped)&((1ULL<<map.pageShift)-1));
+        if(chunk>bytes-mapped) chunk=bytes-mapped;
+        mapped+=chunk;
+    }
+    if(first<wpr->GspFwWprEnd&&first+bytes>wpr->GspFwWprStart) return FALSE;
+    dev->GspScanoutPhysical=first;dev->GspScanoutBytes=bytes;dev->GspScanoutMapped=TRUE;
+    LogStr("NVX [FBMAP]: linear writable scanout VRAM=");LogHex(first);
+    LogStr(" bytes=");LogHex(bytes);LogStr("; discovery only.\n");return TRUE;
 }
 
 static BOOLEAN NvxGspSelectCopyEngine(PNVX_DEVICE_EXTENSION dev)
@@ -407,10 +494,13 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
     volatile ULONG *userd=(volatile ULONG *)(scratch+0x3200);
     volatile ULONG *dst=(volatile ULONG *)(scratch+0xb000);
     volatile ULONG *fence=(volatile ULONG *)(scratch+0xc000);
+    volatile ULONG *backup=(volatile ULONG *)(scratch+0xd000);
+    volatile ULONG *restored=(volatile ULONG *)(scratch+0xe000);
     PULONG src=(PULONG)(scratch+0xa000),push=(PULONG)(scratch+0x9000);
     volatile ULONG64 *fifo=(volatile ULONG64 *)scratch;
     ULONG token=0,n=0,runlistBase=0,runlistQuery[124]={0}; /* two arrays of 62 engines */
     ULONG64 va=dev->GspScratchGpuVa,pushVa=va+0x9000;
+    ULONG64 vramVa=dev->GspVramGpuVa+0x1000000ULL; /* 16MB, inside free ISO region */
     const ULONG done=0x91c0ffee,guard=0xf17e55aa;
     dev->GspCopyVerified=FALSE;
     dev->GspChannelFaulted=FALSE;
@@ -442,6 +532,10 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
         if(dbcfg==0xffffffffU||(dbcfg&0xffff0000U)==0xbadf0000U) return FALSE;
         token=(dbcfg&0xffff0000U)|1;
         runlistBase=base;
+        dev->GspRunlistBase=base;
+        dev->GspSubmitToken=token;
+        dev->GspGPPut=1;
+        dev->GspNextFence=0x91c0ffefU;
         LogStr("NVX [COPY]: physical runlist=");LogHex(base);LogStr(" dbcfg=");LogHex(dbcfg);
         LogStr(" chcfg=");LogHex(chcfg);LogStr(" enable=");LogHex(enable);
         LogStr(" token=");LogHex(token);LogStr("\n");
@@ -461,18 +555,38 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
         LogStr("NVX [COPY]: fresh channel has nonzero GP pointers; submission skipped.\n");
         return FALSE;
     }
-    for(ULONG i=0;i<64;i++) {src[i]=0x6d3a5000U^(i*0x10203U);dst[i]=~src[i];}
+    if(!dev->GspFbLayoutValid||dev->GspFbFreeBase>0x1000000ULL||
+       dev->GspFbFreeLimit<0x10000ffULL||vramVa<dev->GspVramGpuVa||
+       0x1000000ULL+256>dev->GspVramMapBytes) {
+        LogStr("NVX [COPY]: no firmware-confirmed free VRAM probe page; VRAM test skipped.\n");return FALSE;
+    }
+    for(ULONG i=0;i<64;i++) {
+        src[i]=0x6d3a5000U^(i*0x10203U);dst[i]=~src[i];
+        backup[i]=0;restored[i]=0;
+    }
     src[-1]=src[64]=guard;dst[-1]=dst[64]=guard;
+    backup[-1]=backup[64]=guard;restored[-1]=restored[64]=guard;
     fence[-1]=guard;fence[0]=0;fence[1]=guard;
     /* Subchannel 4 works for dedicated CE and GRCE on the graphics runlist.
        NVIDIA UVM notes that subchannel 0 fails on GRCE. SET_OBJECT uses class. */
     push[n++]=0x20018000;push[n++]=0xc7b5;
-    push[n++]=0x20048100; /* OFFSET_IN_UPPER through OFFSET_OUT_LOWER */
-    push[n++]=(ULONG)((va+0xa000)>>32);push[n++]=(ULONG)(va+0xa000);
-    push[n++]=(ULONG)((va+0xb000)>>32);push[n++]=(ULONG)(va+0xb000);
-    push[n++]=0x20048104; /* PITCH_IN/OUT, LINE_LENGTH_IN, LINE_COUNT */
-    push[n++]=256;push[n++]=256;push[n++]=256;push[n++]=1;
-    push[n++]=0x200180c0;push[n++]=0x04000186; /* non-pipelined, pitch, flush, PLC disabled */
+    /* Preserve the free offscreen VRAM bytes, write a pattern, read it back,
+       restore the original bytes, then verify restoration. */
+#define NVX_APPEND_COPY(_src,_dst) do { \
+    ULONG64 _s=(_src),_d=(_dst); \
+    push[n++]=0x20048100; \
+    push[n++]=(ULONG)(_s>>32);push[n++]=(ULONG)_s; \
+    push[n++]=(ULONG)(_d>>32);push[n++]=(ULONG)_d; \
+    push[n++]=0x20048104; \
+    push[n++]=256;push[n++]=256;push[n++]=256;push[n++]=1; \
+    push[n++]=0x200180c0;push[n++]=0x04000186; \
+} while(0)
+    NVX_APPEND_COPY(vramVa,va+0xd000);
+    NVX_APPEND_COPY(va+0xa000,vramVa);
+    NVX_APPEND_COPY(vramVa,va+0xb000);
+    NVX_APPEND_COPY(va+0xd000,vramVa);
+    NVX_APPEND_COPY(vramVa,va+0xe000);
+#undef NVX_APPEND_COPY
     push[n++]=0x20038090; /* SET_SEMAPHORE_A/B/PAYLOAD */
     push[n++]=(ULONG)((va+0xc000)>>32);push[n++]=(ULONG)(va+0xc000);push[n++]=done;
     push[n++]=0x200180c0;push[n++]=0x0400000c; /* flushed one-word semaphore release */
@@ -484,23 +598,24 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
        needed when starting the client-allocated channel (GFID 0, ChID 1).
        Re-notifying the same published GPPut does not enqueue extra work. */
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x90),1);
-    LogStr("NVX [COPY]: submitted 256-byte GPU copy and completion release.\n");
+    LogStr("NVX [COPY]: submitted guarded VRAM write/read/restore roundtrip and completion release.\n");
     for(ULONG wait=0;wait<20000;wait++) {
         if(fence[0]==done) {
             __sync_synchronize();
             for(ULONG i=0;i<64;i++) {
                 ULONG expected=0x6d3a5000U^(i*0x10203U);
-                if(dst[i]!=expected||src[i]!=expected) {
+                if(dst[i]!=expected||src[i]!=expected||restored[i]!=backup[i]) {
                     LogStr("NVX [COPY]: completion arrived but data mismatch at word=");LogHex(i);LogStr("\n");
                     return FALSE;
                 }
             }
             if(src[-1]!=guard||src[64]!=guard||dst[-1]!=guard||dst[64]!=guard||
+               backup[-1]!=guard||backup[64]!=guard||restored[-1]!=guard||restored[64]!=guard||
                fence[-1]!=guard||fence[1]!=guard) {
                 LogStr("NVX [COPY]: completion arrived but guard corrupted.\n");return FALSE;
             }
             dev->GspCopyVerified=TRUE;
-            LogStr("NVX [COPY]: GPU copy completed and verified; desktop drawing remains software.\n");
+            LogStr("NVX [COPY]: GPU copy completed and verified; guarded VRAM roundtrip and restore succeeded; desktop drawing remains software.\n");
             return TRUE;
         }
         VideoPortStallExecution(100);
@@ -519,6 +634,128 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
             LogStr(" addrLo=");LogHex(reply[27]);LogStr(" type=");LogHex(reply[28]);LogStr("\n");
         } else LogStr("NVX [COPY]: MMU fault-info control unavailable.\n");
     }
+    return FALSE;
+}
+
+BOOLEAN NvxGspSubmitCopy(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,ULONG bytes)
+{
+    PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    PUCHAR scratch;
+    volatile ULONG *userd;
+    volatile ULONG *fence;
+    PULONG push;
+    volatile ULONG64 *fifo;
+    ULONG slot,n=0,fenceVal;
+    ULONG64 va,pushVa;
+
+    if(!dev||!dev->GspInitialized||!dev->GspCopyVerified||dev->GspChannelFaulted) return FALSE;
+    if(!bytes||bytes>0x1000000) return FALSE; /* Up to 16MB per submit */
+
+    scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET;
+    userd=(volatile ULONG *)(scratch+0x3200);
+    fence=(volatile ULONG *)(scratch+0xc000);
+    fifo=(volatile ULONG64 *)scratch;
+    va=dev->GspScratchGpuVa;
+
+    slot=dev->GspGPPut%16;
+    push=(PULONG)(scratch+0x9000+slot*0x100);
+    pushVa=va+0x9000+slot*0x100;
+    fenceVal=dev->GspNextFence++;
+    if(!fenceVal) fenceVal=dev->GspNextFence++;
+
+    push[n++]=0x20018000;push[n++]=0xc7b5; /* SET_OBJECT AMPERE_DMA_COPY_B */
+    push[n++]=0x20048100; /* OFFSET_IN/OUT_UPPER/LOWER */
+    push[n++]=(ULONG)(srcVa>>32);push[n++]=(ULONG)srcVa;
+    push[n++]=(ULONG)(dstVa>>32);push[n++]=(ULONG)dstVa;
+    push[n++]=0x20048104; /* PITCH_IN/OUT, LINE_LENGTH, LINE_COUNT */
+    push[n++]=bytes;push[n++]=bytes;push[n++]=bytes;push[n++]=1;
+    push[n++]=0x200180c0;push[n++]=0x04000186; /* LAUNCH_DMA */
+    push[n++]=0x20038090; /* SET_SEMAPHORE_A/B/PAYLOAD */
+    push[n++]=(ULONG)((va+0xc000)>>32);push[n++]=(ULONG)(va+0xc000);push[n++]=fenceVal;
+    push[n++]=0x200180c0;push[n++]=0x0400000c; /* flushed release */
+
+    fifo[dev->GspGPPut%1024]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|((ULONG64)n<<42);
+    __sync_synchronize();
+    dev->GspGPPut = (dev->GspGPPut + 1) % 1024;
+    userd[0x8c/4] = dev->GspGPPut;
+    __sync_synchronize();
+
+    VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),dev->GspSubmitToken);
+    VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+dev->GspRunlistBase+0x90),1);
+
+    for(ULONG wait=0;wait<20000;wait++) {
+        if(fence[0]==fenceVal) {
+            __sync_synchronize();
+            return TRUE;
+        }
+        VideoPortStallExecution(10);
+    }
+    LogStr("NVX [COPY-Q]: submit timeout! fenceVal=");LogHex(fenceVal);
+    LogStr(" fence=");LogHex(fence[0]);LogStr(" GPGet=");LogHex(userd[0x88/4]);
+    LogStr(" GPPut=");LogHex(userd[0x8c/4]);LogStr("\n");
+    dev->GspChannelFaulted=TRUE;
+    return FALSE;
+}
+
+BOOLEAN NvxGspSubmitFill(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG bytes)
+{
+    PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    PUCHAR scratch;
+    volatile ULONG *userd;
+    volatile ULONG *fence;
+    PULONG push;
+    volatile ULONG64 *fifo;
+    ULONG slot,n=0,fenceVal;
+    ULONG64 va,pushVa;
+
+    if(!dev||!dev->GspInitialized||!dev->GspCopyVerified||dev->GspChannelFaulted) return FALSE;
+    if(!bytes||bytes>0x1000000||(bytes&3)) return FALSE;
+
+    scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET;
+    userd=(volatile ULONG *)(scratch+0x3200);
+    fence=(volatile ULONG *)(scratch+0xc000);
+    fifo=(volatile ULONG64 *)scratch;
+    va=dev->GspScratchGpuVa;
+
+    slot=dev->GspGPPut%16;
+    push=(PULONG)(scratch+0x9000+slot*0x100);
+    pushVa=va+0x9000+slot*0x100;
+    fenceVal=dev->GspNextFence++;
+    if(!fenceVal) fenceVal=dev->GspNextFence++;
+
+    push[n++]=0x20018000;push[n++]=0xc7b5; /* SET_OBJECT AMPERE_DMA_COPY_B */
+    push[n++]=0x200281c1; /* SET_REMAP_CONST_B (0x704), SET_REMAP_COMPONENTS (0x708) */
+    push[n++]=color;
+    push[n++]=0x00030005; /* DST_X CONST_B, 4-byte component */
+    push[n++]=0x20028102; /* OFFSET_OUT_UPPER/LOWER */
+    push[n++]=(ULONG)(dstVa>>32);push[n++]=(ULONG)dstVa;
+    push[n++]=0x20018106; /* LINE_LENGTH_IN (dwords) */
+    push[n++]=bytes/4;
+    push[n++]=0x200180c0;push[n++]=0x04000586; /* LAUNCH_DMA with REMAP_ENABLE */
+    push[n++]=0x20038090; /* SET_SEMAPHORE_A/B/PAYLOAD */
+    push[n++]=(ULONG)((va+0xc000)>>32);push[n++]=(ULONG)(va+0xc000);push[n++]=fenceVal;
+    push[n++]=0x200180c0;push[n++]=0x0400000c; /* flushed release */
+
+    fifo[dev->GspGPPut%1024]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|((ULONG64)n<<42);
+    __sync_synchronize();
+    dev->GspGPPut = (dev->GspGPPut + 1) % 1024;
+    userd[0x8c/4] = dev->GspGPPut;
+    __sync_synchronize();
+
+    VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),dev->GspSubmitToken);
+    VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+dev->GspRunlistBase+0x90),1);
+
+    for(ULONG wait=0;wait<20000;wait++) {
+        if(fence[0]==fenceVal) {
+            __sync_synchronize();
+            return TRUE;
+        }
+        VideoPortStallExecution(10);
+    }
+    LogStr("NVX [FILL-Q]: submit timeout! fenceVal=");LogHex(fenceVal);
+    LogStr(" fence=");LogHex(fence[0]);LogStr(" GPGet=");LogHex(userd[0x88/4]);
+    LogStr(" GPPut=");LogHex(userd[0x8c/4]);LogStr("\n");
+    dev->GspChannelFaulted=TRUE;
     return FALSE;
 }
 
@@ -1456,6 +1693,7 @@ VOID NvxGspShutdown(PVOID HwDeviceExtension) {
         devExt->GspCopyVerified = FALSE;
         devExt->GspChannelFaulted = FALSE;
         devExt->GspFbLayoutValid = FALSE;
+        devExt->GspScanoutMapped = FALSE;
 
         if (devExt->DmaAdapter) {
             VideoPortPutDmaAdapter(HwDeviceExtension, devExt->DmaAdapter);

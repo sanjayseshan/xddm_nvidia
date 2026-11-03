@@ -14,8 +14,8 @@ nvxmp.sys: FORCE
 gsp_blob.o: ../dist_full/gsp_ga104.bin
 	cd .. && x86_64-w64-mingw32-objcopy -I binary -O pe-x86-64 -B i386:x86-64 dist_full/gsp_ga104.bin src_driver/gsp_blob.o
 
-nvxmp.sys: nvxmp.c nvx_gsp.c nvx_vbe.c nvx_vbe.h nvx_fw.c nvx_fw.h nvx_vbios.c nvx_vbios.h nvx_gsp.h miniport.h bootloader_blob.h booter_load_blob.h gsp_blob.o nvxmp.def libvideoprt.a
-	$(CC) $(CFLAGS) -o $@ nvxmp.c nvx_gsp.c nvx_vbe.c nvx_fw.c nvx_vbios.c nvx_rpc.c nvx_seq.c gsp_blob.o nvxmp.def $(LDFLAGS)
+nvxmp.sys: nvxmp.c nvx_gsp.c nvx_mmu.c nvx_mmu.h nvx_vbe.c nvx_vbe.h nvx_fw.c nvx_fw.h nvx_vbios.c nvx_vbios.h nvx_gsp.h miniport.h bootloader_blob.h booter_load_blob.h gsp_blob.o nvxmp.def libvideoprt.a
+	$(CC) $(CFLAGS) -o $@ nvxmp.c nvx_gsp.c nvx_mmu.c nvx_vbe.c nvx_fw.c nvx_vbios.c nvx_rpc.c nvx_seq.c gsp_blob.o nvxmp.def $(LDFLAGS)
 
 libvideoprt.a: videoprt.def
 	x86_64-w64-mingw32-dlltool -d videoprt.def -l libvideoprt.a
@@ -25,6 +25,8 @@ clean:
 
 .PHONY: check
 check:
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I. -o /tmp/nvx-mmu-test tests/mmu_test.c nvx_mmu.c
+	ASAN_OPTIONS=detect_leaks=0 /tmp/nvx-mmu-test
 	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I. -o /tmp/nvx-seq-test tests/seq_test.c nvx_seq.c
 	ASAN_OPTIONS=detect_leaks=0 /tmp/nvx-seq-test
 	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I. -o /tmp/nvx-rpc-test tests/rpc_test.c nvx_rpc.c

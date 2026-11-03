@@ -71,7 +71,7 @@
 #define GSP_SCRATCH_OFFSET             0x02F00000ULL
 #define GSP_SCRATCH_SIZE               0x10000UL
 #define GSP_PAGE_TABLES_OFFSET         0x02E00000ULL
-#define GSP_PAGE_TABLES_SIZE           0x5000UL
+#define GSP_PAGE_TABLES_SIZE           0x7000UL
 
 #pragma pack(push, 1)
 /* Libos Init Argument */
@@ -312,6 +312,7 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG GspScratchMemoryHandle;
     ULONG GspVirtualMemoryHandle;
     ULONG64 GspScratchGpuVa;
+    ULONG64 GspVramGpuVa,GspVramMapBytes;
     ULONG GspChannelGroupHandle;
     ULONG GspContextShareHandle;
     ULONG GspChannelHandle;
@@ -323,6 +324,13 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG GspFbRegionCount;
     ULONG64 GspFbFreeBase,GspFbFreeLimit;
     ULONG64 GspBar1PageDirectory,GspBar2PageDirectory;
+    BOOLEAN GspScanoutMapped;
+    ULONG64 GspScanoutPhysical,GspScanoutBytes;
+    /* Reusable CE submission queue state */
+    ULONG GspGPPut;
+    ULONG GspNextFence;
+    ULONG GspRunlistBase;
+    ULONG GspSubmitToken;
     ULONG RpcTxSequence,RpcRxSequence;
     UCHAR RpcRxRecord[65536];
 } NVX_DEVICE_EXTENSION, *PNVX_DEVICE_EXTENSION;
@@ -337,6 +345,9 @@ VOID LogHex(unsigned long long val);
 
 /* GSP Engine entrypoints */
 BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension);
+BOOLEAN NvxGspDiscoverScanout(PVOID HwDeviceExtension,ULONG modeIndex);
+BOOLEAN NvxGspSubmitCopy(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,ULONG bytes);
+BOOLEAN NvxGspSubmitFill(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG bytes);
 
 VOID NvxGspShutdown(PVOID HwDeviceExtension);
 int NvxGspSequencerCore(void *context,unsigned int opcode);

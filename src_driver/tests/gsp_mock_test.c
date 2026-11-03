@@ -7,9 +7,12 @@
 #include <string.h>
 
 static ULONG regs[0x1000000/4];
+static UCHAR gpuMemory[0x10000];
+static UCHAR gpuVram[0x2000000];
 static NVX_DEVICE_EXTENSION dev;
 static int scenario, imemTransfers, dmemTransfers, cpuStarts,freeFailures;
 static ULONG regoff(PULONG p) { return (ULONG)((PUCHAR)p-(PUCHAR)regs); }
+static void gpuWrite64(ULONG offset,ULONG64 value) {memcpy(gpuMemory+offset,&value,8);}
 VOID LogStr(const char *s) {
     if(!strcmp(s,"NVX [SEQ]: validated capacity="))
         assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr>=5);
@@ -35,6 +38,13 @@ PVOID VideoPortAllocateCommonBuffer(PVOID e,PVOID a,ULONG n,PPHYSICAL_ADDRESS pa
 VOID VideoPortFreeCommonBuffer(PVOID e,ULONG n,PVOID p,PHYSICAL_ADDRESS pa,BOOLEAN c)
 { (void)e;(void)n;(void)pa;(void)c; free(p); }
 ULONG VideoPortReadRegisterUlong(PULONG p) {
+    ULONG off=regoff(p);
+    if(off>=0x700000&&off<0x710000) {
+        ULONG64 address=((ULONG64)regs[0x1700/4]<<16)+(off-0x700000);
+        ULONG value;
+        if(address>sizeof(gpuMemory)-4) return 0xffffffff;
+        memcpy(&value,gpuMemory+address,4);return value;
+    }
     if(regoff(p)==0x110040 && dev.CmdQueueVirtual &&
        ((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr>=5)
         return 0x80000000;
@@ -65,7 +75,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             memcpy(cfg+840,&count,4);
             memcpy(cfg+848,&base,8);memcpy(cfg+856,&limit,8);memcpy(cfg+864,&reserved,8);
             cfg[848+28]=cfg[848+29]=cfg[848+30]=1;
-            base=0x10000000;limit=scenario==11?0xfff:0x1dfffffffULL;reserved=0;
+            base=0x180000;limit=scenario==11?0xfff:0x3ddffffULL;reserved=0;
             memcpy(cfg+896,&base,8);memcpy(cfg+904,&limit,8);memcpy(cfg+912,&reserved,8);
             cfg[896+28]=cfg[896+29]=1;
             assert(NvxEncodeRpc((PUCHAR)packet,4096,f,write-1,cfg,scenario==9?840:sizeof(cfg)));
@@ -131,6 +141,10 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(tables[1536+257]==((physical+0x4000)>>4|0xc));
             assert(tables[2048]==((dev.GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET)>>4|0xd));
             assert(tables[2064]==0);
+            assert(tables[1025]==((physical+0x5000)>>4|0xc));
+            assert(tables[2560]==((physical+0x6000)>>4|0xc));
+            assert(tables[3072]==1); /* VRAM physical page zero, valid aperture */
+            assert(tables[3583]==(((ULONG64)0x1ff0000>>4)|1));
         }
         if(f==76&&request[22]==0xa06f0107&&scenario==4) {
             ULONG rc[5]={11,1,0x1f,0,0};
@@ -169,17 +183,23 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         ULONG64 entry=*(PULONG64)scratch;
         ULONG64 address=(entry&0xfffffffcULL)|((entry>>32&0xffULL)<<32);
         assert(value==1&&regs[0x30090/4]==0x40001&&userd[0x8c/4]==1);
-        assert(address==dev.GspScratchGpuVa+0x9000&&(entry>>42)==20);
+        assert(address==dev.GspScratchGpuVa+0x9000&&(entry>>42)==68);
         assert(push[0]==0x20018000&&push[1]==0xc7b5);
-        assert(push[2]==0x20048100&&push[3]==0&&push[4]==0x1000a000);
-        assert(push[5]==0&&push[6]==0x1000b000);
-        assert(push[7]==0x20048104&&push[8]==256&&push[9]==256&&push[10]==256&&push[11]==1);
-        assert(push[12]==0x200180c0&&push[13]==0x04000186);
-        assert(push[14]==0x20038090&&push[15]==0&&push[16]==0x1000c000);
-        assert(push[18]==0x200180c0&&push[19]==0x0400000c);
+        assert(push[2]==0x20048100&&push[3]==0&&push[4]==0x21000000);
+        assert(push[5]==0&&push[6]==0x1000d000);
+        assert(push[14]==0x20048100&&push[16]==0x1000a000&&push[17]==0&&push[18]==0x21000000);
+        assert(push[26]==0x20048100&&push[28]==0x21000000&&push[29]==0&&push[30]==0x1000b000);
+        assert(push[38]==0x20048100&&push[40]==0x1000d000&&push[41]==0&&push[42]==0x21000000);
+        assert(push[50]==0x20048100&&push[52]==0x21000000&&push[53]==0&&push[54]==0x1000e000);
+        assert(push[62]==0x20038090&&push[64]==0x1000c000);
+        assert(push[66]==0x200180c0&&push[67]==0x0400000c);
         if(scenario!=4) { /* timeout: GPU never writes completion */
-            memcpy(scratch+0xb000,scratch+0xa000,256);
-            *(PULONG)(scratch+0xc000)=push[17];
+            memcpy(scratch+0xd000,gpuVram+0x1000000,256);
+            memcpy(gpuVram+0x1000000,scratch+0xa000,256);
+            memcpy(scratch+0xb000,gpuVram+0x1000000,256);
+            memcpy(gpuVram+0x1000000,scratch+0xd000,256);
+            memcpy(scratch+0xe000,gpuVram+0x1000000,256);
+            *(PULONG)(scratch+0xc000)=push[65];
             userd[0x88/4]=1;
             if(scenario==5) *(PULONG)(scratch+0xb000)^=1; /* stale/corrupt data */
             if(scenario==6) *(PULONG)(scratch+0xb100)^=1; /* guard corruption */
@@ -251,6 +271,43 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         }
     }
 }
+static void test_reusable_queue(void) {
+    /* Test NvxGspSubmitCopy and NvxGspSubmitFill */
+    NVX_DEVICE_EXTENSION dev_q;
+    UCHAR *dma = malloc(0x3000000);
+    memset(&dev_q, 0, sizeof(dev_q));
+    memset(dma, 0, 0x3000000);
+    dev_q.GspDmaVirtual = dma;
+    dev_q.GspInitialized = TRUE;
+    dev_q.GspCopyVerified = TRUE;
+    dev_q.GspScratchGpuVa = 0x10000000;
+    dev_q.GspRunlistBase = 0xc00400;
+    dev_q.GspSubmitToken = 0x10001;
+    dev_q.GspGPPut = 1;
+    dev_q.GspNextFence = 0x100;
+    dev_q.Bar0MmioVirtual = regs;
+    dev_q.Bar0Length = sizeof(regs);
+
+    PUCHAR scratch = dma + GSP_SCRATCH_OFFSET;
+    volatile ULONG *fence = (volatile ULONG *)(scratch + 0xc000);
+    fence[0] = 0x100; /* match expected fence */
+
+    assert(NvxGspSubmitCopy(&dev_q, 0x21000000, 0x1000a000, 256));
+    assert(dev_q.GspGPPut == 2);
+    assert(dev_q.GspNextFence == 0x101);
+
+    fence[0] = 0x101;
+    assert(NvxGspSubmitFill(&dev_q, 0x21000000, 0xff00ff00, 256));
+    assert(dev_q.GspGPPut == 3);
+    assert(dev_q.GspNextFence == 0x102);
+
+    /* Timeout scenario */
+    fence[0] = 0x0;
+    assert(!NvxGspSubmitCopy(&dev_q, 0x21000000, 0x1000a000, 256));
+    assert(dev_q.GspChannelFaulted);
+    free(dma);
+}
+
 int main(void)
 {
     for(scenario=0;scenario<12;scenario++) {
@@ -283,13 +340,35 @@ int main(void)
             assert(dev.GspCopyEngineType==11);
             assert(dev.GspFbLayoutValid==(scenario<9));
             if(dev.GspFbLayoutValid) {
-                assert(dev.GspFbRegionCount==2&&dev.GspFbFreeBase==0x10000000&&dev.GspFbFreeLimit==0x1dfffffffULL);
+                assert(dev.GspFbRegionCount==2&&dev.GspFbFreeBase==0x180000&&dev.GspFbFreeLimit==0x3ddffffULL);
                 assert(dev.GspBar1PageDirectory==0x1fa000000ULL&&dev.GspBar2PageDirectory==0x1fb000000ULL);
             }
             else assert(dev.GspFbFreeBase==0&&dev.GspFbFreeLimit==0);
-            assert(dev.GspCopyVerified==(scenario==0||scenario==3||scenario==7||scenario>=9));
+            assert(dev.GspCopyVerified==(scenario==0||scenario==3||scenario==7));
             assert(dev.GspAssertCount==7);
             assert(dev.GspChannelFaulted==(scenario==4));
+            if(scenario==0) {
+                dev.PhysicalBar1.QuadPart=0xe0000000;
+                dev.NumModes=1;dev.ModeFramebuffer[0]=dev.PhysicalBar1;
+                dev.Modes[0].ScreenStride=2560;dev.Modes[0].VisScreenHeight=480;
+                memset(gpuMemory,0,sizeof(gpuMemory));
+                regs[0x1700/4]=0x1234;regs[0x1704/4]=0x80000001;
+                gpuWrite64(0x1200,0x2c00); /* active VER2 PDB, 64KB big pages */
+                gpuWrite64(0x2000,(0x3000>>4)|2);
+                gpuWrite64(0x3000,(0x4000>>4)|2);
+                gpuWrite64(0x4000,(0x5000>>4)|2);
+                gpuWrite64(0x5000,(0x20000000>>4)|1);
+                assert(NvxGspDiscoverScanout(&dev,0));
+                assert(dev.GspScanoutMapped&&dev.GspScanoutPhysical==0x20000000&&dev.GspScanoutBytes==1228800);
+                assert(regs[0x1700/4]==0x1234); /* Every PRAMIN access restores the window. */
+                gpuWrite64(0x1200,0x2c02); /* reject system-memory root */
+                assert(!NvxGspDiscoverScanout(&dev,0)&&!dev.GspScanoutMapped);
+                assert(regs[0x1700/4]==0x1234);
+                gpuWrite64(0x1200,0x2c00);gpuWrite64(0x5000,(0x20000000>>4)|65);
+                assert(!NvxGspDiscoverScanout(&dev,0)); /* read-only scanout */
+                regs[0x1704/4]=0x90000001;
+                assert(!NvxGspDiscoverScanout(&dev,0));
+            }
         }
         if(scenario==2) { assert(imemTransfers==1 && !cpuStarts); }
         else { assert(imemTransfers==131 && dmemTransfers==98 && cpuStarts==1); }
@@ -308,6 +387,7 @@ int main(void)
         assert(!dev.GspDmaVirtual && !dev.DmaAdapter);
         assert(!dev.GspCopyVerified);
     }
-    puts("GSP mock tests passed: boot, GA104 CE, copy submission/completion, timeout, corrupt data/guards and DMA teardown retention.");
+    test_reusable_queue();
+    puts("GSP mock tests passed: boot, GA104 CE, copy submission/completion, timeout, corrupt data/guards, reusable queue and DMA teardown retention.");
     return 0;
 }

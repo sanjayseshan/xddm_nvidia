@@ -79,6 +79,7 @@ BOOLEAN NvxVbeSetMode(PVOID extension, ULONG index)
     LogStr("NVX [VBE]: CURRENT_MODE EAX ");LogHex(a.Eax);LogStr(" BX ");LogHex(a.Ebx);LogStr("\n");
     if(!NvxVbeSuccess(status,a.Eax) || (a.Ebx&0x3fff)!=id) return FALSE;
     dev->CurrentModeIndex=index;
+    dev->GspScanoutMapped=FALSE;
     dev->ActiveWidth=dev->Modes[index].VisScreenWidth;
     dev->ActiveHeight=dev->Modes[index].VisScreenHeight;
     dev->ActiveBpp=dev->Modes[index].BitsPerPlane;
