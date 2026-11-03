@@ -1,19 +1,16 @@
 # NVIDIA GA104 XDDM driver for Windows XP x64
 
 This experimental driver brings up a Windows XP x64 desktop on NVIDIA Ampere
-GA104 hardware. The current confirmed checkpoint is v165, with working native
-output on two displays attached to an EVGA GeForce RTX 3070 XC3 Ultra LHR:
-1920×1080 on the primary and 2560×1440 on the secondary.
+GA104 hardware. The latest tested build, v168, brings up two displays attached
+to an EVGA GeForce RTX 3070 XC3 Ultra LHR at 1920×1080 primary and 2560×1440
+secondary. Orange artifacts remain when dragging windows.
 
-The last hardware-confirmed build, v165, adds an experimental GPU-rendered
-solid rectangle fill for a narrow `DrvBitBlt` case. It passed host-side checks,
-ran on the physical RTX 3070, and the user confirmed the desktop looks normal.
-The latest tested v166 run restored both expected display modes and exercised
-a full-screen GPU fill; slight desktop artifacts remain. The v167 development
-build added same-surface GPU CopyBits, but its first physical test produced
-orange rectangles while dragging windows and excessive small copy submissions.
-Do not treat v167 as a validated desktop build; the current work narrows this
-path.
+The v168 hardware log confirms GSP initialization, both native display heads,
+and GPU solid-fill activity. The user reports orange artifacts during window
+dragging. The new pitched GPU `CopyBits` path was not exercised in that run
+(zero copy submissions), so it has not yet been shown to fix those artifacts.
+Earlier v167 testing also showed orange rectangles and excessive small copy
+submissions. See [SUMMARY.txt](SUMMARY.txt) for the per-version findings.
 
 ## Project overview
 
@@ -28,9 +25,10 @@ batches contiguous rows for full-width opaque `PATCOPY` fills into fewer GPU
 copy-engine submissions on tightly packed 32-bit screen bitmaps. The v167
 experiment submitted same-surface `CopyBits` copies, but produced orange
 rectangles during dragging and reached 10,000 small GPU copy submissions. v168
-narrows this path to large, non-overlapping rectangles with pitched multi-row
-DMA in one GPU submission; other cases remain on software GDI. Physical
-validation is pending. This remains limited 2D acceleration, not a complete
+limits the new path to large, non-overlapping rectangles with pitched multi-row
+DMA in one GPU submission; other cases remain on software GDI. The v168 log
+recorded no GPU copy submissions, and the user still sees orange artifacts
+while dragging. This remains limited 2D acceleration, not a complete
 accelerated GDI driver. OpenGL, Direct3D, video decoding, and 3D acceleration
 are not implemented.
 

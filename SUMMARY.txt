@@ -1,5 +1,5 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 3, 2026 (v168 hardware run logged; visual check pending)
+Updated: November 3, 2026 (v168 orange drag artifacts confirmed)
 
 Confirmed baseline: v164 works on the test EVGA RTX 3070 XC3 Ultra LHR with
 two physical displays. The primary runs at 1920x1080 and the secondary at
@@ -36,8 +36,8 @@ test suite build successfully. The user-run log `test_logs/v168-20261103-172522.
 shows GSP RM INIT_DONE, both heads active and four-lane link-locked at
 1920x1080 and 2560x1440, and successful GPU solid-fill activity. It contains no
 GPU CopyBits submissions, so this run did not exercise the new copy path. The
-visual result while dragging windows is pending. OpenGL, Direct3D, and 3D
-acceleration are not implemented.
+user confirms orange artifacts remain while dragging windows. OpenGL,
+Direct3D, and 3D acceleration are not implemented.
 High-refresh modes such as 120 Hz and other GPU models, boards, connectors, and
 monitor combinations are not validated.
 
@@ -57,8 +57,8 @@ Milestones:
 - v168: narrows CopyBits to larger non-overlapping rectangles, batches rows
   in one pitched GPU copy submission, and snapshots the source for safe GDI
   fallback. Build and host tests pass; user-run hardware log confirms GSP and
-  both native heads, but has zero CopyBits submissions. Visual drag result
-  pending.
+  both native heads, but has zero CopyBits submissions. Orange drag artifacts
+  remain; the new copy path has not yet been exercised by the desktop.
 
 Validation: the v164 hardware log recorded active Head 0 and Head 1, completed
 display-update notifiers, four-lane DisplayPort link locks, 1920x1080 and
