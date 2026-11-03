@@ -217,20 +217,15 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
         for(ULONG page=0;page<32;page++)
             lpt[page]=((((ULONG64)slice*0x200000+(ULONG64)page*0x10000)>>4)|1);
     }
-    /* Map an 8MB coherent upload staging region at CE VA 0x22000000. Four
-       additional 2MB LPT slices use 64KB sysmem leaves, matching the scratch
-       PTE encoding. The physical range is intentionally between the GSP shared
-       queues and the page-table pool, outside firmware/image/queue storage. */
-    for(ULONG slice=16;slice<20;slice++) {
-        ULONG64 *lpt=(ULONG64 *)((PUCHAR)tables+0x7000+(slice-16)*0x100);
-        ULONG64 lptPhysical=physical+0x7000+(slice-16)*0x100;
-        tables[2560+slice*2]=(lptPhysical>>4)|0xc;
-        tables[2560+slice*2+1]=0;
-        for(ULONG page=0;page<32;page++) {
-            ULONG64 pagePhysical=dev->GspDmaPhysical.QuadPart+GSP_UPLOAD_OFFSET+
-                (ULONG64)(slice-16)*0x200000+(ULONG64)page*0x10000;
-            lpt[page]=(pagePhysical>>4)|0xd;
-        }
+    /* DMA allocations are only 4KB aligned. 64KB leaves silently discard
+       low physical address bits and read unrelated bytes on real XP boots.
+       One SPT maps the 64KB staging window used by bounded upload requests. */
+    tables[2560+16*2]=0;
+    tables[2560+16*2+1]=((physical+0x7000)>>4)|0xc;
+    for(ULONG page=0;page<16;page++) {
+        ULONG64 pagePhysical=dev->GspDmaPhysical.QuadPart+GSP_UPLOAD_OFFSET+
+            (ULONG64)page*0x1000;
+        tables[3584+page]=(pagePhysical>>4)|0xd;
     }
     dev->GspVramGpuVa=0x20000000ULL;
     dev->GspVramMapBytes=0x2000000ULL;
@@ -786,7 +781,25 @@ BOOLEAN NvxGspUpload(PVOID HwDeviceExtension,ULONG64 dstVa,const void *src,ULONG
         return FALSE;
     VideoPortMoveMemory((PUCHAR)dev->GspDmaVirtual+GSP_UPLOAD_OFFSET,(PVOID)src,bytes);
     __sync_synchronize();
-    return NvxGspSubmitCopy(HwDeviceExtension,dstVa,GSP_UPLOAD_GPU_VA,bytes);
+    if(!NvxGspSubmitCopy(HwDeviceExtension,dstVa,GSP_UPLOAD_GPU_VA,bytes))
+        return FALSE;
+    /* Verify the real staging path, not just the separately mapped scratch. */
+    {
+        static ULONG verifiedUploads=0;
+        if(verifiedUploads<3) {
+            ULONG count=bytes<256?bytes:256, mismatches=0;
+            PUCHAR readback=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET+0xa000;
+            if(!NvxGspSubmitCopy(HwDeviceExtension,dev->GspScratchGpuVa+0xa000,dstVa,count))
+                return FALSE;
+            for(ULONG i=0;i<count;i++)
+                if(readback[i]!=((const UCHAR *)src)[i]) mismatches++;
+            verifiedUploads++;
+            LogStr("NVX [UPLOAD-CHECK]: GPU readback bytes=");LogHex(count);
+            LogStr(" mismatches=");LogHex(mismatches);LogStr("\n");
+            if(mismatches) return FALSE;
+        }
+    }
+    return TRUE;
 }
 
 static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)

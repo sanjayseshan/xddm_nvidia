@@ -32,7 +32,7 @@ VOID VideoPortPutDmaAdapter(PVOID extension,PVOID adapter) { (void)extension;(vo
 PVOID VideoPortAllocateCommonBuffer(PVOID e,PVOID a,ULONG n,PPHYSICAL_ADDRESS pa,BOOLEAN c,PVOID r)
 {
     (void)e;(void)a;(void)c;(void)r;
-    pa->QuadPart=0x10000000;
+    pa->QuadPart=0x10004000; /* 4KB aligned, deliberately not 64KB aligned */
     return calloc(1,n);
 }
 VOID VideoPortFreeCommonBuffer(PVOID e,ULONG n,PVOID p,PHYSICAL_ADDRESS pa,BOOLEAN c)
@@ -145,12 +145,16 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(tables[2560]==((physical+0x6000)>>4|0xc));
             assert(tables[3072]==1); /* VRAM physical page zero, valid aperture */
             assert(tables[3583]==(((ULONG64)0x1ff0000>>4)|1));
-            assert(tables[2560+16*2]==((physical+0x7000)>>4|0xc));
-            assert(tables[2560+16*2+1]==0);
+            assert(tables[2560+16*2]==0);
+            assert(tables[2560+16*2+1]==((physical+0x7000)>>4|0xc));
             {
                 PULONG64 upload=(PULONG64)((PUCHAR)tables+0x7000);
                 assert(upload[0]==((dev.GspDmaPhysical.QuadPart+GSP_UPLOAD_OFFSET)>>4|0xd));
-                assert(upload[31]==((dev.GspDmaPhysical.QuadPart+GSP_UPLOAD_OFFSET+0x1f0000)>>4|0xd));
+                assert(upload[15]==((dev.GspDmaPhysical.QuadPart+GSP_UPLOAD_OFFSET+0xf000)>>4|0xd));
+                assert(upload[16]==0);
+                /* Decoding the first 4KB leaf must preserve the DMA base's
+                   low 64KB offset; a large leaf would lose these bits. */
+                assert(((upload[0]&~0xffULL)<<4)==dev.GspDmaPhysical.QuadPart+GSP_UPLOAD_OFFSET);
             }
         }
         if(f==76&&request[22]==0xa06f0107&&scenario==4) {

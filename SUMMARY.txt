@@ -1,8 +1,24 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.121 coherent desktop bitmap
+NVIDIA GA104 XDDM DRIVER — v1.0.0.122 4KB upload staging mapping
 Updated: November 3, 2026
 
-Latest change (v121)
+Latest change (v122)
 --------------------
+v121 DMA base was 0x06214000: only 4KB aligned. The desktop upload staging
+used 64KB GPU page-table leaves, discarding the low physical address bits.
+v122 replaces those leaves with 4KB PTEs for the 64KB active staging window.
+The first three uploads now also copy GPU destination bytes back into the
+verified scratch mapping and compare against the original upload data.
+Host regression and builds pass, including a mock DMA base deliberately only
+4KB aligned. Hardware boot test_logs/v122-20261103-102614.log reaches desktop
+workloads at 800x600x32 (stride 4096). Its DMA base is 0x0623E000, again not
+64KB aligned. All three sampled GPU upload/readback checks match exactly (96
+bytes each, zero mismatches). Physical display check is pending; do not claim
+corruption is fixed until that check passes. The coherent bitmap from v121
+remains. GPU fills and copy-engine presentation run; glyph rasterization still
+uses GDI, and no 3D acceleration has been implemented.
+
+Previous v121 change
+-------------------
 v120 still showed rectangles/corruption (user confirmed) and shut down through
 XP; its log ends with HookedPowerDispatch. The readback mismatches exposed an
 additional design flaw: GDI was using BAR1 as its authoritative bitmap, while
