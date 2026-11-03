@@ -18,7 +18,7 @@ typedef struct {
  * Encoding reference: Nouveau r535_dmac_bind and GV100 display DMA. */
 static inline int NvxDisplayPushHeader(uint32_t method,uint32_t count,uint32_t *header)
 {
-    if(!header || !count || count>1023 || (method&3) || method>0x1ffc) return 0;
+    if(!header || !count || count>1023 || (method&3) || method>0x3ffc) return 0;
     *header=(count<<18)|(method>>2);
     return 1;
 }

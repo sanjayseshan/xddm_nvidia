@@ -904,6 +904,13 @@ static BOOLEAN NvxNativeVerifyNotifier(PNVX_DEVICE_EXTENSION dev)
         if(!NvxDisplayPushHeader(usageMethod,1,&header)) return FALSE;
         push[n++]=header;push[n++]=0x00107fff;
     }
+    /* Mirror Nouveau's C67D head capability bounds (256x256 cursor, output
+       LUT and 2-tap scaler). These are limits, not active head state. */
+    for(ULONG head=0;head<4;head++) {
+        ULONG usageMethod=0x2030+head*0x400;
+        if(!NvxDisplayPushHeader(usageMethod,1,&header)) return FALSE;
+        push[n++]=header;push[n++]=0x00001014;
+    }
     __sync_synchronize();
     VideoPortWriteRegisterUlong((PULONG)(bar0+0x680000),n);
     for(ULONG wait=0;wait<2000;wait++) {

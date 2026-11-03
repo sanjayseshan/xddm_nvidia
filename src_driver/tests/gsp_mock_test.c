@@ -282,12 +282,20 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
                 }
                 assert(index==44);regs[off/4+1]=value;return;
             }
-            assert(value==55 && buffer[44]==0x40082 && buffer[45]==0xd1500001);
-            assert(buffer[46]==0x40083 && buffer[47]==0x1000);
-            assert(buffer[48]==0x80086 && !buffer[49] && !buffer[50]);
-            assert(buffer[51]==0x40080 &&
-                   buffer[52]==NVX_C67D_UPDATE_SPECIAL_HANDLING_INTERRUPT_RM);
-            assert(buffer[53]==0x40083 && buffer[54]==0);
+            if(value==52) {
+                ULONG index=44,header;
+                for(ULONG head=0;head<4;head++) {
+                    assert(NvxDisplayPushHeader(0x2030+head*0x400,1,&header));
+                    assert(buffer[index++]==header && buffer[index++]==0x1014);
+                }
+                assert(index==52);regs[off/4+1]=value;return;
+            }
+            assert(value==63 && buffer[52]==0x40082 && buffer[53]==0xd1500001);
+            assert(buffer[54]==0x40083 && buffer[55]==0x1000);
+            assert(buffer[56]==0x80086 && !buffer[57] && !buffer[58]);
+            assert(buffer[59]==0x40080 &&
+                   buffer[60]==NVX_C67D_UPDATE_SPECIAL_HANDLING_INTERRUPT_RM);
+            assert(buffer[61]==0x40083 && buffer[62]==0);
             assert(entry[0]==0xd1500001 && entry[1]==0x400001);
             assert(descriptor[0]==0x46 && descriptor[1]==physical>>8);
             assert(!descriptor[2] && descriptor[3]==(physical+0xfff)>>8 && !descriptor[4]);

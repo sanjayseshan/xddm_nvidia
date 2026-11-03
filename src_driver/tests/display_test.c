@@ -26,8 +26,9 @@ int main(void)
         assert(NvxDisplayPushHeader(0x208,1,&header) && header==0x40082);
         assert(NvxDisplayPushHeader(0x218,2,&header) && header==0x80086);
         assert(NvxDisplayPushHeader(0x200,1,&header) && header==0x40080);
+        assert(NvxDisplayPushHeader(0x2030,1,&header) && header==0x4080c);
         assert(!NvxDisplayPushHeader(0x209,1,&header));
-        assert(!NvxDisplayPushHeader(0x2000,1,&header));
+        assert(!NvxDisplayPushHeader(0x4000,1,&header));
         assert(!NvxDisplayPushHeader(0x200,0,&header));
         assert(NvxDisplayRamhtEntry(0xd1500001,0,0x2000,0xc1d00001,&slot,entry));
         assert(slot==0x117);

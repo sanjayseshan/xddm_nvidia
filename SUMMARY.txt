@@ -78,6 +78,21 @@ succeeded on this boot, and the guest shut down cleanly via ACPI. Core window
 bounds alone are insufficient. Next, add Nouveau's per-head usage bounds to
 the same initialization sequence; still do not program timings or outputs.
 
+Latest change (v137): initialize C67D head bounds
+------------------------------------------------
+v137 adds all four head usage-bound methods alongside the eight window
+bounds, and corrects push-header validation to accept the C67D method-offset
+range through 0x3ffc. These commands only declare supported cursor/LUT/scaler
+capabilities; no active head, timing, link, or window assignment is made.
+Host sanitizer suite and warning-free x64 build pass, including exact method
+header and mocked pushbuffer checks. Two initial VFIO attempts failed before
+XP output (empty log and then KVM BIOS emulation failure at 0xA0000). The third
+attempt booted XP. Log test_logs/v137-20261103-120009.log shows VBE 0x177 set
+success, all NOPs and capability bounds consumed (core GET=0x34), then UPDATE
+stalled at GET=0x3c with notifier zero. ACPI shutdown completed. Head bounds
+did not resolve the UPDATE stall; the secondary remains unassigned. This
+version has not been visually confirmed on the physical displays.
+
 Latest change (v131): native display command channels
 -----------------------------------------------------
 After the user's host reboot, supplied log v130-20261103-112439.log shows XP
