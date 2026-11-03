@@ -833,6 +833,22 @@ static BOOLEAN NvxNativeFreeObject(PNVX_DEVICE_EXTENSION dev,ULONG parent,ULONG 
         reply[20]==release[0] && reply[21]==parent && reply[22]==handle && !reply[23];
 }
 
+static VOID NvxNativeLogDisplayStatus(PNVX_DEVICE_EXTENSION dev,const char *phase)
+{
+    PUCHAR bar0=dev->Bar0MmioVirtual;
+    static const ULONG offsets[]={0x610020,0x610024,0x610030,0x610080,0x610084,
+                                  0x611cf0,0x611db0};
+    static const char *names[]={"intr0","intr1","super","core-exc","core-data",
+                                "ctrl-mask","ctrl-enable"};
+    if(!bar0 || dev->Bar0Length<0x611db4) return;
+    LogStr("NVX [NATIVE]: display status ");LogStr(phase);LogStr(":");
+    for(ULONG i=0;i<sizeof(offsets)/sizeof(offsets[0]);i++) {
+        LogStr(" ");LogStr(names[i]);LogStr("=");
+        LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+offsets[i])));
+    }
+    LogStr("\n");
+}
+
 /* Establish hardware completion before attempting any native head update. */
 static BOOLEAN NvxNativeVerifyNotifier(PNVX_DEVICE_EXTENSION dev)
 {
@@ -862,6 +878,7 @@ static BOOLEAN NvxNativeVerifyNotifier(PNVX_DEVICE_EXTENSION dev)
     push[n++]=(2U<<18)|(0x218>>2);push[n++]=0;push[n++]=0;
     push[n++]=(1U<<18)|(0x200>>2);push[n++]=1; /* UPDATE with no interlocks */
     push[n++]=(1U<<18)|(0x20c>>2);push[n++]=0;
+    NvxNativeLogDisplayStatus(dev,"before-update");
     __sync_synchronize();
     VideoPortWriteRegisterUlong((PULONG)(bar0+0x680000),n);
     for(ULONG wait=0;wait<10000;wait++) {
@@ -877,7 +894,9 @@ static BOOLEAN NvxNativeVerifyNotifier(PNVX_DEVICE_EXTENSION dev)
     }
     LogStr("NVX [NATIVE]: core UPDATE completion unconfirmed GET=");
     LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x680004)));
-    LogStr(" notifier=");LogHex(notify[0]);LogStr("; native modeset disabled.\n");
+    LogStr(" notifier=");LogHex(notify[0]);LogStr("\n");
+    NvxNativeLogDisplayStatus(dev,"after-timeout");
+    LogStr("NVX [NATIVE]: native modeset disabled.\n");
     return FALSE;
 }
 

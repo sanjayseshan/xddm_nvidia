@@ -21,6 +21,24 @@ powerdown completed and QEMU exited. Next, capture display interrupt and
 supervisor status around the stalled UPDATE. Do not issue head timing or link
 commands until the supervisor/completion path is understood.
 
+Latest change (v133): display interrupt/supervisor diagnostics
+--------------------------------------------------------------
+v133 adds read-only BAR0 snapshots before the isolated core UPDATE and after
+its timeout. It records core interrupt status, supervisor state, channel error
+address/data, and display interrupt mask/enable; no acknowledgement, interrupt
+enable write, head update, or secondary-link operation is attempted.
+Host sanitizer suite and warning-free x64 build pass. Hardware log
+test_logs/v133-20261103-114316.log shows the same successful 1080p VBE mode set,
+all three native NOP channels consumed, and the secondary output still has no
+SOR assignment. The UPDATE stalls at GET=12; notifier stays zero. Core interrupt
+registers read the GPU's 0xBADF5040 invalid-register value, display interrupt
+mask is 0x478 and enable is zero. This confirms that directly servicing
+supervisor state is not ready: the XP miniport has no interrupt dispatcher and
+we have not initialized that display interrupt block. v133 leaves the working
+single-display path intact and the guest shut down cleanly. Next, test the
+NVIDIA-defined UPDATE special-handling mode that requests RM handling, without
+changing head/link state; keep the diagnostic snapshot in place.
+
 Latest change (v131): native display command channels
 -----------------------------------------------------
 After the user's host reboot, supplied log v130-20261103-112439.log shows XP
