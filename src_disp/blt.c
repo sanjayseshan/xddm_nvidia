@@ -5,6 +5,7 @@
  */
 
 #include "driver.h"
+#include "color.h"
 
 /*
  * GPU-rendered XDDM solid PATCOPY fills on the primary bitmap.
@@ -24,6 +25,9 @@ NvxTrySolidPatCopy(PPDEV ppdev, SURFOBJ *pso, CLIPOBJ *pco,
 
     if (!ppdev || !pso || !prcl || !ppdev->PresentationValid ||
         ppdev->BitsPerPixel != 32 || pso->dhpdev != (DHPDEV)ppdev ||
+        ppdev->RedMask != 0x00FF0000UL ||
+        ppdev->GreenMask != 0x0000FF00UL ||
+        ppdev->BlueMask != 0x000000FFUL ||
         pso->iType != STYPE_BITMAP || pso->pvBits != ppdev->ScreenPtr ||
         pso->iBitmapFormat != BMF_32BPP || pso->lDelta <= 0 ||
         (ULONG)pso->lDelta != ppdev->ScreenDelta ||
@@ -36,6 +40,10 @@ NvxTrySolidPatCopy(PPDEV ppdev, SURFOBJ *pso, CLIPOBJ *pco,
     color = BRUSHOBJ_ulGetBrushColor(pbo);
     if (color == CLR_INVALID)
         return FALSE;
+    /* BRUSHOBJ returns COLORREF (0x00BBGGRR); the 32bpp framebuffer masks
+       above describe XRGB memory pixels (0x00RRGGBB). Convert before writing
+       either VRAM or the system-memory surface shadow. */
+    color = NvxColorRefToXrgb(color);
 
     rect = *prcl;
     if (pco && pco->iDComplexity == DC_RECT) {

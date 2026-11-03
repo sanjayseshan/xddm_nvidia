@@ -1,5 +1,5 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 3, 2026 (v168 orange drag artifacts confirmed)
+Updated: November 3, 2026 (v169 channel-order fix built; guest launch blocked)
 
 Confirmed baseline: v164 works on the test EVGA RTX 3070 XC3 Ultra LHR with
 two physical displays. The primary runs at 1920x1080 and the secondary at
@@ -38,6 +38,17 @@ shows GSP RM INIT_DONE, both heads active and four-lane link-locked at
 GPU CopyBits submissions, so this run did not exercise the new copy path. The
 user confirms orange artifacts remain while dragging windows. OpenGL,
 Direct3D, and 3D acceleration are not implemented.
+
+v169 targets a likely color artifact source in the proven GPU fill path. GDI
+brush colors are COLORREF values (0x00BBGGRR), while the active 32-bit mode
+advertises XRGB masks (0x00RRGGBB). v168 passed brush values directly to the
+fill engine and shadow bitmap. v169 swaps red/blue channels before both writes
+and disables the fast path for unexpected channel masks. A host test covers
+red, green, blue, and a mixed color. The display driver, miniport, and host
+tests pass. `./test_full_driver.sh` packaged v169 but stopped before guest
+launch because libguestfs `supermin` exited with error status 1. The visual
+effect remains unverified; this is a diagnosis-driven candidate, not a
+confirmed fix.
 High-refresh modes such as 120 Hz and other GPU models, boards, connectors, and
 monitor combinations are not validated.
 
@@ -59,6 +70,10 @@ Milestones:
   fallback. Build and host tests pass; user-run hardware log confirms GSP and
   both native heads, but has zero CopyBits submissions. Orange drag artifacts
   remain; the new copy path has not yet been exercised by the desktop.
+- v169: converts COLORREF brush values to XRGB pixels in accelerated solid
+  fills; display and miniport builds plus host tests pass. Hardware launch was
+  blocked by libguestfs `supermin` before QEMU started; visual validation is
+  pending.
 
 Validation: the v164 hardware log recorded active Head 0 and Head 1, completed
 display-update notifiers, four-lane DisplayPort link locks, 1920x1080 and

@@ -8,9 +8,11 @@ secondary. Orange artifacts remain when dragging windows.
 The v168 hardware log confirms GSP initialization, both native display heads,
 and GPU solid-fill activity. The user reports orange artifacts during window
 dragging. The new pitched GPU `CopyBits` path was not exercised in that run
-(zero copy submissions), so it has not yet been shown to fix those artifacts.
-Earlier v167 testing also showed orange rectangles and excessive small copy
-submissions. See [SUMMARY.txt](SUMMARY.txt) for the per-version findings.
+(zero copy submissions). v169 converts GDI `COLORREF` values to the
+framebuffer's XRGB pixel order before accelerated solid fills; this targets a
+likely source of orange/blue color swaps and awaits hardware validation.
+Earlier v167 testing also showed excessive small copy submissions. See
+[SUMMARY.txt](SUMMARY.txt) for per-version findings.
 
 ## Project overview
 
@@ -78,6 +80,8 @@ The display driver's import library is generated from the checked-in
 `src_disp/win32k.def`. The XP package install file is `dist_full/nvx.inf`.
 `make -C src_driver check` runs the host-side parser, memory, RPC, display,
 firmware, and mock GSP checks. It requires the matching GSP firmware input.
+`make -C src_disp check` verifies the GDI color-to-pixel conversion used by
+the accelerated solid-fill path.
 
 ## Hardware test execution
 
