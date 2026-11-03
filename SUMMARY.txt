@@ -1,3 +1,20 @@
+NVIDIA GA104 XDDM DRIVER — v1.0.0.164 both native heads active
+Updated: November 3, 2026
+
+Restores accepted v159 window sequence (ARGB format, composition bypass
+default, no extra plane/composition programming); state0x2d is gone.
+Host sanitizer tests/build pass. First launch exited without driver log.
+Retry v164-20261103-155124.log: two complete native updates, notifier80000000
+each; Head0 display0800 and Head1 display0200 both active, four DP lanes
+locked on each. Primary raster/surface1920x1080, secondary2560x1440.
+Independent GPU uploads verified; secondary pixel readbacks all zero
+mismatches. No display errors/timeouts in successful log. HMP read-only
+cache checks show window composition bypass10000 and identity FMT matrices
+on both windows (the explicitly disabled bypass in v163 caused invalid state).
+This establishes dual-head activation plus correct upload regions. Next log
+DP sink receive-sync status and armed image/color-pipeline state for stronger
+autonomous verification without physical-screen questions.
+
 NVIDIA GA104 XDDM DRIVER — v1.0.0.163 independent accelerated framebuffer uploads
 Updated: November 3, 2026
 

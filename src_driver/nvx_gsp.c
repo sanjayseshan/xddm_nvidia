@@ -1075,8 +1075,8 @@ static BOOLEAN NvxGspVerifyDisplays(PNVX_DEVICE_EXTENSION dev)
                 LogStr("NVX [DISPLAY-VERIFY]: display=");LogHex(id);
                 LogStr(" fourLaneLock=");LogHex(locked);
                 LogStr(" status=");LogHex(r->data[0]|(r->data[1]<<8)|(r->data[2]<<16));LogStr("\n");
-                if(head==1 && !locked) secondaryActive=FALSE;
-            } else if(head==1) secondaryActive=FALSE;
+                if(!locked) { if(head==1) secondaryActive=FALSE;else primaryActive=FALSE; }
+            } else { if(head==1) secondaryActive=FALSE;else primaryActive=FALSE; }
         }
     }
     LogStr("NVX [DISPLAY-VERIFY]: bothHeadsActive=");LogHex(primaryActive&&secondaryActive);LogStr("\n");
@@ -1097,20 +1097,13 @@ static VOID NvxNativeWindow(PULONG push,PULONG count,ULONG width,ULONG height,
     NvxNativeMethod(push,count,0x308,0);
     NvxNativeMethod(push,count,0x224,(height<<16)|width);
     NvxNativeMethod(push,count,0x228,0); /* Linear DMA context kind, C67E. */
-    NvxNativeMethod(push,count,0x22c,0xe6); /* X8R8G8B8: desktop alpha ignored. */
+    NvxNativeMethod(push,count,0x22c,0xcf); /* Known accepted v159 ARGB image format. */
     NvxNativeMethod(push,count,0x230,pitch>>6);
     NvxNativeMethod(push,count,0x240,handle);
-    NvxNativeMethod(push,count,0x244,0);
     NvxNativeMethod(push,count,0x260,offset>>8);
-    NvxNativeMethod(push,count,0x290,0);
     NvxNativeMethod(push,count,0x298,(height<<16)|width);
     NvxNativeMethod(push,count,0x2a4,(height<<16)|width);
-    /* Opaque source-over-zero composition, independent of reset alpha. */
-    NvxNativeMethod(push,count,0x2ec,0);
-    NvxNativeMethod(push,count,0x2f0,0xff);
-    NvxNativeMethod(push,count,0x2f4,0x11);
     NvxNativeMethod(push,count,0x370,1); /* Interlock with core. */
-    NvxNativeMethod(push,count,0x374,0);
     NvxNativeMethod(push,count,0x200,1);
 }
 
