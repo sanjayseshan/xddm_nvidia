@@ -28,14 +28,15 @@ static VP_STATUS call(PVOID p,NVX_INT10_ARGS *a)
         memcpy(info->VbeSignature,"VESA",4);info->VbeVersion=0x300;
         info->VideoModePtr=0x12000080; /* list inside the reused BIOS buffer */
         list[0]=0x112;list[1]=0x115;list[2]=0x118;
-        if(scenario==4) {
+        if(scenario>=4) {
             list[3]=0x11b;
-            if(controllerCalls>1) { list[4]=0x177;list[5]=0xffff; }
+            if(scenario==4 && controllerCalls>1) { list[4]=0x177;list[5]=0xffff; }
             else list[4]=0xffff;
         } else list[3]=0xffff;
     } else {
         VBE_MODE_INFO *v=buffer;
         assert(a->Eax==0x4f01);
+        if(scenario==6 && a->Ecx==0x177) {a->Eax=0x014f;return 0;}
         v->ModeAttributes=0x91;v->NumberOfPlanes=1;v->MemoryModel=6;
         v->BitsPerPixel=a->Ecx==0x112?24:32;
         v->XResolution=a->Ecx==0x112?640:a->Ecx==0x115?800:1920;
@@ -92,6 +93,14 @@ int main(void)
     dev.PhysicalBar1.QuadPart=0xe0000000;dev.Bar1Length=0x10000000;
     assert(NvxVbeInitialize(&dev));
     assert(controllerCalls==2&&frees==2&&derefs==2&&dev.NumModes==5);
+    for(scenario=5;scenario<=6;scenario++) {
+        memset(&dev,0,sizeof(dev));current=3;frees=derefs=0;controllerCalls=0;
+        dev.PhysicalBar1.QuadPart=0xe0000000;dev.Bar1Length=0x10000000;
+        assert(NvxVbeInitialize(&dev));
+        assert(controllerCalls==2 && frees==2 && derefs==2);
+        assert(dev.NumModes==(scenario==5?5U:4U));
+        if(scenario==5) assert(dev.ModeVbeIds[4]==0x177 && dev.Modes[4].VisScreenWidth==1920);
+    }
     puts("VBE tests passed: AX status, BIOS buffer/list, real stride/depth/base, native mode, rejected modes and cleanup.");
     return 0;
 }

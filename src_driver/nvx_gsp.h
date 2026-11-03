@@ -316,6 +316,9 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG GspDisplayHandle;
     ULONG GspSupportedDisplays;
     ULONG GspConnectedDisplays;
+    ULONG NativeDisplayHandle;
+    ULONG NativeDisplayCaps;
+    ULONG DisplayWindowMask;
     ULONG DisplayHeadCount;
     ULONG DisplayHeadMask;
     ULONG DisplayActiveIds[4];

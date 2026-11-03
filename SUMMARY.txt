@@ -1,8 +1,25 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.128 native display preflight
+NVIDIA GA104 XDDM DRIVER — v1.0.0.129 1080p recovery and native display root
 Updated: November 3, 2026
 
-Latest change (v128)
+Latest change (v129)
 --------------------
+User requests desktop dual display and at least a 1080p primary. v129 probes
+BIOS mode 0x177 after a degraded four-mode-list retry, accepts only validated
+1920x1080x32 metadata, and prefers that format over saved 800x600 startup modes.
+Host tests cover successful recovery and BIOS refusal without inventing mode
+metadata. Hardware log test_logs/v129-20261103-110444.log still selects
+800x600: direct 1080p metadata passes geometry checks but AddMode rejects it.
+This recovery attempt has NOT fixed the degraded-list case. Next inspect the
+rejected metadata/attributes and verify any attempted fallback mode set.
+
+The native GA102 display-root object (class 0xC670) is now allocated successfully.
+GET_CAPS_V2 returns caps=0x24; INTERNAL_DISPLAY_GET_STATIC_INFO reports eight
+window resources (mask 0xFF) and four heads. No core/window channels or native
+head update have been submitted, so second-head desktop output remains absent.
+The existing GDI/CE rendering path is unchanged. Host suite/build pass.
+
+Previous v128 change
+-------------------
 User requests enabling the second monitor. v128 adds validated progressive
 separate-sync EDID detailed-timing decoding plus head-count, head-mask,
 active-display and firmware head-routing queries. No modeset is submitted.

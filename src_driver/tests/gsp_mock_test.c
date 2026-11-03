@@ -61,7 +61,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         PULONG request=(PULONG)((PUCHAR)cmd+4096+(cmd->WritePtr-1)*4096);
         ULONG alloc[528]={0},replyBytes;
         uint32_t f,r,s;
-        assert(cmd->WritePtr>=3&&cmd->WritePtr<=37);
+        assert(cmd->WritePtr>=3&&cmd->WritePtr<=40);
         assert(NvxDecodeRpc((PUCHAR)request,4096,&f,&r,&s));
         assert((f==103||f==76||f==4||f==14||f==10||f==65)&&s==cmd->WritePtr-1);
         if(f==65) {
@@ -166,6 +166,13 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         replyBytes=f==76?24+request[24]:(f==14?56:32);
         assert(replyBytes<=sizeof(alloc));
         memcpy(alloc,request+20,f==76?replyBytes:(f==14?56:16));
+        if(f==76&&request[22]==0x50700709) {
+            assert(request[21]==0xc6700001 && request[24]==8);alloc[7]=3;
+        }
+        if(f==76&&request[22]==0x20800a01) {
+            assert(request[21]==dev.GspSubdeviceHandle && request[24]==28);
+            alloc[7]=255;alloc[9]=4;
+        }
         if(f==76&&request[22]==0x730102) alloc[8]=4;
         if(f==76&&request[22]==0x730287) alloc[7]=15;
         if(f==76&&request[22]==0x730126) {
@@ -369,9 +376,11 @@ int main(void)
         assert(dev.GspInitialized==(scenario==0 || scenario>=3));
         if (dev.GspInitialized) {
             assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==
-                   (ULONG)((scenario==4?30:28)+(dev.GspCopyVerified?12:0)));
+                   (ULONG)((scenario==4?30:28)+(dev.GspCopyVerified?15:0)));
             if(dev.GspCopyVerified) {
                 assert(dev.GspDisplayHandle==0x73000001);
+                assert(dev.NativeDisplayHandle==0xc6700001 && dev.NativeDisplayCaps==3);
+                assert(dev.DisplayWindowMask==255);
                 assert(dev.DisplayHeadCount==4 && dev.DisplayHeadMask==15);
                 assert(dev.DisplayActiveIds[0]==1 && dev.DisplayActiveIds[1]==0);
                 assert(dev.DisplayRoutableMask==5 && dev.DisplayHeadRoutingMap==0x10);

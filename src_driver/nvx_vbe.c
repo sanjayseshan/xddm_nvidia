@@ -87,7 +87,7 @@ BOOLEAN NvxVbeSetMode(PVOID extension, ULONG index)
     return TRUE;
 }
 
-static BOOLEAN NvxVbeEnumerate(PVOID extension)
+static BOOLEAN NvxVbeEnumerate(PVOID extension, BOOLEAN recoverNative)
 {
     PNVX_DEVICE_EXTENSION dev=extension;
     NVX_INT10_INTERFACE api;
@@ -131,6 +131,22 @@ static BOOLEAN NvxVbeEnumerate(PVOID extension)
         if(NvxVbeSuccess(status,a.Eax) && api.Read(api.Context,seg,off,&mode,sizeof(mode))==NO_ERROR)
             AddMode(dev,list[i],&mode,info.VbeVersion);
     }
+    /* GA104 previously reports 0x177 as 1920x1080x32. On the second
+       degraded-list attempt, query it directly; never invent its metadata. */
+    if(recoverNative && dev->NumModes<=4) {
+        VideoPortZeroMemory(&mode,sizeof(mode));
+        if(api.Write(api.Context,seg,off,&mode,sizeof(mode))==NO_ERROR) {
+            VideoPortZeroMemory(&a,sizeof(a));a.Eax=0x4f01;a.Ecx=0x177;
+            a.SegEs=seg;a.Edi=off;
+            status=api.Call(api.Context,&a);
+            if(NvxVbeSuccess(status,a.Eax) &&
+               api.Read(api.Context,seg,off,&mode,sizeof(mode))==NO_ERROR &&
+               mode.XResolution==1920 && mode.YResolution==1080 && mode.BitsPerPixel==32) {
+                if(AddMode(dev,0x177,&mode,info.VbeVersion))
+                    LogStr("NVX [VBE]: recovered BIOS-validated 1080p mode omitted from list.\n");
+            } else LogStr("NVX [VBE]: BIOS rejected direct 1080p query; retaining verified fallback.\n");
+        }
+    }
 done:
     if(allocated) api.Free(api.Context,seg,off);
     if(api.Dereference) api.Dereference(api.Context);
@@ -147,7 +163,7 @@ BOOLEAN NvxVbeInitialize(PVOID extension)
     ULONG attempt;
     for(attempt=0;attempt<2;attempt++) {
         ULONG i,initial=0;
-        if(!NvxVbeEnumerate(extension)) return FALSE;
+        if(!NvxVbeEnumerate(extension,attempt!=0)) return FALSE;
         for(i=1;i<dev->NumModes;i++) {
             const VIDEO_MODE_INFORMATION *m=&dev->Modes[i], *b=&dev->Modes[initial];
             ULONG64 area=(ULONG64)m->VisScreenWidth*m->VisScreenHeight;

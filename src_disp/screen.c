@@ -217,6 +217,20 @@ DrvEnablePDEV(
         return NULL;
     }
 
+    /* Recover a saved low-resolution startup choice when this board has a
+       BIOS-validated 1080p format. The user requested a 1080p primary. */
+    if(pdm->dmPelsWidth<=800 && pdm->dmPelsHeight<=600) {
+        PVIDEO_MODE_INFORMATION candidate=ModeInfo;
+        for(ULONG i=0;i<ModeCount;i++) {
+            if(candidate->Length && candidate->VisScreenWidth==1920 &&
+               candidate->VisScreenHeight==1080 && candidate->BitsPerPlane==32)
+                SelectedMode=candidate;
+            candidate=(PVIDEO_MODE_INFORMATION)((PUCHAR)candidate+ModeInfoSize);
+        }
+    }
+    if(SelectedMode) {
+        /* Keep recovered native primary selection. */
+    } else
     if (pdm->dmPelsWidth == 0 && pdm->dmPelsHeight == 0 &&
         pdm->dmBitsPerPel == 0 && pdm->dmDisplayFrequency == 0)
     {

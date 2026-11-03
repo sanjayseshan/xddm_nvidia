@@ -844,6 +844,29 @@ static VOID NvxGspReadMonitorEdid(PNVX_DEVICE_EXTENSION dev,ULONG displayId)
     LogStr(" bytes=");LogHex(bytes);LogStr("\n");
 }
 
+/* GA102 native display root; its constructor creates the RM API resource.
+   Core/window channel ownership and head updates remain separate operations. */
+static VOID NvxGspNativeDisplayRoot(PNVX_DEVICE_EXTENSION dev)
+{
+    ULONG caps[2]={0,0},info[7]={0};
+    const ULONG *reply;
+    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0xc6700001,0xc670,NULL,0)) {
+        LogStr("NVX [NATIVE]: GA102 display root allocation failed.\n");return;
+    }
+    dev->NativeDisplayHandle=0xc6700001;
+    if(NvxGspControl(dev,dev->NativeDisplayHandle,0x50700709,caps,sizeof(caps))) {
+        reply=(const ULONG *)dev->RpcRxRecord;
+        dev->NativeDisplayCaps=reply[27]&255;
+        LogStr("NVX [NATIVE]: display caps=");LogHex(dev->NativeDisplayCaps);LogStr("\n");
+    }
+    if(NvxGspControl(dev,dev->GspSubdeviceHandle,0x20800a01,info,sizeof(info))) {
+        reply=(const ULONG *)dev->RpcRxRecord;
+        dev->DisplayWindowMask=reply[27];
+        LogStr("NVX [NATIVE]: windows=");LogHex(dev->DisplayWindowMask);
+        LogStr(" heads=");LogHex(reply[29]);LogStr("; channels not yet started.\n");
+    }
+}
+
 /* Query routing without changing any output assignments or taking ownership. */
 static VOID NvxGspPlanHeads(PNVX_DEVICE_EXTENSION dev)
 {
@@ -885,6 +908,8 @@ static VOID NvxGspPlanHeads(PNVX_DEVICE_EXTENSION dev)
     LogStr("NVX [MODEPLAN]: routable=");LogHex(dev->DisplayRoutableMask);
     LogStr(" headMap=");LogHex(dev->DisplayHeadRoutingMap);
     LogStr("; no native modeset submitted.\n");
+    if(dev->DisplayRoutableMask==dev->GspConnectedDisplays)
+        NvxGspNativeDisplayRoot(dev);
 }
 
 /* NVIDIA ctrl0073system.h: discover physical connectors, independent of
