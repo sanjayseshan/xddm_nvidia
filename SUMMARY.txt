@@ -1,8 +1,25 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.123 complete bitmap presentation
+NVIDIA GA104 XDDM DRIVER — v1.0.0.124 batched padded-row presentation
 Updated: November 3, 2026
 
-Latest change (v123)
+Latest change (v124)
 --------------------
+v124 copies the full row pitch, including padding, when presenting the full
+bitmap. At 800x600 with pitch 4096, this batches 15 rows per 60KB upload:
+40 submissions/frame instead of 600. Acceleration IOCTLs no longer print one
+serial line per request; sampled progress and errors remain. Host checks and
+builds pass. v124 hardware log test_logs/v124-20261103-103458.log selects
+1920x1080x32 with stride 7680 (mode index 9), and all three 256-byte GPU upload
+readbacks match. Uploads are batched at 60KB. Physical responsiveness/icon and
+Explorer stability checks are pending. Native VBE mode enumeration varies
+between boots; no permanent resolution-enumeration fix has been established.
+This is GPU copy-engine presentation of GDI-rendered pixels, not full GPU GDI
+rasterization or 3D acceleration.
+User confirms v123 shows the Start icon, but reports severe interface/cursor
+lag, Explorer crashes, and low resolution. Guest exited after ACPI shutdown;
+log ends with HookedPowerDispatch. v124 hardware validation now in progress.
+
+Previous v123 change
+-------------------
 User confirms v122 improved the screen, but corruption remains. It completed
 an XP power transition (HookedPowerDispatch). v123 presents the full coherent
 bitmap after hooked drawing and software cursor callbacks. The latter had no

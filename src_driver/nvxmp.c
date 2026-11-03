@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.123
+ * Driver Version: 1.0.0.124
  */
 
 #include "miniport.h"
@@ -794,9 +794,15 @@ BOOLEAN HwVidStartIO(
     PSTATUS_BLOCK statusBlock = RequestPacket->StatusBlock;
     ULONG status = NO_ERROR;
 
-    LogStr("NVX: HwVidStartIO IoControlCode: ");
-    LogHex(RequestPacket->IoControlCode);
-    LogStr("\n");
+    /* Serial polling per row can dominate desktop rendering. Acceleration
+       paths already report sampled progress and all submission failures. */
+    if(RequestPacket->IoControlCode!=IOCTL_NVX_ACCEL_UPLOAD &&
+       RequestPacket->IoControlCode!=IOCTL_NVX_ACCEL_COPY &&
+       RequestPacket->IoControlCode!=IOCTL_NVX_ACCEL_FILL) {
+        LogStr("NVX: HwVidStartIO IoControlCode: ");
+        LogHex(RequestPacket->IoControlCode);
+        LogStr("\n");
+    }
 
     statusBlock->Information = 0;
 
@@ -1131,7 +1137,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.123 (complete bitmap presentation)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.124 (batched padded-row presentation)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

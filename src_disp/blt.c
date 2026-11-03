@@ -22,7 +22,7 @@ NvxUploadSurfaceRect(PPDEV ppdev, SURFOBJ *pso, RECTL *prcl, ULONG kind)
        pso->lDelta<=0||(ULONG)pso->lDelta!=ppdev->ScreenDelta)
         return FALSE;
 
-    /* v123: publish the whole authoritative bitmap to isolate missed dirty
+    /* Publish the whole authoritative bitmap to isolate missed dirty
        bounds and direct GDI writes from pixel production. */
     r.left=0; r.top=0;
     r.right=(LONG)ppdev->ScreenWidth; r.bottom=(LONG)ppdev->ScreenHeight;
@@ -33,7 +33,9 @@ NvxUploadSurfaceRect(PPDEV ppdev, SURFOBJ *pso, RECTL *prcl, ULONG kind)
     if(r.left>=r.right||r.top>=r.bottom) return TRUE;
 
     bytesPerPixel=4;
-    lineBytes=(ULONG)(r.right-r.left)*bytesPerPixel;
+    /* Include pitch padding when sending full-width rows. This keeps each
+       staged row adjacent to the next and preserves its destination stride. */
+    lineBytes=ppdev->ScreenDelta;
     if(!lineBytes||lineBytes>NVX_ACCEL_UPLOAD_MAX_BYTES) return FALSE;
     /* The CE copy is linear: only adjacent rows with no pitch padding can be
        coalesced. Partial-width spans must be submitted one row at a time so
