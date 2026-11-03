@@ -925,10 +925,10 @@ static BOOLEAN NvxNativeVerifyNotifier(PNVX_DEVICE_EXTENSION dev)
     LogStr("NVX [NATIVE]: C67D core capability bounds consumed GET=");LogHex(n);LogStr("\n");
     /* Each header carries the byte method offset and count in bits 27:18.
        Core PUT remains a DWORD index. This update changes no head state. */
-    push[n++]=(1U<<18)|(0x208>>2);push[n++]=handle;
-    push[n++]=(1U<<18)|(0x20c>>2);push[n++]=0x1000; /* notifier enabled, offset zero */
-    push[n++]=(2U<<18)|(0x218>>2);push[n++]=0;push[n++]=0;
-    push[n++]=(1U<<18)|(0x200>>2);
+    push[n++]=(1U<<18)|0x208;push[n++]=handle;
+    push[n++]=(1U<<18)|0x20c;push[n++]=0x1000; /* notifier enabled, offset zero */
+    push[n++]=(2U<<18)|0x218;push[n++]=0;push[n++]=0;
+    push[n++]=(1U<<18)|0x200;
     push[n++]=NVX_C67D_UPDATE_INHIBIT_INTERRUPTS;
     NvxNativeLogDisplayStatus(dev,"before-update");
     __sync_synchronize();
@@ -1124,6 +1124,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     ULONG coreN = 0, winN = 0;
     uint32_t header;
     NVX_DISPLAY_TIMING *t;
+    NVX_DP_CONFIG_STREAM_PARAMS stream={0};
     ULONG width, height, pitch;
     ULONG hTotal, vTotal, hSyncEnd, vSyncEnd, hBlankStart, vBlankStart, pixelClockHz;
     ULONG hBlankEnd,vBlankEnd;
@@ -1183,16 +1184,13 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
         hBlankStart=raster.blankStart&0xffff;vBlankStart=raster.blankStart>>16;
         hBlankEnd=raster.blankEnd&0xffff;vBlankEnd=raster.blankEnd>>16;
         {
-            NVX_DP_CONFIG_STREAM_PARAMS stream={0};
             ULONG protocol=dev->MonitorProtocol[1];
             if((protocol!=8 && protocol!=9) ||
-               !NvxDpBuildSst(&mode,sor,protocol==9,&stream) ||
-               !NvxGspControl(dev,dev->GspDisplayHandle,NVX_CTRL_CMD_DP_CONFIG_STREAM,
-                              &stream,sizeof(stream))) {
+               !NvxDpBuildSst(&mode,sor,protocol==9,&stream)) {
                 LogStr("NVX [DP]: secondary SST stream configuration failed.\n");
                 return FALSE;
             }
-            LogStr("NVX [DP]: secondary SST stream configured Head1 SOR=");LogHex(sor);
+            LogStr("NVX [DP]: secondary SST stream prepared Head1 SOR=");LogHex(sor);
             LogStr(" link=");LogHex(stream.dpLink);
             LogStr(" hBlankSym=");LogHex(stream.hBlankSym);
             LogStr(" vBlankSym=");LogHex(stream.vBlankSym);
@@ -1380,6 +1378,11 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
                     LogStr("NVX [NATIVE]: RM active display on Head1=");LogHex(reply[29]);LogStr("\n");
                 }
             }
+            if(NvxGspControl(dev,dev->GspDisplayHandle,NVX_CTRL_CMD_DP_CONFIG_STREAM,
+                             &stream,sizeof(stream)))
+                LogStr("NVX [DP]: post-update SST configuration accepted.\n");
+            else
+                LogStr("NVX [DP]: post-update SST configuration rejected.\n");
             return TRUE;
         }
         VideoPortStallExecution(100);

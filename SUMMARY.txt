@@ -1,3 +1,18 @@
+NVIDIA GA104 XDDM DRIVER — v1.0.0.153 corrected EVO method headers
+Updated: November 3, 2026
+
+v153 fixes method address encoding: DMA_METHOD_OFFSET is bits 13:2, so the
+already-byte-addressed method belongs directly in the header. Previously the
+address was shifted right twice. Tests now check actual wire headers, e.g.
+SET_CONTEXT_DMA_NOTIFIER 0x208 -> 0x00040208. The DP stream call runs after the
+head update instead of blocking submission. Host sanitizer tests/build pass.
+Hardware log: test_logs/v153-20261103-150947.log. RM still reports Head1 inactive
+and DP_CONFIG_STREAM returns illegal action. Core probe GET is 0x3c for PUT61;
+this consistent four-byte rounding suggests PUT/GET MMIO must use byte pointers,
+as Nouveau's NV507C_PTR packing does. Also observed unhandled GSP OS_ERROR_LOG
+0x1006; it remains at queue head and blocks later RPCs. Next fix pointer packing
+and consume/log this diagnostic event so the actual hardware error is visible.
+
 NVIDIA GA104 XDDM DRIVER — v1.0.0.152 secondary DP stream control
 Updated: November 3, 2026
 

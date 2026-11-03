@@ -256,7 +256,7 @@ static inline int NvxDpBuildSst(const NVX_DISPLAY_TIMING *t,uint32_t sor,
 static inline int NvxDisplayPushHeader(uint32_t method,uint32_t count,uint32_t *header)
 {
     if(!header || !count || count>1023 || (method&3) || method>0x3ffc) return 0;
-    *header=(count<<18)|(method>>2);
+    *header=(count<<18)|method;
     return 1;
 }
 

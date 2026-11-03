@@ -333,10 +333,10 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
                 }
                 assert(index==52);regs[off/4+1]=value;return;
             }
-            assert(value==61 && buffer[52]==0x40082 && buffer[53]==0xd1500001);
-            assert(buffer[54]==0x40083 && buffer[55]==0x1000);
-            assert(buffer[56]==0x80086 && !buffer[57] && !buffer[58]);
-            assert(buffer[59]==0x40080 &&
+            assert(value==61 && buffer[52]==0x40208 && buffer[53]==0xd1500001);
+            assert(buffer[54]==0x4020c && buffer[55]==0x1000);
+            assert(buffer[56]==0x80218 && !buffer[57] && !buffer[58]);
+            assert(buffer[59]==0x40200 &&
                    buffer[60]==NVX_C67D_UPDATE_INHIBIT_INTERRUPTS);
             assert(entry[0]==0xd1500001 && entry[1]==0x400001);
             assert(descriptor[0]==0x46 && descriptor[1]==physical>>8);

@@ -78,10 +78,10 @@ int main(void)
     memset(d,0,sizeof(d));assert(!NvxDecodeDetailedTiming(d,sizeof(d),&t));
     {
         uint32_t slot=0,entry[2]={0},header=0;
-        assert(NvxDisplayPushHeader(0x208,1,&header) && header==0x40082);
-        assert(NvxDisplayPushHeader(0x218,2,&header) && header==0x80086);
-        assert(NvxDisplayPushHeader(0x200,1,&header) && header==0x40080);
-        assert(NvxDisplayPushHeader(0x2030,1,&header) && header==0x4080c);
+        assert(NvxDisplayPushHeader(0x208,1,&header) && header==0x40208);
+        assert(NvxDisplayPushHeader(0x218,2,&header) && header==0x80218);
+        assert(NvxDisplayPushHeader(0x200,1,&header) && header==0x40200);
+        assert(NvxDisplayPushHeader(0x2030,1,&header) && header==0x42030);
         assert(!NvxDisplayPushHeader(0x209,1,&header));
         assert(!NvxDisplayPushHeader(0x4000,1,&header));
         assert(!NvxDisplayPushHeader(0x200,0,&header));
