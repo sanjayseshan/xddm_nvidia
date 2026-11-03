@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.164
+ * Driver Version: 1.0.0.165
  */
 
 #include "miniport.h"
@@ -1325,21 +1325,37 @@ BOOLEAN HwVidStartIO(
 
     case IOCTL_NVX_ACCEL_FILL: {
         PNVX_ACCEL_FILL_PARAMS params = (PNVX_ACCEL_FILL_PARAMS)RequestPacket->InputBuffer;
+        PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
         static ULONG s_fillCount = 0;
-        if (!params || RequestPacket->InputBufferLength < sizeof(NVX_ACCEL_FILL_PARAMS)) {
+        ULONG64 base,surfaceBytes,offset;
+        if (!params || RequestPacket->InputBufferLength != sizeof(NVX_ACCEL_FILL_PARAMS)) {
             status = ERROR_INVALID_PARAMETER;
             break;
         }
-        if (!devExt->GspCopyVerified) {
+        if (!engine || !engine->GspCopyVerified || engine->GspChannelFaulted ||
+            devExt->CurrentModeIndex>=devExt->NumModes || !params->Bytes ||
+            params->Bytes>0x01000000UL || (params->Bytes&3)) {
             status = ERROR_NOT_SUPPORTED;
             break;
         }
-        if (NvxGspSubmitFill(HwDeviceExtension, params->DstGpuVa, params->Color, params->Bytes)) {
+        base=engine->GspVramGpuVa+(devExt->IsSecondaryDisplay?0x2000000ULL:0x200000ULL);
+        surfaceBytes=(ULONG64)devExt->Modes[devExt->CurrentModeIndex].ScreenStride*
+            devExt->Modes[devExt->CurrentModeIndex].VisScreenHeight;
+        if(params->DstGpuVa<base || params->DstGpuVa-base>surfaceBytes ||
+           params->Bytes>surfaceBytes-(params->DstGpuVa-base) ||
+           ((params->DstGpuVa-base)&3)) {
+            status=ERROR_INVALID_PARAMETER;
+            break;
+        }
+        offset=params->DstGpuVa-base;
+        if (NvxGspSubmitFill(engine, params->DstGpuVa, params->Color, params->Bytes)) {
             status = NO_ERROR;
             statusBlock->Information = sizeof(NVX_ACCEL_FILL_PARAMS);
             s_fillCount++;
             if ((s_fillCount <= 5) || (s_fillCount % 100 == 0)) {
-                LogStr("NVX [ACCEL]: GPU Fill #"); LogHex(s_fillCount);
+                LogStr("NVX [2D]: GPU solid fill #"); LogHex(s_fillCount);
+                LogStr(" offset=");LogHex(offset);
                 LogStr(" color "); LogHex(params->Color);
                 LogStr(" bytes "); LogHex(params->Bytes); LogStr("\n");
             }
@@ -1498,7 +1514,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.164 (DualView Child State, Dynamic Scanout Stride & Head Control)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.165 (Experimental GDI Solid Fill, DualView)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

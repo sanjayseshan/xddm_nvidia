@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="164"
+NVX_TEST_VERSION="165"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
@@ -12,7 +12,7 @@ if [ -f "$NVX_ROOT/vm_serial.log" ]; then
     cp "$NVX_ROOT/vm_serial.log" "$NVX_ARCHIVE/before-v$NVX_TEST_VERSION-$NVX_STAMP.log"
 fi
 
-echo "==> Running host tests and building GA104 DualView 1080p+1440p secondary v$NVX_TEST_VERSION (no ISO)"
+echo "==> Running host tests and building GA104 DualView plus 2D solid-fill v$NVX_TEST_VERSION (no ISO)"
 if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
     sudo -u "$SUDO_USER" make -C "$NVX_ROOT/src_driver" check full
     sudo -u "$SUDO_USER" cp "$NVX_ROOT/src_driver/nvxmp.sys" "$NVX_ROOT/dist_full/nvxmp.sys"
@@ -54,6 +54,12 @@ finish() {
             echo "DISPLAY RESULT: No display verification recorded; monitor activation is unverified."
         fi
         grep -E "Miniport Driver|\[SEC2\]|\[GSP\]|\[RM\]|\[COPY\]|\[FB\]|\[FBMAP\]|\[RESET\]" "$NVX_RUN_LOG" | tail -80 || true
+        if grep -q '\[2D\]: GPU solid fill' "$NVX_RUN_LOG"; then
+            grep '\[2D\]: GPU solid fill' "$NVX_RUN_LOG" | tail -8 || true
+            echo "2D RESULT: GPU solid fills were submitted; verify rectangles visually and inspect fallback/corruption behavior."
+        else
+            echo "2D RESULT: no GPU solid-fill submission was logged; the new GDI fast path was not exercised or did not activate."
+        fi
         if grep -q 'RM INIT_DONE received' "$NVX_RUN_LOG"; then
             if grep -q 'GPU copy completed and verified' "$NVX_RUN_LOG"; then
                 echo "RESULT: GPU copy completion verified."

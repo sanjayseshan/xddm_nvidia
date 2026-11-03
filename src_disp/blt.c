@@ -6,6 +6,76 @@
 
 #include "driver.h"
 
+/*
+ * First GPU-rendered XDDM primitive: a solid PATCOPY to the primary bitmap.
+ * GDI keeps an authoritative system-memory shadow, while the GPU copy engine
+ * writes the corresponding scanout pixels directly. Unsupported operations
+ * continue through EngBitBlt and the normal upload path.
+ */
+static BOOL
+NvxTrySolidPatCopy(PPDEV ppdev, SURFOBJ *pso, CLIPOBJ *pco,
+                   BRUSHOBJ *pbo, RECTL *prcl, ROP4 rop4)
+{
+    NVX_ACCEL_FILL_PARAMS params;
+    RECTL rect;
+    ULONG color, ulTemp, rowBytes;
+    LONG y, x;
+    PULONG shadow, presented;
+
+    if (!ppdev || !pso || !pbo || !prcl || !ppdev->PresentationValid ||
+        ppdev->BitsPerPixel != 32 || pso->dhpdev != (DHPDEV)ppdev ||
+        pso->iType != STYPE_BITMAP || pso->pvBits != ppdev->ScreenPtr ||
+        pso->iBitmapFormat != BMF_32BPP || pso->lDelta <= 0 ||
+        (ULONG)pso->lDelta != ppdev->ScreenDelta || rop4 != 0xF0F0 ||
+        (pco && pco->iDComplexity == DC_COMPLEX))
+        return FALSE;
+
+    color = BRUSHOBJ_ulGetBrushColor(pbo);
+    if (color == CLR_INVALID)
+        return FALSE;
+
+    rect = *prcl;
+    if (pco && pco->iDComplexity == DC_RECT) {
+        if (rect.left < pco->rclBounds.left) rect.left = pco->rclBounds.left;
+        if (rect.top < pco->rclBounds.top) rect.top = pco->rclBounds.top;
+        if (rect.right > pco->rclBounds.right) rect.right = pco->rclBounds.right;
+        if (rect.bottom > pco->rclBounds.bottom) rect.bottom = pco->rclBounds.bottom;
+    } else if (pco && pco->iDComplexity != DC_TRIVIAL) {
+        return FALSE;
+    }
+    if (rect.left < 0) rect.left = 0;
+    if (rect.top < 0) rect.top = 0;
+    if (rect.right > (LONG)ppdev->ScreenWidth) rect.right = (LONG)ppdev->ScreenWidth;
+    if (rect.bottom > (LONG)ppdev->ScreenHeight) rect.bottom = (LONG)ppdev->ScreenHeight;
+    if (rect.left >= rect.right || rect.top >= rect.bottom)
+        return TRUE;
+
+    rowBytes = (ULONG)(rect.right - rect.left) * 4;
+    if (!rowBytes || rowBytes > 0x01000000UL || (rowBytes & 3))
+        return FALSE;
+
+    shadow = (PULONG)ppdev->ScreenPtr;
+    presented = (PULONG)ppdev->PresentedPixels;
+    params.Color = color;
+    params.Bytes = rowBytes;
+    for (y = rect.top; y < rect.bottom; ++y) {
+        params.DstGpuVa = ppdev->ScreenGpuVaBase +
+            (ULONG64)(ULONG)y * ppdev->ScreenDelta + (ULONG64)(ULONG)rect.left * 4;
+        if (EngDeviceIoControl(ppdev->hDriver, IOCTL_NVX_ACCEL_FILL,
+                               &params, sizeof(params), NULL, 0, &ulTemp)) {
+            /* A partial GPU operation is repaired by the standard full diff upload. */
+            ppdev->PresentationValid = FALSE;
+            return FALSE;
+        }
+        for (x = rect.left; x < rect.right; ++x) {
+            shadow[(ULONG)y * (ppdev->ScreenDelta / 4) + (ULONG)x] = color;
+            presented[(ULONG)y * (ppdev->ScreenDelta / 4) + (ULONG)x] = color;
+        }
+    }
+    ppdev->AccelFills++;
+    return TRUE;
+}
+
 /* Upload software-rendered primary-surface rows through coherent DMA staging. */
 BOOL
 NvxUploadSurfaceRect(PPDEV ppdev, SURFOBJ *pso, RECTL *prcl, ULONG kind)
@@ -127,6 +197,12 @@ DrvBitBlt(
     POINTL *pptlBrush,
     ROP4 rop4)
 {
+    /* Restrict the GPU path to simple, opaque, rectangular solid fills. */
+    if (!psoSrc && !psoMask && !pxlo &&
+        NvxTrySolidPatCopy((PPDEV)(psoTrg ? psoTrg->dhpdev : NULL),
+                           psoTrg, pco, pbo, prclTrg, rop4))
+        return TRUE;
+
     BOOL result=EngBitBlt(psoTrg,psoSrc,psoMask,pco,pxlo,prclTrg,pptlSrc,
                            pptlMask,pbo,pptlBrush,rop4);
     if(result && psoTrg && psoTrg->dhpdev)

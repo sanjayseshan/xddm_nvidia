@@ -660,7 +660,25 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
     return FALSE;
 }
 
-BOOLEAN NvxGspSubmitCopy(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,ULONG bytes)
+/* The two display adapters share one CE queue, fence and push-buffer ring. */
+static volatile ULONG NvxGspEngineBusy=0;
+
+static BOOLEAN NvxGspLockEngine(void)
+{
+    ULONG wait;
+    for(wait=0;wait<20000;wait++) {
+        if(!__sync_lock_test_and_set(&NvxGspEngineBusy,1)) return TRUE;
+        VideoPortStallExecution(10);
+    }
+    return FALSE;
+}
+
+static VOID NvxGspUnlockEngine(VOID)
+{
+    __sync_lock_release(&NvxGspEngineBusy);
+}
+
+static BOOLEAN NvxGspSubmitCopyUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,ULONG bytes)
 {
     PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
     PUCHAR scratch;
@@ -720,7 +738,16 @@ BOOLEAN NvxGspSubmitCopy(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,ULO
     return FALSE;
 }
 
-BOOLEAN NvxGspSubmitFill(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG bytes)
+BOOLEAN NvxGspSubmitCopy(PVOID extension,ULONG64 dstVa,ULONG64 srcVa,ULONG bytes)
+{
+    BOOLEAN result;
+    if(!NvxGspLockEngine()) return FALSE;
+    result=NvxGspSubmitCopyUnlocked(extension,dstVa,srcVa,bytes);
+    NvxGspUnlockEngine();
+    return result;
+}
+
+static BOOLEAN NvxGspSubmitFillUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG bytes)
 {
     PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
     PUCHAR scratch;
@@ -782,6 +809,15 @@ BOOLEAN NvxGspSubmitFill(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG
     return FALSE;
 }
 
+BOOLEAN NvxGspSubmitFill(PVOID extension,ULONG64 dstVa,ULONG color,ULONG bytes)
+{
+    BOOLEAN result;
+    if(!NvxGspLockEngine()) return FALSE;
+    result=NvxGspSubmitFillUnlocked(extension,dstVa,color,bytes);
+    NvxGspUnlockEngine();
+    return result;
+}
+
 static BOOLEAN NvxGspUploadUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,const void *src,ULONG bytes)
 {
     PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
@@ -797,7 +833,7 @@ static BOOLEAN NvxGspUploadUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,const 
     }
     VideoPortMoveMemory((PUCHAR)dev->GspDmaVirtual+GSP_UPLOAD_OFFSET,(PVOID)src,bytes);
     __sync_synchronize();
-    if(!NvxGspSubmitCopy(HwDeviceExtension,dstVa,GSP_UPLOAD_GPU_VA,bytes))
+    if(!NvxGspSubmitCopyUnlocked(HwDeviceExtension,dstVa,GSP_UPLOAD_GPU_VA,bytes))
         return FALSE;
     /* Verify the real staging path, not just the separately mapped scratch. */
     {
@@ -806,7 +842,7 @@ static BOOLEAN NvxGspUploadUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,const 
         if(verifiedUploads[adapter]<3) {
             ULONG count=bytes<256?bytes:256, mismatches=0;
             PUCHAR readback=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET+0xa000;
-            if(!NvxGspSubmitCopy(HwDeviceExtension,dev->GspScratchGpuVa+0xa000,dstVa,count))
+            if(!NvxGspSubmitCopyUnlocked(HwDeviceExtension,dev->GspScratchGpuVa+0xa000,dstVa,count))
                 return FALSE;
             for(ULONG i=0;i<count;i++)
                 if(readback[i]!=((const UCHAR *)src)[i]) mismatches++;
@@ -823,16 +859,10 @@ static BOOLEAN NvxGspUploadUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,const 
 /* Two XDDM adapters share one coherent staging buffer and CE queue. */
 BOOLEAN NvxGspUpload(PVOID extension,ULONG64 dstVa,const void *src,ULONG bytes)
 {
-    static volatile ULONG busy=0;
     BOOLEAN result;
-    ULONG wait;
-    for(wait=0;wait<20000;wait++) {
-        if(!__sync_lock_test_and_set(&busy,1)) break;
-        VideoPortStallExecution(10);
-    }
-    if(wait==20000) return FALSE;
+    if(!NvxGspLockEngine()) return FALSE;
     result=NvxGspUploadUnlocked(extension,dstVa,src,bytes);
-    __sync_lock_release(&busy);
+    NvxGspUnlockEngine();
     return result;
 }
 

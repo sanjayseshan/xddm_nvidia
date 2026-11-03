@@ -1,9 +1,13 @@
 # NVIDIA GA104 XDDM driver for Windows XP x64
 
 This experimental driver brings up a Windows XP x64 desktop on NVIDIA Ampere
-GA104 hardware. The current confirmed checkpoint is v164, with working native
+GA104 hardware. The current confirmed checkpoint is v165, with working native
 output on two displays attached to an EVGA GeForce RTX 3070 XC3 Ultra LHR:
 1920×1080 on the primary and 2560×1440 on the secondary.
+
+The current confirmed build, v165, adds an experimental GPU-rendered solid
+rectangle fill for a narrow `DrvBitBlt` case. It passed host-side checks, ran
+on the physical RTX 3070, and the user confirmed the desktop looks normal.
 
 ## Project overview
 
@@ -13,13 +17,17 @@ NVIDIA GSP firmware and configures native display heads. A GSP-managed GPU copy
 engine uploads desktop framebuffer changes to separate scanout buffers for
 each display.
 
-GDI rasterization still happens in software on the CPU. GPU DMA is used to
-present the desktop; this is not accelerated GDI rendering or a complete
-graphics driver. OpenGL, Direct3D, video decoding, and 3D acceleration are not
-implemented.
+Most GDI rasterization still happens in software on the CPU. The v165
+development build can submit opaque solid rectangular `PATCOPY` fills directly
+to the GPU copy engine when the target is a 32-bit screen bitmap and the clip
+is rectangular or trivial. It mirrors those fills into the GDI shadow for
+correct fallback behavior. Other GDI operations continue through Windows
+software rendering and are uploaded to scanout. This is an initial 2D
+acceleration primitive, not a complete accelerated GDI driver. OpenGL,
+Direct3D, video decoding, and 3D acceleration are not implemented.
 
-The current v164 confirmation is recorded in [SUMMARY.txt](SUMMARY.txt). The
-matching NVIDIA firmware source and checksums are documented in
+The v165 physical run and its log evidence are recorded in [SUMMARY.txt](SUMMARY.txt).
+The matching NVIDIA firmware source and checksums are documented in
 [FIRMWARE_PROVENANCE.md](FIRMWARE_PROVENANCE.md).
 
 ## Compatibility and limits
@@ -30,9 +38,9 @@ matching NVIDIA firmware source and checksums are documented in
   `10de:2488`, passed through to the guest with VFIO.
 - **Tested display setup:** two DisplayPort displays, 1920×1080 primary and
   2560×1440 secondary. The tested EDID timings are approximately 60 Hz.
-- **Not established:** 120 Hz operation, arbitrary resolutions, other Ampere
-  boards, other GPU generations, HDMI, hot-plug/reconfiguration, accelerated
-  GDI, OpenGL, or Direct3D.
+- **Not established:** performance benefit beyond the tested fill path, 120 Hz
+  operation, arbitrary resolutions, other Ampere boards, other GPU generations,
+  HDMI, hot-plug/reconfiguration, broad GDI acceleration, OpenGL, or Direct3D.
 - The kernel driver is experimental and unsigned. Use a disposable XP guest
   and a GPU reserved for passthrough. The test script writes the newly built
   driver into the configured guest disk before launching it.

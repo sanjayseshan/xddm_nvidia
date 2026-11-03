@@ -1,23 +1,43 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 3, 2026
+Updated: November 3, 2026 (v165 confirmed)
 
 Confirmed baseline: v164 works on the test EVGA RTX 3070 XC3 Ultra LHR with
 two physical displays. The primary runs at 1920x1080 and the secondary at
 2560x1440. The driver initializes NVIDIA GSP, configures both native display
 heads, and uploads each desktop framebuffer through the GPU copy engine.
 
-Current scope: Windows XP x64 XDDM desktop output with native dual-head
-scanout and GPU DMA presentation. GDI drawing still runs in software on the
-CPU and the completed work does not include accelerated 2D rendering, OpenGL,
-Direct3D, or a general-purpose 3D driver. High-refresh modes such as 120 Hz
-and other GPU models, boards, connectors, and monitor combinations are not
-validated.
+Current confirmed scope: Windows XP x64 XDDM desktop output with native
+dual-head scanout and GPU DMA presentation. v165 adds a GPU solid-fill path;
+the user confirmed the desktop appears normal during the physical v165 test.
+GDI drawing is still mostly software-rendered on the CPU.
+
+Current development: v165 adds a narrow GPU-rendered 2D path for opaque solid
+rectangular PATCOPY fills on 32-bit screen bitmaps with trivial or
+rectangular clipping. The GPU fill updates scanout directly while the driver
+keeps its GDI shadow and presentation cache coherent. The fill ioctl is bounded
+to the active display surface, and copy/fill/upload work now shares a lock for
+the common GSP copy-engine queue. Compilation and host GSP mock checks pass;
+the v165 physical test log shows both display heads active and GPU fill
+submissions completing without reported channel faults or timeouts. The user
+confirmed the desktop looked normal. Log `test_logs/v165-20261103-165503.log`
+records GSP `INIT_DONE`, two active heads (1920x1080 and 2560x1440), 1,657 GPU
+solid-fill submissions, and 673 GPU uploads. Its startup banner says 1.0.0.164;
+the source banner and INF are now corrected to 1.0.0.165 for the next package.
+The guest was shut down through QEMU ACPI.
+Other drawing continues through software GDI plus GPU DMA presentation.
+OpenGL, Direct3D, and 3D acceleration are not implemented.
+High-refresh modes such as 120 Hz and other GPU models, boards, connectors, and
+monitor combinations are not validated.
 
 Milestones:
 - v98: verified GSP-backed GPU copy execution on the RTX 3070.
 - v122–v125: brought the GDI desktop to readable, responsive 1080p output.
 - v150–v164: implemented native secondary-head scanout and independent
   framebuffers; v164 is the user-confirmed dual-display baseline.
+- v165: added the first experimental GPU-rendered solid-fill operation to the
+  XDDM `DrvBitBlt` path; physical testing confirmed GPU submissions and a
+  normal-looking desktop. Performance benefit beyond this fill operation is
+  not yet measured.
 
 Validation: the v164 hardware log recorded active Head 0 and Head 1, completed
 display-update notifiers, four-lane DisplayPort link locks, 1920x1080 and
