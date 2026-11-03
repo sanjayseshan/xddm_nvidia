@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.126
+ * Driver Version: 1.0.0.127
  */
 
 #include "miniport.h"
@@ -597,21 +597,32 @@ VP_STATUS HwVidGetVideoChildDescriptor(
     PULONG UId,
     PULONG pUnused
 ) {
-    (void)HwDeviceExtension;
-    (void)pChildDescriptor;
-    (void)pUnused;
-
+    PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    ULONG index;
+    if(pUnused) *pUnused=0;
+    if(!ChildEnumInfo || !VideoChildType || !UId)
+        return VIDEO_ENUM_INVALID_DEVICE;
     LogStr("NVX: HwVidGetVideoChildDescriptor ChildIndex: ");
-    LogHex(ChildEnumInfo->ChildIndex);
-    LogStr("\n");
-
-    if (ChildEnumInfo->ChildIndex == 0) {
-        *VideoChildType = Monitor;
-        *UId = 1;
+    LogHex(ChildEnumInfo->ChildIndex);LogStr("\n");
+    if(ChildEnumInfo->ChildIndex==0xffffffffUL) {
+        *VideoChildType=VideoChip;*UId=0xffffffffUL;
         return VIDEO_ENUM_MORE_DEVICES;
     }
-
-    return VIDEO_ENUM_NO_MORE_DEVICES;
+    if(!ChildEnumInfo->ChildIndex) {
+        for(index=0;index<dev->MonitorCount;index++)
+            if(dev->MonitorIds[index]==ChildEnumInfo->ACPIHwId) break;
+        if(index==dev->MonitorCount) return VIDEO_ENUM_INVALID_DEVICE;
+    } else {
+        index=ChildEnumInfo->ChildIndex-1;
+        if(index>=dev->MonitorCount) return VIDEO_ENUM_NO_MORE_DEVICES;
+    }
+    if(!pChildDescriptor || ChildEnumInfo->ChildDescriptorSize<128)
+        return VIDEO_ENUM_INVALID_DEVICE;
+    /* XP's monitor child descriptor is the validated base EDID block. */
+    VideoPortMoveMemory(pChildDescriptor,dev->MonitorEdid[index],128);
+    *VideoChildType=Monitor;*UId=dev->MonitorIds[index];
+    LogStr("NVX [DISPLAY]: enumerate monitor id=");LogHex(*UId);LogStr("\n");
+    return VIDEO_ENUM_MORE_DEVICES;
 }
 
 VP_STATUS HwVidFindAdapter(
@@ -1137,7 +1148,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.126 (physical connector discovery)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.127 (EDID monitor enumeration)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

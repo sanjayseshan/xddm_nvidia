@@ -121,9 +121,9 @@ static BOOLEAN NvxGspAlloc(PNVX_DEVICE_EXTENSION dev,ULONG parent,ULONG object,
 static BOOLEAN NvxGspControl(PNVX_DEVICE_EXTENSION dev,ULONG object,ULONG cmd,
                             const void *params,ULONG bytes)
 {
-    ULONG payload[134]={0};
+    ULONG payload[522]={0};
     const ULONG *words=(const ULONG *)dev->RpcRxRecord;
-    if(bytes>512) return FALSE;
+    if(bytes>2064) return FALSE;
     payload[0]=dev->GspClientHandle;
     payload[1]=object;
     payload[2]=cmd;
@@ -802,6 +802,38 @@ BOOLEAN NvxGspUpload(PVOID HwDeviceExtension,ULONG64 dstVa,const void *src,ULONG
     return TRUE;
 }
 
+/* ctrl0073specific.h GET_EDID_V2: fixed inline buffer, no guest pointers. */
+static VOID NvxGspReadMonitorEdid(PNVX_DEVICE_EXTENSION dev,ULONG displayId)
+{
+    ULONG params[516]={0};
+    const ULONG *reply;
+    const UCHAR *edid;
+    ULONG bytes,i,block;
+    static const UCHAR header[8]={0,255,255,255,255,255,255,0};
+    if(dev->MonitorCount>=8) return;
+    params[1]=displayId;params[2]=2048;
+    if(!NvxGspControl(dev,dev->GspDisplayHandle,0x730245,params,sizeof(params))) {
+        LogStr("NVX [DISPLAY]: EDID unavailable id=");LogHex(displayId);LogStr("\n");return;
+    }
+    reply=(const ULONG *)dev->RpcRxRecord;
+    bytes=reply[28];edid=(const UCHAR *)(reply+30);
+    if(bytes<128 || bytes>2048 || (bytes&127)) return;
+    for(i=0;i<8;i++) if(edid[i]!=header[i]) return;
+    if((ULONG)edid[126]+1>bytes/128) return;
+    for(block=0;block<bytes;block+=128) {
+        ULONG checksum=0;
+        for(i=0;i<128;i++) checksum+=edid[block+i];
+        if(checksum&255) {
+            LogStr("NVX [DISPLAY]: invalid EDID checksum id=");LogHex(displayId);LogStr("\n");return;
+        }
+    }
+    i=dev->MonitorCount++;
+    dev->MonitorIds[i]=displayId;dev->MonitorEdidBytes[i]=bytes;
+    VideoPortMoveMemory(dev->MonitorEdid[i],(PVOID)edid,bytes);
+    LogStr("NVX [DISPLAY]: valid EDID id=");LogHex(displayId);
+    LogStr(" bytes=");LogHex(bytes);LogStr("\n");
+}
+
 /* NVIDIA ctrl0073system.h: discover physical connectors, independent of
    scanout programming. Optional failure must preserve the v125 desktop. */
 static VOID NvxGspDiscoverDisplays(PNVX_DEVICE_EXTENSION dev)
@@ -810,6 +842,7 @@ static VOID NvxGspDiscoverDisplays(PNVX_DEVICE_EXTENSION dev)
     ULONG connected[4]={0,0,0,0};
     const ULONG *reply;
     dev->GspSupportedDisplays=dev->GspConnectedDisplays=0;
+    dev->MonitorCount=0;
     if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0x73000001,0x73,NULL,0)) {
         LogStr("NVX [DISPLAY]: display-common allocation unavailable; single VBE scanout retained.\n");
         return;
@@ -833,6 +866,9 @@ static VOID NvxGspDiscoverDisplays(PNVX_DEVICE_EXTENSION dev)
     dev->GspConnectedDisplays=reply[28]&dev->GspSupportedDisplays;
     LogStr("NVX [DISPLAY]: connected mask=");LogHex(dev->GspConnectedDisplays);
     LogStr("; discovery only, additional heads not programmed.\n");
+    for(ULONG bit=0;bit<32;bit++)
+        if(dev->GspConnectedDisplays&(1UL<<bit))
+            NvxGspReadMonitorEdid(dev,1UL<<bit);
 }
 
 static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)

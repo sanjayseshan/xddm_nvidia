@@ -59,9 +59,9 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         ULONG write=q->WritePtr;
         PULONG packet=(PULONG)((PUCHAR)q+4096+write*4096);
         PULONG request=(PULONG)((PUCHAR)cmd+4096+(cmd->WritePtr-1)*4096);
-        ULONG alloc[160]={0},replyBytes;
+        ULONG alloc[528]={0},replyBytes;
         uint32_t f,r,s;
-        assert(cmd->WritePtr>=3&&cmd->WritePtr<=28);
+        assert(cmd->WritePtr>=3&&cmd->WritePtr<=30);
         assert(NvxDecodeRpc((PUCHAR)request,4096,&f,&r,&s));
         assert((f==103||f==76||f==4||f==14||f==10||f==65)&&s==cmd->WritePtr-1);
         if(f==65) {
@@ -166,6 +166,19 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         replyBytes=f==76?24+request[24]:(f==14?56:32);
         assert(replyBytes<=sizeof(alloc));
         memcpy(alloc,request+20,f==76?replyBytes:(f==14?56:16));
+        if(f==76&&request[22]==0x730245) {
+            UCHAR *edid=(UCHAR *)(alloc+10);
+            assert(request[24]==2064 && request[28]==2048);
+            assert(request[27]==1 || request[27]==4);
+            alloc[8]=128;
+            for(ULONG j=1;j<7;j++) edid[j]=255;
+            edid[18]=1;edid[19]=4;
+            ULONG sum=0;
+            for(ULONG j=0;j<127;j++) sum+=edid[j];
+            edid[127]=(UCHAR)(0-sum);
+            if(request[27]==4 && scenario==3) edid[127]^=1;
+            if(request[27]==4 && scenario==7) alloc[8]=2049;
+        }
         if(f==76&&request[22]==0x730120) {
             assert(request[21]==0x73000001 && request[24]==12);
             alloc[7]=5; alloc[8]=5; /* two supported physical connectors */
@@ -347,10 +360,13 @@ int main(void)
         assert(dev.GspInitialized==(scenario==0 || scenario>=3));
         if (dev.GspInitialized) {
             assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==
-                   (ULONG)((scenario==4?30:28)+(dev.GspCopyVerified?3:0)));
+                   (ULONG)((scenario==4?30:28)+(dev.GspCopyVerified?5:0)));
             if(dev.GspCopyVerified) {
                 assert(dev.GspDisplayHandle==0x73000001);
                 assert(dev.GspSupportedDisplays==5 && dev.GspConnectedDisplays==5);
+                assert(dev.MonitorCount==(ULONG)(scenario==0?2:1));
+                assert(dev.MonitorIds[0]==1 && dev.MonitorEdidBytes[0]==128);
+                if(scenario==0) assert(dev.MonitorIds[1]==4 && dev.MonitorEdid[1][19]==4);
             }
             assert(dev.GspScratchGpuVa==0x10000000);
             assert(dev.GspClientHandle==0xc1d00001);

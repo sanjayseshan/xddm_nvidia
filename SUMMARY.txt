@@ -1,8 +1,30 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.126 physical connector discovery
+NVIDIA GA104 XDDM DRIVER — v1.0.0.127 EDID monitor enumeration
 Updated: November 3, 2026
 
-Latest change (v126)
+Latest change (v127)
 --------------------
+v126 proved both RTX-connected monitors are detected by GSP (mask 0x0A00).
+v127 queries inline GET_EDID_V2 (0x730245) for each connected display, validates
+size/header/block count/checksums, and caches valid monitor descriptors.
+The Windows callback now enumerates child indices starting at 1 (index zero
+is ACPI-ID lookup), supplies each monitor's base EDID and physical display ID,
+and initializes the required unused output. Its previous index-zero-only
+placeholder prevented normal XP monitor enumeration.
+
+Host checks/build pass, with mock coverage for two valid monitor identities,
+bad checksum and oversized EDID rejection. Hardware validation:
+test_logs/v127-20261103-104920.log reads valid 384-byte EDIDs from display IDs
+0x0200 and 0x0800. XP invokes child enumeration at indices 1, 2 and 3; both
+monitor descriptors are returned at indices 1 and 2, then enumeration ends.
+Primary scanout is 1920x1080x32 (stride 7680). Device Manager confirmation is
+pending, but the log confirms actual EDID reads and both enumeration callbacks.
+This enumerates monitor devices, not independent desktops: no second head,
+extended-desktop scanout, hotplug reenumeration, or 120Hz programming yet.
+The primary desktop rendering code is unchanged from confirmed-working v125.
+v126 shut down normally before installing v127.
+
+Previous v126 change
+-------------------
 User reports a second monitor is not detected. v125 has no physical connector
 or hotplug discovery and one VBE scanout. HwVidGetVideoChildDescriptor is a
 placeholder returning one generic monitor for index zero, without EDID.

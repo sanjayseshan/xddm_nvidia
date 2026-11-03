@@ -315,6 +315,10 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG GspDisplayHandle;
     ULONG GspSupportedDisplays;
     ULONG GspConnectedDisplays;
+    ULONG MonitorCount;
+    ULONG MonitorIds[8];
+    ULONG MonitorEdidBytes[8];
+    UCHAR MonitorEdid[8][2048];
     ULONG GspVaSpaceHandle;
     ULONG GspScratchMemoryHandle;
     ULONG GspVirtualMemoryHandle;
