@@ -1,6 +1,21 @@
 NVIDIA GA104 XDDM DRIVER — v1.0.0.130 verified native mode-set recovery
 Updated: November 3, 2026
 
+Reset helper correction (November 3)
+-------------------------------------
+User-authenticated reset attempt failed selecting per-function "bus" with
+EINVAL; no reset was reached. Linux's per-function bus probe rejects a bus
+with another function, even though the cached reset_method list says "bus".
+The previous finally block also retried this unsupported selection and masked
+the original error. reset_test_gpu.sh now uses the kernel's existing upstream
+bridge reset_subordinate API, after independently verifying every PCI descendant
+is exactly RTX graphics/audio, both VFIO-bound, and the group/disk are idle.
+This API saves/restores subordinate PCI state. It does not change reset_method.
+Read-only validation passes on bridge 0000:00:01.1; actual reset still requires
+user sudo authentication. No new driver build or successful reset is claimed.
+Reference: Linux v6.1 drivers/pci/pci.c pci_parent_bus_reset and upstream
+Documentation/ABI/testing/sysfs-bus-pci reset_subordinate.
+
 Latest change (v130)
 --------------------
 v130 logs the directly queried 1080p candidate attributes/pitch/base and tests
