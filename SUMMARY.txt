@@ -1108,3 +1108,27 @@ v108 Test Results
 - Executed 13,097 GPU hardware fills on physical GA104 (RTX 3070).
 - Zero queue stalls, zero fence timeouts; ring buffer wrapped cleanly over 12 full cycles (1024 entries each).
 - Clean system_powerdown shutdown verified.
+
+v146 - DualView Native Head 1 SOR0 Scanout & EDID Discovery
+------------------------------------------------------------
+- Addressed secondary monitor remaining blank/off when enabled in Windows Display Settings:
+  1. Identified root cause: in v145, HwVidStartIO only performed hardware discovery and channel
+     init on the primary display. When Windows attached the secondary display, called
+     IOCTL_VIDEO_SET_CURRENT_MODE (2560x1440x32) and IOCTL_VIDEO_MAP_VIDEO_MEMORY (0xE2000000),
+     zero C67D core methods were emitted to drive Head 1, leaving the trained DP link on SOR0
+     without active scanout.
+  2. Implemented NvxNativeSetSecondaryScanout:
+     - Programs C67E Window 2 channel: surface base BAR1 + 32MB (0xE2000000), 2560x1440 size,
+       stride 10240 (160 64-byte blocks), A8R8G8B8 format (0xCF).
+     - Programs C67D Core channel: Head 1 raster size (2560x1440 CVT-RB), sync ends, blanking,
+       pixel clock (241.50 MHz), output control (24/32bpp), SOR0 owner assignment to Head 1 (0x802),
+       and interlock with Window 2.
+     - Submits Window 2 DMA followed by Core DMA and verifies completion.
+  3. Fixed monitor child enumeration in HwVidGetVideoChildDescriptor:
+     - Sorted discovered monitors so the VBIOS-lit monitor is guaranteed to be index 0 (primary).
+     - Properly enumerates child monitors: ChildIndex 1 = Monitor 0 (1080p primary),
+       ChildIndex 2 = Monitor 1 (1440p secondary).
+  4. Added ASCII Monitor Model Name descriptor parsing directly from the EDID in NvxGspReadMonitorEdid
+     so monitor brand/model strings are explicitly logged to serial during boot.
+  5. Fixed premature notifier disable in NvxNativeVerifyNotifier.
+  6. Rebuilt and passed all driver host unit tests (check full), updated dist_full and offline XP disk.
