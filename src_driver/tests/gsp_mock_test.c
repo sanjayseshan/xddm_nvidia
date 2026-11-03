@@ -518,7 +518,7 @@ int main(void)
                 if(scenario==0 || scenario==12) {
                     assert(dev.MonitorSor[0]==1 && dev.MonitorProtocol[0]==0);
                     assert(dev.NativeDisplayChannels[0]==0xc6700100);
-                    assert(!dev.NativeDisplayChannels[1]);
+                    assert(dev.NativeDisplayChannels[1]==0xc6700101);
                     assert(dev.NativeDisplayChannels[2]==0xc6700102);
                 } else for(ULONG i=0;i<3;i++) assert(!dev.NativeDisplayChannels[i]);
                 if(scenario==12) {

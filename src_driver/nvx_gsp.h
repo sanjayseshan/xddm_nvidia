@@ -325,6 +325,7 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG NativeDisplayCorePut;
     BOOLEAN NativeDisplayNotifierReady;
     BOOLEAN NativeDisplayFaulted;
+    BOOLEAN NativeDualActive;
     ULONG MonitorSor[8],MonitorProtocol[8];
     BOOLEAN IsSecondaryDisplay;
     PVOID PrimaryDeviceExtension;

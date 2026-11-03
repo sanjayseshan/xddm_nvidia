@@ -1,3 +1,16 @@
+NVIDIA GA104 XDDM DRIVER — v1.0.0.162 explicit native dual-head state
+Updated: November 3, 2026
+
+Replaces VBE replay with native Window0/Head0 and Window2/Head1 setup, separate
+ownership commit, opaque XRGB composition and EDID raster modes. All host
+sanitizer tests and cross build pass. First boot produced no driver log.
+Retry log v162-20261103-154514.log reached initialization; modeset was safely
+refused before owner UPDATE because primary offset0 is outside firmware free
+VRAM (free base0x180000). No dual activation claimed. Next place native primary
+at2MB, secondary at32MB, extend CE mapping and fix per-adapter upload routing.
+The existing desktop DDI hardcoded VA20000000 had been targeting reserved
+physical low VRAM; native windows must use firmware-reported free regions.
+
 NVIDIA GA104 XDDM DRIVER — v1.0.0.161 normalized VBE handoff
 Updated: November 3, 2026
 
