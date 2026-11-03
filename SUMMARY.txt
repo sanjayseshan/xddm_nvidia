@@ -1,5 +1,35 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.130 verified native mode-set recovery
+NVIDIA GA104 XDDM DRIVER — v1.0.0.131 native display DMA bring-up
 Updated: November 3, 2026
+
+Latest change (v131): native display command channels
+-----------------------------------------------------
+After the user's host reboot, supplied log v130-20261103-112439.log shows XP
+booted with both EDIDs, GSP and CE presentation working, but BIOS still refused
+1080p and only head 0/display 0x800 was active. No QEMU was running when v131
+was installed. Existing modified v130 archive is left untouched.
+
+v131 implements the RM 535 display instance/pushbuffer/channel ABIs, reserves
+64KB VRAM at 0x1FF0000 strictly within firmware-reported free/unprotected memory
+and the CE aperture, GPU-clears it, and verifies all 64KB through CE readback.
+It registers the instance and three coherent physical 4KB pushbuffers: native
+GA102 core C67D and window C67E instances 0 and 2. NOP-only submission checks
+GET progress in DWORD units. No head timing, SOR, or window surface is updated.
+Partial allocation tears down allocated channels; DMA backing remains pinned
+until acknowledged RM client teardown. Initialization occurs after the final
+VBE mode set, and is attempted at most once per adapter lifetime.
+
+Host sanitizer suite and warning-free x64 build pass. GSP mock verifies exact
+ABI layouts, full instance clearing/readback, all three DMA fetches, rejected
+instance registration, stalled display fetch, partial teardown and repeat-call
+idempotence. Test log test_logs/v131-20261103-113016.log proves physical RTX:
+- VBE mode 0x177 SET_MODE/CURRENT_MODE succeeded, 1920x1080x32, stride 7680.
+- Instance registration and all C67D/C67E allocations returned success.
+- Core/window0/window2 each consumed four NOP DWORDs (GET=4).
+- Subsequent staging-to-VRAM GPU readbacks have zero mismatches; CE desktop
+  uploads continue. CPU BAR1 readbacks still mismatch as previously documented.
+Physical primary readability is awaiting user confirmation. Second-head output
+is NOT enabled. Next: bind display DMA memory/RAMHT, acquire secondary SOR and
+configure its link/timing/window, then expose a second logical XP desktop view.
 
 Post-reset hardware test (November 3)
 -------------------------------------

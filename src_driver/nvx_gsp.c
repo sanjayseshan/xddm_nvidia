@@ -802,6 +802,122 @@ BOOLEAN NvxGspUpload(PVOID HwDeviceExtension,ULONG64 dstVa,const void *src,ULONG
     return TRUE;
 }
 
+/* Display DMA uses physical push buffers and a display-owned instance block,
+ * independently of the CE virtual-address space. RM 535 ABI, checked below. */
+typedef struct {
+    ULONG64 physical,size;
+    ULONG addressSpace,cache;
+} NVX_DISPLAY_INSTANCE_535;
+typedef struct {
+    ULONG addressSpace,pad;
+    ULONG64 physical,limit;
+    ULONG cache,hclass,instance;
+    UCHAR valid,padding[3];
+} NVX_DISPLAY_PUSH_535;
+typedef struct {
+    ULONG instance,buffer,notify,offset;
+    ULONG64 control;
+    ULONG flags,pad;
+} NVX_DISPLAY_CHANNEL_535;
+_Static_assert(sizeof(NVX_DISPLAY_INSTANCE_535)==24,"535 display instance ABI");
+_Static_assert(sizeof(NVX_DISPLAY_PUSH_535)==40,"535 display push ABI");
+_Static_assert(offsetof(NVX_DISPLAY_PUSH_535,physical)==8,"535 display push alignment");
+_Static_assert(offsetof(NVX_DISPLAY_PUSH_535,valid)==36,"535 display push valid");
+_Static_assert(sizeof(NVX_DISPLAY_CHANNEL_535)==32,"535 display DMA ABI");
+
+static BOOLEAN NvxNativeFreeObject(PNVX_DEVICE_EXTENSION dev,ULONG parent,ULONG handle)
+{
+    ULONG release[4]={dev->GspClientHandle,parent,handle,0};
+    const ULONG *reply=(const ULONG *)dev->RpcRxRecord;
+    return NvxGspCall(dev,10,release,sizeof(release)) && reply[14]>=48 &&
+        reply[20]==release[0] && reply[21]==parent && reply[22]==handle && !reply[23];
+}
+
+/* Deliberately only NOPs: GET progress proves DMA fetch, not a modeset. */
+BOOLEAN NvxGspInitDisplayChannels(PVOID extension)
+{
+    PNVX_DEVICE_EXTENSION dev=extension;
+    const ULONG offsets[3]={0x680000,0x690000,0x692000};
+    const ULONG classes[3]={0xc67d,0xc67e,0xc67e};
+    const ULONG instances[3]={0,0,2};
+    NVX_DISPLAY_INSTANCE_535 instance={0};
+    PUCHAR bar0,scratch;
+    ULONG64 base,va;
+    if(!dev || dev->NativeDisplayAttempted) return dev && dev->NativeDisplayChannelsReady;
+    if(!dev->GspCopyVerified || !dev->NativeDisplayHandle || !dev->GspFbLayoutValid ||
+       dev->GspChannelFaulted || dev->Bar0Length<0x693000 ||
+       dev->GspDmaLength<GSP_DISPLAY_PUSH_OFFSET+0x3000 ||
+       dev->DisplayHeadCount<2 || (dev->DisplayWindowMask&5)!=5) return FALSE;
+    dev->NativeDisplayAttempted=TRUE;
+    /* Reserve the top 64KB of our existing 32MB CE VRAM aperture. This is
+       outside all supported primary framebuffers (at most 16MB) and the CE
+       smoke-test word at 16MB. Never use firmware-owned/protected regions. */
+    base=0x1ff0000ULL;
+    if(dev->GspFbFreeBase>base || dev->GspFbFreeLimit<base+0xffff ||
+       dev->GspVramMapBytes<base+0x10000 ||
+       (dev->GspScanoutMapped && dev->GspScanoutPhysical<base+0x10000 &&
+        base<dev->GspScanoutPhysical+dev->GspScanoutBytes)) return FALSE;
+    dev->NativeDisplayInstance=base;
+    va=dev->GspVramGpuVa+base;
+    bar0=dev->Bar0MmioVirtual;
+    scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET;
+    if(!NvxGspSubmitFill(dev,va,0,0x10000)) return FALSE;
+    /* GPU readback of the entire instance/RAMHT, not the unreliable BAR1 map. */
+    for(ULONG offset=0;offset<0x10000;offset+=0x1000) {
+        if(!NvxGspSubmitCopy(dev,dev->GspScratchGpuVa+0xa000,va+offset,0x1000)) return FALSE;
+        for(ULONG i=0;i<0x1000;i++) if(scratch[0xa000+i]) return FALSE;
+    }
+    instance.physical=base;instance.size=0x10000;instance.addressSpace=2;instance.cache=2;
+    if(!NvxGspControl(dev,dev->GspSubdeviceHandle,0x20800a49,&instance,sizeof(instance))) {
+        LogStr("NVX [NATIVE]: display instance registration failed; no channels submitted.\n");return FALSE;
+    }
+    LogStr("NVX [NATIVE]: verified 64KB display instance VRAM=");LogHex(base);LogStr("\n");
+    for(ULONG channel=0;channel<3;channel++) {
+        NVX_DISPLAY_PUSH_535 push={0};
+        NVX_DISPLAY_CHANNEL_535 args={0};
+        ULONG handle=0xc6700100+channel;
+        PULONG buffer=(PULONG)((PUCHAR)dev->GspDmaVirtual+GSP_DISPLAY_PUSH_OFFSET+channel*0x1000);
+        VideoPortZeroMemory(buffer,0x1000);
+        push.addressSpace=1;
+        push.physical=dev->GspDmaPhysical.QuadPart+GSP_DISPLAY_PUSH_OFFSET+channel*0x1000;
+        push.limit=0xfff;push.cache=1;push.hclass=classes[channel];
+        push.instance=instances[channel];push.valid=1;
+        __sync_synchronize();
+        if(!NvxGspControl(dev,dev->GspSubdeviceHandle,0x20800a58,&push,sizeof(push))) goto failed;
+        args.instance=instances[channel];
+        if(!NvxGspAlloc(dev,dev->NativeDisplayHandle,handle,classes[channel],&args,sizeof(args))) goto failed;
+        dev->NativeDisplayChannels[channel]=handle;
+        /* PUT/GET are DWORD indices, not byte offsets. Four zero NOP words. */
+        __sync_synchronize();
+        VideoPortWriteRegisterUlong((PULONG)(bar0+offsets[channel]),4);
+        for(ULONG wait=0;wait<2000;wait++) {
+            ULONG get=VideoPortReadRegisterUlong((PULONG)(bar0+offsets[channel]+4));
+            if(get!=0xffffffff && (get&0x3ff)==4) {
+                LogStr("NVX [NATIVE]: DMA NOP consumed class=");LogHex(classes[channel]);
+                LogStr(" instance=");LogHex(instances[channel]);LogStr(" GET=");LogHex(get);LogStr("\n");
+                break;
+            }
+            if(wait==1999) {
+                LogStr("NVX [NATIVE]: DMA NOP timeout class=");LogHex(classes[channel]);
+                LogStr(" GET=");LogHex(get);LogStr("\n");goto failed;
+            }
+            VideoPortStallExecution(100);
+        }
+    }
+    dev->NativeDisplayChannelsReady=TRUE;
+    LogStr("NVX [NATIVE]: core and windows 0/2 DMA verified; head timings unchanged.\n");
+    return TRUE;
+failed:
+    /* Avoid leaked live channels on partial allocation. Keep backing pinned
+       if RM cannot acknowledge teardown; whole-client shutdown also retains it. */
+    for(ULONG channel=3;channel>0;channel--) {
+        ULONG *handle=&dev->NativeDisplayChannels[channel-1];
+        if(*handle && NvxNativeFreeObject(dev,dev->NativeDisplayHandle,*handle)) *handle=0;
+    }
+    LogStr("NVX [NATIVE]: channel bring-up incomplete; no head update submitted.\n");
+    return FALSE;
+}
+
 /* ctrl0073specific.h GET_EDID_V2: fixed inline buffer, no guest pointers. */
 static VOID NvxGspReadMonitorEdid(PNVX_DEVICE_EXTENSION dev,ULONG displayId)
 {

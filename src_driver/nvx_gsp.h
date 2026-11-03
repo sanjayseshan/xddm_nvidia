@@ -73,6 +73,7 @@
 #define GSP_SCRATCH_SIZE               0x10000UL
 #define GSP_PAGE_TABLES_OFFSET         0x02E00000ULL
 #define GSP_PAGE_TABLES_SIZE           0x8000UL
+#define GSP_DISPLAY_PUSH_OFFSET        0x02E10000ULL
 #define GSP_UPLOAD_OFFSET              0x02600000ULL
 #define GSP_UPLOAD_SIZE                0x00800000UL
 #define GSP_UPLOAD_GPU_VA              0x22000000ULL
@@ -318,6 +319,9 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG GspConnectedDisplays;
     ULONG NativeDisplayHandle;
     ULONG NativeDisplayCaps;
+    BOOLEAN NativeDisplayAttempted,NativeDisplayChannelsReady;
+    ULONG64 NativeDisplayInstance;
+    ULONG NativeDisplayChannels[3];
     ULONG DisplayWindowMask;
     ULONG DisplayHeadCount;
     ULONG DisplayHeadMask;
@@ -366,6 +370,7 @@ VOID LogHex(unsigned long long val);
 
 /* GSP Engine entrypoints */
 BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension);
+BOOLEAN NvxGspInitDisplayChannels(PVOID HwDeviceExtension);
 BOOLEAN NvxGspDiscoverScanout(PVOID HwDeviceExtension,ULONG modeIndex);
 BOOLEAN NvxGspSubmitCopy(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,ULONG bytes);
 BOOLEAN NvxGspSubmitFill(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG bytes);

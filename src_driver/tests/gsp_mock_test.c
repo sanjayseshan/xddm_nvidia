@@ -50,6 +50,15 @@ ULONG VideoPortReadRegisterUlong(PULONG p) {
         return 0x80000000;
     return regs[regoff(p)/4];
 }
+static PUCHAR dmaPointer(ULONG64 va,ULONG bytes)
+{
+    if(va>=dev.GspScratchGpuVa && va-dev.GspScratchGpuVa<=GSP_SCRATCH_SIZE &&
+       bytes<=GSP_SCRATCH_SIZE-(va-dev.GspScratchGpuVa))
+        return (PUCHAR)dev.GspDmaVirtual+GSP_SCRATCH_OFFSET+(va-dev.GspScratchGpuVa);
+    assert(va>=dev.GspVramGpuVa && va-dev.GspVramGpuVa<=sizeof(gpuVram) &&
+           bytes<=sizeof(gpuVram)-(va-dev.GspVramGpuVa));
+    return gpuVram+(va-dev.GspVramGpuVa);
+}
 VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
 {
     ULONG off=regoff(p);
@@ -61,7 +70,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         PULONG request=(PULONG)((PUCHAR)cmd+4096+(cmd->WritePtr-1)*4096);
         ULONG alloc[528]={0},replyBytes;
         uint32_t f,r,s;
-        assert(cmd->WritePtr>=3&&cmd->WritePtr<=40);
+        assert(cmd->WritePtr>=3&&cmd->WritePtr<=60);
         assert(NvxDecodeRpc((PUCHAR)request,4096,&f,&r,&s));
         assert((f==103||f==76||f==4||f==14||f==10||f==65)&&s==cmd->WritePtr-1);
         if(f==65) {
@@ -217,13 +226,62 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(request[24]==496&&request[26]==11);
             alloc[6+62]=scenario==8?0xffffffffU:0x220400;
         }
+        if(f==76 && request[22]==0x20800a49) {
+            assert(request[24]==24 && request[26]==0x1ff0000 && request[28]==0x10000);
+            assert(request[30]==2 && request[31]==2);
+            for(ULONG i=0;i<0x10000;i++) assert(gpuVram[0x1ff0000+i]==0);
+            if(scenario==3) alloc[3]=0x40; /* reject instance registration */
+        }
+        if(f==76 && request[22]==0x20800a58) {
+            assert(request[24]==40 && request[26]==1 && request[32]==1);
+            assert(request[28]==(ULONG)(dev.GspDmaPhysical.QuadPart+GSP_DISPLAY_PUSH_OFFSET+
+                (request[33]==0xc67d?0:(request[34]==0?1:2))*0x1000));
+            assert(request[30]==0xfff && request[35]==1);
+            assert(request[33]==0xc67d || request[33]==0xc67e);
+        }
+        if(f==103 && (request[23]==0xc67d || request[23]==0xc67e)) {
+            assert(request[21]==dev.NativeDisplayHandle && request[25]==32);
+            assert(request[28]==(request[22]==0xc6700102?2:0));
+            for(ULONG i=29;i<36;i++) assert(request[i]==0);
+        }
         if(f==10) {
-            assert(request[20]==dev.GspClientHandle&&request[21]==0&&request[22]==dev.GspClientHandle);
-            if(freeFailures) {alloc[3]=0x40;freeFailures--;}
+            assert(request[20]==dev.GspClientHandle);
+            if(request[21]==0) {
+                assert(request[22]==dev.GspClientHandle);
+                if(freeFailures) {alloc[3]=0x40;freeFailures--;}
+            } else {
+                assert(request[21]==dev.NativeDisplayHandle);
+                assert(request[22]>=0xc6700100 && request[22]<=0xc6700102);
+            }
         }
         assert(NvxEncodeRpc((PUCHAR)packet,4096,f,write-1,alloc,replyBytes));
         packet[16]=0;packet[8]^=0xffffffffU;
         q->WritePtr=write+1;q->ReadPtr=cmd->WritePtr;
+    }
+    if(off==0x680000 || off==0x690000 || off==0x692000) {
+        ULONG channel=off==0x680000?0:(off==0x690000?1:2);
+        PULONG buffer=(PULONG)((PUCHAR)dev.GspDmaVirtual+GSP_DISPLAY_PUSH_OFFSET+channel*0x1000);
+        assert(value==4);
+        for(ULONG i=0;i<4;i++) assert(buffer[i]==0);
+        if(scenario!=7) regs[off/4+1]=4; /* stall only the display channel */
+    }
+    if(off==0x220490 && dev.GspGPPut>1) {
+        PUCHAR scratch=(PUCHAR)dev.GspDmaVirtual+GSP_SCRATCH_OFFSET;
+        ULONG previous=(dev.GspGPPut+1023)%1024;
+        PULONG push=(PULONG)(scratch+0x9000+(previous%16)*0x100);
+        if(push[2]==0x20048100) {
+            assert(push[11]==1 && push[8]==push[9] && push[9]==push[10]);
+            memcpy(dmaPointer(((ULONG64)push[5]<<32)|push[6],push[10]),
+                   dmaPointer(((ULONG64)push[3]<<32)|push[4],push[10]),push[10]);
+            *(PULONG)(scratch+0xc000)=push[17];
+        } else {
+            assert(push[2]==0x200281c1 && push[4]==0x00030005);
+            PULONG dst=(PULONG)dmaPointer(((ULONG64)push[6]<<32)|push[7],push[9]*4);
+            for(ULONG i=0;i<push[9];i++) dst[i]=push[3];
+            *(PULONG)(scratch+0xc000)=push[15];
+        }
+        *(PULONG)(scratch+0x3288)=dev.GspGPPut;
+        return;
     }
     if(off==0x220490) {
         PUCHAR scratch=(PUCHAR)dev.GspDmaVirtual+GSP_SCRATCH_OFFSET;
@@ -388,6 +446,20 @@ int main(void)
                 assert(dev.MonitorCount==(ULONG)(scenario==0?2:1));
                 assert(dev.MonitorIds[0]==1 && dev.MonitorEdidBytes[0]==128);
                 if(scenario==0) assert(dev.MonitorIds[1]==4 && dev.MonitorEdid[1][19]==4);
+            }
+            if(dev.GspCopyVerified) {
+                memset(gpuVram+0x1ff0000,0xa5,0x10000);
+                assert(NvxGspInitDisplayChannels(&dev)==(scenario==0));
+                assert(dev.NativeDisplayChannelsReady==(scenario==0));
+                assert(dev.NativeDisplayInstance==0x1ff0000);
+                if(scenario==0) {
+                    assert(dev.NativeDisplayChannels[0]==0xc6700100);
+                    assert(dev.NativeDisplayChannels[1]==0xc6700101);
+                    assert(dev.NativeDisplayChannels[2]==0xc6700102);
+                } else for(ULONG i=0;i<3;i++) assert(!dev.NativeDisplayChannels[i]);
+                ULONG sequence=dev.RpcTxSequence;
+                assert(NvxGspInitDisplayChannels(&dev)==(scenario==0));
+                assert(dev.RpcTxSequence==sequence); /* never allocate twice */
             }
             assert(dev.GspScratchGpuVa==0x10000000);
             assert(dev.GspClientHandle==0xc1d00001);
