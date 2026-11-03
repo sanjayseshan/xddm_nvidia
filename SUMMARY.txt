@@ -1,8 +1,34 @@
-NVIDIA GA104 XDDM DRIVER — v1.0.0.124 batched padded-row presentation
+NVIDIA GA104 XDDM DRIVER — v1.0.0.125 changed-row desktop presentation
 Updated: November 3, 2026
 
-Latest change (v124)
+Latest change (v125)
 --------------------
+User confirms v124's 1080p display is correct, but still slow. This establishes
+visible desktop correctness for the coherent-bitmap + 4KB staging path; it does
+not establish responsive GPU rasterization or 3D support.
+
+v125 retains a second system-memory bitmap of successfully uploaded pixels.
+Each callback still checks the full bitmap to catch direct GDI writes, but
+uploads only consecutive changed rows, batching pitch padding as in v124.
+The comparison copy updates only after GPU completion; any upload failure or
+mode reset invalidates it so the next update sends the entire frame. Software
+cursor callbacks retain explicit presentation. Host tests and both builds pass.
+Hardware log test_logs/v125-20261103-104051.log boots at 1920x1080x32,
+passes three sampled GPU upload readback checks, and records variable-size
+changed-row uploads. User confirms v125 is responsive with correct icons and text when moving the
+cursor, dragging windows, and opening Start. This is the confirmed working
+1080p desktop baseline. Preserve v125 for rollback before timing or rendering
+changes. v124
+shut down normally (HookedPowerDispatch) after ACPI and a guest shutdown command.
+
+Monitor refresh limitation: nvx_vbe.c currently hardcodes Frequency=60 and sets
+VBE default timing without custom CRTC data. There is no EDID/DDC reader or
+native GSP display timing path. Therefore 120Hz is not currently supported;
+adding UI entries alone would misrepresent what the driver can program. EDID
+reading and validated timing programming remain required work.
+
+Previous v124 change
+-------------------
 v124 copies the full row pitch, including padding, when presenting the full
 bitmap. At 800x600 with pitch 4096, this batches 15 rows per 60KB upload:
 40 submissions/frame instead of 600. Acceleration IOCTLs no longer print one

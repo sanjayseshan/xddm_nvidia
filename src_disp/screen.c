@@ -445,6 +445,13 @@ DrvEnableSurface(
         return NULL;
     }
     memset(ppdev->ScreenPtr, 0, ppdev->ScreenDelta * ppdev->ScreenHeight);
+    ppdev->PresentedPixels=EngAllocMem(FL_ZERO_MEMORY,
+        ppdev->ScreenDelta * ppdev->ScreenHeight,ALLOC_TAG);
+    if(!ppdev->PresentedPixels) {
+        DrvDisableSurface(dhpdev);
+        return NULL;
+    }
+    ppdev->PresentationValid=FALSE;
 
     switch (ppdev->BitsPerPixel)
     {
@@ -500,6 +507,9 @@ DrvDisableSurface(
     EngDeviceIoControl(ppdev->hDriver, IOCTL_VIDEO_UNMAP_VIDEO_MEMORY,
                        &VideoMemory, sizeof(VIDEO_MEMORY), NULL, 0, &ulTemp);
     if (ppdev->ScreenPtr) EngFreeMem(ppdev->ScreenPtr);
+    if (ppdev->PresentedPixels) EngFreeMem(ppdev->PresentedPixels);
+    ppdev->PresentedPixels=NULL;
+    ppdev->PresentationValid=FALSE;
     ppdev->ScreenPtr = NULL;
     ppdev->MappedFramebuffer = NULL;
 }
@@ -512,6 +522,7 @@ DrvAssertMode(
     PPDEV ppdev = (PPDEV)dhpdev;
     ULONG ulTemp;
 
+    ppdev->PresentationValid=FALSE;
     if (bEnable)
     {
         return !EngDeviceIoControl(ppdev->hDriver, IOCTL_VIDEO_SET_CURRENT_MODE,

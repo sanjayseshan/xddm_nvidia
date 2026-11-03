@@ -22,8 +22,8 @@ NvxUploadSurfaceRect(PPDEV ppdev, SURFOBJ *pso, RECTL *prcl, ULONG kind)
        pso->lDelta<=0||(ULONG)pso->lDelta!=ppdev->ScreenDelta)
         return FALSE;
 
-    /* Publish the whole authoritative bitmap to isolate missed dirty
-       bounds and direct GDI writes from pixel production. */
+    /* Check the whole bitmap to retain v124's handling of direct GDI writes.
+       Transfer only changed row runs; cursor motion should not upload 8MB. */
     r.left=0; r.top=0;
     r.right=(LONG)ppdev->ScreenWidth; r.bottom=(LONG)ppdev->ScreenHeight;
     if(r.left<0) r.left=0;
@@ -48,8 +48,22 @@ NvxUploadSurfaceRect(PPDEV ppdev, SURFOBJ *pso, RECTL *prcl, ULONG kind)
     if(!params) return FALSE;
 
     params->Reserved=kind;
-    for(y=r.top;y<r.bottom;y+=(LONG)rowsPerBatch) {
-        rows=(ULONG)((r.bottom-y)<(LONG)rowsPerBatch?(r.bottom-y):(LONG)rowsPerBatch);
+    for(y=r.top;y<r.bottom;) {
+        if(ppdev->PresentationValid &&
+           !memcmp((PUCHAR)pso->pvBits+(ULONG)y*lineBytes,
+                   (PUCHAR)ppdev->PresentedPixels+(ULONG)y*lineBytes,lineBytes)) {
+            y++;
+            continue;
+        }
+        rows=1;
+        while(rows<rowsPerBatch && y+(LONG)rows<r.bottom) {
+            ULONG offset=((ULONG)y+rows)*lineBytes;
+            if(ppdev->PresentationValid &&
+               !memcmp((PUCHAR)pso->pvBits+offset,
+                       (PUCHAR)ppdev->PresentedPixels+offset,lineBytes))
+                break;
+            rows++;
+        }
         batchBytes=lineBytes*rows;
         params->DstGpuVa=ppdev->ScreenGpuVaBase+
             (ULONG64)(ULONG)y*ppdev->ScreenDelta+(ULONG64)(ULONG)r.left*bytesPerPixel;
@@ -62,7 +76,13 @@ NvxUploadSurfaceRect(PPDEV ppdev, SURFOBJ *pso, RECTL *prcl, ULONG kind)
             success=FALSE;
             break;
         }
+        /* Cache the exact staged snapshot, and only after GPU completion. */
+        memcpy((PUCHAR)ppdev->PresentedPixels+(ULONG)y*lineBytes,
+               params->Data,batchBytes);
+        y+=(LONG)rows;
     }
+    if(success) ppdev->PresentationValid=TRUE;
+    else ppdev->PresentationValid=FALSE;
 
     EngFreeMem(params);
     return success;
