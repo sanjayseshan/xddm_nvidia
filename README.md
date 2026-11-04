@@ -1,9 +1,10 @@
 # NVIDIA GA104 XDDM driver for Windows XP x64
 
 This experimental driver brings up a Windows XP x64 desktop on NVIDIA Ampere
-GA104 hardware. Build v176 aligns the primary scanout base exactly to physical VRAM
-offset 0 (eliminating visual shift on VBE/native displays) and aligns secondary scanout to
-+32MB, retaining coherent host memory descriptors (`NV_MEMORY_CACHED`) for GSP-RM channels.
+GA104 hardware. Build v177 ensures GSP display channels (Core, Window0, Window2)
+are initialized immediately upon GSP copy engine verification and on-demand in DualView,
+enabling secondary display activation at native 1440p and re-enumerating DualView child monitors.
+Primary scanout base is aligned to physical VRAM offset 0 and secondary to +32MB.
 
 The v168 hardware log confirms GSP initialization, both native display heads,
 and GPU solid-fill activity. The v168 run showed orange artifacts while

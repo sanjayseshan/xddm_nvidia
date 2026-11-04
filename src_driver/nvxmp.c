@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.176
+ * Driver Version: 1.0.0.177
  */
 
 #include "miniport.h"
@@ -1084,10 +1084,19 @@ BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
     LogStr("\n");
 
     if (devExt->IsSecondaryDisplay) {
+        PNVX_DEVICE_EXTENSION prim = (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension;
         NvxInitSecondaryDisplayModes(devExt);
         LogStr("NVX [DUALVIEW]: Secondary initialized with ");
         LogHex(devExt->NumModes);
         LogStr(" modes\n");
+        if (prim && prim->MonitorCount >= 2) {
+            devExt->MonitorCount = 1;
+            LogStr("NVX [DUALVIEW]: re-enumerating secondary children\n");
+            enumStatus = VideoPortEnumerateChildren(HwDeviceExtension, NULL);
+            LogStr("NVX [DUALVIEW]: secondary VideoPortEnumerateChildren status=");
+            LogHex(enumStatus);
+            LogStr("\n");
+        }
         NvxLogFlush();
         return TRUE;
     }
@@ -1157,6 +1166,12 @@ BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
     LogStr(" scanout_mapped=");LogHex(devExt->GspScanoutMapped);
     LogStr(" gpu_va=");LogHex(devExt->GspVramGpuVa);LogStr("\n");
 
+    if (devExt->GspCopyVerified) {
+        LogStr("NVX [GSP]: Initializing display channels post-bootstrap.\n");
+        (void)NvxGspDiscoverScanout(HwDeviceExtension, devExt->CurrentModeIndex);
+        (void)NvxGspInitDisplayChannels(HwDeviceExtension);
+    }
+
     /* Connector/EDID discovery runs after VideoPort's initial PnP child query.
        Ask XP to enumerate again now that MonitorCount and EDIDs are populated. */
     if (devExt->MonitorCount) {
@@ -1167,6 +1182,15 @@ BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
         LogStr("NVX [DISPLAY]: VideoPortEnumerateChildren status=");
         LogHex(enumStatus);
         LogStr("\n");
+        if (devExt->SecondaryDeviceExtension && devExt->MonitorCount >= 2) {
+            PNVX_DEVICE_EXTENSION sec = (PNVX_DEVICE_EXTENSION)devExt->SecondaryDeviceExtension;
+            sec->MonitorCount = 1;
+            LogStr("NVX [DUALVIEW]: re-enumerating secondary children from primary init\n");
+            enumStatus = VideoPortEnumerateChildren(devExt->SecondaryDeviceExtension, NULL);
+            LogStr("NVX [DUALVIEW]: secondary VideoPortEnumerateChildren status=");
+            LogHex(enumStatus);
+            LogStr("\n");
+        }
     }
 
     LogStr("NVX: HwVidInitialize returning TRUE\n");
@@ -1272,15 +1296,20 @@ BOOLEAN HwVidStartIO(
 
         if (devExt->IsSecondaryDisplay) {
             PNVX_DEVICE_EXTENSION prim = (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension;
+            ULONG previous = devExt->CurrentModeIndex;
             devExt->CurrentModeIndex = requested;
             LogStr("NVX [DUALVIEW]: Secondary mode set to index: ");
             LogHex(requested);
             LogStr("\n");
             if (prim) {
                 if(!NvxNativeSetSecondaryScanout(prim)) {
-                        LogStr("NVX [DISPLAY-VERIFY]: secondary activation failed; restoring primary VBE mode.\n");
-                        (void)NvxVbeSetMode(prim,prim->CurrentModeIndex);
-                    }
+                    LogStr("NVX [DISPLAY-VERIFY]: secondary activation failed; restoring primary VBE mode.\n");
+                    (void)NvxVbeSetMode(prim,prim->CurrentModeIndex);
+                    devExt->CurrentModeIndex = previous;
+                    status = ERROR_DEVICE_NOT_READY;
+                }
+            } else {
+                status = ERROR_INVALID_PARAMETER;
             }
             break;
         }
@@ -1407,6 +1436,9 @@ BOOLEAN HwVidStartIO(
         LogHex(devExt->IsSecondaryDisplay);
         LogStr("\n");
         devExt->DualViewAttached = (switchVal != 0);
+        if (devExt->IsSecondaryDisplay && devExt->NumModes == 0) {
+            NvxInitSecondaryDisplayModes(devExt);
+        }
         status = NO_ERROR;
         break;
     }
@@ -1785,7 +1817,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.176 (zero-offset primary scanout, aligned DualView base, coherent GSP CE)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.177 (secondary display channel init, DualView enumeration & activation)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

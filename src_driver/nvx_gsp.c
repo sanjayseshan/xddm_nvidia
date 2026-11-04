@@ -1237,8 +1237,26 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     const ULONG channels[2]={1,2};
     NVX_DISPLAY_TIMING modes[2];
     BOOLEAN ownersChanged=FALSE;
-    if(!dev || !dev->NativeDisplayChannelsReady || dev->NativeDisplayFaulted ||
-       dev->MonitorCount<2 || !(sec=dev->SecondaryDeviceExtension)) return FALSE;
+    if(!dev) return FALSE;
+    if(dev->IsSecondaryDisplay) {
+        dev = (PNVX_DEVICE_EXTENSION)dev->PrimaryDeviceExtension;
+        if(!dev) return FALSE;
+    }
+    if(!dev->NativeDisplayChannelsReady) {
+        LogStr("NVX [NATIVE]: display channels not yet ready; initializing now.\n");
+        if(!NvxGspInitDisplayChannels(dev)) {
+            LogStr("NVX [NATIVE]: display channel initialization failed.\n");
+            return FALSE;
+        }
+    }
+    if(dev->NativeDisplayFaulted || dev->MonitorCount<2 || !(sec=dev->SecondaryDeviceExtension)) {
+        LogStr("NVX [NATIVE]: cannot set secondary scanout: faulted=");
+        LogHex(dev->NativeDisplayFaulted);
+        LogStr(" monitors=");LogHex(dev->MonitorCount);
+        LogStr(" sec=");LogHex((unsigned long long)dev->SecondaryDeviceExtension);
+        LogStr("\n");
+        return FALSE;
+    }
     if(dev->CurrentModeIndex>=dev->NumModes || sec->CurrentModeIndex>=sec->NumModes)
         return FALSE;
     modes[0]=dev->MonitorTiming[0];modes[1]=dev->MonitorTiming[1];

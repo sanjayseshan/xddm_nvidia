@@ -1,5 +1,5 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 4, 2026 (v176 zero-offset primary scanout, aligned DualView base, coherent GSP CE)
+Updated: November 4, 2026 (v177 secondary display channel init, DualView enumeration & activation)
 
 Confirmed baseline: v164 works on the test EVGA RTX 3070 XC3 Ultra LHR with
 two physical displays. The primary runs at 1920x1080 and the secondary at
@@ -117,19 +117,19 @@ cacheAttrib = 0 (NV_MEMORY_CACHED) for all host system memory descriptors, mappi
 them as GMMU_APERTURE_SYS_COH with hardware PCIe cache snooping enabled. Diagnostics
 now read engine status registers at runlistBase + 0x200 + i*0x40.
 
-v176 fixes the primary monitor visual shift (down 273 rows, right 128 px) and
-aligns scanout apertures for both displays:
-1. In v163-v175, primary scanout was offset by +0x200000 (2MB) in CE GPU VA space
-   and upload/fill/copy IOCTLs. Because VBE mode scans out from physical VRAM offset 0,
-   writing to +2MB shifted the active 1920x1080 desktop by exactly 2MB (273.06 rows
-   down and 128 px right).
-2. v176 maps physical VRAM 0..64MB in GspVramGpuVa without skipping the VBE region,
-   allowing CE uploads/fills/copies to target offset 0x0 for the primary display.
-3. Aligns secondary scanout to +0x2000000 (+32MB) with native 2560x1440 support.
-4. Preserves verified EDID discovery and DualView child state management. Windows XP
-   setupapi and nvxmp logs confirm both Dell S2419HGF and Lenovo Legion R27qe monitors
-   are detected and installed via PnP EDID. Enabling "Extend desktop onto this monitor"
-   in Display Properties activates the secondary display at native 1440p.
+v177 fixes secondary display activation and DualView child device enumeration:
+1. In v175-v176, GSP display channels (Core, Window0, Window2) were only initialized
+   during IOCTL_VIDEO_MAP_VIDEO_MEMORY, which ran early during boot before GSP copy
+   verification completed. Display channel initialization was skipped, leaving
+   NativeDisplayChannelsReady as FALSE permanently.
+2. In HwVidInitialize, immediately upon copy verification completion, v177 initializes
+   the GSP display channels and discovers scanout.
+3. In NvxNativeSetSecondaryScanout, v177 normalizes secondary device extension pointers,
+   lazily initializes display channels on demand if not ready, and returns accurate status
+   codes upon mode set or activation failure.
+4. Triggers VideoPortEnumerateChildren for the secondary adapter both from secondary
+   initialization and primary PnP discovery, ensuring the Lenovo R27qe monitor devnode
+   is properly recognized under DualView.
 
 Milestones:
 - v98: verified GSP-backed GPU copy execution on the RTX 3070.
