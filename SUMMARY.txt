@@ -1,5 +1,5 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 4, 2026 (v171 native-XP fallback and logging changes prepared)
+Updated: November 4, 2026 (v172 safe native-XP fallback prepared)
 
 Confirmed baseline: v164 works on the test EVGA RTX 3070 XC3 Ultra LHR with
 two physical displays. The primary runs at 1920x1080 and the secondary at
@@ -65,21 +65,22 @@ and is not sufficient evidence of what the direct-copy update script installed.
 The locally prepared v170 ZIP had a stale miniport binary, so compare package
 hashes with the script-installed files before using any archive.
 
-v171 is a prepared, untested native-XP follow-up. The miniport logger now keeps
+v171 was tested on native XP. Its miniport logger kept
 early messages in a resident 64 KiB ring, retries opening `C:\WINDOWS\nvxmp.log`
 at safe PASSIVE_LEVEL opportunities, and flushes buffered text when the file
-becomes available. It does not use COM1. The display driver may render directly
-to the mapped framebuffer only on the primary head, only if the miniport confirms
-the head identity, and only if the mapped length covers the requested mode. It
-does not require GSP copy verification for that CPU-only path. If these checks
-fail, DrvEnableSurface still declines the mode and XP can use its safe VGA
-fallback, including 4-bit color. The secondary head does not use this fallback.
-GSP diagnostics now report the actual common-buffer physical range. The existing
-32-bit DMA request and >4 GiB rejection remain in place; native 64-bit Falcon DMA
-is not enabled without evidence and implementation of every affected DMA path.
+becomes available. It does not use COM1. The new native log shows the GSP DMA
+buffer at `0x023C1000..0x053C1000`, below 4 GiB, disproving the Above-4G blocker
+for that run. The guarded GPU copy probe still times out and leaves
+`GspCopyVerified=FALSE`. The DDI then returned a successful surface after using
+the newly added direct framebuffer path, but the physical display was black.
+The log does not establish that the mapped BAR aperture was configured for
+scanout. Therefore that path is unsafe and removed in v172. The driver will
+reject the DDI surface when verified GPU scanout is unavailable, allowing XP to
+return to the safe VGA fallback (which may be 4-bit). The existing 32-bit DMA
+request and >4 GiB rejection remain in place; native 64-bit Falcon DMA is not
+enabled.
 
-The v171 sources build and host checks pass, but this behavior has not yet been
-tested on bare-metal XP. `./update_xp_driver.sh` builds both binaries, requires
+v172 is a prepared, untested correction. `./update_xp_driver.sh` builds both binaries, requires
 the offline XP volume to be writable, copies the binaries, and verifies exact
 source/destination matches. The XP installation currently mounted read-only
 must not be modified until it is safely remounted read-write after XP shutdown.

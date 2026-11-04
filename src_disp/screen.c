@@ -513,50 +513,30 @@ DrvEnableSurface(
         BOOL haveGpuScanout=!ioctlStatus &&
             outBytes==sizeof(ppdev->ScreenGpuVaBase) && ppdev->ScreenGpuVaBase;
         if (!haveGpuScanout) {
-            NVX_DIAGNOSTIC_STATE state;
-            ULONG stateBytes=0;
-            ULONG stateStatus=EngDeviceIoControl(ppdev->hDriver,
-                IOCTL_NVX_DIAGNOSTIC_STATE,NULL,0,&state,sizeof(state),&stateBytes);
-            /* A VBE mode has already been set and VideoPortMapMemory returned
-               its validated linear framebuffer. Let GDI draw directly there
-               on the primary head when GSP's GPU VA/copy channel is unavailable.
-               Secondary BAR mappings are not assumed to be scanout surfaces.
-               This path is CPU-only and issues no GPU acceleration IOCTLs. */
-            if (stateStatus || stateBytes<sizeof(state) || (state.Flags&1) ||
-                !ppdev->MappedFramebuffer ||
-                VideoMemoryInfo.FrameBufferLength < framebufferBytes) {
-                NvxDispLogEvent(16,ioctlStatus,VideoMemoryInfo.FrameBufferLength,
-                                framebufferBytes);
-                NvxDispLogEvent(18,stateStatus,stateBytes,
-                                stateStatus?0:state.Flags);
-                DrvDisableSurface(dhpdev);
-                return NULL;
-            }
-            ppdev->DirectFramebuffer=TRUE;
-            ppdev->ScreenPtr=ppdev->MappedFramebuffer;
-            ppdev->PresentedPixels=NULL;
-            ppdev->PresentationValid=FALSE;
-            memset(ppdev->ScreenPtr,0,framebufferBytes);
-            NvxDispLogEvent(17,1,framebufferBytes,ppdev->ModeIndex);
-        } else {
-            /* Keep authoritative GDI pixels in system memory and present them
-               through the verified GSP copy channel. */
-            ppdev->DirectFramebuffer=FALSE;
-            ppdev->ScreenPtr = EngAllocMem(0, framebufferBytes, ALLOC_TAG);
-            if (!ppdev->ScreenPtr) {
-                DrvDisableSurface(dhpdev);
-                return NULL;
-            }
-            memset(ppdev->ScreenPtr, 0, framebufferBytes);
-            ppdev->PresentedPixels=EngAllocMem(FL_ZERO_MEMORY,
-                framebufferBytes,ALLOC_TAG);
-            if(!ppdev->PresentedPixels) {
-                DrvDisableSurface(dhpdev);
-                return NULL;
-            }
-            ppdev->PresentationValid=FALSE;
-            NvxDispLogEvent(17,0,framebufferBytes,ppdev->ModeIndex);
+            /* A mapped BAR aperture is not proof of active scanout. Until a
+               verified GSP scanout surface exists, reject this DDI surface so
+               XP can return to its safe VGA fallback instead of showing black. */
+            NvxDispLogEvent(16,ioctlStatus,VideoMemoryInfo.FrameBufferLength,
+                            framebufferBytes);
+            DrvDisableSurface(dhpdev);
+            return NULL;
         }
+        /* Keep authoritative GDI pixels in system memory and present them
+           through the verified GSP copy channel. */
+        ppdev->ScreenPtr = EngAllocMem(0, framebufferBytes, ALLOC_TAG);
+        if (!ppdev->ScreenPtr) {
+            DrvDisableSurface(dhpdev);
+            return NULL;
+        }
+        memset(ppdev->ScreenPtr, 0, framebufferBytes);
+        ppdev->PresentedPixels=EngAllocMem(FL_ZERO_MEMORY,
+            framebufferBytes,ALLOC_TAG);
+        if(!ppdev->PresentedPixels) {
+            DrvDisableSurface(dhpdev);
+            return NULL;
+        }
+        ppdev->PresentationValid=FALSE;
+        NvxDispLogEvent(17,0,framebufferBytes,ppdev->ModeIndex);
     }
     ppdev->PresentationValid=FALSE;
 
@@ -615,7 +595,7 @@ DrvDisableSurface(
     VideoMemory.RequestedVirtualAddress = ppdev->MappedFramebuffer;
     EngDeviceIoControl(ppdev->hDriver, IOCTL_VIDEO_UNMAP_VIDEO_MEMORY,
                        &VideoMemory, sizeof(VIDEO_MEMORY), NULL, 0, &ulTemp);
-    if (ppdev->ScreenPtr && !ppdev->DirectFramebuffer) EngFreeMem(ppdev->ScreenPtr);
+    if (ppdev->ScreenPtr) EngFreeMem(ppdev->ScreenPtr);
     if (ppdev->PresentedPixels) EngFreeMem(ppdev->PresentedPixels);
     if (ppdev->CopyScratch) EngFreeMem(ppdev->CopyScratch);
     ppdev->CopyScratch=NULL;
@@ -624,7 +604,6 @@ DrvDisableSurface(
     ppdev->PresentationValid=FALSE;
     ppdev->ScreenPtr = NULL;
     ppdev->MappedFramebuffer = NULL;
-    ppdev->DirectFramebuffer = FALSE;
 }
 
 BOOL APIENTRY
