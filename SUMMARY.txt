@@ -1,9 +1,21 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 4, 2026 (v180 secondary desktop activation without VBE fallback)
+Updated: November 4, 2026 (v181 secondary DP wake, centered primary raster, isolated DualView children)
 
 Confirmed baseline: v164 works on the test EVGA RTX 3070 XC3 Ultra LHR with
 two physical displays. The primary runs at 1920x1080 and the secondary at
-2560x1440. Build v180 resolves the "flash of black on primary then unchecks" issue
+2560x1440. Build v181 addresses three key physical display issues:
+1. Secondary monitor off/standby: Removes one-shot barriers in NvxGspWakeSecondaryDpSink
+   and NvxGspTrainSecondaryDpLink so secondary DP sink wake (DPCD 0x600=1) and DP link
+   training (4 lanes @ 5.4Gbps HBR2) execute whenever secondary scanout is activated.
+2. Primary monitor shifted down and right: In NvxNativeSetSecondaryScanout, Head 0 and
+   Window 0 are left untouched so VBE's perfectly aligned raster timings for Dell S2419HGF
+   are preserved without the 40-line top black bar and horizontal shift.
+3. "(Multiple Monitors)" label: Isolates HwVidGetVideoChildDescriptor so \Device\Video0
+   only enumerates Child 1 (Dell) and \Device\Video1 only enumerates Child 1 (Lenovo).
+4. Increases miniport log ring buffer to 1MB and rate-limits high-frequency 2D fill,
+   copy, and upload logs to prevent ring overflow.
+
+Build v180 resolved the "flash of black on primary then unchecks" issue
 when enabling desktop extension onto the secondary monitor in desk.cpl. In v179,
 NvxNativeSetSecondaryScanout gated success on NvxGspVerifyDisplays, which returned
 false because Head 1's activeDisplay is 0 in GSP-RM software tables (Head 1 is

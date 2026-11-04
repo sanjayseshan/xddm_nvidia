@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.180
+ * Driver Version: 1.0.0.181
  */
 
 #include "miniport.h"
@@ -39,7 +39,7 @@ extern LONG NTAPI ZwWriteFile(HANDLE, HANDLE, PVOID, PVOID, PNVX_IO_STATUS_BLOCK
     PVOID, ULONG, PLARGE_INTEGER, PULONG);
 extern UCHAR NTAPI KeGetCurrentIrql(VOID);
 
-#define NVX_LOG_RING_BYTES 65536UL
+#define NVX_LOG_RING_BYTES 1048576UL
 #define NVX_LOG_FLUSH_CHUNK 1024UL
 #define NVX_LOG_PASSIVE_LEVEL 0
 static HANDLE g_LogFile;
@@ -772,26 +772,31 @@ VP_STATUS HwVidGetVideoChildDescriptor(
         return VIDEO_ENUM_MORE_DEVICES;
     }
 
-    /* Primary adapter enumerates attached monitors */
-    if(!ChildEnumInfo->ChildIndex) {
-        for(index=0; index<dev->MonitorCount; index++)
-            if(dev->MonitorIds[index]==ChildEnumInfo->ACPIHwId) break;
-        if(index==dev->MonitorCount) return VIDEO_ENUM_INVALID_DEVICE;
+    /* Primary adapter enumerates attached primary monitor only (DualView architecture) */
+    if (ChildEnumInfo->ChildIndex == 0) {
+        if (dev->MonitorCount == 0) return VIDEO_ENUM_INVALID_DEVICE;
+        if (ChildEnumInfo->ACPIHwId != dev->MonitorIds[0] &&
+            ChildEnumInfo->ACPIHwId != 1)
+            return VIDEO_ENUM_INVALID_DEVICE;
+        index = 0;
+    } else if (ChildEnumInfo->ChildIndex == 1) {
+        if (dev->MonitorCount == 0) return VIDEO_ENUM_NO_MORE_DEVICES;
+        index = 0;
     } else {
-        index = ChildEnumInfo->ChildIndex - 1;
-        if(index >= dev->MonitorCount) {
-            LogStr("NVX [DISPLAY]: no child at index=");LogHex(index);
-            LogStr(" MonitorCount=");LogHex(dev->MonitorCount);LogStr("\n");
-            return VIDEO_ENUM_NO_MORE_DEVICES;
-        }
+        return VIDEO_ENUM_NO_MORE_DEVICES;
     }
-    if(!pChildDescriptor || ChildEnumInfo->ChildDescriptorSize<128)
+
+    if (!pChildDescriptor || ChildEnumInfo->ChildDescriptorSize < 128)
         return VIDEO_ENUM_INVALID_DEVICE;
     /* XP's monitor child descriptor is the validated base EDID block. */
-    VideoPortMoveMemory(pChildDescriptor,dev->MonitorEdid[index],128);
-    *VideoChildType=Monitor;*UId=dev->MonitorIds[index];
-    LogStr("NVX [DISPLAY]: enumerate monitor id=");LogHex(*UId);
-    LogStr(" index=");LogHex(index);LogStr("\n");
+    VideoPortMoveMemory(pChildDescriptor, dev->MonitorEdid[index], 128);
+    *VideoChildType = Monitor;
+    *UId = dev->MonitorIds[index];
+    LogStr("NVX [DISPLAY]: enumerate monitor id=");
+    LogHex(*UId);
+    LogStr(" index=");
+    LogHex(index);
+    LogStr("\n");
     return VIDEO_ENUM_MORE_DEVICES;
 }
 
@@ -1318,20 +1323,6 @@ BOOLEAN HwVidStartIO(
             break;
         }
 
-        if(devExt->NativeDualActive) {
-            ULONG previous=devExt->CurrentModeIndex;
-            devExt->CurrentModeIndex=requested;
-            if(!NvxNativeSetSecondaryScanout(devExt)) {
-                devExt->CurrentModeIndex=previous;
-                status=ERROR_DEVICE_NOT_READY;
-            } else {
-                devExt->ActiveWidth=devExt->Modes[requested].VisScreenWidth;
-                devExt->ActiveHeight=devExt->Modes[requested].VisScreenHeight;
-                devExt->ActiveBpp=32;
-                devExt->ActiveFreq=devExt->Modes[requested].Frequency;
-            }
-            break;
-        }
         if (!NvxVbeSetMode(HwDeviceExtension, requested)) {
             LogStr("NVX: VBE mode change failed; attempting previous mode.\n");
             if (!NvxVbeSetMode(HwDeviceExtension, devExt->CurrentModeIndex))
@@ -1347,10 +1338,12 @@ BOOLEAN HwVidStartIO(
         LogStr("NVX: Mode switched to index: ");
         LogHex(requested);
         LogStr("\n");
-        if (devExt->Modes[requested].VisScreenWidth >= 1920 &&
-            devExt->Modes[requested].VisScreenHeight >= 1080 &&
-            devExt->SecondaryDpTrainReady &&
-            !devExt->SecondaryDpTrainingAttempted) {
+        if (devExt->NativeDualActive) {
+            (void)NvxNativeSetSecondaryScanout(devExt);
+        } else if (devExt->Modes[requested].VisScreenWidth >= 1920 &&
+                   devExt->Modes[requested].VisScreenHeight >= 1080 &&
+                   devExt->SecondaryDpTrainReady &&
+                   !devExt->SecondaryDpTrainingAttempted) {
             NvxGspTrainSecondaryDpLink(HwDeviceExtension);
             /* RM link training can reset display state; reassert the working
                primary VBE mode after it so the secondary cannot leave XP in
@@ -1617,7 +1610,7 @@ BOOLEAN HwVidStartIO(
             status = NO_ERROR;
             statusBlock->Information = sizeof(NVX_ACCEL_COPY_PARAMS);
             s_copyCount++;
-            if ((s_copyCount <= 5) || (s_copyCount % 100 == 0)) {
+            if ((s_copyCount <= 5) || (s_copyCount % 10000 == 0)) {
                 LogStr("NVX [ACCEL]: GPU Copy #"); LogHex(s_copyCount);
                 LogStr(" srcOffset=");LogHex(srcOffset);
                 LogStr(" dstOffset=");LogHex(dstOffset);
@@ -1660,7 +1653,7 @@ BOOLEAN HwVidStartIO(
             status = NO_ERROR;
             statusBlock->Information = sizeof(NVX_ACCEL_FILL_PARAMS);
             s_fillCount++;
-            if ((s_fillCount <= 5) || (s_fillCount % 100 == 0)) {
+            if ((s_fillCount <= 5) || (s_fillCount % 10000 == 0)) {
                 LogStr("NVX [2D]: GPU solid fill #"); LogHex(s_fillCount);
                 LogStr(" offset=");LogHex(offset);
                 LogStr(" color "); LogHex(params->Color);
@@ -1794,7 +1787,7 @@ BOOLEAN HwVidStartIO(
             status=NO_ERROR;
             statusBlock->Information=required;
             s_uploadKinds[params->Reserved]++;
-            if((s_uploadKinds[params->Reserved]<=3)||(s_uploadKinds[params->Reserved]%100==0)) {
+            if ((s_uploadKinds[params->Reserved] <= 5) || (s_uploadKinds[params->Reserved] % 10000 == 0)) {
                 LogStr("NVX [ACCEL]: secondary=");LogHex(devExt->IsSecondaryDisplay);
                 LogStr(" GPU Upload kind=");LogHex(params->Reserved);
                 LogStr(" #");LogHex(s_uploadKinds[params->Reserved]);
@@ -1885,7 +1878,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.180 (secondary desktop activation without VBE fallback)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.181 (isolated DualView child monitors and secondary DP native scanout)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

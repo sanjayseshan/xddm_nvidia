@@ -1,11 +1,11 @@
 # NVIDIA GA104 XDDM driver for Windows XP x64
 
 This experimental driver brings up a Windows XP x64 desktop on NVIDIA Ampere
-GA104 hardware. Build v180 fixes secondary desktop activation and prevents primary display black flash:
-1. In `NvxNativeSetSecondaryScanout`, decouples modeset success from GSP-RM software display tracking queries (`NvxGspVerifyDisplays`), which return 0 for Head 1 because Head 1 is programmed directly via hardware EVO pushbuffer methods.
-2. In `IOCTL_VIDEO_SET_CURRENT_MODE` and `IOCTL_VIDEO_MAP_VIDEO_MEMORY`, removes destructive fallback calls to `NvxVbeSetMode(prim, prim->CurrentModeIndex)`, eliminating the flash of black on the primary monitor when extending the desktop.
-3. Unconditionally returns `NO_ERROR` on secondary mode set after committing native scanout and window routing, allowing GDI `DrvEnableSurface` to successfully map secondary video memory and scanout GPU VA for the Lenovo 1440p display.
-4. Preserves all child state configuration validation and DualView separation from v179.
+GA104 hardware. Build v181 fixes secondary display link wake, centers primary raster, and isolates DualView monitors:
+1. In `NvxGspWakeSecondaryDpSink` and `NvxGspTrainSecondaryDpLink`, removes one-shot gates (`s_sinkWoken` and `dev->SecondaryDpTrainingAttempted`) so sink wake (DPCD `0x600 = 1`) and link training (4 lanes @ 5.4Gbps HBR2) execute when secondary scanout is activated, bringing the Lenovo monitor out of standby.
+2. In `NvxNativeSetSecondaryScanout`, removes destructive Head 0/Window 0 reprogramming. Head 0 and Window 0 remain in their perfectly centered VBE raster, eliminating the downward/rightward active area shift and top black border on the primary Dell monitor. Window 2 is bound and assigned exclusively to Head 1 at 2560x1440.
+3. In `HwVidGetVideoChildDescriptor`, isolates child enumeration so the primary adapter only returns Child 1 (Dell S2419HGF) and the secondary adapter only returns Child 1 (Lenovo R27qe). This prevents Windows XP from grouping them under "(Multiple Monitors)".
+4. Expands miniport logging ring buffer to 1MB and rate-limits high-frequency 2D fill/copy/upload messages to prevent ring buffer overflow.
 
 The v168 hardware log confirms GSP initialization, both native display heads,
 and GPU solid-fill activity. The v168 run showed orange artifacts while
