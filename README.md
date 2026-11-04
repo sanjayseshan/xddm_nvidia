@@ -1,9 +1,9 @@
 # NVIDIA GA104 XDDM driver for Windows XP x64
 
 This experimental driver brings up a Windows XP x64 desktop on NVIDIA Ampere
-GA104 hardware. Build v175 configures coherent host system memory descriptors
-(`NV_MEMORY_CACHED`) for GSP-RM channels so bare-metal PCIe reads snoop host RAM,
-pairing with uncached common buffers, dual Ampere doorbells, and safe VGA fallback.
+GA104 hardware. Build v176 aligns the primary scanout base exactly to physical VRAM
+offset 0 (eliminating visual shift on VBE/native displays) and aligns secondary scanout to
++32MB, retaining coherent host memory descriptors (`NV_MEMORY_CACHED`) for GSP-RM channels.
 
 The v168 hardware log confirms GSP initialization, both native display heads,
 and GPU solid-fill activity. The v168 run showed orange artifacts while

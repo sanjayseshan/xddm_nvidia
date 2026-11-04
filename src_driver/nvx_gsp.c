@@ -224,7 +224,7 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
         tables[2560+pdIndex*2+1]=0;
         for(ULONG page=0;page<32;page++) {
             ULONG64 address=(ULONG64)slice*0x200000+(ULONG64)page*0x10000;
-            if(address>=dev->GspFbFreeBase && address+0xffff<=dev->GspFbFreeLimit)
+            if(address+0xffff<=dev->GspFbFreeLimit)
                 lpt[page]=(address>>4)|1;
         }
     }
@@ -878,7 +878,7 @@ static BOOLEAN NvxGspUploadUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,const 
         return FALSE;
     {
         ULONG64 offset=dstVa-dev->GspVramGpuVa;
-        if(!dev->GspFbLayoutValid || offset<dev->GspFbFreeBase ||
+        if(!dev->GspFbLayoutValid ||
            offset>dev->GspFbFreeLimit || bytes-1>dev->GspFbFreeLimit-offset) return FALSE;
     }
     VideoPortMoveMemory((PUCHAR)dev->GspDmaVirtual+GSP_UPLOAD_OFFSET,(PVOID)src,bytes);
@@ -1231,7 +1231,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     volatile ULONG *notifier;
     ULONG counts[2],n,wait;
     ULONG widths[2],heights[2],pitches[2];
-    const ULONG offsets[2]={0x200000,0x2000000};
+    const ULONG offsets[2]={0,0x2000000};
     const ULONG users[2]={1,3};
     const ULONG windowIds[2]={0,2};
     const ULONG channels[2]={1,2};
@@ -1276,7 +1276,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
         } else {
             ULONG j=i-1;
             ULONG64 end=offsets[j]+(ULONG64)pitches[j]*heights[j]-1;
-            if(offsets[j]<dev->GspFbFreeBase || end>dev->GspFbFreeLimit ||
+            if(end>dev->GspFbFreeLimit ||
                (!j && end>=dev->NativeDisplayInstance)) return FALSE;
             desc[3]=(ULONG)(end>>8);
         }

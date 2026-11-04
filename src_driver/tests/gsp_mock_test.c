@@ -161,7 +161,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(tables[2064]==0);
             assert(tables[1025]==((physical+0x5000)>>4|0xc));
             assert(tables[2560]==((physical+0x6000)>>4|0xc));
-            assert(tables[3072]==0); /* Reserved low VRAM is deliberately unmapped. */
+            assert(tables[3072]==(dev.GspFbLayoutValid?1:0));
             assert(tables[4095]==0);
             assert(tables[3072+32]==(dev.GspFbLayoutValid?((0x200000ULL>>4)|1):0));
             assert(tables[2560+16*2]==((physical+0x7000)>>4|0xc));
@@ -579,11 +579,10 @@ int main(void)
             if(scenario==0) {
                 UCHAR pixels[512];
                 for(ULONG i=0;i<sizeof(pixels);i++) pixels[i]=(UCHAR)(i*17+3);
-                assert(NvxGspUpload(&dev,dev.GspVramGpuVa+0x200000,pixels,sizeof(pixels)));
-                assert(!memcmp(gpuVram+0x200000,pixels,sizeof(pixels)));
+                assert(NvxGspUpload(&dev,dev.GspVramGpuVa,pixels,sizeof(pixels)));
+                assert(!memcmp(gpuVram,pixels,sizeof(pixels)));
                 assert(NvxGspUpload(&dev,dev.GspVramGpuVa+0x2000000,pixels,sizeof(pixels)));
                 assert(!memcmp(gpuVram+0x2000000,pixels,sizeof(pixels)));
-                assert(!NvxGspUpload(&dev,dev.GspVramGpuVa,pixels,sizeof(pixels)));
                 assert(!NvxGspUpload(&dev,dev.GspVramGpuVa+0x3de0000,pixels,sizeof(pixels)));
             }
             if(scenario==0) {

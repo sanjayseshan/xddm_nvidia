@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.175
+ * Driver Version: 1.0.0.176
  */
 
 #include "miniport.h"
@@ -1492,7 +1492,7 @@ BOOLEAN HwVidStartIO(
             status = ERROR_NOT_SUPPORTED;
             break;
         }
-        base=engine->GspVramGpuVa+(devExt->IsSecondaryDisplay?0x2000000ULL:0x200000ULL);
+        base=engine->GspVramGpuVa+(devExt->IsSecondaryDisplay?0x2000000ULL:0ULL);
         surfaceBytes=(ULONG64)devExt->Modes[devExt->CurrentModeIndex].ScreenStride*
             devExt->Modes[devExt->CurrentModeIndex].VisScreenHeight;
         srcSpan=(ULONG64)(params->LineCount-1)*params->SrcPitch+params->BytesPerLine;
@@ -1548,7 +1548,7 @@ BOOLEAN HwVidStartIO(
             status = ERROR_NOT_SUPPORTED;
             break;
         }
-        base=engine->GspVramGpuVa+(devExt->IsSecondaryDisplay?0x2000000ULL:0x200000ULL);
+        base=engine->GspVramGpuVa+(devExt->IsSecondaryDisplay?0x2000000ULL:0ULL);
         surfaceBytes=(ULONG64)devExt->Modes[devExt->CurrentModeIndex].ScreenStride*
             devExt->Modes[devExt->CurrentModeIndex].VisScreenHeight;
         if(params->DstGpuVa<base || params->DstGpuVa-base>surfaceBytes ||
@@ -1596,7 +1596,7 @@ BOOLEAN HwVidStartIO(
             status=ERROR_DEVICE_NOT_READY;break;
         }
         *(PULONG64)RequestPacket->OutputBuffer=engine->GspVramGpuVa+
-            (devExt->IsSecondaryDisplay?0x2000000ULL:0x200000ULL);
+            (devExt->IsSecondaryDisplay?0x2000000ULL:0ULL);
         statusBlock->Information=sizeof(ULONG64);status=NO_ERROR;
         LogStr("NVX [SCANOUT-VA]: secondary=");LogHex(devExt->IsSecondaryDisplay);
         LogStr(" gpuVa=");LogHex(*(PULONG64)RequestPacket->OutputBuffer);LogStr("\n");
@@ -1671,7 +1671,7 @@ BOOLEAN HwVidStartIO(
             break;
         }
         {
-            ULONG64 base=engine->GspVramGpuVa+(devExt->IsSecondaryDisplay?0x2000000ULL:0x200000ULL);
+            ULONG64 base=engine->GspVramGpuVa+(devExt->IsSecondaryDisplay?0x2000000ULL:0ULL);
             ULONG64 surfaceBytes=(ULONG64)devExt->Modes[devExt->CurrentModeIndex].ScreenStride*
                 devExt->Modes[devExt->CurrentModeIndex].VisScreenHeight;
             if(params->DstGpuVa<base || params->DstGpuVa-base>surfaceBytes ||
@@ -1785,7 +1785,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.175 (coherent GSP channel sysmem, dual doorbell, safe VGA fallback)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.176 (zero-offset primary scanout, aligned DualView base, coherent GSP CE)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));
