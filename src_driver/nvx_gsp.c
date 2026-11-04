@@ -445,33 +445,39 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
     chan[32]=dev->GspCopyEngineType;
     chan[34]=0;                         /* subDeviceId = 0 */
 
-    /* NV_MEMORY_CACHED=0 and NV_MEMORY_UNCACHED=1 in the RM ABI. */
+    /* All descriptors describe OS-owned coherent SYSTEM memory.
+       In the RM ABI, NV_MEMORY_CACHED=0 and NV_MEMORY_UNCACHED=1.
+       Passing NV_MEMORY_CACHED (0) instructs GSP-RM to map system memory as
+       GMMU_APERTURE_SYS_COH (coherent PCIe snooping enabled), matching official
+       NVIDIA driver (kernel_channel.c) and Nouveau (r535/fifo.c).
+       Passing UNCACHED (1) causes GSP-RM to set SYS_NONCOH, generating PCIe
+       No-Snoop accesses which fail bare-metal CPU-GPU coherency on USERD. */
     chan[36]=(ULONG)instPhys;
     chan[37]=(ULONG)(instPhys>>32);
     chan[38]=0x1000;
     chan[40]=1;         /* ADDR_SYSMEM, never a VRAM physical offset */
-    chan[41]=1;         /* NV_MEMORY_UNCACHED */
+    chan[41]=0;         /* NV_MEMORY_CACHED (coherent sysmem) */
 
     /* userdMem: slot 1, matching CHANNEL_USERD_INDEX_VALUE. */
     chan[42]=(ULONG)userdPhys;
     chan[43]=(ULONG)(userdPhys>>32);
     chan[44]=0x200;
-    chan[46]=1;
-    chan[47]=1;         /* NV_MEMORY_UNCACHED */
+    chan[46]=1;         /* ADDR_SYSMEM */
+    chan[47]=0;         /* NV_MEMORY_CACHED (coherent sysmem) */
 
     /* ramfcMem aliases the beginning of the instance block. */
     chan[48]=(ULONG)instPhys;
     chan[49]=(ULONG)(instPhys>>32);
     chan[50]=0x200;
-    chan[52]=1;
-    chan[53]=1;         /* NV_MEMORY_UNCACHED */
+    chan[52]=1;         /* ADDR_SYSMEM */
+    chan[53]=0;         /* NV_MEMORY_CACHED (coherent sysmem) */
 
     /* mthdbufMem: at scratch offset 0x4000 (ADDR_SYSMEM = 1, CACHED = 0) */
     chan[54]=(ULONG)mthdbufPhys;
     chan[55]=(ULONG)(mthdbufPhys>>32);
     chan[56]=mthdSize?mthdSize:0x1000;
     chan[58]=1;         /* addressSpace = ADDR_SYSMEM */
-    chan[59]=0;         /* cacheAttrib = UNCACHED */
+    chan[59]=0;         /* cacheAttrib = NV_MEMORY_CACHED */
 
     /* internalFlags: ADMIN (1) | ERROR_NOTIFIER_TYPE_NONE (4) | ECC_ERROR_NOTIFIER_TYPE_NONE (0x10) */
     chan[61]=0x15;
@@ -659,9 +665,9 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
         ULONG chcfg=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+4));
         chramBase=chcfg&0xfffffff0U;
         for(ULONG i=0;i<3;i++) {
-            ULONG current=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x208+i*64));
-            ULONG inst=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x210+i*64));
-            ULONG instHi=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x214+i*64));
+            ULONG current=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x200+i*0x40));
+            ULONG inst=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x208+i*0x40));
+            ULONG instHi=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x20c+i*0x40));
             LogStr("NVX [COPY]: runlist-engine=");LogHex(i);
             LogStr(" channel-status=");LogHex(current);
             LogStr(" inst-lo=");LogHex(inst);LogStr(" inst-hi=");LogHex(instHi);LogStr("\n");

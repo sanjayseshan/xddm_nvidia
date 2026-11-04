@@ -1,10 +1,9 @@
 # NVIDIA GA104 XDDM driver for Windows XP x64
 
 This experimental driver brings up a Windows XP x64 desktop on NVIDIA Ampere
-GA104 hardware. The latest tested build, v169, brings up two displays attached
-to an EVGA GeForce RTX 3070 XC3 Ultra LHR at 1920×1080 primary and 2560×1440
-secondary. The user confirms the orange artifacts seen in v168 are gone in
-v169.
+GA104 hardware. Build v175 configures coherent host system memory descriptors
+(`NV_MEMORY_CACHED`) for GSP-RM channels so bare-metal PCIe reads snoop host RAM,
+pairing with uncached common buffers, dual Ampere doorbells, and safe VGA fallback.
 
 The v168 hardware log confirms GSP initialization, both native display heads,
 and GPU solid-fill activity. The v168 run showed orange artifacts while

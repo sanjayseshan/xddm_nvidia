@@ -132,14 +132,18 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             assert(request[28+36]==(ULONG)(scratchPhys+0x2000));
             assert(request[28+38]==0x1000);
             assert(request[28+40]==1); /* SYSMEM */
+            assert(request[28+41]==0); /* NV_MEMORY_CACHED (coherent sysmem) */
             assert(request[28+42]==(ULONG)(scratchPhys+0x3200));
             assert(request[28+44]==0x200);
             assert(request[28+46]==1); /* SYSMEM */
+            assert(request[28+47]==0); /* NV_MEMORY_CACHED (coherent sysmem) */
             assert(request[28+48]==(ULONG)(scratchPhys+0x2000));
             assert(request[28+50]==0x200);
             assert(request[28+52]==1); /* SYSMEM */
+            assert(request[28+53]==0); /* NV_MEMORY_CACHED (coherent sysmem) */
             assert(request[28+54]==(ULONG)(scratchPhys+0x4000));
             assert(request[28+58]==1); /* SYSMEM */
+            assert(request[28+59]==0); /* NV_MEMORY_CACHED (coherent sysmem) */
             assert(request[28+61]==0x15);
         }
         if(f==103&&request[23]==0xc7b5) {

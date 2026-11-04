@@ -1,5 +1,5 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 4, 2026 (v174 uncached common buffer + dual doorbell kick prepared)
+Updated: November 4, 2026 (v175 coherent GSP channel sysmem descriptors configured)
 
 Confirmed baseline: v164 works on the test EVGA RTX 3070 XC3 Ultra LHR with
 two physical displays. The primary runs at 1920x1080 and the secondary at
@@ -104,6 +104,18 @@ enabled (CacheEnabled=TRUE), leaving writes invisible to the GPU. v174 pairs the
 uncached CPU mapping (CacheEnabled=FALSE) with the dual doorbell kick: writing
 token = (runlistId << 16) | chid (0x10001) to BAR0 + 0x30090 AND writing 1 to
 runlistBase + 0x90. Safe VGA fallback is preserved when scanout is unverified.
+
+v175 fixes the root cause of the bare-metal copy timeout: channel descriptor
+cache attributes. In v174, GSP channel allocation passed cacheAttrib = 1
+(NV_MEMORY_UNCACHED) for instanceMem, userdMem, and ramfcMem. In the NVIDIA RM ABI,
+passing NV_MEMORY_UNCACHED instructs GSP-RM to map system memory as
+GMMU_APERTURE_SYS_NONCOH, generating PCIe transactions with the No-Snoop (NS) bit
+set. In the VM, Linux VFIO IOMMU snoop control (IOMMU_CACHE) overrode No-Snoop and
+forced cache snooping; on bare metal without an IOMMU, No-Snoop accesses bypassed
+the CPU cache and read stale/zero USERD values (GPPut=0, queue empty). v175 sets
+cacheAttrib = 0 (NV_MEMORY_CACHED) for all host system memory descriptors, mapping
+them as GMMU_APERTURE_SYS_COH with hardware PCIe cache snooping enabled. Diagnostics
+now read engine status registers at runlistBase + 0x200 + i*0x40.
 
 Milestones:
 - v98: verified GSP-backed GPU copy execution on the RTX 3070.
