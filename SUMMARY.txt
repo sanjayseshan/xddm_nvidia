@@ -1,5 +1,5 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 4, 2026 (v173 copy-engine diagnostics and doorbell correction prepared)
+Updated: November 4, 2026 (v174 uncached common buffer + dual doorbell kick prepared)
 
 Confirmed baseline: v164 works on the test EVGA RTX 3070 XC3 Ultra LHR with
 two physical displays. The primary runs at 1920x1080 and the secondary at
@@ -85,7 +85,7 @@ the offline XP volume to be writable, copies the binaries, and verifies exact
 source/destination matches. The XP installation currently mounted read-only
 must not be modified until it is safely remounted read-write after XP shutdown.
 
-v173 addresses the copy timeout without treating the log as proof of a unique
+v173 addressed the copy timeout without treating the log as proof of a unique
 hardware cause. The v171 native log's GSP common buffer was below 4 GiB, so the
 proposed Above-4G address rejection did not cause that observed timeout. v173
 requests an uncached CPU mapping for the common DMA buffer, avoids fabricating
@@ -93,12 +93,17 @@ a global doorbell token when GSP-RM returns zero, and continues to use the
 GSP/runlist internal doorbell path. The driver now queries connector/EDID state
 before attempting CE execution, so a CE timeout no longer skips display
 discovery. Timeout logs now include selected runlist engine/channel registers
-and CHRAM values to distinguish scheduling from queue/fence problems. Host
-tests verify uncached allocation, internal-doorbell-only submission, and that
-display discovery still completes when the guarded copy test times out. The
-driver and host tests pass; v173 has not yet been run on native XP, so copy
-execution remains unconfirmed. The safe VGA fallback remains enabled when
-native scanout is unverified.
+and CHRAM values to distinguish scheduling from queue/fence problems.
+
+v174 resolves the doorbell and cache interaction. On native XP hardware, the v173
+log confirmed that CHRAM transitioned to 0x46 (channel 1 enabled, on PBDMA),
+confirming that the runlist processor picked up the channel, but PBDMA did not
+advance GPGet without the Ampere usermode doorbell (BAR0 + 0x30090, NV_VIRTUAL_FUNCTION_DOORBELL).
+In v172, 0x30090 was written but common buffer memory had CPU write-back caching
+enabled (CacheEnabled=TRUE), leaving writes invisible to the GPU. v174 pairs the
+uncached CPU mapping (CacheEnabled=FALSE) with the dual doorbell kick: writing
+token = (runlistId << 16) | chid (0x10001) to BAR0 + 0x30090 AND writing 1 to
+runlistBase + 0x90. Safe VGA fallback is preserved when scanout is unverified.
 
 Milestones:
 - v98: verified GSP-backed GPU copy execution on the RTX 3070.

@@ -350,7 +350,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         PULONG push=(PULONG)(scratch+0x9000),userd=(PULONG)(scratch+0x3200);
         ULONG64 entry=*(PULONG64)scratch;
         ULONG64 address=(entry&0xfffffffcULL)|((entry>>32&0xffULL)<<32);
-        assert(value==1&&regs[0x30090/4]==0&&regs[0x220490/4]==1&&userd[0x8c/4]==1);
+        assert(value==1&&regs[0x30090/4]==0x40001&&regs[0x220490/4]==1&&userd[0x8c/4]==1);
         assert(address==dev.GspScratchGpuVa+0x9000&&(entry>>42)==68);
         assert(push[0]==0x20018000&&push[1]==0xc7b5);
         assert(push[2]==0x20048100&&push[3]==0&&push[4]==0x21000000);
@@ -450,7 +450,7 @@ static void test_reusable_queue(void) {
     dev_q.GspCopyVerified = TRUE;
     dev_q.GspScratchGpuVa = 0x10000000;
     dev_q.GspRunlistBase = 0xc00400;
-    dev_q.GspSubmitToken = 0;
+    dev_q.GspSubmitToken = 0x10001;
     dev_q.GspGPPut = 1;
     dev_q.GspNextFence = 0x100;
     dev_q.Bar0MmioVirtual = regs;

@@ -551,9 +551,10 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
         chcfg=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+base+4));
         enable=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+base+0x300));
         if(dbcfg==0xffffffffU||(dbcfg&0xffff0000U)==0xbadf0000U) return FALSE;
+        token=(dbcfg&0xffff0000U)|1;
         runlistBase=base;
         dev->GspRunlistBase=base;
-        dev->GspSubmitToken=0;
+        dev->GspSubmitToken=token;
         dev->GspGPPut=1;
         dev->GspNextFence=0x91c0ffefU;
         LogStr("NVX [COPY]: physical runlist=");LogHex(base);LogStr(" dbcfg=");LogHex(dbcfg);
@@ -613,7 +614,10 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
     push[n++]=0x200180c0;push[n++]=0x0400000c; /* flushed one-word semaphore release */
     fifo[0]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|((ULONG64)n<<42);
     __sync_synchronize();userd[0x8c/4]=1;__sync_synchronize();
-    /* GSP internal doorbell value: GFID 0, physical channel ID 1. */
+    /* Ring both the Ampere usermode doorbell (0x30090) and the runlist internal doorbell (runlistBase+0x90). */
+    if(dev->Bar0Length>=0x30094) {
+        VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),token);
+    }
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x90),1);
     LogStr("NVX [COPY]: submitted guarded VRAM write/read/restore roundtrip and completion release.\n");
     /* Cold bare-metal GSP/channel startup can take longer than the VM path.
@@ -750,6 +754,9 @@ static BOOLEAN NvxGspSubmitCopyUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,UL
     userd[0x8c/4] = dev->GspGPPut;
     __sync_synchronize();
 
+    if(dev->Bar0Length>=0x30094) {
+        VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),dev->GspSubmitToken);
+    }
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+dev->GspRunlistBase+0x90),1);
 
     for(ULONG wait=0;wait<20000;wait++) {
@@ -827,6 +834,9 @@ static BOOLEAN NvxGspSubmitFillUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,UL
     userd[0x8c/4] = dev->GspGPPut;
     __sync_synchronize();
 
+    if(dev->Bar0Length>=0x30094) {
+        VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),dev->GspSubmitToken);
+    }
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+dev->GspRunlistBase+0x90),1);
 
     for(ULONG wait=0;wait<20000;wait++) {
