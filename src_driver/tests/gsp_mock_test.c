@@ -32,7 +32,8 @@ PVOID VideoPortGetDmaAdapter(PVOID extension,PVP_DEVICE_DESCRIPTION desc)
 VOID VideoPortPutDmaAdapter(PVOID extension,PVOID adapter) { (void)extension;(void)adapter; }
 PVOID VideoPortAllocateCommonBuffer(PVOID e,PVOID a,ULONG n,PPHYSICAL_ADDRESS pa,BOOLEAN c,PVOID r)
 {
-    (void)e;(void)a;(void)c;(void)r;
+    (void)e;(void)a;(void)r;
+    assert(!c); /* GSP DMA memory must not remain in CPU write-back cache. */
     pa->QuadPart=0x10004000; /* 4KB aligned, deliberately not 64KB aligned */
     return calloc(1,n);
 }
@@ -349,7 +350,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         PULONG push=(PULONG)(scratch+0x9000),userd=(PULONG)(scratch+0x3200);
         ULONG64 entry=*(PULONG64)scratch;
         ULONG64 address=(entry&0xfffffffcULL)|((entry>>32&0xffULL)<<32);
-        assert(value==1&&regs[0x30090/4]==0x40001&&userd[0x8c/4]==1);
+        assert(value==1&&regs[0x30090/4]==0&&regs[0x220490/4]==1&&userd[0x8c/4]==1);
         assert(address==dev.GspScratchGpuVa+0x9000&&(entry>>42)==68);
         assert(push[0]==0x20018000&&push[1]==0xc7b5);
         assert(push[2]==0x20048100&&push[3]==0&&push[4]==0x21000000);
@@ -449,7 +450,7 @@ static void test_reusable_queue(void) {
     dev_q.GspCopyVerified = TRUE;
     dev_q.GspScratchGpuVa = 0x10000000;
     dev_q.GspRunlistBase = 0xc00400;
-    dev_q.GspSubmitToken = 0x10001;
+    dev_q.GspSubmitToken = 0;
     dev_q.GspGPPut = 1;
     dev_q.GspNextFence = 0x100;
     dev_q.Bar0MmioVirtual = regs;
@@ -508,8 +509,14 @@ int main(void)
         assert(dev.GspInitialized==(scenario==0 || scenario>=3));
         if (dev.GspInitialized) {
             assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==
-                   (ULONG)((scenario==4?30:28)+(dev.GspCopyVerified?15:0)+dev.MonitorCount+
+                   (ULONG)((scenario==4?30:28)+15+dev.MonitorCount+
                            (scenario==12?5:0)));
+            if(scenario==4) {
+                assert(!dev.GspCopyVerified);
+                assert(dev.GspDisplayHandle==0x73000001);
+                assert(dev.GspSupportedDisplays==5 && dev.GspConnectedDisplays==5);
+                assert(dev.MonitorCount==2);
+            }
             if(dev.GspCopyVerified) {
                 assert(dev.GspDisplayHandle==0x73000001);
                 assert(dev.NativeDisplayHandle==0xc6700001 && dev.NativeDisplayCaps==3);

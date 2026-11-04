@@ -43,8 +43,13 @@ On native XP the GDI surface initialized, but the display stayed black. The log
 does not prove that the mapped BAR aperture was an active scanout surface.
 v172 removes that unverified path: if GSP scanout setup is not verified, the
 display driver rejects the surface and lets XP use its safe VGA fallback,
-including 4-bit color. This is a diagnostic safety correction and still needs
-physical testing; see [SUMMARY.txt](SUMMARY.txt).
+including 4-bit color. v173 makes the CE copy probe independent of connector
+and EDID discovery, maps GSP DMA common memory uncached on the CPU side, and
+removes the fabricated global user-mode doorbell write when GSP-RM returns a
+zero external work token. It records runlist engine/channel state after a
+timeout. v173 is built and host-tested, but needs a native XP run to establish
+whether the copy queue advances and whether display discovery survives a copy
+timeout; see [SUMMARY.txt](SUMMARY.txt).
 
 ## Compatibility and limits
 

@@ -1,5 +1,5 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 4, 2026 (v172 safe native-XP fallback prepared)
+Updated: November 4, 2026 (v173 copy-engine diagnostics and doorbell correction prepared)
 
 Confirmed baseline: v164 works on the test EVGA RTX 3070 XC3 Ultra LHR with
 two physical displays. The primary runs at 1920x1080 and the secondary at
@@ -80,10 +80,25 @@ return to the safe VGA fallback (which may be 4-bit). The existing 32-bit DMA
 request and >4 GiB rejection remain in place; native 64-bit Falcon DMA is not
 enabled.
 
-v172 is a prepared, untested correction. `./update_xp_driver.sh` builds both binaries, requires
+v172 was an untested safety correction. `./update_xp_driver.sh` builds both binaries, requires
 the offline XP volume to be writable, copies the binaries, and verifies exact
 source/destination matches. The XP installation currently mounted read-only
 must not be modified until it is safely remounted read-write after XP shutdown.
+
+v173 addresses the copy timeout without treating the log as proof of a unique
+hardware cause. The v171 native log's GSP common buffer was below 4 GiB, so the
+proposed Above-4G address rejection did not cause that observed timeout. v173
+requests an uncached CPU mapping for the common DMA buffer, avoids fabricating
+a global doorbell token when GSP-RM returns zero, and continues to use the
+GSP/runlist internal doorbell path. The driver now queries connector/EDID state
+before attempting CE execution, so a CE timeout no longer skips display
+discovery. Timeout logs now include selected runlist engine/channel registers
+and CHRAM values to distinguish scheduling from queue/fence problems. Host
+tests verify uncached allocation, internal-doorbell-only submission, and that
+display discovery still completes when the guarded copy test times out. The
+driver and host tests pass; v173 has not yet been run on native XP, so copy
+execution remains unconfirmed. The safe VGA fallback remains enabled when
+native scanout is unverified.
 
 Milestones:
 - v98: verified GSP-backed GPU copy execution on the RTX 3070.

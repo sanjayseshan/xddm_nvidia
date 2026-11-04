@@ -445,28 +445,28 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
     chan[32]=dev->GspCopyEngineType;
     chan[34]=0;                         /* subDeviceId = 0 */
 
-    /* All descriptors describe OS-owned coherent SYSTEM memory. */
+    /* NV_MEMORY_CACHED=0 and NV_MEMORY_UNCACHED=1 in the RM ABI. */
     chan[36]=(ULONG)instPhys;
     chan[37]=(ULONG)(instPhys>>32);
     chan[38]=0x1000;
     chan[40]=1;         /* ADDR_SYSMEM, never a VRAM physical offset */
-    chan[41]=1;         /* cacheAttrib = CACHED */
+    chan[41]=1;         /* NV_MEMORY_UNCACHED */
 
     /* userdMem: slot 1, matching CHANNEL_USERD_INDEX_VALUE. */
     chan[42]=(ULONG)userdPhys;
     chan[43]=(ULONG)(userdPhys>>32);
     chan[44]=0x200;
     chan[46]=1;
-    chan[47]=1;         /* cacheAttrib = CACHED */
+    chan[47]=1;         /* NV_MEMORY_UNCACHED */
 
     /* ramfcMem aliases the beginning of the instance block. */
     chan[48]=(ULONG)instPhys;
     chan[49]=(ULONG)(instPhys>>32);
     chan[50]=0x200;
     chan[52]=1;
-    chan[53]=1;         /* cacheAttrib = CACHED */
+    chan[53]=1;         /* NV_MEMORY_UNCACHED */
 
-    /* mthdbufMem: at scratch offset 0x4000 (ADDR_SYSMEM = 1, UNCACHED = 0) */
+    /* mthdbufMem: at scratch offset 0x4000 (ADDR_SYSMEM = 1, CACHED = 0) */
     chan[54]=(ULONG)mthdbufPhys;
     chan[55]=(ULONG)(mthdbufPhys>>32);
     chan[56]=mthdSize?mthdSize:0x1000;
@@ -527,17 +527,15 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
     const ULONG done=0x91c0ffee,guard=0xf17e55aa;
     dev->GspCopyVerified=FALSE;
     dev->GspChannelFaulted=FALSE;
-    if(dev->Bar0Length<0x30094||!dev->GspCopyEngineHandle||!va) return FALSE;
+    if(dev->Bar0Length<0x94||!dev->GspCopyEngineHandle||!va) return FALSE;
     if(!NvxGspControl(dev,dev->GspChannelHandle,0xc36f0108,&token,sizeof(token))) {
         LogStr("NVX [COPY]: work-submit token unavailable; no commands submitted.\n");
         return FALSE;
     }
     token=((const ULONG *)dev->RpcRxRecord)[26];
     LogStr("NVX [COPY]: RM work-submit token=");LogHex(token);LogStr("\n");
-    /* GSP's 535 kfifoGenerateWorkSubmitToken_GA100() generates an internal
-       token but returns its initially-zero external value. Nouveau uses
-       the physical runlist doorbell selector and the client-fixed ChID.
-       Our PAGE_FIXED flags reserve USERD page 0 / slot 1, i.e. ChID 1. */
+    /* GSP-RM returns zero for the external work-submit token. Do not invent a
+       non-GSP token from the runlist selector; use the GSP internal doorbell. */
     runlistQuery[0]=dev->GspCopyEngineType;
     if(!NvxGspControl(dev,dev->GspSubdeviceHandle,0x20800179,runlistQuery,sizeof(runlistQuery))) {
         LogStr("NVX [COPY]: selected CE runlist query failed; no commands submitted.\n");return FALSE;
@@ -553,15 +551,15 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
         chcfg=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+base+4));
         enable=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+base+0x300));
         if(dbcfg==0xffffffffU||(dbcfg&0xffff0000U)==0xbadf0000U) return FALSE;
-        token=(dbcfg&0xffff0000U)|1;
         runlistBase=base;
         dev->GspRunlistBase=base;
-        dev->GspSubmitToken=token;
+        dev->GspSubmitToken=0;
         dev->GspGPPut=1;
         dev->GspNextFence=0x91c0ffefU;
         LogStr("NVX [COPY]: physical runlist=");LogHex(base);LogStr(" dbcfg=");LogHex(dbcfg);
         LogStr(" chcfg=");LogHex(chcfg);LogStr(" enable=");LogHex(enable);
-        LogStr(" token=");LogHex(token);LogStr("\n");
+        LogStr(" runlistId=");LogHex((dbcfg>>16)&0xffffU);
+        LogStr(" workToken=");LogHex(token);LogStr(" chid=0x1\n");
         {
             ULONG chram=chcfg&0xfffffff0U;
             if(chram&&chram<=dev->Bar0Length-8) {
@@ -615,11 +613,7 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
     push[n++]=0x200180c0;push[n++]=0x0400000c; /* flushed one-word semaphore release */
     fifo[0]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|((ULONG64)n<<42);
     __sync_synchronize();userd[0x8c/4]=1;__sync_synchronize();
-    /* Ampere USERMODE window is BAR0+0x30000, NOT Volta's 0x810000. */
-    VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),token);
-    /* Match ga100_chan_start(): an initial per-runlist notification is
-       needed when starting the client-allocated channel (GFID 0, ChID 1).
-       Re-notifying the same published GPPut does not enqueue extra work. */
+    /* GSP internal doorbell value: GFID 0, physical channel ID 1. */
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x90),1);
     LogStr("NVX [COPY]: submitted guarded VRAM write/read/restore roundtrip and completion release.\n");
     /* Cold bare-metal GSP/channel startup can take longer than the VM path.
@@ -657,6 +651,24 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
     {
         PULONG ramfc=(PULONG)(scratch+0x2000);
         ULONG fault[26]={0};
+        ULONG chramBase=0;
+        ULONG chcfg=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+4));
+        chramBase=chcfg&0xfffffff0U;
+        for(ULONG i=0;i<3;i++) {
+            ULONG current=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x208+i*64));
+            ULONG inst=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x210+i*64));
+            ULONG instHi=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x214+i*64));
+            LogStr("NVX [COPY]: runlist-engine=");LogHex(i);
+            LogStr(" channel-status=");LogHex(current);
+            LogStr(" inst-lo=");LogHex(inst);LogStr(" inst-hi=");LogHex(instHi);LogStr("\n");
+        }
+        if(chramBase&&chramBase+8<=dev->Bar0Length) {
+            LogStr("NVX [COPY]: CHRAM after timeout slot0=");
+            LogHex(VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+chramBase)));
+            LogStr(" slot1=");
+            LogHex(VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+chramBase+4)));
+            LogStr("\n");
+        }
         LogStr("NVX [COPY]: RAMFC userdLo=");LogHex(ramfc[0x8/4]);
         LogStr(" userdHi=");LogHex(ramfc[0xc/4]);LogStr(" gpBaseLo=");LogHex(ramfc[0x48/4]);
         LogStr(" gpBaseHi=");LogHex(ramfc[0x4c/4]);LogStr(" chid=");LogHex(ramfc[0xe8/4]);LogStr("\n");
@@ -738,7 +750,6 @@ static BOOLEAN NvxGspSubmitCopyUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,UL
     userd[0x8c/4] = dev->GspGPPut;
     __sync_synchronize();
 
-    VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),dev->GspSubmitToken);
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+dev->GspRunlistBase+0x90),1);
 
     for(ULONG wait=0;wait<20000;wait++) {
@@ -816,7 +827,6 @@ static BOOLEAN NvxGspSubmitFillUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,UL
     userd[0x8c/4] = dev->GspGPPut;
     __sync_synchronize();
 
-    VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),dev->GspSubmitToken);
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+dev->GspRunlistBase+0x90),1);
 
     for(ULONG wait=0;wait<20000;wait++) {
@@ -1703,6 +1713,8 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
     if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0x20800001,0x2080,&subdevice,4)) return FALSE;
     dev->GspSubdeviceHandle=0x20800001;
     if(!NvxGspGetName(dev)) return FALSE;
+    /* Connector and EDID discovery does not depend on CE execution. */
+    NvxGspDiscoverDisplays(dev);
     /* Private externally owned VASpace; page directory installed below. */
     va.flags=8;
     if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0x90f10001,0x90f1,&va,sizeof(va))) return FALSE;
@@ -1715,7 +1727,6 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
     if(!NvxGspAllocChannel(dev)) return FALSE;
     LogStr("NVX [RM]: dedicated channel and copy engine allocated; testing GPU execution.\n");
     if(!NvxGspCopySmokeTest(dev)) return FALSE;
-    NvxGspDiscoverDisplays(dev);
     return TRUE;
 }
 
@@ -1971,7 +1982,7 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
         devExt->DmaAdapter,
         devExt->GspDmaLength,
         &devExt->GspDmaPhysical,
-        TRUE,
+        FALSE,
         NULL
     );
 
@@ -1986,7 +1997,7 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
     LogHex((ULONG64)devExt->GspDmaPhysical.QuadPart);
     LogStr(" end=");
     LogHex((ULONG64)devExt->GspDmaPhysical.QuadPart + devExt->GspDmaLength);
-    LogStr(" requested 32-bit=1 64-bit=0\n");
+    LogStr(" requested 32-bit=1 64-bit=0 cpu-cache=disabled\n");
     if ((devExt->GspDmaPhysical.QuadPart & 0xfff) ||
         (ULONG64)devExt->GspDmaPhysical.QuadPart + devExt->GspDmaLength > 0x100000000ULL) {
         LogStr("NVX [GSP]: VideoPort violated the requested 32-bit DMA range or alignment; GSP remains disabled.\n");
