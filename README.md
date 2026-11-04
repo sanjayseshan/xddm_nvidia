@@ -1,12 +1,11 @@
 # NVIDIA GA104 XDDM driver for Windows XP x64
 
 This experimental driver brings up a Windows XP x64 desktop on NVIDIA Ampere
-GA104 hardware. Build v179 fixes child state configuration validation and DualView monitor separation:
-1. `IOCTL_VIDEO_VALIDATE_CHILD_STATE_CONFIGURATION` returns `1` (proceed) and sets output length, resolving the issue where checking "Extend my Windows desktop onto this monitor" immediately unchecked itself.
-2. `IOCTL_VIDEO_SET_CHILD_STATE_CONFIGURATION` correctly parses requested child device states and updates DualView attachment flags.
-3. `IOCTL_VIDEO_GET_CHILD_STATE` returns `VIDEO_CHILD_DETACHED` (without `VIDEO_CHILD_ACTIVE`) on the primary adapter for the secondary display, preventing `desk.cpl` from treating the primary adapter as driving multiple simultaneous displays and mislabeling the secondary display as `(Multiple Monitors)`.
-4. Secondary device extension records its own monitor count and EDID block directly upon creation.
-5. Buffered miniport logs are flushed on PnP/Power dispatches.
+GA104 hardware. Build v180 fixes secondary desktop activation and prevents primary display black flash:
+1. In `NvxNativeSetSecondaryScanout`, decouples modeset success from GSP-RM software display tracking queries (`NvxGspVerifyDisplays`), which return 0 for Head 1 because Head 1 is programmed directly via hardware EVO pushbuffer methods.
+2. In `IOCTL_VIDEO_SET_CURRENT_MODE` and `IOCTL_VIDEO_MAP_VIDEO_MEMORY`, removes destructive fallback calls to `NvxVbeSetMode(prim, prim->CurrentModeIndex)`, eliminating the flash of black on the primary monitor when extending the desktop.
+3. Unconditionally returns `NO_ERROR` on secondary mode set after committing native scanout and window routing, allowing GDI `DrvEnableSurface` to successfully map secondary video memory and scanout GPU VA for the Lenovo 1440p display.
+4. Preserves all child state configuration validation and DualView separation from v179.
 
 The v168 hardware log confirms GSP initialization, both native display heads,
 and GPU solid-fill activity. The v168 run showed orange artifacts while

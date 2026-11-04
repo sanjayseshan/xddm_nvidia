@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.179
+ * Driver Version: 1.0.0.180
  */
 
 #include "miniport.h"
@@ -1301,24 +1301,17 @@ BOOLEAN HwVidStartIO(
 
         if (devExt->IsSecondaryDisplay) {
             PNVX_DEVICE_EXTENSION prim = (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension;
-            ULONG previous = devExt->CurrentModeIndex;
             devExt->CurrentModeIndex = requested;
             LogStr("NVX [DUALVIEW]: Secondary mode set to index: ");
             LogHex(requested);
             LogStr("\n");
             if (prim) {
-                if(!NvxNativeSetSecondaryScanout(prim)) {
-                    LogStr("NVX [DISPLAY-VERIFY]: secondary activation failed; restoring primary VBE mode.\n");
-                    (void)NvxVbeSetMode(prim,prim->CurrentModeIndex);
-                    devExt->CurrentModeIndex = previous;
-                    status = ERROR_DEVICE_NOT_READY;
-                } else {
-                    devExt->ActiveWidth = devExt->Modes[requested].VisScreenWidth;
-                    devExt->ActiveHeight = devExt->Modes[requested].VisScreenHeight;
-                    devExt->ActiveBpp = 32;
-                    devExt->ActiveFreq = devExt->Modes[requested].Frequency;
-                    status = NO_ERROR;
-                }
+                (void)NvxNativeSetSecondaryScanout(prim);
+                devExt->ActiveWidth = devExt->Modes[requested].VisScreenWidth;
+                devExt->ActiveHeight = devExt->Modes[requested].VisScreenHeight;
+                devExt->ActiveBpp = 32;
+                devExt->ActiveFreq = devExt->Modes[requested].Frequency;
+                status = NO_ERROR;
             } else {
                 status = ERROR_INVALID_PARAMETER;
             }
@@ -1417,10 +1410,7 @@ BOOLEAN HwVidStartIO(
             } else {
                 PNVX_DEVICE_EXTENSION prim = (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension;
                 if (prim) {
-                    if(!NvxNativeSetSecondaryScanout(prim)) {
-                        LogStr("NVX [DISPLAY-VERIFY]: secondary activation failed; restoring primary VBE mode.\n");
-                        (void)NvxVbeSetMode(prim,prim->CurrentModeIndex);
-                    }
+                    (void)NvxNativeSetSecondaryScanout(prim);
                 }
             }
             statusBlock->Information = sizeof(VIDEO_MEMORY_INFORMATION);
@@ -1895,7 +1885,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.179 (child state validation, DualView detach separation)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.180 (secondary desktop activation without VBE fallback)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

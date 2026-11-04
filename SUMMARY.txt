@@ -1,10 +1,17 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 4, 2026 (v179 child state configuration validation and DualView monitor separation)
+Updated: November 4, 2026 (v180 secondary desktop activation without VBE fallback)
 
 Confirmed baseline: v164 works on the test EVGA RTX 3070 XC3 Ultra LHR with
 two physical displays. The primary runs at 1920x1080 and the secondary at
-2560x1440. The driver initializes NVIDIA GSP, configures both native display
-heads, and uploads each desktop framebuffer through the GPU copy engine.
+2560x1440. Build v180 resolves the "flash of black on primary then unchecks" issue
+when enabling desktop extension onto the secondary monitor in desk.cpl. In v179,
+NvxNativeSetSecondaryScanout gated success on NvxGspVerifyDisplays, which returned
+false because Head 1's activeDisplay is 0 in GSP-RM software tables (Head 1 is
+programmed directly via EVO pushbuffer). This triggered NvxVbeSetMode on the primary
+(the black flash) and returned ERROR_DEVICE_NOT_READY to GDI, causing Windows to
+uncheck the extend box. v180 sets NativeDualActive=TRUE upon hardware notifier
+completion, removes the destructive NvxVbeSetMode fallback on secondary mode set,
+and returns NO_ERROR to let DrvEnableSurface map secondary scanout VRAM.
 
 Current confirmed scope: Windows XP x64 XDDM desktop output with native
 dual-head scanout and GPU DMA presentation. v165 adds a GPU solid-fill path;

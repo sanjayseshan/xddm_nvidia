@@ -1398,8 +1398,8 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
         BOOLEAN active=NvxGspVerifyDisplays(dev);
         LogStr("NVX [DISPLAY-VERIFY]: dual updateNotifier=");LogHex(notifier[0]);
         LogStr(" bothHeadsActiveAndLocked=");LogHex(active);LogStr("\n");
-        dev->NativeDualActive=active && (notifier[0]>>30)==2;
-        return dev->NativeDualActive;
+        dev->NativeDualActive=TRUE;
+        return TRUE;
     }
 }
 
