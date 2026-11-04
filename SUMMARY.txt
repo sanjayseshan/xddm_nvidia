@@ -1,5 +1,5 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 4, 2026 (v177 secondary display channel init, DualView enumeration & activation)
+Updated: November 4, 2026 (v178 primary mode index retention, secondary scanout activation)
 
 Confirmed baseline: v164 works on the test EVGA RTX 3070 XC3 Ultra LHR with
 two physical displays. The primary runs at 1920x1080 and the secondary at

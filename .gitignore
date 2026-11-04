@@ -6,6 +6,7 @@
 *.o
 *.a
 *.dll
+*.zip
 
 # Mutable hardware logs and local tools
 *.log

@@ -753,9 +753,7 @@ VP_STATUS HwVidGetVideoChildDescriptor(
             return VIDEO_ENUM_NO_MORE_DEVICES;
 
         if (ChildEnumInfo->ChildIndex == 0) {
-            if (ChildEnumInfo->ACPIHwId != 0 &&
-                ChildEnumInfo->ACPIHwId != prim->MonitorIds[1] &&
-                ChildEnumInfo->ACPIHwId != 1 &&
+            if (ChildEnumInfo->ACPIHwId != prim->MonitorIds[1] &&
                 ChildEnumInfo->ACPIHwId != 2)
                 return VIDEO_ENUM_INVALID_DEVICE;
         } else if (ChildEnumInfo->ChildIndex != 1) {
@@ -1307,6 +1305,12 @@ BOOLEAN HwVidStartIO(
                     (void)NvxVbeSetMode(prim,prim->CurrentModeIndex);
                     devExt->CurrentModeIndex = previous;
                     status = ERROR_DEVICE_NOT_READY;
+                } else {
+                    devExt->ActiveWidth = devExt->Modes[requested].VisScreenWidth;
+                    devExt->ActiveHeight = devExt->Modes[requested].VisScreenHeight;
+                    devExt->ActiveBpp = 32;
+                    devExt->ActiveFreq = devExt->Modes[requested].Frequency;
+                    status = NO_ERROR;
                 }
             } else {
                 status = ERROR_INVALID_PARAMETER;
@@ -1335,6 +1339,11 @@ BOOLEAN HwVidStartIO(
             status = ERROR_INVALID_PARAMETER;
             break;
         }
+        devExt->CurrentModeIndex = requested;
+        devExt->ActiveWidth = devExt->Modes[requested].VisScreenWidth;
+        devExt->ActiveHeight = devExt->Modes[requested].VisScreenHeight;
+        devExt->ActiveBpp = devExt->Modes[requested].BitsPerPlane;
+        devExt->ActiveFreq = devExt->Modes[requested].Frequency;
         LogStr("NVX: Mode switched to index: ");
         LogHex(requested);
         LogStr("\n");
@@ -1817,7 +1826,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.177 (secondary display channel init, DualView enumeration & activation)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.178 (primary mode index retention, secondary scanout activation)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));
