@@ -41,6 +41,16 @@
 #define VIDEO_CHILD_DETACHED                            0x00000002U
 #endif
 
+typedef struct _VIDEO_CHILD_STATE {
+    uint32_t Id;
+    uint32_t State;
+} VIDEO_CHILD_STATE, *PVIDEO_CHILD_STATE;
+
+typedef struct _VIDEO_CHILD_STATE_CONFIGURATION {
+    uint32_t Count;
+    VIDEO_CHILD_STATE ChildStateArray[1];
+} VIDEO_CHILD_STATE_CONFIGURATION, *PVIDEO_CHILD_STATE_CONFIGURATION;
+
 #define NVX_C67D_SOR_SET_CONTROL(sor)                   (0x300U + (sor) * 0x20U)
 #define NVX_C67D_WINDOW_SET_CONTROL(win)                (0x1000U + (win) * 0x80U)
 

@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.177
+ * Driver Version: 1.0.0.179
  */
 
 #include "miniport.h"
@@ -1063,6 +1063,13 @@ VP_STATUS HwVidFindAdapter(
             sec->PciSlot = devExt->PciSlot;
             sec->PciBusNumber = devExt->PciBusNumber;
             sec->ActiveBpp = 32;
+            if (devExt->MonitorCount >= 2) {
+                sec->MonitorCount = 1;
+                sec->MonitorIds[0] = devExt->MonitorIds[1];
+                sec->MonitorEdidBytes[0] = devExt->MonitorEdidBytes[1];
+                sec->MonitorTiming[0] = devExt->MonitorTiming[1];
+                VideoPortMoveMemory(sec->MonitorEdid[0], devExt->MonitorEdid[1], sizeof(sec->MonitorEdid[0]));
+            }
             NvxInitSecondaryDisplayModes(sec);
         }
     }
@@ -1481,18 +1488,28 @@ BOOLEAN HwVidStartIO(
         isDell = (childId == 1 || childId == mon0);
 
         if (devExt->IsSecondaryDisplay) {
-            /* Secondary adapter: Child 2 (Lenovo) is active; Child 1 (Dell) is inactive */
-            if (isDell) {
-                state = 0;
-            } else {
+            /* Secondary adapter (\Device\Video1):
+             * Dell (mon0 / child 1) is inactive on secondary.
+             * Lenovo (mon1 / child 2) is the active display on secondary. */
+            if (isLenovo) {
                 state = VIDEO_CHILD_ACTIVE;
+            } else {
+                state = 0;
             }
         } else {
-            /* Primary adapter: Child 1 (Dell) is active; Child 2 (Lenovo) is detached to DualView */
-            if (isLenovo) {
-                state = VIDEO_CHILD_ACTIVE | VIDEO_CHILD_DETACHED;
-            } else {
+            /* Primary adapter (\Device\Video0):
+             * Dell (mon0 / child 1) is active on primary.
+             * Lenovo (mon1 / child 2) is detached to DualView secondary.
+             * Returning ONLY VIDEO_CHILD_DETACHED (without VIDEO_CHILD_ACTIVE)
+             * ensures Windows XP does not treat the primary adapter as driving
+             * multiple simultaneous displays ("(Multiple Monitors)"), and instead
+             * cleanly binds Lenovo to the secondary DualView adapter. */
+            if (isDell) {
                 state = VIDEO_CHILD_ACTIVE;
+            } else if (isLenovo) {
+                state = VIDEO_CHILD_DETACHED;
+            } else {
+                state = 0;
             }
         }
 
@@ -1502,8 +1519,58 @@ BOOLEAN HwVidStartIO(
         break;
     }
 
-    case IOCTL_VIDEO_VALIDATE_CHILD_STATE_CONFIGURATION:
+    case IOCTL_VIDEO_VALIDATE_CHILD_STATE_CONFIGURATION: {
+        PVIDEO_CHILD_STATE_CONFIGURATION config = (PVIDEO_CHILD_STATE_CONFIGURATION)RequestPacket->InputBuffer;
+        if (config && RequestPacket->InputBufferLength >= sizeof(ULONG)) {
+            LogStr("NVX [DUALVIEW]: VALIDATE_CHILD_STATE count=");
+            LogHex(config->Count);
+            LogStr(" IsSec=");
+            LogHex(devExt->IsSecondaryDisplay);
+            LogStr("\n");
+        }
+        if (RequestPacket->OutputBuffer && RequestPacket->OutputBufferLength >= sizeof(ULONG)) {
+            *(PULONG)RequestPacket->OutputBuffer = 1; /* 1 = proceed with change/extend */
+            statusBlock->Information = sizeof(ULONG);
+        }
+        status = NO_ERROR;
+        break;
+    }
+
     case IOCTL_VIDEO_SET_CHILD_STATE_CONFIGURATION: {
+        PVIDEO_CHILD_STATE_CONFIGURATION config = (PVIDEO_CHILD_STATE_CONFIGURATION)RequestPacket->InputBuffer;
+        PNVX_DEVICE_EXTENSION prim = devExt->IsSecondaryDisplay ?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension : devExt;
+        ULONG mon1 = (prim && prim->MonitorCount >= 2) ? prim->MonitorIds[1] : 0x0200;
+
+        if (config && RequestPacket->InputBufferLength >= sizeof(ULONG)) {
+            ULONG count = config->Count;
+            LogStr("NVX [DUALVIEW]: SET_CHILD_STATE count=");
+            LogHex(count);
+            LogStr(" IsSec=");
+            LogHex(devExt->IsSecondaryDisplay);
+            LogStr("\n");
+            for (ULONG i = 0; i < count; i++) {
+                if ((PCHAR)&config->ChildStateArray[i + 1] > (PCHAR)RequestPacket->InputBuffer + RequestPacket->InputBufferLength)
+                    break;
+                ULONG cid = config->ChildStateArray[i].Id;
+                ULONG cstate = config->ChildStateArray[i].State;
+                LogStr("NVX [DUALVIEW]: child id=");
+                LogHex(cid);
+                LogStr(" state=");
+                LogHex(cstate);
+                LogStr("\n");
+                if (cid == 2 || cid == mon1) {
+                    BOOLEAN attached = ((cstate & VIDEO_CHILD_ACTIVE) != 0);
+                    devExt->DualViewAttached = attached;
+                    if (devExt->SecondaryDeviceExtension) {
+                        ((PNVX_DEVICE_EXTENSION)devExt->SecondaryDeviceExtension)->DualViewAttached = attached;
+                    }
+                    if (prim && prim->SecondaryDeviceExtension) {
+                        ((PNVX_DEVICE_EXTENSION)prim->SecondaryDeviceExtension)->DualViewAttached = attached;
+                    }
+                }
+            }
+        }
         statusBlock->Information = 0;
         status = NO_ERROR;
         break;
@@ -1812,12 +1879,14 @@ static NTSTATUS HookedPnpDispatch(PVOID DeviceObject, PVOID Irp) {
     LogStr(" returned: ");
     LogHex((unsigned long long)status);
     LogStr("\n");
+    NvxLogFlush();
     return status;
 }
 
 static NTSTATUS HookedPowerDispatch(PVOID DeviceObject, PVOID Irp) {
     LogStr("NVX: HookedPowerDispatch!\n");
     NTSTATUS status = RealPowerDispatch(DeviceObject, Irp);
+    NvxLogFlush();
     return status;
 }
 
@@ -1826,7 +1895,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.178 (primary mode index retention, secondary scanout activation)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.179 (child state validation, DualView detach separation)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));
