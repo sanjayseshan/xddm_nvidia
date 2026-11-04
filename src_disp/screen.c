@@ -8,6 +8,32 @@
 
 #define DEVICE_NAME L"nvxdisp"
 
+static VOID NvxGdiTrace(HANDLE hDriver, ULONG stage, ULONG a, ULONG b, ULONG c)
+{
+    NVX_DIAGNOSTIC_TRACE trace;
+    ULONG returned=0;
+    ULONG traceStatus;
+    NvxDispLogEvent(stage,a,b,c);
+    trace.Stage=stage;trace.Value0=a;trace.Value1=b;trace.Value2=c;
+    traceStatus=EngDeviceIoControl(hDriver,IOCTL_NVX_DIAGNOSTIC_TRACE,
+        &trace,sizeof(trace),NULL,0,&returned);
+    NvxDispLogEvent(0x100,stage,traceStatus,returned);
+    if(stage==11) {
+        NVX_DIAGNOSTIC_STATE state;
+        ULONG stateBytes=0;
+        ULONG stateStatus=EngDeviceIoControl(hDriver,IOCTL_NVX_DIAGNOSTIC_STATE,
+            NULL,0,&state,sizeof(state),&stateBytes);
+        NvxDispLogEvent(0x101,stateStatus,stateBytes,
+            stateStatus?0:state.Flags);
+        if(!stateStatus && stateBytes>=sizeof(state)) {
+            NvxDispLogEvent(0x102,state.NumModes,state.CurrentModeIndex,
+                state.MonitorCount);
+            NvxDispLogEvent(0x103,(ULONG)state.GspVramGpuVa,
+                (ULONG)(state.GspVramGpuVa>>32),0);
+        }
+    }
+}
+
 static LOGFONTW SystemFont = { 16, 7, 0, 0, 700, 0, 0, 0, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, VARIABLE_PITCH | FF_DONTCARE, L"System" };
 static LOGFONTW AnsiVariableFont = { 12, 9, 0, 0, 400, 0, 0, 0, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_STROKE_PRECIS, PROOF_QUALITY, VARIABLE_PITCH | FF_DONTCARE, L"MS Sans Serif" };
 static LOGFONTW AnsiFixedFont = { 12, 9, 0, 0, 400, 0, 0, 0, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_STROKE_PRECIS, PROOF_QUALITY, FIXED_PITCH | FF_DONTCARE, L"Courier" };
@@ -45,9 +71,14 @@ GetAvailableModes(
     ULONG ulTemp;
     VIDEO_NUM_MODES Modes;
     PVIDEO_MODE_INFORMATION ModeInfoPtr;
+    ULONG ioctlStatus;
 
-    if (EngDeviceIoControl(hDriver, IOCTL_VIDEO_QUERY_NUM_AVAIL_MODES, NULL,
-                           0, &Modes, sizeof(VIDEO_NUM_MODES), &ulTemp))
+    ulTemp=0;
+    ioctlStatus=EngDeviceIoControl(hDriver, IOCTL_VIDEO_QUERY_NUM_AVAIL_MODES, NULL,
+                           0, &Modes, sizeof(VIDEO_NUM_MODES), &ulTemp);
+    NvxGdiTrace(hDriver,2,ioctlStatus,ioctlStatus?0:Modes.NumModes,
+                ioctlStatus?0:Modes.ModeInformationLength);
+    if (ioctlStatus)
     {
         return 0;
     }
@@ -60,9 +91,12 @@ GetAvailableModes(
     if (!*ModeInfo)
         return 0;
 
-    if (EngDeviceIoControl(hDriver, IOCTL_VIDEO_QUERY_AVAIL_MODES, NULL, 0,
+    ulTemp=0;
+    ioctlStatus=EngDeviceIoControl(hDriver, IOCTL_VIDEO_QUERY_AVAIL_MODES, NULL, 0,
                            *ModeInfo, Modes.NumModes * Modes.ModeInformationLength,
-                           &ulTemp))
+                           &ulTemp);
+    NvxGdiTrace(hDriver,3,ioctlStatus,ulTemp,Modes.NumModes);
+    if (ioctlStatus)
     {
         EngFreeMem(*ModeInfo);
         *ModeInfo = NULL;
@@ -87,6 +121,8 @@ GetAvailableModes(
         ModeInfoPtr = (PVIDEO_MODE_INFORMATION)(((PUCHAR)ModeInfoPtr) + Modes.ModeInformationLength);
     }
 
+    NvxGdiTrace(hDriver,4,Modes.NumModes,*ModeInfoSize,0);
+
     return Modes.NumModes;
 }
 
@@ -101,6 +137,7 @@ DrvGetModes(
     PVIDEO_MODE_INFORMATION ModeInfo, ModeInfoPtr;
     ULONG OutputSize;
 
+    NvxGdiTrace(hDriver,1,cjSize,pdm!=NULL,0); /* DrvGetModes entry */
     ModeCount = GetAvailableModes(hDriver, &ModeInfo, &ModeInfoSize);
     if (ModeCount == 0)
         return 0;
@@ -203,6 +240,9 @@ DrvEnablePDEV(
     PVIDEO_MODE_INFORMATION ModeInfo, ModeInfoPtr, SelectedMode = NULL;
     PGDIINFO pGdiInfo = (PGDIINFO)pdevcaps;
 
+    NvxGdiTrace(hDriver,5,pdm?pdm->dmPelsWidth:0,
+        pdm?pdm->dmPelsHeight:0,pdm?pdm->dmBitsPerPel:0);
+
     ppdev = (PPDEV)EngAllocMem(FL_ZERO_MEMORY, sizeof(PDEV), ALLOC_TAG);
     if (!ppdev)
         return NULL;
@@ -267,6 +307,7 @@ DrvEnablePDEV(
 
     if (!SelectedMode)
     {
+        NvxGdiTrace(hDriver,6,ModeCount,0,0);
         EngFreeMem(ModeInfo);
         EngFreeMem(ppdev);
         return NULL;
@@ -280,6 +321,8 @@ DrvEnablePDEV(
     ppdev->RedMask      = SelectedMode->RedMask;
     ppdev->GreenMask    = SelectedMode->GreenMask;
     ppdev->BlueMask     = SelectedMode->BlueMask;
+    NvxGdiTrace(hDriver,7,ppdev->ModeIndex,ppdev->ScreenWidth,
+        (ppdev->ScreenHeight&0xffff)|(ppdev->BitsPerPixel<<16));
 
     pGdiInfo->ulVersion         = GDI_DRIVER_VERSION;
     pGdiInfo->ulTechnology      = DT_RASDISPLAY;
@@ -426,50 +469,94 @@ DrvEnableSurface(
     SIZEL ScreenSize;
     VIDEO_MEMORY VideoMemory;
     VIDEO_MEMORY_INFORMATION VideoMemoryInfo;
-    ULONG ulTemp;
+    ULONG outBytes;
+    ULONG ioctlStatus;
     FLONG flHooks;
 
-    if (EngDeviceIoControl(ppdev->hDriver, IOCTL_VIDEO_SET_CURRENT_MODE,
+    NvxGdiTrace(ppdev->hDriver,8,ppdev->ModeIndex,ppdev->ScreenWidth,
+                (ppdev->ScreenHeight&0xffff)|(ppdev->BitsPerPixel<<16));
+    outBytes=0;
+    ioctlStatus=EngDeviceIoControl(ppdev->hDriver, IOCTL_VIDEO_SET_CURRENT_MODE,
                            &(ppdev->ModeIndex), sizeof(ULONG), NULL, 0,
-                           &ulTemp))
+                           &outBytes);
+    NvxGdiTrace(ppdev->hDriver,9,ioctlStatus,ppdev->ModeIndex,outBytes);
+    if (ioctlStatus)
     {
         return NULL;
     }
 
     VideoMemory.RequestedVirtualAddress = NULL;
-    if (EngDeviceIoControl(ppdev->hDriver, IOCTL_VIDEO_MAP_VIDEO_MEMORY,
+    outBytes=0;
+    ioctlStatus=EngDeviceIoControl(ppdev->hDriver, IOCTL_VIDEO_MAP_VIDEO_MEMORY,
                            &VideoMemory, sizeof(VIDEO_MEMORY),
                            &VideoMemoryInfo, sizeof(VIDEO_MEMORY_INFORMATION),
-                           &ulTemp))
+                           &outBytes);
+    NvxGdiTrace(ppdev->hDriver,10,ioctlStatus,outBytes,0);
+    if (ioctlStatus)
     {
         return NULL;
     }
 
-    if(EngDeviceIoControl(ppdev->hDriver,IOCTL_NVX_SCANOUT_GPU_VA,NULL,0,
-                          &ppdev->ScreenGpuVaBase,sizeof(ppdev->ScreenGpuVaBase),&ulTemp)
-       || ulTemp!=sizeof(ppdev->ScreenGpuVaBase) || !ppdev->ScreenGpuVaBase) {
-        DrvDisableSurface(dhpdev);
-        return NULL;
-    }
+    outBytes=0;
+    ioctlStatus=EngDeviceIoControl(ppdev->hDriver,IOCTL_NVX_SCANOUT_GPU_VA,NULL,0,
+                          &ppdev->ScreenGpuVaBase,sizeof(ppdev->ScreenGpuVaBase),&outBytes);
+    NvxGdiTrace(ppdev->hDriver,11,ioctlStatus,outBytes,
+                (ULONG)(ppdev->ScreenGpuVaBase>>32));
     ppdev->MappedFramebuffer = VideoMemoryInfo.FrameBufferBase;
-    /* BAR1 readback is unreliable after GSP initialization. Keep authoritative
-       GDI pixels in ordinary system memory and present them through CE DMA. */
     if (!ppdev->ScreenDelta || ppdev->ScreenHeight > (~0UL / ppdev->ScreenDelta))
     {
         DrvDisableSurface(dhpdev);
         return NULL;
     }
-    ppdev->ScreenPtr = EngAllocMem(0, ppdev->ScreenDelta * ppdev->ScreenHeight, ALLOC_TAG);
-    if (!ppdev->ScreenPtr) {
-        DrvDisableSurface(dhpdev);
-        return NULL;
-    }
-    memset(ppdev->ScreenPtr, 0, ppdev->ScreenDelta * ppdev->ScreenHeight);
-    ppdev->PresentedPixels=EngAllocMem(FL_ZERO_MEMORY,
-        ppdev->ScreenDelta * ppdev->ScreenHeight,ALLOC_TAG);
-    if(!ppdev->PresentedPixels) {
-        DrvDisableSurface(dhpdev);
-        return NULL;
+    {
+        ULONG framebufferBytes=ppdev->ScreenDelta*ppdev->ScreenHeight;
+        BOOL haveGpuScanout=!ioctlStatus &&
+            outBytes==sizeof(ppdev->ScreenGpuVaBase) && ppdev->ScreenGpuVaBase;
+        if (!haveGpuScanout) {
+            NVX_DIAGNOSTIC_STATE state;
+            ULONG stateBytes=0;
+            ULONG stateStatus=EngDeviceIoControl(ppdev->hDriver,
+                IOCTL_NVX_DIAGNOSTIC_STATE,NULL,0,&state,sizeof(state),&stateBytes);
+            /* A VBE mode has already been set and VideoPortMapMemory returned
+               its validated linear framebuffer. Let GDI draw directly there
+               on the primary head when GSP's GPU VA/copy channel is unavailable.
+               Secondary BAR mappings are not assumed to be scanout surfaces.
+               This path is CPU-only and issues no GPU acceleration IOCTLs. */
+            if (stateStatus || stateBytes<sizeof(state) || (state.Flags&1) ||
+                !ppdev->MappedFramebuffer ||
+                VideoMemoryInfo.FrameBufferLength < framebufferBytes) {
+                NvxDispLogEvent(16,ioctlStatus,VideoMemoryInfo.FrameBufferLength,
+                                framebufferBytes);
+                NvxDispLogEvent(18,stateStatus,stateBytes,
+                                stateStatus?0:state.Flags);
+                DrvDisableSurface(dhpdev);
+                return NULL;
+            }
+            ppdev->DirectFramebuffer=TRUE;
+            ppdev->ScreenPtr=ppdev->MappedFramebuffer;
+            ppdev->PresentedPixels=NULL;
+            ppdev->PresentationValid=FALSE;
+            memset(ppdev->ScreenPtr,0,framebufferBytes);
+            NvxDispLogEvent(17,1,framebufferBytes,ppdev->ModeIndex);
+        } else {
+            /* Keep authoritative GDI pixels in system memory and present them
+               through the verified GSP copy channel. */
+            ppdev->DirectFramebuffer=FALSE;
+            ppdev->ScreenPtr = EngAllocMem(0, framebufferBytes, ALLOC_TAG);
+            if (!ppdev->ScreenPtr) {
+                DrvDisableSurface(dhpdev);
+                return NULL;
+            }
+            memset(ppdev->ScreenPtr, 0, framebufferBytes);
+            ppdev->PresentedPixels=EngAllocMem(FL_ZERO_MEMORY,
+                framebufferBytes,ALLOC_TAG);
+            if(!ppdev->PresentedPixels) {
+                DrvDisableSurface(dhpdev);
+                return NULL;
+            }
+            ppdev->PresentationValid=FALSE;
+            NvxDispLogEvent(17,0,framebufferBytes,ppdev->ModeIndex);
+        }
     }
     ppdev->PresentationValid=FALSE;
 
@@ -506,6 +593,8 @@ DrvEnableSurface(
     }
 
     ppdev->hSurfEng = hSurface;
+    NvxGdiTrace(ppdev->hDriver,12,ppdev->ScreenWidth,ppdev->ScreenHeight,
+                ppdev->BitsPerPixel);
     return hSurface;
 }
 
@@ -526,7 +615,7 @@ DrvDisableSurface(
     VideoMemory.RequestedVirtualAddress = ppdev->MappedFramebuffer;
     EngDeviceIoControl(ppdev->hDriver, IOCTL_VIDEO_UNMAP_VIDEO_MEMORY,
                        &VideoMemory, sizeof(VIDEO_MEMORY), NULL, 0, &ulTemp);
-    if (ppdev->ScreenPtr) EngFreeMem(ppdev->ScreenPtr);
+    if (ppdev->ScreenPtr && !ppdev->DirectFramebuffer) EngFreeMem(ppdev->ScreenPtr);
     if (ppdev->PresentedPixels) EngFreeMem(ppdev->PresentedPixels);
     if (ppdev->CopyScratch) EngFreeMem(ppdev->CopyScratch);
     ppdev->CopyScratch=NULL;
@@ -535,6 +624,7 @@ DrvDisableSurface(
     ppdev->PresentationValid=FALSE;
     ppdev->ScreenPtr = NULL;
     ppdev->MappedFramebuffer = NULL;
+    ppdev->DirectFramebuffer = FALSE;
 }
 
 BOOL APIENTRY
@@ -544,17 +634,25 @@ DrvAssertMode(
 {
     PPDEV ppdev = (PPDEV)dhpdev;
     ULONG ulTemp;
+    ULONG status;
 
     ppdev->PresentationValid=FALSE;
+    NvxDispLogEvent(13,bEnable,ppdev->ModeIndex,0);
     if (bEnable)
     {
-        return !EngDeviceIoControl(ppdev->hDriver, IOCTL_VIDEO_SET_CURRENT_MODE,
-                                   &(ppdev->ModeIndex), sizeof(ULONG), NULL, 0, &ulTemp);
+        ulTemp=0;
+        status=EngDeviceIoControl(ppdev->hDriver, IOCTL_VIDEO_SET_CURRENT_MODE,
+                                  &(ppdev->ModeIndex), sizeof(ULONG), NULL, 0, &ulTemp);
+        NvxDispLogEvent(14,status,ppdev->ModeIndex,ulTemp);
+        return !status;
     }
     else
     {
-        return !EngDeviceIoControl(ppdev->hDriver, IOCTL_VIDEO_RESET_DEVICE,
-                                   NULL, 0, NULL, 0, &ulTemp);
+        ulTemp=0;
+        status=EngDeviceIoControl(ppdev->hDriver, IOCTL_VIDEO_RESET_DEVICE,
+                                  NULL, 0, NULL, 0, &ulTemp);
+        NvxDispLogEvent(15,status,ulTemp,0);
+        return !status;
     }
 }
 

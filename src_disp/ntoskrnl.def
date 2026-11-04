@@ -1,0 +1,5 @@
+LIBRARY NTOSKRNL.EXE
+EXPORTS
+    ZwCreateFile
+    ZwWriteFile
+    ZwClose

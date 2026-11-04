@@ -126,6 +126,8 @@ NvxUploadSurfaceRect(PPDEV ppdev, SURFOBJ *pso, RECTL *prcl, ULONG kind)
     PNVX_ACCEL_UPLOAD_PARAMS params;
     BOOL success=TRUE;
 
+    /* GDI's primary bitmap already points at the mapped linear framebuffer. */
+    if(ppdev && ppdev->DirectFramebuffer) return TRUE;
     if(!ppdev||!pso||!prcl||pso->dhpdev!=(DHPDEV)ppdev||
        pso->iType!=STYPE_BITMAP||!pso->pvBits||pso->pvBits!=ppdev->ScreenPtr||
        pso->iBitmapFormat!=BMF_32BPP||ppdev->BitsPerPixel!=32||

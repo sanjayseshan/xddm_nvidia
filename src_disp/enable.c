@@ -32,17 +32,24 @@ DrvEnableDriver(
     ULONG cj,
     PDRVENABLEDATA pded)
 {
+    NvxDispLogEvent(0,iEngineVersion,cj,0);
     if (cj < sizeof(DRVENABLEDATA) || !pded)
+    {
+        NvxDispLogEvent(16,FALSE,cj,0);
         return FALSE;
+    }
 
     pded->c = sizeof(DrvFunctionTable) / sizeof(DRVFN);
     pded->pdrvfn = DrvFunctionTable;
     pded->iDriverVersion = DDI_DRIVER_VERSION_NT5;
 
+    NvxDispLogEvent(16,TRUE,pded->c,pded->iDriverVersion);
     return TRUE;
 }
 
 VOID APIENTRY
 DrvDisableDriver(VOID)
 {
+    NvxDispLogEvent(17,0,0,0);
+    NvxDispCloseLog();
 }

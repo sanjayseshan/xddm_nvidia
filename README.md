@@ -38,6 +38,15 @@ The v165 physical run and its log evidence are recorded in [SUMMARY.txt](SUMMARY
 The matching NVIDIA firmware source and checksums are documented in
 [FIRMWARE_PROVENANCE.md](FIRMWARE_PROVENANCE.md).
 
+The v171 working tree contains an untested native-XP diagnostic/fallback update.
+It buffers early miniport messages in memory until the XP log path is available,
+then flushes them without using a serial port. When GPU scanout setup fails, the
+display driver can use CPU rendering to the mapped framebuffer on the primary
+head if the miniport confirms the head and the mapped range covers the mode.
+Otherwise it allows XP's safe VGA fallback, including 4-bit color. The fallback
+is not yet confirmed on physical XP hardware; see [SUMMARY.txt](SUMMARY.txt) for
+the observed failure and test procedure.
+
 ## Compatibility and limits
 
 - **Guest OS:** Windows XP Professional x64 Edition (NT 5.2). Windows Server

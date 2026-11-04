@@ -1,5 +1,5 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 3, 2026 (v169 artifacts cleared in user test)
+Updated: November 4, 2026 (v171 native-XP fallback and logging changes prepared)
 
 Confirmed baseline: v164 works on the test EVGA RTX 3070 XC3 Ultra LHR with
 two physical displays. The primary runs at 1920x1080 and the secondary at
@@ -51,6 +51,38 @@ this host because libguestfs `supermin` exits with error status 1; that host
 tooling issue did not prevent the user-run v169 display check.
 High-refresh modes such as 120 Hz and other GPU models, boards, connectors, and
 monitor combinations are not validated.
+
+Native XP troubleshooting: the mounted `nvxdisp.log` records selection of
+1920x1080x32 (Mode 9), successful SET_CURRENT_MODE, and successful
+VIDEO_MAP_VIDEO_MEMORY, followed by failure of IOCTL_NVX_SCANOUT_GPU_VA with
+STATUS_UNSUCCESSFUL. The display driver's old behavior rejected DrvEnableSurface
+at that point, which explains XP reverting to VGA. The miniport log ends after
+HwVidFindAdapter, but the display log proves later miniport I/O requests were
+handled; missing miniport messages alone do not prove HwVidInitialize never ran.
+The XP-mounted SYS and DLL hashes matched the corresponding workspace binaries
+at inspection time. SetupAPI's v169 entry reflects the recorded install method
+and is not sufficient evidence of what the direct-copy update script installed.
+The locally prepared v170 ZIP had a stale miniport binary, so compare package
+hashes with the script-installed files before using any archive.
+
+v171 is a prepared, untested native-XP follow-up. The miniport logger now keeps
+early messages in a resident 64 KiB ring, retries opening `C:\WINDOWS\nvxmp.log`
+at safe PASSIVE_LEVEL opportunities, and flushes buffered text when the file
+becomes available. It does not use COM1. The display driver may render directly
+to the mapped framebuffer only on the primary head, only if the miniport confirms
+the head identity, and only if the mapped length covers the requested mode. It
+does not require GSP copy verification for that CPU-only path. If these checks
+fail, DrvEnableSurface still declines the mode and XP can use its safe VGA
+fallback, including 4-bit color. The secondary head does not use this fallback.
+GSP diagnostics now report the actual common-buffer physical range. The existing
+32-bit DMA request and >4 GiB rejection remain in place; native 64-bit Falcon DMA
+is not enabled without evidence and implementation of every affected DMA path.
+
+The v171 sources build and host checks pass, but this behavior has not yet been
+tested on bare-metal XP. `./update_xp_driver.sh` builds both binaries, requires
+the offline XP volume to be writable, copies the binaries, and verifies exact
+source/destination matches. The XP installation currently mounted read-only
+must not be modified until it is safely remounted read-write after XP shutdown.
 
 Milestones:
 - v98: verified GSP-backed GPU copy execution on the RTX 3070.

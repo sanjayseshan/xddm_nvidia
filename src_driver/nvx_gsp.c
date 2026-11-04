@@ -622,7 +622,10 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
        Re-notifying the same published GPPut does not enqueue extra work. */
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x90),1);
     LogStr("NVX [COPY]: submitted guarded VRAM write/read/restore roundtrip and completion release.\n");
-    for(ULONG wait=0;wait<20000;wait++) {
+    /* Cold bare-metal GSP/channel startup can take longer than the VM path.
+       Give the asynchronous copy engine ten seconds before rejecting native
+       scanout, and emit one-second progress snapshots for the next log. */
+    for(ULONG wait=0;wait<100000;wait++) {
         if(fence[0]==done) {
             __sync_synchronize();
             for(ULONG i=0;i<64;i++) {
@@ -640,6 +643,12 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
             dev->GspCopyVerified=TRUE;
             LogStr("NVX [COPY]: GPU copy completed and verified; guarded VRAM roundtrip and restore succeeded; desktop drawing remains software.\n");
             return TRUE;
+        }
+        if(wait && (wait%10000)==0) {
+            LogStr("NVX [COPY]: still waiting; seconds=");LogHex(wait/10000);
+            LogStr(" GPGet=");LogHex(userd[0x88/4]);
+            LogStr(" GPPut=");LogHex(userd[0x8c/4]);
+            LogStr(" fence=");LogHex(fence[0]);LogStr("\n");
         }
         VideoPortStallExecution(100);
     }
@@ -1942,6 +1951,8 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
     /* Obtain DMA adapter from VideoPort */
     VideoPortZeroMemory(&devDesc, sizeof(devDesc));
     devDesc.ScatterGather = TRUE;
+    /* XP's VideoPort VP_DEVICE_DESCRIPTION has no MaximumPhysicalAddress
+       member. Request 32-bit DMA and explicitly decline 64-bit DMA instead. */
     devDesc.Dma32BitAddresses = TRUE;
     devDesc.Dma64BitAddresses = FALSE;
     devDesc.MaximumLength = 0x3000000; /* 48 MB */
@@ -1971,9 +1982,14 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
         devExt->DmaAdapter = NULL;
         return FALSE;
     }
+    LogStr("NVX [GSP-DMA]: common buffer physical=");
+    LogHex((ULONG64)devExt->GspDmaPhysical.QuadPart);
+    LogStr(" end=");
+    LogHex((ULONG64)devExt->GspDmaPhysical.QuadPart + devExt->GspDmaLength);
+    LogStr(" requested 32-bit=1 64-bit=0\n");
     if ((devExt->GspDmaPhysical.QuadPart & 0xfff) ||
         (ULONG64)devExt->GspDmaPhysical.QuadPart + devExt->GspDmaLength > 0x100000000ULL) {
-        LogStr("NVX [GSP]: DMA allocation is not aligned/below 4GB.\n");
+        LogStr("NVX [GSP]: VideoPort violated the requested 32-bit DMA range or alignment; GSP remains disabled.\n");
         NvxGspShutdown(HwDeviceExtension);
         return FALSE;
     }

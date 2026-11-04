@@ -19,15 +19,33 @@ typedef struct _VIDEOMEMORY VIDEOMEMORY;
 #include <ntddvdeo.h>
 
 /* Custom Miniport Hardware Acceleration IOCTLs */
-#define IOCTL_NVX_ACCEL_COPY             CTL_CODE(FILE_DEVICE_VIDEO, 0x200, METHOD_BUFFERED, FILE_ANY_ACCESS) /* 0x00230800 */
-#define IOCTL_NVX_ACCEL_FILL             CTL_CODE(FILE_DEVICE_VIDEO, 0x201, METHOD_BUFFERED, FILE_ANY_ACCESS) /* 0x00230804 */
-#define IOCTL_NVX_ACCEL_UPLOAD           CTL_CODE(FILE_DEVICE_VIDEO, 0x202, METHOD_BUFFERED, FILE_ANY_ACCESS) /* 0x00230808 */
+#define IOCTL_NVX_ACCEL_COPY             CTL_CODE(FILE_DEVICE_VIDEO, 0x200, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_NVX_ACCEL_FILL             CTL_CODE(FILE_DEVICE_VIDEO, 0x201, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_NVX_ACCEL_UPLOAD           CTL_CODE(FILE_DEVICE_VIDEO, 0x202, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_NVX_SCANOUT_GPU_VA         CTL_CODE(FILE_DEVICE_VIDEO, 0x203, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_NVX_DIAGNOSTIC_TRACE       CTL_CODE(FILE_DEVICE_VIDEO, 0x204, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_NVX_DIAGNOSTIC_STATE       CTL_CODE(FILE_DEVICE_VIDEO, 0x205, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define NVX_ACCEL_UPLOAD_MAX_BYTES       0x0000F000UL
 #define NVX_UPLOAD_KIND_COPYBITS         1UL
 #define NVX_UPLOAD_KIND_BITBLT           2UL
 #define NVX_UPLOAD_KIND_TEXTOUT          3UL
 #define NVX_ACCEL_UPLOAD_HEADER_BYTES    16UL
+
+typedef struct _NVX_DIAGNOSTIC_TRACE {
+    ULONG Stage;
+    ULONG Value0;
+    ULONG Value1;
+    ULONG Value2;
+} NVX_DIAGNOSTIC_TRACE, *PNVX_DIAGNOSTIC_TRACE;
+typedef struct _NVX_DIAGNOSTIC_STATE {
+    ULONG Flags;
+    ULONG NumModes;
+    ULONG CurrentModeIndex;
+    ULONG MonitorCount;
+    ULONG64 GspVramGpuVa;
+} NVX_DIAGNOSTIC_STATE, *PNVX_DIAGNOSTIC_STATE;
+VOID NvxDispLogEvent(ULONG stage, ULONG value0, ULONG value1, ULONG value2);
+VOID NvxDispCloseLog(VOID);
 /* Diagnostic mode is available for isolating direct BAR1 surface writes. */
 #define NVX_SOFTWARE_SCANOUT_DIAGNOSTIC  0
 
@@ -70,6 +88,7 @@ typedef struct _PDEV
     ULONG    BlueMask;
     PVOID    ScreenPtr; /* coherent GDI desktop bitmap */
     PVOID    MappedFramebuffer;
+    BOOL     DirectFramebuffer; /* CPU-render to validated VBE framebuffer */
     PVOID    PresentedPixels; /* last successfully uploaded bitmap */
     BOOL     PresentationValid;
     HPALETTE DefaultPalette;

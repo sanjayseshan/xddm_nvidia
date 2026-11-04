@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.169
+ * Driver Version: 1.0.0.171
  */
 
 #include "miniport.h"
@@ -12,26 +12,158 @@
 
 #define NV_VENDOR_ID 0x10DE
 
-/* COM1 Direct Serial Logging (I/O Port 0x3F8) */
-static inline unsigned char inb(unsigned short port) {
-    unsigned char val;
-    __asm__ __volatile__("inb %1, %0" : "=a"(val) : "Nd"(port));
-    return val;
+/* NT kernel file APIs used by the optional boot diagnostic log. */
+typedef struct _NVX_OBJECT_ATTRIBUTES {
+    ULONG Length;
+    HANDLE RootDirectory;
+    struct _NVX_UNICODE_STRING *ObjectName;
+    ULONG Attributes;
+    PVOID SecurityDescriptor;
+    PVOID SecurityQualityOfService;
+} NVX_OBJECT_ATTRIBUTES, *PNVX_OBJECT_ATTRIBUTES;
+
+typedef struct _NVX_UNICODE_STRING {
+    USHORT Length;
+    USHORT MaximumLength;
+    PWSTR Buffer;
+} NVX_UNICODE_STRING;
+
+typedef struct _NVX_IO_STATUS_BLOCK {
+    union { LONG Status; PVOID Pointer; } u;
+    ULONG_PTR Information;
+} NVX_IO_STATUS_BLOCK, *PNVX_IO_STATUS_BLOCK;
+
+extern LONG NTAPI ZwCreateFile(PHANDLE, ACCESS_MASK, PNVX_OBJECT_ATTRIBUTES,
+    PNVX_IO_STATUS_BLOCK, PLARGE_INTEGER, ULONG, ULONG, ULONG, ULONG, PVOID, ULONG);
+extern LONG NTAPI ZwWriteFile(HANDLE, HANDLE, PVOID, PVOID, PNVX_IO_STATUS_BLOCK,
+    PVOID, ULONG, PLARGE_INTEGER, PULONG);
+extern UCHAR NTAPI KeGetCurrentIrql(VOID);
+
+#define NVX_LOG_RING_BYTES 65536UL
+#define NVX_LOG_FLUSH_CHUNK 1024UL
+#define NVX_LOG_PASSIVE_LEVEL 0
+static HANDLE g_LogFile;
+static UCHAR g_LogRing[NVX_LOG_RING_BYTES];
+static volatile ULONG64 g_LogWriteSequence;
+static ULONG64 g_LogReadSequence;
+static ULONG g_LogOpenRetry;
+static BOOLEAN g_LogMarkerWritten;
+static volatile LONG g_LogFlushBusy;
+
+static VOID NvxLogAppend(const CHAR *text, ULONG length)
+{
+    ULONG i;
+    for (i = 0; i < length; ++i) {
+        ULONG64 sequence=__sync_fetch_and_add(&g_LogWriteSequence,1);
+        g_LogRing[sequence % NVX_LOG_RING_BYTES]=(UCHAR)text[i];
+    }
 }
 
-static inline void outb(unsigned short port, unsigned char val) {
-    __asm__ __volatile__("outb %0, %1" : : "a"(val), "Nd"(port));
+/* File I/O is only attempted from PASSIVE_LEVEL. LogStr itself is also used
+ * by callbacks that may run at elevated IRQL, so every message first enters
+ * the resident ring and disk flushing is opportunistic. */
+static VOID NvxLogFlush(VOID)
+{
+    static WCHAR pathBuffer[] = L"\\??\\C:\\WINDOWS\\nvxmp.log";
+    static const CHAR marker[] = "\r\n===== NVX diagnostic run =====\r\n";
+    static const CHAR overflowPrefix[] = "NVX [LOG]: ring overflow; dropped bytes=";
+    NVX_UNICODE_STRING path;
+    NVX_OBJECT_ATTRIBUTES attributes;
+    NVX_IO_STATUS_BLOCK io;
+    LARGE_INTEGER append;
+    CHAR chunk[NVX_LOG_FLUSH_CHUNK];
+    ULONG count, dropped, i;
+    ULONG64 end;
+    LONG status;
+
+    if (KeGetCurrentIrql() != NVX_LOG_PASSIVE_LEVEL ||
+        __sync_lock_test_and_set(&g_LogFlushBusy, 1))
+        return;
+
+    if (!g_LogFile) {
+        if (g_LogOpenRetry) {
+            --g_LogOpenRetry;
+            __sync_lock_release(&g_LogFlushBusy);
+            return;
+        }
+        path.Buffer = pathBuffer;
+        path.Length = (USHORT)(sizeof(pathBuffer) - sizeof(WCHAR));
+        path.MaximumLength = sizeof(pathBuffer);
+        attributes.Length = sizeof(attributes);
+        attributes.RootDirectory = NULL;
+        attributes.ObjectName = &path;
+        attributes.Attributes = 0x40; /* OBJ_CASE_INSENSITIVE */
+        attributes.SecurityDescriptor = NULL;
+        attributes.SecurityQualityOfService = NULL;
+        status = ZwCreateFile(&g_LogFile, 0x00100004, &attributes, &io, NULL,
+            0x80, 0x00000007, 0x00000003, 0x00000020, NULL, 0);
+        if (status < 0) {
+            g_LogFile = NULL;
+            g_LogOpenRetry = 31; /* retry after 32 safe flush opportunities */
+            __sync_lock_release(&g_LogFlushBusy);
+            return;
+        }
+    }
+
+    append.QuadPart = -1;
+    if (!g_LogMarkerWritten) {
+        status = ZwWriteFile(g_LogFile, NULL, NULL, NULL, &io, (PVOID)marker,
+            sizeof(marker) - 1, &append, NULL);
+        if (status < 0) {
+            __sync_lock_release(&g_LogFlushBusy);
+            return;
+        }
+        g_LogMarkerWritten = TRUE;
+    }
+
+    end=__sync_fetch_and_add(&g_LogWriteSequence,0);
+    dropped=0;
+    if (end-g_LogReadSequence > NVX_LOG_RING_BYTES) {
+        dropped=(ULONG)((end-g_LogReadSequence)-NVX_LOG_RING_BYTES);
+        g_LogReadSequence=end-NVX_LOG_RING_BYTES;
+    }
+    if (dropped) {
+        CHAR line[sizeof(overflowPrefix) + 20];
+        ULONG at = sizeof(overflowPrefix) - 1;
+        for (i = 0; i < at; ++i) line[i] = overflowPrefix[i];
+        line[at++] = '0'; line[at++] = 'x';
+        for (i = 0; i < 16; ++i) {
+            ULONG shift = (15 - i) * 4;
+            ULONG nibble = (dropped >> shift) & 0xFUL;
+            line[at++] = (CHAR)(nibble < 10 ? '0' + nibble : 'A' + nibble - 10);
+        }
+        line[at++] = '\r'; line[at++] = '\n';
+        status = ZwWriteFile(g_LogFile, NULL, NULL, NULL, &io, line, at,
+            &append, NULL);
+        if (status < 0) {
+            __sync_lock_release(&g_LogFlushBusy);
+            return;
+        }
+    }
+
+    for (;;) {
+        end=__sync_fetch_and_add(&g_LogWriteSequence,0);
+        count=(ULONG)(end-g_LogReadSequence);
+        if (count > sizeof(chunk)) count = sizeof(chunk);
+        for (i = 0; i < count; ++i)
+            chunk[i] = (CHAR)g_LogRing[(g_LogReadSequence + i) % NVX_LOG_RING_BYTES];
+        if (!count) break;
+
+        status = ZwWriteFile(g_LogFile, NULL, NULL, NULL, &io, chunk, count,
+            &append, NULL);
+        if (status < 0 || io.Information != count) break;
+
+        g_LogReadSequence+=count;
+    }
+    __sync_lock_release(&g_LogFlushBusy);
 }
 
 void LogStr(const char *s) {
-    while (*s) {
-        if (*s == '\n') {
-            while ((inb(0x3FD) & 0x20) == 0);
-            outb(0x3F8, '\r');
-        }
-        while ((inb(0x3FD) & 0x20) == 0);
-        outb(0x3F8, (unsigned char)*s++);
-    }
+    ULONG length = (ULONG)__builtin_strlen(s);
+    NvxLogAppend(s, length);
+    /* VideoPortDebugPrint remains available for debugger capture. */
+    VideoPortDebugPrint(Info, "%s", s);
+    if (length && s[length - 1] == '\n') NvxLogFlush();
 }
 
 void LogHex(unsigned long long val) {
@@ -606,6 +738,8 @@ VP_STATUS HwVidGetVideoChildDescriptor(
     LogHex(ChildEnumInfo->ChildIndex);
     LogStr(" IsSecondary: ");
     LogHex(dev->IsSecondaryDisplay);
+    LogStr(" MonitorCount: ");
+    LogHex(dev->MonitorCount);
     LogStr("\n");
     if(ChildEnumInfo->ChildIndex==0xffffffffUL) {
         *VideoChildType=VideoChip;*UId=0xffffffffUL;
@@ -647,7 +781,11 @@ VP_STATUS HwVidGetVideoChildDescriptor(
         if(index==dev->MonitorCount) return VIDEO_ENUM_INVALID_DEVICE;
     } else {
         index = ChildEnumInfo->ChildIndex - 1;
-        if(index >= dev->MonitorCount) return VIDEO_ENUM_NO_MORE_DEVICES;
+        if(index >= dev->MonitorCount) {
+            LogStr("NVX [DISPLAY]: no child at index=");LogHex(index);
+            LogStr(" MonitorCount=");LogHex(dev->MonitorCount);LogStr("\n");
+            return VIDEO_ENUM_NO_MORE_DEVICES;
+        }
     }
     if(!pChildDescriptor || ChildEnumInfo->ChildDescriptorSize<128)
         return VIDEO_ENUM_INVALID_DEVICE;
@@ -805,6 +943,7 @@ VP_STATUS HwVidFindAdapter(
     (void)HwContext;
     (void)ArgumentString;
 
+    NvxLogFlush();
     *Again = 0;
 
     LogStr("NVX: HwVidFindAdapter entered\n");
@@ -931,12 +1070,15 @@ VP_STATUS HwVidFindAdapter(
     }
 
     LogStr("NVX: HwVidFindAdapter returning NO_ERROR\n");
+    NvxLogFlush();
     return NO_ERROR;
 }
 
 BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
     PNVX_DEVICE_EXTENSION devExt = (PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    VP_STATUS enumStatus;
 
+    NvxLogFlush();
     LogStr("NVX: HwVidInitialize entered, IsSecondary: ");
     LogHex(devExt->IsSecondaryDisplay);
     LogStr("\n");
@@ -946,6 +1088,7 @@ BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
         LogStr("NVX [DUALVIEW]: Secondary initialized with ");
         LogHex(devExt->NumModes);
         LogStr(" modes\n");
+        NvxLogFlush();
         return TRUE;
     }
 
@@ -976,18 +1119,27 @@ BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
 
 #if NVX_ENABLE_EXPERIMENTAL_GSP
 #if NVX_ENABLE_UNSAFE_GSP_PROBE
-        if (!NvxGspInitSubsystem(HwDeviceExtension)) {
-            LogStr("NVX [GSP]: Bootstrap incomplete; restoring verified VBE mode.\n");
-            if (!NvxVbeSetMode(HwDeviceExtension, devExt->CurrentModeIndex))
-                LogStr("NVX [GSP]: WARNING: VBE mode restore failed.\n");
+        {
+            BOOLEAN initOk=NvxGspInitSubsystem(HwDeviceExtension);
+            LogStr("NVX [GSP-STATE]: init_return=");LogHex(initOk);LogStr("\n");
+            if (!initOk) {
+                LogStr("NVX [GSP]: Bootstrap incomplete; restoring verified VBE mode.\n");
+                if (!NvxVbeSetMode(HwDeviceExtension, devExt->CurrentModeIndex))
+                    LogStr("NVX [GSP]: WARNING: VBE mode restore failed.\n");
+            }
         }
 #else
         LogStr("NVX [GSP]: Validating and executing board FWSEC/FRTS before Booter Load.\n");
         NvxProbeFwsecRom(HwDeviceExtension,(PUCHAR)devExt->Bar0MmioVirtual);
         if (devExt->FwsecFrtsReady) {
             LogStr("NVX [GSP]: Verified FWSEC/FRTS prerequisite; starting GSP bootstrap.\n");
-            if (!NvxGspInitSubsystem(HwDeviceExtension))
-                LogStr("NVX [GSP]: Bootstrap incomplete; staging retained for diagnosis.\n");
+            {
+                BOOLEAN initOk=NvxGspInitSubsystem(HwDeviceExtension);
+                LogStr("NVX [GSP-STATE]: init_return=");LogHex(initOk);LogStr("\n");
+                if (!initOk) {
+                    LogStr("NVX [GSP]: Bootstrap incomplete; staging retained for diagnosis.\n");
+                }
+            }
         }
 #endif
 #else
@@ -995,7 +1147,30 @@ BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
 #endif
     }
 
+    LogStr("NVX [GSP-STATE]: after-init fwsec_frts=");
+    LogHex(devExt->FwsecFrtsReady);
+    LogStr(" boot_verified=");LogHex(devExt->GspBootVerified);
+    LogStr(" initialized=");LogHex(devExt->GspInitialized);
+    LogStr(" copy_verified=");LogHex(devExt->GspCopyVerified);
+    LogStr(" channel_faulted=");LogHex(devExt->GspChannelFaulted);
+    LogStr(" fb_layout=");LogHex(devExt->GspFbLayoutValid);
+    LogStr(" scanout_mapped=");LogHex(devExt->GspScanoutMapped);
+    LogStr(" gpu_va=");LogHex(devExt->GspVramGpuVa);LogStr("\n");
+
+    /* Connector/EDID discovery runs after VideoPort's initial PnP child query.
+       Ask XP to enumerate again now that MonitorCount and EDIDs are populated. */
+    if (devExt->MonitorCount) {
+        LogStr("NVX [DISPLAY]: re-enumerating children after discovery; count=");
+        LogHex(devExt->MonitorCount);
+        LogStr("\n");
+        enumStatus=VideoPortEnumerateChildren(HwDeviceExtension,NULL);
+        LogStr("NVX [DISPLAY]: VideoPortEnumerateChildren status=");
+        LogHex(enumStatus);
+        LogStr("\n");
+    }
+
     LogStr("NVX: HwVidInitialize returning TRUE\n");
+    NvxLogFlush();
     return TRUE;
 }
 
@@ -1406,6 +1581,18 @@ BOOLEAN HwVidStartIO(
             status=ERROR_INSUFFICIENT_BUFFER;break;
         }
         if(!engine || !engine->GspCopyVerified || engine->GspChannelFaulted) {
+            LogStr("NVX [SCANOUT-VA]: rejected; engine=");LogHex(engine!=NULL);
+            if(engine) {
+                LogStr(" initialized=");LogHex(engine->GspInitialized);
+                LogStr(" boot_verified=");LogHex(engine->GspBootVerified);
+                LogStr(" copy_verified=");LogHex(engine->GspCopyVerified);
+                LogStr(" channel_faulted=");LogHex(engine->GspChannelFaulted);
+                LogStr(" fwsec_frts=");LogHex(engine->FwsecFrtsReady);
+                LogStr(" fb_layout=");LogHex(engine->GspFbLayoutValid);
+                LogStr(" scanout_mapped=");LogHex(engine->GspScanoutMapped);
+                LogStr(" gpu_va=");LogHex(engine->GspVramGpuVa);
+            }
+            LogStr(" secondary=");LogHex(devExt->IsSecondaryDisplay);LogStr("\n");
             status=ERROR_DEVICE_NOT_READY;break;
         }
         *(PULONG64)RequestPacket->OutputBuffer=engine->GspVramGpuVa+
@@ -1413,6 +1600,49 @@ BOOLEAN HwVidStartIO(
         statusBlock->Information=sizeof(ULONG64);status=NO_ERROR;
         LogStr("NVX [SCANOUT-VA]: secondary=");LogHex(devExt->IsSecondaryDisplay);
         LogStr(" gpuVa=");LogHex(*(PULONG64)RequestPacket->OutputBuffer);LogStr("\n");
+        break;
+    }
+
+    case IOCTL_NVX_DIAGNOSTIC_TRACE: {
+        const ULONG *trace=(const ULONG *)RequestPacket->InputBuffer;
+        if(!trace || RequestPacket->InputBufferLength<4*sizeof(ULONG)) {
+            status=ERROR_INVALID_PARAMETER;
+            break;
+        }
+        LogStr("NVX [GDI-TRACE]: stage=");LogHex(trace[0]);
+        LogStr(" v0=");LogHex(trace[1]);
+        LogStr(" v1=");LogHex(trace[2]);
+        LogStr(" v2=");LogHex(trace[3]);LogStr("\n");
+        status=NO_ERROR;
+        break;
+    }
+
+    case IOCTL_NVX_DIAGNOSTIC_STATE: {
+        PNVX_DIAGNOSTIC_STATE state=(PNVX_DIAGNOSTIC_STATE)RequestPacket->OutputBuffer;
+        PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
+        if(!state || RequestPacket->OutputBufferLength<sizeof(*state)) {
+            status=ERROR_INSUFFICIENT_BUFFER;
+            break;
+        }
+        VideoPortZeroMemory(state,sizeof(*state));
+        if(devExt->IsSecondaryDisplay) state->Flags|=0x00000001UL;
+        if(engine) {
+            state->Flags|=0x00000002UL;
+            if(engine->GspInitialized) state->Flags|=0x00000004UL;
+            if(engine->GspBootVerified) state->Flags|=0x00000008UL;
+            if(engine->GspCopyVerified) state->Flags|=0x00000010UL;
+            if(engine->GspChannelFaulted) state->Flags|=0x00000020UL;
+            if(engine->FwsecFrtsReady) state->Flags|=0x00000040UL;
+            if(engine->GspFbLayoutValid) state->Flags|=0x00000080UL;
+            if(engine->GspScanoutMapped) state->Flags|=0x00000100UL;
+            state->MonitorCount=engine->MonitorCount;
+            state->GspVramGpuVa=engine->GspVramGpuVa;
+        }
+        state->NumModes=devExt->NumModes;
+        state->CurrentModeIndex=devExt->CurrentModeIndex;
+        statusBlock->Information=sizeof(*state);
+        status=NO_ERROR;
         break;
     }
 
@@ -1521,9 +1751,12 @@ static NTSTATUS HookedPnpDispatch(PVOID DeviceObject, PVOID Irp) {
     unsigned char *irpBytes = (unsigned char *)Irp;
     unsigned char **stackLocationPtr = (unsigned char **)(irpBytes + 0xb8);
     unsigned char *stack = *stackLocationPtr;
+    unsigned char major = stack ? stack[0] : 0xFF;
     unsigned char minor = stack ? stack[1] : 0xFF;
 
-    LogStr("NVX: HookedPnpDispatch! Minor=0x");
+    LogStr("NVX: HookedPnpDispatch! Major=");
+    LogHex(major);
+    LogStr(" Minor=");
     LogHex(minor);
     LogStr(" DevObj=");
     LogHex((unsigned long long)DeviceObject);
@@ -1531,7 +1764,11 @@ static NTSTATUS HookedPnpDispatch(PVOID DeviceObject, PVOID Irp) {
 
     NTSTATUS status = RealPnpDispatch(DeviceObject, Irp);
 
-    LogStr("NVX: RealPnpDispatch returned: ");
+    LogStr("NVX: RealPnpDispatch Major=");
+    LogHex(major);
+    LogStr(" Minor=");
+    LogHex(minor);
+    LogStr(" returned: ");
     LogHex((unsigned long long)status);
     LogStr("\n");
     return status;
@@ -1548,7 +1785,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.169 (XRGB Solid Fills, DualView)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.171 (boot log ring, VBE surface fallback, GSP diagnostics)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));
@@ -1624,5 +1861,6 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
         *(PDRIVER_DISPATCH *)(drvObj + 0x120) = HookedPowerDispatch;
     }
 
+    NvxLogFlush();
     return status;
 }
