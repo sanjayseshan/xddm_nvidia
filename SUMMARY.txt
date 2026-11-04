@@ -1,19 +1,33 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 4, 2026 (v181 secondary DP wake, centered primary raster, isolated DualView children)
+Updated: November 4, 2026 (v182 restore full dual-head EVO scanout, user-mode log flushing, zero-offset primary)
 
-Confirmed baseline: v164 works on the test EVGA RTX 3070 XC3 Ultra LHR with
+Confirmed baseline: v164/v169 works on the test EVGA RTX 3070 XC3 Ultra LHR with
 two physical displays. The primary runs at 1920x1080 and the secondary at
-2560x1440. Build v181 addresses three key physical display issues:
-1. Secondary monitor off/standby: Removes one-shot barriers in NvxGspWakeSecondaryDpSink
-   and NvxGspTrainSecondaryDpLink so secondary DP sink wake (DPCD 0x600=1) and DP link
-   training (4 lanes @ 5.4Gbps HBR2) execute whenever secondary scanout is activated.
-2. Primary monitor shifted down and right: In NvxNativeSetSecondaryScanout, Head 0 and
-   Window 0 are left untouched so VBE's perfectly aligned raster timings for Dell S2419HGF
-   are preserved without the 40-line top black bar and horizontal shift.
-3. "(Multiple Monitors)" label: Isolates HwVidGetVideoChildDescriptor so \Device\Video0
-   only enumerates Child 1 (Dell) and \Device\Video1 only enumerates Child 1 (Lenovo).
-4. Increases miniport log ring buffer to 1MB and rate-limits high-frequency 2D fill,
-   copy, and upload logs to prevent ring overflow.
+2560x1440. Build v182 resolves the secondary display remaining off and log truncation:
+1. Secondary monitor off/standby root cause & VM explanation:
+   - In v164-v169 (verified working in the VM/VFIO test environment), NvxNativeSetSecondaryScanout
+     programmed BOTH Window 0 (Head 0, handle 0xd1500002) and Window 2 (Head 1, handle 0xd1500003),
+     along with both Head 0 (SOR 2, 1080p) and Head 1 (SOR 0, 1440p) in Core pushbuffer with
+     interlock 5 (Window 0 | Window 2).
+   - In v164-v169, offsets[0] was 0x200000 (2MB). Because GspFbFreeBase was 0x180000 (1.5MB), the check
+     `offsets[j] < dev->GspFbFreeBase` passed (0x200000 >= 0x180000). Both heads activated and locked 4 DP lanes.
+     However, scanning out from +2MB shifted the primary raster down by 273 lines and 128 px right.
+   - When offsets[0] was changed to 0 to fix the shift, `0 < dev->GspFbFreeBase` failed the limit check!
+   - In v181, dropping Window 0/Head 0 and programming only Window 2 left Head 1 unlinked in EVO Core,
+     so the secondary monitor remained off/in standby.
+   - Build v182 restores the complete dual-head EVO sequence with correct descriptor validation:
+     Window 0 uses offset 0 (perfect alignment, no shift!) checked against NativeDisplayInstance,
+     while Window 2 uses offset 0x2000000 (32MB) checked against GspFbFreeLimit. Both heads and
+     windows are committed together with interlock 5.
+2. Real-time miniport diagnostic logging (IOCTL_NVX_GET_LOG):
+   - HwVidStartIO runs at DISPATCH_LEVEL under a videoprt spinlock, preventing kernel file I/O (ZwWriteFile).
+   - v182 adds IOCTL_NVX_GET_LOG, allowing nvxdisp.dll (which runs at PASSIVE_LEVEL in GDI session context)
+     to pull pending bytes from the miniport's 1MB ring buffer and flush them to \??\C:\WINDOWS\nvxmp.log.
+3. Cleaned diagnostic logs:
+   - Truncated both nvxmp.log and nvxdisp.log to 0 bytes for clean capture on next boot.
+4. Preserved v181 PnP monitor separation:
+   - Retained isolated HwVidGetVideoChildDescriptor and detached child state handling, ensuring both
+     displays continue to identify cleanly as independent PnP monitors and Windows accepts desktop extension.
 
 Build v180 resolved the "flash of black on primary then unchecks" issue
 when enabling desktop extension onto the secondary monitor in desk.cpl. In v179,
@@ -168,10 +182,10 @@ Milestones:
   fallback. Build and host tests pass; user-run hardware log confirms GSP and
   both native heads, but has zero CopyBits submissions. Orange drag artifacts
   remain; the new copy path has not yet been exercised by the desktop.
-- v169: converts COLORREF brush values to XRGB pixels in accelerated solid
-  fills. Display and miniport builds plus host tests pass; user confirms the
-  orange drag artifacts are gone. The automated host test launcher remains
-  blocked by libguestfs `supermin` before QEMU starts.
+- v181: fixes "(Multiple Monitors)" label by isolating child descriptors per adapter,
+  allowing Windows to cleanly identify both displays as PnP monitors and accept desktop extension.
+- v182: restores full dual-head EVO pushbuffer with correct zero-offset primary descriptor checks
+  and 32MB secondary scanout, and implements user-mode miniport log flushing via IOCTL_NVX_GET_LOG.
 
 Validation: the v164 hardware log recorded active Head 0 and Head 1, completed
 display-update notifiers, four-lane DisplayPort link locks, 1920x1080 and

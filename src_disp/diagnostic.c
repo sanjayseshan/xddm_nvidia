@@ -30,6 +30,52 @@ extern LONG NTAPI ZwClose(HANDLE);
 
 static HANDLE g_NvxDispLog;
 static BOOLEAN g_NvxDispLogAttempted;
+static HANDLE g_NvxMpLog;
+
+static VOID NvxDispWriteMpLog(const CHAR *buffer, ULONG length)
+{
+    static WCHAR pathBuffer[] = L"\\??\\C:\\WINDOWS\\nvxmp.log";
+    NVX_DISP_UNICODE_STRING path;
+    NVX_DISP_OBJECT_ATTRIBUTES attributes;
+    NVX_DISP_IO_STATUS_BLOCK io;
+    LARGE_INTEGER append;
+    if (!length) return;
+
+    if (!g_NvxMpLog) {
+        path.Buffer = pathBuffer;
+        path.Length = (USHORT)(sizeof(pathBuffer) - sizeof(WCHAR));
+        path.MaximumLength = sizeof(pathBuffer);
+        attributes.Length = sizeof(attributes);
+        attributes.RootDirectory = NULL;
+        attributes.ObjectName = &path;
+        attributes.Attributes = 0x40; /* OBJ_CASE_INSENSITIVE */
+        attributes.SecurityDescriptor = NULL;
+        attributes.SecurityQualityOfService = NULL;
+        if (ZwCreateFile(&g_NvxMpLog, 0x00100004, &attributes, &io, NULL,
+            0x80, 0x00000007, 0x00000003, 0x00000020, NULL, 0) < 0) {
+            g_NvxMpLog = NULL;
+            return;
+        }
+    }
+    append.QuadPart = -1;
+    (void)ZwWriteFile(g_NvxMpLog, NULL, NULL, NULL, &io,
+        (PVOID)buffer, length, &append, NULL);
+}
+
+VOID NvxDispFlushMiniportLog(HANDLE hDriver)
+{
+    static CHAR chunk[4096];
+    ULONG returned;
+    if (!hDriver) return;
+    for (int iter = 0; iter < 64; ++iter) {
+        returned = 0;
+        ULONG status = EngDeviceIoControl(hDriver, IOCTL_NVX_GET_LOG,
+            NULL, 0, chunk, sizeof(chunk), &returned);
+        if (status != 0 || returned == 0) break;
+        NvxDispWriteMpLog(chunk, returned);
+        if (returned < sizeof(chunk)) break;
+    }
+}
 
 static VOID NvxDispWrite(const CHAR *buffer, ULONG length)
 {
@@ -101,5 +147,9 @@ VOID NvxDispCloseLog(VOID)
     if (g_NvxDispLog) {
         (void)ZwClose(g_NvxDispLog);
         g_NvxDispLog = NULL;
+    }
+    if (g_NvxMpLog) {
+        (void)ZwClose(g_NvxMpLog);
+        g_NvxMpLog = NULL;
     }
 }

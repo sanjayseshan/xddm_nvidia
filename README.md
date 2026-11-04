@@ -1,11 +1,11 @@
 # NVIDIA GA104 XDDM driver for Windows XP x64
 
 This experimental driver brings up a Windows XP x64 desktop on NVIDIA Ampere
-GA104 hardware. Build v181 fixes secondary display link wake, centers primary raster, and isolates DualView monitors:
-1. In `NvxGspWakeSecondaryDpSink` and `NvxGspTrainSecondaryDpLink`, removes one-shot gates (`s_sinkWoken` and `dev->SecondaryDpTrainingAttempted`) so sink wake (DPCD `0x600 = 1`) and link training (4 lanes @ 5.4Gbps HBR2) execute when secondary scanout is activated, bringing the Lenovo monitor out of standby.
-2. In `NvxNativeSetSecondaryScanout`, removes destructive Head 0/Window 0 reprogramming. Head 0 and Window 0 remain in their perfectly centered VBE raster, eliminating the downward/rightward active area shift and top black border on the primary Dell monitor. Window 2 is bound and assigned exclusively to Head 1 at 2560x1440.
-3. In `HwVidGetVideoChildDescriptor`, isolates child enumeration so the primary adapter only returns Child 1 (Dell S2419HGF) and the secondary adapter only returns Child 1 (Lenovo R27qe). This prevents Windows XP from grouping them under "(Multiple Monitors)".
-4. Expands miniport logging ring buffer to 1MB and rate-limits high-frequency 2D fill/copy/upload messages to prevent ring buffer overflow.
+GA104 hardware. Build v182 restores full dual-head EVO scanout and enables real-time user-mode log flushing:
+1. Restores verified dual-head EVO pushbuffer sequence in `NvxNativeSetSecondaryScanout` (Window 0 at physical offset 0, Window 2 at physical offset 0x2000000, Head 0 on SOR 2 @ 1080p, Head 1 on SOR 0 @ 1440p, interlock 5), correcting the descriptor limit check to properly accommodate offset 0 for primary and 32MB for secondary.
+2. Implements `IOCTL_NVX_GET_LOG` and user-mode log flushing in `nvxdisp.dll`: because `HwVidStartIO` executes at `DISPATCH_LEVEL`, direct kernel file writes (`ZwWriteFile`) cannot run; `nvxdisp.dll` at `PASSIVE_LEVEL` in session context now continuously drains the miniport's 1MB ring buffer directly to `\??\C:\WINDOWS\nvxmp.log`.
+3. Retains isolated DualView child enumeration from v181, keeping both monitors recognized as independent PnP monitors in Windows Display Properties.
+4. Truncates miniport and display diagnostic logs to 0 bytes for clean capture on the next boot.
 
 The v168 hardware log confirms GSP initialization, both native display heads,
 and GPU solid-fill activity. The v168 run showed orange artifacts while

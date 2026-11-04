@@ -32,6 +32,7 @@ static VOID NvxGdiTrace(HANDLE hDriver, ULONG stage, ULONG a, ULONG b, ULONG c)
                 (ULONG)(state.GspVramGpuVa>>32),0);
         }
     }
+    NvxDispFlushMiniportLog(hDriver);
 }
 
 static LOGFONTW SystemFont = { 16, 7, 0, 0, 700, 0, 0, 0, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, VARIABLE_PITCH | FF_DONTCARE, L"System" };
@@ -452,6 +453,10 @@ DrvDisablePDEV(
     DHPDEV dhpdev)
 {
     PPDEV ppdev = (PPDEV)dhpdev;
+    if (ppdev && ppdev->hDriver) {
+        NvxDispFlushMiniportLog(ppdev->hDriver);
+    }
+    NvxDispCloseLog();
     if (ppdev->DefaultPalette)
         EngDeletePalette(ppdev->DefaultPalette);
     if (ppdev->PaletteEntries)
@@ -595,6 +600,9 @@ DrvDisableSurface(
     VideoMemory.RequestedVirtualAddress = ppdev->MappedFramebuffer;
     EngDeviceIoControl(ppdev->hDriver, IOCTL_VIDEO_UNMAP_VIDEO_MEMORY,
                        &VideoMemory, sizeof(VIDEO_MEMORY), NULL, 0, &ulTemp);
+    if (ppdev->hDriver) {
+        NvxDispFlushMiniportLog(ppdev->hDriver);
+    }
     if (ppdev->ScreenPtr) EngFreeMem(ppdev->ScreenPtr);
     if (ppdev->PresentedPixels) EngFreeMem(ppdev->PresentedPixels);
     if (ppdev->CopyScratch) EngFreeMem(ppdev->CopyScratch);

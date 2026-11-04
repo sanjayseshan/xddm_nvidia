@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.181
+ * Driver Version: 1.0.0.182
  */
 
 #include "miniport.h"
@@ -1220,7 +1220,8 @@ BOOLEAN HwVidStartIO(
        paths already report sampled progress and all submission failures. */
     if(RequestPacket->IoControlCode!=IOCTL_NVX_ACCEL_UPLOAD &&
        RequestPacket->IoControlCode!=IOCTL_NVX_ACCEL_COPY &&
-       RequestPacket->IoControlCode!=IOCTL_NVX_ACCEL_FILL) {
+       RequestPacket->IoControlCode!=IOCTL_NVX_ACCEL_FILL &&
+       RequestPacket->IoControlCode!=IOCTL_NVX_GET_LOG) {
         LogStr("NVX: HwVidStartIO IoControlCode: ");
         LogHex(RequestPacket->IoControlCode);
         LogStr("\n");
@@ -1737,6 +1738,30 @@ BOOLEAN HwVidStartIO(
         break;
     }
 
+    case IOCTL_NVX_GET_LOG: {
+        ULONG maxBytes = RequestPacket->OutputBufferLength;
+        PUCHAR outBuf = (PUCHAR)RequestPacket->OutputBuffer;
+        ULONG count = 0;
+        ULONG64 end;
+        if (!outBuf || !maxBytes) {
+            status = ERROR_INVALID_PARAMETER;
+            break;
+        }
+        end = __sync_fetch_and_add(&g_LogWriteSequence, 0);
+        if (end - g_LogReadSequence > NVX_LOG_RING_BYTES) {
+            g_LogReadSequence = end - NVX_LOG_RING_BYTES;
+        }
+        count = (ULONG)(end - g_LogReadSequence);
+        if (count > maxBytes) count = maxBytes;
+        for (ULONG i = 0; i < count; i++) {
+            outBuf[i] = g_LogRing[(g_LogReadSequence + i) % NVX_LOG_RING_BYTES];
+        }
+        g_LogReadSequence += count;
+        statusBlock->Information = count;
+        status = NO_ERROR;
+        break;
+    }
+
     case IOCTL_NVX_ACCEL_UPLOAD: {
         PNVX_ACCEL_UPLOAD_PARAMS params=(PNVX_ACCEL_UPLOAD_PARAMS)RequestPacket->InputBuffer;
         PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
@@ -1878,7 +1903,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.181 (isolated DualView child monitors and secondary DP native scanout)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.182 (restore dual-head EVO scanout and user-mode log flushing)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

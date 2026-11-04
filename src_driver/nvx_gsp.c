@@ -1223,12 +1223,15 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
 {
     PNVX_DEVICE_EXTENSION dev=extension,sec;
     PUCHAR bar0;
-    PULONG core,win2;
+    PULONG core,windows[2];
     volatile ULONG *notifier;
-    ULONG count2,n,wait;
-    ULONG secWidth,secHeight,secPitch;
-    NVX_DISPLAY_TIMING secTiming;
-    NVX_EVO_RASTER secRaster;
+    ULONG counts[2],n,wait;
+    ULONG widths[2],heights[2],pitches[2];
+    const ULONG offsets[2]={0,0x2000000};
+    const ULONG users[2]={1,3};
+    const ULONG windowIds[2]={0,2};
+    const ULONG channels[2]={1,2};
+    NVX_DISPLAY_TIMING modes[2];
     BOOLEAN ownersChanged=FALSE;
     if(!dev) return FALSE;
     if(dev->IsSecondaryDisplay) {
@@ -1250,27 +1253,55 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
         LogStr("\n");
         return FALSE;
     }
-    if(sec->CurrentModeIndex>=sec->NumModes) {
-        LogStr("NVX [NATIVE]: invalid mode index sec=");LogHex(sec->CurrentModeIndex);LogStr("\n");
+    {
+        ULONG primMode = dev->CurrentModeIndex;
+        if (primMode >= dev->NumModes || dev->Modes[primMode].BitsPerPlane != 32 ||
+            dev->Modes[primMode].VisScreenWidth < 1024) {
+            for (ULONG m = 0; m < dev->NumModes; m++) {
+                if (dev->Modes[m].VisScreenWidth == 1920 &&
+                    dev->Modes[m].VisScreenHeight == 1080 &&
+                    dev->Modes[m].BitsPerPlane == 32) {
+                    primMode = m;
+                    dev->CurrentModeIndex = m;
+                    break;
+                }
+            }
+        }
+    }
+    if(dev->CurrentModeIndex>=dev->NumModes || sec->CurrentModeIndex>=sec->NumModes) {
+        LogStr("NVX [NATIVE]: invalid mode index prim=");
+        LogHex(dev->CurrentModeIndex);LogStr(" sec=");LogHex(sec->CurrentModeIndex);LogStr("\n");
         return FALSE;
     }
-    secTiming=dev->MonitorTiming[1];
-    secWidth=sec->Modes[sec->CurrentModeIndex].VisScreenWidth;
-    secHeight=sec->Modes[sec->CurrentModeIndex].VisScreenHeight;
-    secPitch=sec->Modes[sec->CurrentModeIndex].ScreenStride;
-    LogStr("NVX [NATIVE]: secondary scanout config: Head1=");
-    LogHex(secWidth);LogStr("x");LogHex(secHeight);LogStr(" pitch=");LogHex(secPitch);
-    LogStr(" sor=");LogHex(dev->MonitorSor[1]);LogStr(" proto=");LogHex(dev->MonitorProtocol[1]);
+    modes[0]=dev->MonitorTiming[0];modes[1]=dev->MonitorTiming[1];
+    widths[0]=dev->Modes[dev->CurrentModeIndex].VisScreenWidth;
+    heights[0]=dev->Modes[dev->CurrentModeIndex].VisScreenHeight;
+    pitches[0]=dev->Modes[dev->CurrentModeIndex].ScreenStride;
+    widths[1]=sec->Modes[sec->CurrentModeIndex].VisScreenWidth;
+    heights[1]=sec->Modes[sec->CurrentModeIndex].VisScreenHeight;
+    pitches[1]=sec->Modes[sec->CurrentModeIndex].ScreenStride;
+    LogStr("NVX [NATIVE]: dual scanout config: Head0=");
+    LogHex(widths[0]);LogStr("x");LogHex(heights[0]);LogStr(" pitch=");LogHex(pitches[0]);
+    LogStr(" Head1=");LogHex(widths[1]);LogStr("x");LogHex(heights[1]);LogStr(" pitch=");LogHex(pitches[1]);
     LogStr("\n");
-
-    if(!NvxEncodeEvoRaster(&secTiming,&secRaster) || dev->MonitorSor[1]>=4 ||
-       (dev->MonitorProtocol[1]!=8 && dev->MonitorProtocol[1]!=9) ||
-       !secWidth || !secHeight || secPitch<secWidth*4 || (secPitch&63)) {
-        LogStr("NVX [NATIVE]: validation failed for secondary head 1\n");
+    for(ULONG i=0;i<2;i++) {
+        NVX_EVO_RASTER raster;
+        if(!NvxEncodeEvoRaster(&modes[i],&raster) || dev->MonitorSor[i]>=4 ||
+           (dev->MonitorProtocol[i]!=8 && dev->MonitorProtocol[i]!=9) ||
+           !widths[i] || !heights[i] || pitches[i]<widths[i]*4 || (pitches[i]&63)) {
+            LogStr("NVX [NATIVE]: validation failed for head=");LogHex(i);
+            LogStr(" w=");LogHex(widths[i]);LogStr(" h=");LogHex(heights[i]);
+            LogStr(" pitch=");LogHex(pitches[i]);LogStr(" sor=");LogHex(dev->MonitorSor[i]);
+            LogStr(" proto=");LogHex(dev->MonitorProtocol[i]);LogStr("\n");
+            return FALSE;
+        }
+    }
+    if(dev->MonitorSor[0]==dev->MonitorSor[1]) {
+        LogStr("NVX [NATIVE]: SOR collision between heads\n");
         return FALSE;
     }
 
-    /* Wake DP sink power (DPCD 0x600=1) and main link transmitter first,
+    /* Wake secondary DP sink power (DPCD 0x600=1) and main link transmitter first,
        then link-train 4 lanes @ HBR2. */
     NvxGspWakeSecondaryDpSink(dev);
     NvxGspTrainSecondaryDpLink(dev);
@@ -1280,56 +1311,45 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     notifier=(volatile ULONG *)((PUCHAR)core+0x3000);
     VideoPortZeroMemory((PVOID)notifier,0x1000);
 
-    /* Bind Core sync notifier DMA context (handle 0xd1500001, user 0). */
-    {
-        ULONG desc[6]={0x46,0,0,0,0,0};
-        uint32_t slot,entry[2];
-        ULONG handle=0xd1500001;
-        ULONG descriptor=0x2000;
-        ULONG64 instanceVa=dev->GspVramGpuVa+dev->NativeDisplayInstance;
-        ULONG64 physical=dev->GspDmaPhysical.QuadPart+GSP_DISPLAY_PUSH_OFFSET+0x3000;
-        desc[1]=(ULONG)(physical>>8);desc[2]=(ULONG)(physical>>40);
-        desc[3]=(ULONG)((physical+0xfff)>>8);desc[4]=(ULONG)((physical+0xfff)>>40);
-        if(!NvxDisplayRamhtEntry(handle,0,descriptor,dev->GspClientHandle,&slot,entry) ||
-           !NvxGspUpload(dev,instanceVa+descriptor,desc,sizeof(desc)) ||
-           !NvxGspUpload(dev,instanceVa+slot*8,entry,sizeof(entry))) {
-            LogStr("NVX [NATIVE]: Core notifier DMA bind failed\n");
-            return FALSE;
-        }
-    }
-
-    /* Bind Window 2 image DMA context (handle 0xd1500003, user 3, offset 0x2000000). */
-    {
+    /* Bind independent image DMA objects for both window channels. */
+    for(ULONG i=0;i<3;i++) {
         ULONG desc[6]={0x45,0,0,0,0,0};
         uint32_t slot,entry[2];
-        ULONG handle=0xd1500003;
-        ULONG descriptor=0x2040;
+        ULONG handle=0xd1500001+i;
+        ULONG descriptor=0x2000+i*0x20;
         ULONG64 instanceVa=dev->GspVramGpuVa+dev->NativeDisplayInstance;
-        ULONG64 end=0x2000000ULL+(ULONG64)secPitch*secHeight-1;
-        if(end>dev->GspFbFreeLimit) {
-            LogStr("NVX [NATIVE]: Window 2 surface exceeds FB free limit\n");
-            return FALSE;
+        if(i==0) {
+            ULONG64 physical=dev->GspDmaPhysical.QuadPart+GSP_DISPLAY_PUSH_OFFSET+0x3000;
+            desc[0]=0x46;desc[1]=(ULONG)(physical>>8);desc[2]=(ULONG)(physical>>40);
+            desc[3]=(ULONG)((physical+0xfff)>>8);desc[4]=(ULONG)((physical+0xfff)>>40);
+        } else {
+            ULONG j=i-1;
+            ULONG64 end=offsets[j]+(ULONG64)pitches[j]*heights[j]-1;
+            if((j==0 && end>=dev->NativeDisplayInstance) ||
+               (j==1 && (offsets[1]<0x2000000 || end>dev->GspFbFreeLimit))) {
+                LogStr("NVX [NATIVE]: DMA descriptor limit check failed for window=");
+                LogHex(j);LogStr(" end=");LogHex(end);LogStr("\n");
+                return FALSE;
+            }
+            desc[3]=(ULONG)(end>>8);
         }
-        desc[3]=(ULONG)(end>>8);
-        if(!NvxDisplayRamhtEntry(handle,3,descriptor,dev->GspClientHandle,&slot,entry) ||
+        if(!NvxDisplayRamhtEntry(handle,i?users[i-1]:0,descriptor,
+                                 dev->GspClientHandle,&slot,entry) ||
            !NvxGspUpload(dev,instanceVa+descriptor,desc,sizeof(desc)) ||
            !NvxGspUpload(dev,instanceVa+slot*8,entry,sizeof(entry))) {
-            LogStr("NVX [NATIVE]: Window 2 image DMA bind failed\n");
+            LogStr("NVX [NATIVE]: RAMHT or DMA bind failed for handle=");LogHex(handle);LogStr("\n");
             return FALSE;
         }
     }
-
     n=NvxDisplayGetWords(VideoPortReadRegisterUlong((PULONG)(bar0+0x680000)));
     if(n>600) {
         LogStr("NVX [NATIVE]: core pushbuffer limit exceeded: ");LogHex(n);LogStr("\n");
         return FALSE;
     }
-
-    /* Assign Window 2 to Head 1 if needed. Window 0 belongs to Head 0 and is left untouched. */
-    {
-        ULONG owner=VideoPortReadRegisterUlong((PULONG)(bar0+0x681000+2*0x80))&15;
-        if(owner!=1) {
-            NvxNativeMethod(core,&n,NVX_C67D_WINDOW_SET_CONTROL(2),1);
+    for(ULONG i=0;i<2;i++) {
+        ULONG owner=VideoPortReadRegisterUlong((PULONG)(bar0+0x681000+windowIds[i]*0x80))&15;
+        if(owner!=i) {
+            NvxNativeMethod(core,&n,NVX_C67D_WINDOW_SET_CONTROL(windowIds[i]),i);
             ownersChanged=TRUE;
         }
     }
@@ -1347,48 +1367,47 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
         if((notifier[0]>>30)!=2) { (void)NvxGspVerifyDisplays(dev);return FALSE; }
         VideoPortZeroMemory((PVOID)notifier,16);
     }
-
-    /* Program Window 2 in Core pushbuffer */
-    NvxNativeMethod(core,&n,0x1004+2*0x80,0x1f);
-    NvxNativeMethod(core,&n,0x1008+2*0x80,0);
-    NvxNativeMethod(core,&n,0x1010+2*0x80,0x00117fff);
-
-    /* Program Window 2 channel pushbuffer (channel index 2, MMIO 0x692000) */
-    win2=(PULONG)((PUCHAR)core+2*0x1000);
-    count2=NvxDisplayGetWords(VideoPortReadRegisterUlong((PULONG)(bar0+0x692000)));
-    if(count2>900) {
-        LogStr("NVX [NATIVE]: window 2 pushbuffer limit exceeded: ");LogHex(count2);LogStr("\n");
-        return FALSE;
+    /* Full native state for both heads: do not replay partial VBE state. */
+    for(ULONG window=0;window<8;window++) {
+        NvxNativeMethod(core,&n,0x1004+window*0x80,0x1f);
+        NvxNativeMethod(core,&n,0x1008+window*0x80,0);
+        NvxNativeMethod(core,&n,0x1010+window*0x80,0x00117fff);
     }
-    NvxNativeWindow(win2,&count2,secWidth,secHeight,secPitch,0x2000000,0xd1500003);
-
-    /* Program Head 1 methods into Core pushbuffer (SOR 0, DP, Display ID 0x0200) */
-    if(!NvxNativeHead(core,&n,1,&secTiming,secWidth,secHeight,
-                      dev->MonitorIds[1],dev->MonitorSor[1],dev->MonitorProtocol[1])) {
-        LogStr("NVX [NATIVE]: NvxNativeHead failed for Head 1\n");
-        return FALSE;
+    for(ULONG i=0;i<2;i++) {
+        windows[i]=(PULONG)((PUCHAR)core+channels[i]*0x1000);
+        counts[i]=NvxDisplayGetWords(VideoPortReadRegisterUlong((PULONG)(bar0+
+                                    (i?0x692000:0x690000))));
+        if(counts[i]>900) {
+            LogStr("NVX [NATIVE]: window pushbuffer limit exceeded for head=");LogHex(i);LogStr("\n");
+            return FALSE;
+        }
+        NvxNativeWindow(windows[i],&counts[i],widths[i],heights[i],pitches[i],
+                        offsets[i],0xd1500002+i);
+        if(!NvxNativeHead(core,&n,i,&modes[i],widths[i],heights[i],
+                          dev->MonitorIds[i],dev->MonitorSor[i],dev->MonitorProtocol[i])) {
+            LogStr("NVX [NATIVE]: NvxNativeHead failed for head=");LogHex(i);LogStr("\n");
+            return FALSE;
+        }
+        LogStr("NVX [NATIVE]: head=");LogHex(i);LogStr(" nativeWidth=");LogHex(modes[i].hActive);
+        LogStr(" nativeHeight=");LogHex(modes[i].vActive);LogStr(" surfaceWidth=");LogHex(widths[i]);
+        LogStr(" surfaceHeight=");LogHex(heights[i]);LogStr("\n");
     }
-    LogStr("NVX [NATIVE]: head=1 nativeWidth=");LogHex(secTiming.hActive);
-    LogStr(" nativeHeight=");LogHex(secTiming.vActive);
-    LogStr(" surfaceWidth=");LogHex(secWidth);
-    LogStr(" surfaceHeight=");LogHex(secHeight);LogStr("\n");
-
-    /* Commit Core update with Window 2 interlock (bit 2 = 1 << 2 = 4) */
     NvxNativeMethod(core,&n,0x208,0xd1500001);
     NvxNativeMethod(core,&n,0x20c,0x1000);
     NvxNativeMethod(core,&n,0x218,0);
-    NvxNativeMethod(core,&n,0x21c,4); /* Window 2 interlock only */
+    NvxNativeMethod(core,&n,0x21c,5); /* Window0 and Window2. */
     NvxNativeMethod(core,&n,0x200,1);
     __sync_synchronize();
-    VideoPortWriteRegisterUlong((PULONG)(bar0+0x692000),NvxDisplayPutBytes(count2));
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x690000),NvxDisplayPutBytes(counts[0]));
+    VideoPortWriteRegisterUlong((PULONG)(bar0+0x692000),NvxDisplayPutBytes(counts[1]));
     VideoPortWriteRegisterUlong((PULONG)(bar0+0x680000),NvxDisplayPutBytes(n));
     for(wait=0;wait<2000 && (notifier[0]>>30)!=2;wait++) VideoPortStallExecution(100);
     {
         BOOLEAN active=NvxGspVerifyDisplays(dev);
-        LogStr("NVX [DISPLAY-VERIFY]: secondary updateNotifier=");LogHex(notifier[0]);
+        LogStr("NVX [DISPLAY-VERIFY]: dual updateNotifier=");LogHex(notifier[0]);
         LogStr(" bothHeadsActiveAndLocked=");LogHex(active);LogStr("\n");
-        dev->NativeDualActive=TRUE;
-        return TRUE;
+        dev->NativeDualActive=active && (notifier[0]>>30)==2;
+        return dev->NativeDualActive;
     }
 }
 
