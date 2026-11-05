@@ -74,7 +74,7 @@ static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
             decoded!=elements||sequence!=dev->RpcRxSequence) return FALSE;
         LogStr("NVX [RM]: reply function=");LogHex(function);
         LogStr(" result=");LogHex(result);LogStr("\n");
-        if(!result && (function==0x101b||function==0x100c||function==0x1004||function==0x1006)) {
+        if(!result && (function==0x101b||function==0x100c||function==0x1004||function==0x1006||function==0x100f)) {
             const ULONG *words=(const ULONG *)dev->RpcRxRecord;
             if(function==0x1006) {
                 char message[257];
@@ -94,6 +94,11 @@ static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
                 LogStr(" chid=");LogHex(words[21]);LogStr(" type=");LogHex(words[22]);
                 LogStr(" scope=");LogHex(words[23]);LogStr("\n");
                 if(words[21]==1) dev->GspChannelFaulted=TRUE;
+            } else if(function==0x100f) {
+                /* PERF_BRIDGELESS_INFO_UPDATE: informational, no reply or
+                   power-management action required (also ignored by Nouveau).
+                   Consume it before waiting for the real RM response. */
+                LogStr("NVX [RM]: consumed asynchronous performance notification.\n");
             } else {
                 if(words[14]<40||words[21]>words[14]-40) return FALSE;
                 LogStr("NVX [RM]: LibOS notification bytes=");LogHex(words[21]);LogStr("\n");
@@ -1039,6 +1044,9 @@ BOOLEAN NvxGspInitDisplayChannels(PVOID extension)
        dev->GspChannelFaulted || dev->Bar0Length<0x693000 ||
        dev->GspDmaLength<GSP_DISPLAY_PUSH_OFFSET+0x3000 ||
        dev->DisplayHeadCount<2 || (dev->DisplayWindowMask&5)!=5) return FALSE;
+    /* v169 trained the link before creating native channels. Retraining an
+       already prepared transmitter can replace the state those channels use. */
+    NvxGspTrainSecondaryDpLink(dev);
     dev->NativeDisplayAttempted=TRUE;
     /* Reserve the top 64KB of our existing 32MB CE VRAM aperture. This is
        outside all supported primary framebuffers (at most 16MB) and the CE
@@ -1061,6 +1069,15 @@ BOOLEAN NvxGspInitDisplayChannels(PVOID extension)
     instance.physical=base;instance.size=0x10000;instance.addressSpace=2;instance.cache=2;
     if(!NvxGspControl(dev,dev->GspSubdeviceHandle,0x20800a49,&instance,sizeof(instance))) {
         LogStr("NVX [NATIVE]: display instance registration failed; no channels submitted.\n");return FALSE;
+    }
+    /* Audit the hardware root after RM registration; do not override GSP's
+       instance configuration based solely on an inferred cold-boot cause. */
+    {
+        ULONG config=VideoPortReadRegisterUlong((PULONG)(bar0+0x610010));
+        ULONG root=VideoPortReadRegisterUlong((PULONG)(bar0+0x610014));
+        ULONG expected=(ULONG)(base>>16);
+        LogStr("NVX [NATIVE]: instance hardware config=");LogHex(config);
+        LogStr(" root=");LogHex(root);LogStr(" expected=");LogHex(expected);LogStr("\n");
     }
     LogStr("NVX [NATIVE]: verified 64KB display instance VRAM=");LogHex(base);LogStr("\n");
     for(ULONG channel=0;channel<3;channel++) {
@@ -1361,10 +1378,8 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
         return FALSE;
     }
 
-    /* Wake secondary DP sink power (DPCD 0x600=1) and main link transmitter first,
-       then link-train 4 lanes @ HBR2. */
-    NvxGspWakeSecondaryDpSink(dev);
-    NvxGspTrainSecondaryDpLink(dev);
+    /* Link preparation ran before native channel creation. Do not power up
+       and retrain it again between DMA verification and ownership UPDATE. */
 
     bar0=dev->Bar0MmioVirtual;
     core=(PULONG)((PUCHAR)dev->GspDmaVirtual+GSP_DISPLAY_PUSH_OFFSET);
@@ -1670,7 +1685,7 @@ VOID NvxGspTrainSecondaryDpLink(PVOID HwDeviceExtension)
     NVX_DP_CTRL_PARAMS train={0};
     ULONG link[4]={0};
     const ULONG *reply;
-    if(!dev || !dev->SecondaryDpTrainReady ||
+    if(!dev || !dev->SecondaryDpTrainReady || dev->SecondaryDpTrainingAttempted ||
        !dev->SecondaryDpDisplayId || !dev->GspDisplayHandle) return;
     dev->SecondaryDpTrainingAttempted=TRUE;
 

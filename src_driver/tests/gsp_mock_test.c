@@ -12,9 +12,13 @@ static UCHAR gpuVram[0x4000000];
 static NVX_DEVICE_EXTENSION dev;
 static int scenario, imemTransfers, dmemTransfers, cpuStarts,freeFailures,displayFreeFailures;
 static BOOLEAN dpLinkTrained;
+static BOOLEAN injectPerfBeforeFree;
+static ULONG perfNotifications;
 static ULONG regoff(PULONG p) { return (ULONG)((PUCHAR)p-(PUCHAR)regs); }
 static void gpuWrite64(ULONG offset,ULONG64 value) {memcpy(gpuMemory+offset,&value,8);}
 VOID LogStr(const char *s) {
+    if(!strcmp(s,"NVX [RM]: consumed asynchronous performance notification.\n"))
+        perfNotifications++;
     if(!strcmp(s,"NVX [SEQ]: validated capacity="))
         assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr>=5);
 }
@@ -310,6 +314,13 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             for(ULONG i=29;i<36;i++) assert(request[i]==0);
         }
         if(f==10) {
+            if(injectPerfBeforeFree) {
+                ULONG info=0x185;
+                injectPerfBeforeFree=FALSE;
+                assert(NvxEncodeRpc((PUCHAR)packet,4096,0x100f,write-1,&info,sizeof(info)));
+                packet[16]=0;packet[8]^=0xffffffffU;
+                write++;packet=(PULONG)((PUCHAR)q+4096+write*4096);
+            }
             assert(request[20]==dev.GspClientHandle);
             if(request[21]==0) {
                 assert(request[22]==dev.GspClientHandle);
@@ -325,6 +336,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         q->WritePtr=write+1;q->ReadPtr=cmd->WritePtr;
     }
     if(off==0x680000 || off==0x690000 || off==0x692000) {
+        if(scenario==12) assert(dpLinkTrained); /* Train before any channel DMA. */
         assert(!(value&3));value>>=2;
         ULONG channel=off==0x680000?0:(off==0x690000?1:2);
         PULONG buffer=(PULONG)((PUCHAR)dev.GspDmaVirtual+GSP_DISPLAY_PUSH_OFFSET+channel*0x1000);
@@ -545,6 +557,7 @@ int main(void)
                 assert(!dev.NativeDisplayAttempted && !dev.NativeDisplayChannelsReady);
                 assert(dev.RpcTxSequence==beforeMap);
                 dev.FramebufferVirtual=(PVOID)1;
+                regs[0x610010/4]=3;regs[0x610014/4]=0x6d40; /* Inherited BIOS root. */
                 memset(gpuVram+0x1ff0000,0xa5,0x10000);
                 assert(NvxGspInitDisplayChannels(&dev)==(scenario==0 || scenario==12));
                 assert(dev.NativeDisplayChannelsReady==(scenario==0 || scenario==12));
@@ -557,9 +570,10 @@ int main(void)
                     assert(dev.NativeDisplayChannels[2]==0xc6700102);
                 } else for(ULONG i=0;i<3;i++) assert(!dev.NativeDisplayChannels[i]);
                 if(scenario==12) {
-                    assert(!dpLinkTrained && !dev.SecondaryDpTrainingAttempted);
-                    NvxGspTrainSecondaryDpLink(&dev);
                     assert(dpLinkTrained && dev.SecondaryDpTrainingAttempted);
+                    ULONG trainedSequence=dev.RpcTxSequence;
+                    NvxGspTrainSecondaryDpLink(&dev);
+                    assert(dev.RpcTxSequence==trainedSequence); /* No retraining live channels. */
                 }
                 ULONG sequence=dev.RpcTxSequence;
                 assert(NvxGspInitDisplayChannels(&dev)==(scenario==0 || scenario==12));
@@ -628,7 +642,9 @@ int main(void)
                block reuse until a later teardown confirms it is gone. */
             dev.NativeDualActive=TRUE;
             displayFreeFailures=1;
+            injectPerfBeforeFree=TRUE;
             assert(!NvxGspReleaseDisplayChannels(&dev));
+            assert(!injectPerfBeforeFree && perfNotifications==1);
             assert(!dev.NativeDisplayChannelsReady && !dev.NativeDualActive);
             assert(dev.NativeDisplayAttempted && dev.NativeDisplayChannels[2]);
             assert(!NvxGspInitDisplayChannels(&dev));

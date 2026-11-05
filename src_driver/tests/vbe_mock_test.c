@@ -105,8 +105,13 @@ int main(void)
         assert(NvxVbeSetMode(&dev,2) && dev.ActiveWidth==1920 && dev.ActiveBpp==32);
         dev.NativeDisplayAttempted=TRUE;dev.NativeDisplayChannelsReady=TRUE;
         dev.NativeDualActive=TRUE;dev.NativeDisplayChannels[0]=0xc6700100;
+        ULONG sameModeSets=biosModeSets;
         assert(NvxVbeSetMode(&dev,2));
+        assert(!channelReleases && biosModeSets==sameModeSets);
+        assert(dev.NativeDisplayChannelsReady && dev.NativeDualActive);
+        assert(NvxVbeSetMode(&dev,0));
         assert(channelReleases==1 && !dev.NativeDisplayChannelsReady && !dev.NativeDualActive);
+        assert(NvxVbeSetMode(&dev,2));
         dev.NativeDisplayAttempted=TRUE;dev.NativeDisplayChannelsReady=TRUE;
         dev.NativeDisplayChannels[0]=0xc6700100;
         channelReleaseAllowed=FALSE;
@@ -114,8 +119,9 @@ int main(void)
         assert(!NvxVbeSetMode(&dev,0));
         assert(biosModeSets==sets && dev.CurrentModeIndex==2);
         channelReleaseAllowed=TRUE;
-        assert(NvxVbeSetMode(&dev,2));
+        assert(NvxVbeSetMode(&dev,0));
         assert(channelReleases==3 && !dev.NativeDisplayAttempted);
+        assert(NvxVbeSetMode(&dev,2));
         assert(!NvxVbeSetMode(&dev,3) && dev.CurrentModeIndex==2);
         scenario=3;
         assert(!NvxVbeSetMode(&dev,0) && dev.CurrentModeIndex==2 && dev.ActiveWidth==1920);

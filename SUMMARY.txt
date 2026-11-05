@@ -1,5 +1,41 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 4, 2026 (v184 restore v169 BIOS-before-native display handoff)
+Updated: November 4, 2026 (v185 RPC notification handling and v169 one-time DP training)
+
+v185 evidence from the actual v184 native run:
+- v184 did run (banner at line 909 in the accumulated nvxmp.log). The BIOS
+  modesets now precede native channel creation, but ownership still times out.
+  Thus v184's ordering change did not solve the secondary by itself.
+- Core PUT/GET advance together (0x48, later 0x80), but the ownership notifier
+  remains zero. The raw exception snapshot is 0x4fe5/data 0x40/code 0x20;
+  those values alone do not prove an active/unserviced hardware exception.
+- On changing settings, FREE encounters event 0x100f instead of its reply.
+  Our synchronous RPC code rejects the event without consuming it; subsequent
+  releases see the same event repeatedly. v184's teardown protection then
+  blocks BIOS modesets, SET_CURRENT_MODE returns error 87, and XP falls back.
+  This is a confirmed software failure path in the log, not a DMA guess.
+
+v185 fixes that path by consuming the known informational performance event
+(PERF_BRIDGELESS_INFO_UPDATE, also ignored by Nouveau), preserving sequence
+checks and then waiting for the requested reply. Unknown events are not silently
+consumed. Reselecting an unchanged active native mode no longer resets BIOS or
+tears down display channels. Actual mode changes retain acknowledged teardown.
+
+Comparison with v169 also found that v181 removed the one-time DP training
+guard and repeatedly wakes/powers/trains the transmitter between verified
+native channel setup and ownership UPDATE. The v184 log shows duplicate wake
+calls and another training on each activation attempt. v169 trained before
+native channel creation and skipped repeats. v185 restores that guard, ensures
+initial training precedes channel creation, and removes the duplicate live-path
+wake/training calls. The full v182 dual-head EVO sequence and zero primary base
+are retained; v182's core sequence is substantially the successful v169 one.
+The registered instance's hardware root/config are now logged read-only for
+further diagnosis, without an unverified direct-register override.
+
+Validation: v185 miniport/display builds and both host suites pass. Regression
+tests inject 0x100f before a FREE reply and verify it is consumed; cover unchanged
+mode preservation; and verify training is done before channels and not repeated.
+Hardware validation remains pending. The latest native run inspected is v184.
+
 
 v184 comparison against the confirmed v169 VM run:
 - v169 log lines 431/446: BIOS selects/restores 1080p. Lines 462-480:

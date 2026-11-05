@@ -68,6 +68,14 @@ BOOLEAN NvxVbeSetMode(PVOID extension, ULONG index)
     VP_STATUS status;
     ULONG id;
     if(index>=dev->NumModes) return FALSE;
+    if(dev->NativeDisplayChannelsReady && !dev->NativeDisplayFaulted &&
+       index==dev->CurrentModeIndex &&
+       dev->ActiveWidth==dev->Modes[index].VisScreenWidth &&
+       dev->ActiveHeight==dev->Modes[index].VisScreenHeight &&
+       dev->ActiveBpp==dev->Modes[index].BitsPerPlane) {
+        LogStr("NVX [VBE]: current native mode already matches; preserving display channels.\n");
+        return TRUE;
+    }
     if(dev->NativeDisplayAttempted || dev->NativeDisplayChannelsReady) {
         LogStr("NVX [VBE]: releasing native channels before BIOS display reset.\n");
         if(!NvxGspReleaseDisplayChannels(dev)) return FALSE;

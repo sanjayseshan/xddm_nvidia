@@ -142,3 +142,33 @@ The physical log inspected for this work is still v182, so hardware confirmation
 is pending. Latest sources and staged binaries are v184; use update_xp_driver.sh
 once the offline native volume is writable. Do not infer hardware success from
 host mocks or treat the old VM log as a fresh native run.
+
+
+## v185: latest tested-run findings and prepared correction
+
+The user ran v184: the second monitor stayed black and display setting changes
+triggered VGA fallback. The mounted nvxmp.log appends a v184 run after v182.
+v184's VBE-before-channel ordering is correct in this run but ownership still
+times out; do not present the previous ordering hypothesis as a confirmed cure.
+
+The fallback cause is explicit: FREE RPC encounters asynchronous event 0x100f
+(PERF_BRIDGELESS_INFO_UPDATE), which NvxGspCall left queued on mismatch. Every
+following release retries the same event, and v184 blocks BIOS reset because
+teardown is unconfirmed. v185 consumes this known informational event (as
+Nouveau does), then waits for the actual reply with sequence validation intact.
+It also treats an unchanged active native mode as a no-op, preserving channels.
+
+The v169 comparison additionally found a v181 regression: removal of the
+one-time DP training guard. The failing run retrains/powers the secondary
+transmitter after native channel NOP verification, twice waking it on each
+activation attempt. v185 restores one-time training and performs it before
+channel creation, removing wake/retrain calls from the live modeset path.
+The v182 full dual-head sequence and correct zero primary base remain.
+Display instance hardware config/root are logged read-only after RM registration.
+
+v185 builds and both host suites pass, including injected performance-event,
+unchanged-mode, and one-time-training regressions. Physical verification is
+pending. Stage matching binaries in dist_full and install using the existing
+update script when the offline XP volume is writable. Use a fresh v185 boot
+before assessing queue recovery; the prior v184 run already left RPC traffic
+blocked. Preserve v184 logs in test_logs before the next update.
