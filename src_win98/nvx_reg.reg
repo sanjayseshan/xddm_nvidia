@@ -1,5 +1,9 @@
 REGEDIT4
 
+[-HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display]
+
+[-HKEY_LOCAL_MACHINE\Enum\PCI\VEN_10DE&DEV_2488&SUBSYS_47553842&REV_A1]
+
 [HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000]
 "DriverDesc"="NVIDIA GeForce RTX 3070 (GA104 Win98)"
 "MatchingDeviceId"="PCI\\VEN_10DE&DEV_2488"

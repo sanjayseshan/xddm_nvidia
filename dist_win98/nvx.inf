@@ -44,6 +44,7 @@ nvx.drv
 nvx.vxd
 
 [Driver.Inis]
+system.ini,boot,,"display.drv=nvx.drv"
 system.ini,386Enh,,"device=nvx.vxd"
 
 [Driver.DelReg]
@@ -56,7 +57,6 @@ HKR,CURRENT
 [Driver.AddReg]
 HKR,,Ver,,4.0
 HKR,,DevLoader,,*vdd
-HKR,DEFAULT,Mode,,"32,1920,1080"
 HKR,DEFAULT,drv,,nvx.drv
 HKR,DEFAULT,vdd,,"*vdd,*vflatd"
 HKR,DEFAULT,RefreshRate,,-1
@@ -98,7 +98,7 @@ HKR,"MODES\32\2560,1440"
 
 [Strings]
 Mfg           = "NVIDIA Corporation (Win98SE Port)"
-DiskName      = "NVIDIA RTX 3070 Windows 98 SE Driver Installation Disk"
+DiskName      = "NVIDIA GA104 Win98 Driver Disk"
 NV3070        = "NVIDIA GeForce RTX 3070 (GA104 Win98)"
 NV3070_LHR    = "NVIDIA GeForce RTX 3070 LHR (GA104 Win98)"
 NV3060TI      = "NVIDIA GeForce RTX 3060 Ti (GA104 Win98)"
