@@ -1,9 +1,32 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 4, 2026 (v182 restore full dual-head EVO scanout, user-mode log flushing, zero-offset primary)
+Updated: November 4, 2026 (v183 display RAMHT/client hash and coherent notifier)
+
+v183 current finding (native XP, user-confirmed primary correct at 1080p):
+The latest mounted nvxmp.log has a v182 banner. GSP/copy and display DMA NOP
+fetches succeed. Secondary DP wake and training succeed at four lanes/HBR2.
+The ownership updateNotifier stays zero, so the function returns before
+submitting both native head states. RM reports primary display 0x800 on Head 0
+and no display on Head 1. Both EDIDs and the extended desktop setting therefore
+do not establish that the secondary scanout was activated.
+
+NVIDIA's instmemHashFunc_v03_00 includes the RM client ID in the RAMHT bucket
+hash. Our entries included that client in the context word but omitted it from
+the hash, a concrete mismatch capable of breaking notifier/DMA object lookup.
+v183 corrects this, enforces 32-byte DMA descriptor alignment, changes the
+notifier target from noncoherent PCI to coherent PCI (0x46 -> 0x47), and sets
+display pushbuffer cache attributes to RM NV_MEMORY_CACHED (0). Timeout logs now
+capture Core/Window0/Window2 PUT, GET and exception/data/code registers plus
+supervisor state. Link verification again requires all four DP lanes to lock.
+These are candidate fixes; the ownership timeout must disappear and both heads
+must activate on hardware before claiming the secondary is fixed.
+
+Validation: v183 miniport/display builds and both host test suites pass. Native
+physical validation is pending; the XP filesystem is currently read-only.
 
 Confirmed baseline: v164/v169 works on the test EVGA RTX 3070 XC3 Ultra LHR with
 two physical displays. The primary runs at 1920x1080 and the secondary at
-2560x1440. Build v182 resolves the secondary display remaining off and log truncation:
+2560x1440. Build v182 attempted to restore the secondary display and improved logging; the
+subsequent native test still has a black secondary. Its implementation changes:
 1. Secondary monitor off/standby root cause & VM explanation:
    - In v164-v169 (verified working in the VM/VFIO test environment), NvxNativeSetSecondaryScanout
      programmed BOTH Window 0 (Head 0, handle 0xd1500002) and Window 2 (Head 1, handle 0xd1500003),

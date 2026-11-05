@@ -1033,7 +1033,8 @@ BOOLEAN NvxGspInitDisplayChannels(PVOID extension)
         VideoPortZeroMemory(buffer,0x1000);
         push.addressSpace=1;
         push.physical=dev->GspDmaPhysical.QuadPart+GSP_DISPLAY_PUSH_OFFSET+channel*0x1000;
-        push.limit=0xfff;push.cache=1;push.hclass=classes[channel];
+        /* RM NV_MEMORY_CACHED=0 selects coherent PCI system-memory fetch. */
+        push.limit=0xfff;push.cache=0;push.hclass=classes[channel];
         push.instance=instances[channel];push.valid=1;
         __sync_synchronize();
         if(!NvxGspControl(dev,dev->GspSubdeviceHandle,0x20800a58,&push,sizeof(push))) goto failed;
@@ -1143,22 +1144,43 @@ static BOOLEAN NvxGspVerifyDisplays(PNVX_DEVICE_EXTENSION dev)
         LogStr("NVX [DISPLAY-VERIFY]: head=");LogHex(head);
         LogStr(" activeDisplay=");LogHex(id);LogStr("\n");
         if(head==0 && id==dev->MonitorIds[0]) primaryActive=TRUE;
-        if(head==1 && (id==dev->SecondaryDpDisplayId || (dev->MonitorCount>1 && id==dev->MonitorIds[1]))) secondaryActive=TRUE;
+        if(head==1 && id && (id==dev->SecondaryDpDisplayId || (dev->MonitorCount>1 && id==dev->MonitorIds[1]))) secondaryActive=TRUE;
         if(id) {
             NVX_DP_AUX_CTRL_PARAMS aux={0};
             aux.displayId=id;aux.cmd=9;aux.addr=0x202;aux.size=2;
             if(NvxGspControl(dev,dev->GspDisplayHandle,NVX_CTRL_CMD_DP_AUXCH_CTRL,&aux,sizeof(aux))) {
                 const NVX_DP_AUX_CTRL_PARAMS *r=(const void *)((const ULONG *)dev->RpcRxRecord+26);
                 BOOLEAN locked=r->replyType==0 && r->size==3 &&
-                    (r->data[0]&0x77)==0x77 && (r->data[2]&1);
+                    (r->data[0]&0x77)==0x77 && (r->data[1]&0x77)==0x77 && (r->data[2]&1);
                 LogStr("NVX [DISPLAY-VERIFY]: display=");LogHex(id);
                 LogStr(" auxLock=");LogHex(locked);
                 LogStr(" status=");LogHex(r->data[0]|(r->data[1]<<8)|(r->data[2]<<16));LogStr("\n");
-            }
+                if(!locked) { if(head==1) secondaryActive=FALSE;else primaryActive=FALSE; }
+            } else { if(head==1) secondaryActive=FALSE;else primaryActive=FALSE; }
         }
     }
     LogStr("NVX [DISPLAY-VERIFY]: bothHeadsActive=");LogHex(primaryActive&&secondaryActive);LogStr("\n");
     return primaryActive && secondaryActive && !dev->NativeDisplayFaulted;
+}
+
+/* Read-only snapshots: distinguish DMA-object lookup faults from an UPDATE
+   which was fetched but is waiting for display supervision/interlocks. */
+static VOID NvxNativeLogChannelState(PNVX_DEVICE_EXTENSION dev)
+{
+    PUCHAR bar0=dev->Bar0MmioVirtual;
+    const ULONG channels[3]={0,1,3};
+    const ULONG users[3]={0x680000,0x690000,0x692000};
+    for(ULONG i=0;i<3;i++) {
+        ULONG error=0x611020+channels[i]*12;
+        LogStr("NVX [EVO]: channel=");LogHex(channels[i]);
+        LogStr(" PUT=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+users[i])));
+        LogStr(" GET=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+users[i]+4)));
+        LogStr(" exception=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+error)));
+        LogStr(" data=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+error+4)));
+        LogStr(" code=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+error+8)));LogStr("\n");
+    }
+    LogStr("NVX [EVO]: supervisor=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x6107a8)));
+    LogStr(" errorPending=");LogHex(VideoPortReadRegisterUlong((PULONG)(bar0+0x611848)));LogStr("\n");
 }
 
 /* Methods use the byte-addressed EVO wire format. */
@@ -1320,7 +1342,9 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
         ULONG64 instanceVa=dev->GspVramGpuVa+dev->NativeDisplayInstance;
         if(i==0) {
             ULONG64 physical=dev->GspDmaPhysical.QuadPart+GSP_DISPLAY_PUSH_OFFSET+0x3000;
-            desc[0]=0x46;desc[1]=(ULONG)(physical>>8);desc[2]=(ULONG)(physical>>40);
+            /* NV_DMA_TARGET_NODE_PHYSICAL_PCI_COHERENT (3), writable (4).
+               The notifier must use snooped system-memory transactions. */
+            desc[0]=0x47;desc[1]=(ULONG)(physical>>8);desc[2]=(ULONG)(physical>>40);
             desc[3]=(ULONG)((physical+0xfff)>>8);desc[4]=(ULONG)((physical+0xfff)>>40);
         } else {
             ULONG j=i-1;
@@ -1364,7 +1388,10 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
         VideoPortWriteRegisterUlong((PULONG)(bar0+0x680000),NvxDisplayPutBytes(n));
         for(wait=0;wait<2000 && (notifier[0]>>30)!=2;wait++) VideoPortStallExecution(100);
         LogStr("NVX [DISPLAY-VERIFY]: ownership updateNotifier=");LogHex(notifier[0]);LogStr("\n");
-        if((notifier[0]>>30)!=2) { (void)NvxGspVerifyDisplays(dev);return FALSE; }
+        if((notifier[0]>>30)!=2) {
+            NvxNativeLogChannelState(dev);
+            (void)NvxGspVerifyDisplays(dev);return FALSE;
+        }
         VideoPortZeroMemory((PVOID)notifier,16);
     }
     /* Full native state for both heads: do not replay partial VBE state. */
@@ -1402,6 +1429,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     VideoPortWriteRegisterUlong((PULONG)(bar0+0x692000),NvxDisplayPutBytes(counts[1]));
     VideoPortWriteRegisterUlong((PULONG)(bar0+0x680000),NvxDisplayPutBytes(n));
     for(wait=0;wait<2000 && (notifier[0]>>30)!=2;wait++) VideoPortStallExecution(100);
+    if((notifier[0]>>30)!=2) NvxNativeLogChannelState(dev);
     {
         BOOLEAN active=NvxGspVerifyDisplays(dev);
         LogStr("NVX [DISPLAY-VERIFY]: dual updateNotifier=");LogHex(notifier[0]);

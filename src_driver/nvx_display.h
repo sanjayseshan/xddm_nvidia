@@ -277,9 +277,13 @@ static inline uint32_t NvxDisplayGetWords(uint32_t raw) { return (raw>>2)&1023; 
 static inline int NvxDisplayRamhtEntry(uint32_t handle,uint32_t channel,
     uint32_t offset,uint32_t client,uint32_t *slot,uint32_t entry[2])
 {
-    if(!handle || channel>15 || offset<0x2000 || offset>0xffe0 ||
-       (offset&15) || !slot || !entry) return 0;
-    *slot=(handle^(handle>>10)^(handle>>20)^(handle>>30)^(channel<<6))&1023;
+    if(!handle || channel>127 || offset<0x2000 || offset>0xffe0 ||
+       (offset&31) || !slot || !entry) return 0;
+    /* NVIDIA instmemHashFunc_v03_00: the lookup key includes the client
+       stored in the context word, not just the object handle and channel. */
+    *slot=((handle&0x3ff)^((handle>>10)&0x3ff)^((handle>>20)&0x3ff)^
+           (((client&0xff)<<2)|(handle>>30))^
+           (((channel&15)<<6)|((client>>8)&0x3f))^((channel>>4)&7));
     entry[0]=handle;
     entry[1]=(channel<<25)|(offset<<9)|(client&0x3fff);
     return 1;

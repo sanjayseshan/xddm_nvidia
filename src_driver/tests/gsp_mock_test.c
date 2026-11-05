@@ -298,7 +298,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             if(scenario==3) alloc[3]=0x40; /* reject instance registration */
         }
         if(f==76 && request[22]==0x20800a58) {
-            assert(request[24]==40 && request[26]==1 && request[32]==1);
+            assert(request[24]==40 && request[26]==1 && request[32]==0);
             assert(request[28]==(ULONG)(dev.GspDmaPhysical.QuadPart+GSP_DISPLAY_PUSH_OFFSET+
                 (request[33]==0xc67d?0:(request[34]==0?1:2))*0x1000));
             assert(request[30]==0xfff && request[35]==1);

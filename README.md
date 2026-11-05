@@ -1,11 +1,13 @@
 # NVIDIA GA104 XDDM driver for Windows XP x64
 
 This experimental driver brings up a Windows XP x64 desktop on NVIDIA Ampere
-GA104 hardware. Build v182 restores full dual-head EVO scanout and enables real-time user-mode log flushing:
-1. Restores verified dual-head EVO pushbuffer sequence in `NvxNativeSetSecondaryScanout` (Window 0 at physical offset 0, Window 2 at physical offset 0x2000000, Head 0 on SOR 2 @ 1080p, Head 1 on SOR 0 @ 1440p, interlock 5), correcting the descriptor limit check to properly accommodate offset 0 for primary and 32MB for secondary.
-2. Implements `IOCTL_NVX_GET_LOG` and user-mode log flushing in `nvxdisp.dll`: because `HwVidStartIO` executes at `DISPATCH_LEVEL`, direct kernel file writes (`ZwWriteFile`) cannot run; `nvxdisp.dll` at `PASSIVE_LEVEL` in session context now continuously drains the miniport's 1MB ring buffer directly to `\??\C:\WINDOWS\nvxmp.log`.
-3. Retains isolated DualView child enumeration from v181, keeping both monitors recognized as independent PnP monitors in Windows Display Properties.
-4. Truncates miniport and display diagnostic logs to 0 bytes for clean capture on the next boot.
+GA104 hardware. The current native XP test has a visually correct 1920×1080
+primary desktop. Both 1080p and 1440p monitors are detected, but the secondary
+remains black: v182's log records a display ownership-update timeout and no
+active output on Head 1. v183 corrects the DMA-object hash to include the RM
+client ID and requests coherent display pushbuffer/notifier memory accesses.
+It also logs display-channel exceptions on timeouts. Native hardware validation
+of v183 is pending. Earlier v164/v169 VM tests drove both monitors successfully.
 
 The v168 hardware log confirms GSP initialization, both native display heads,
 and GPU solid-fill activity. The v168 run showed orange artifacts while
