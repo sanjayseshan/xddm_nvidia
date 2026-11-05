@@ -382,6 +382,7 @@ VOID LogHex(unsigned long long val);
 /* GSP Engine entrypoints */
 BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension);
 BOOLEAN NvxGspInitDisplayChannels(PVOID HwDeviceExtension);
+BOOLEAN NvxGspReleaseDisplayChannels(PVOID HwDeviceExtension);
 BOOLEAN NvxNativeSetSecondaryScanout(PVOID HwDeviceExtension);
 VOID NvxGspWakeSecondaryDpSink(PVOID HwDeviceExtension);
 VOID NvxGspTrainSecondaryDpLink(PVOID HwDeviceExtension);

@@ -949,6 +949,38 @@ static BOOLEAN NvxNativeFreeObject(PNVX_DEVICE_EXTENSION dev,ULONG parent,ULONG 
         reply[20]==release[0] && reply[21]==parent && reply[22]==handle && !reply[23];
 }
 
+/* A BIOS modeset can replace display instance/channel state. Release RM's
+   objects first; never carry a cached ready flag across an INT10 modeset. */
+BOOLEAN NvxGspReleaseDisplayChannels(PVOID extension)
+{
+    PNVX_DEVICE_EXTENSION dev=extension;
+    BOOLEAN released=TRUE;
+    if(!dev) return FALSE;
+    if(dev->IsSecondaryDisplay) dev=dev->PrimaryDeviceExtension;
+    if(!dev) return FALSE;
+    dev->NativeDisplayChannelsReady=FALSE;
+    dev->NativeDualActive=FALSE;
+    dev->NativeDisplayNotifierReady=FALSE;
+    for(ULONG channel=3;channel>0;channel--) {
+        ULONG *handle=&dev->NativeDisplayChannels[channel-1];
+        if(!*handle) continue;
+        if(!NvxNativeFreeObject(dev,dev->NativeDisplayHandle,*handle)) {
+            released=FALSE;
+            LogStr("NVX [NATIVE]: display channel release unconfirmed; retaining handle=");
+            LogHex(*handle);LogStr("; BIOS modeset blocked.\n");
+        } else *handle=0;
+    }
+    /* Retry initialization only once all old channel objects are gone. */
+    dev->NativeDisplayAttempted=!released;
+    if(released) {
+        dev->NativeDisplayFaulted=FALSE;
+        dev->NativeDisplayCorePut=0;
+        dev->GspScanoutMapped=FALSE;
+        LogStr("NVX [NATIVE]: display channels released before BIOS modeset; lazy reinitialization enabled.\n");
+    }
+    return released;
+}
+
 /* Nouveau's GV100+ display init wakes the engine through 0x610078 bit 0
    before publishing instance memory. Leave interrupt masks/enable untouched. */
 static BOOLEAN NvxNativeWakeDisplayEngine(PNVX_DEVICE_EXTENSION dev)
@@ -997,6 +1029,12 @@ BOOLEAN NvxGspInitDisplayChannels(PVOID extension)
     PUCHAR bar0,scratch;
     ULONG64 base,va;
     if(!dev || dev->NativeDisplayAttempted) return dev && dev->NativeDisplayChannelsReady;
+    /* The primary surface mapping follows SET_CURRENT_MODE. Do not publish
+       live channels during boot or a premature secondary activation request. */
+    if(!dev->FramebufferVirtual) {
+        LogStr("NVX [NATIVE]: waiting for primary surface mapping after BIOS modeset.\n");
+        return FALSE;
+    }
     if(!dev->GspCopyVerified || !dev->NativeDisplayHandle || !dev->GspFbLayoutValid ||
        dev->GspChannelFaulted || dev->Bar0Length<0x693000 ||
        dev->GspDmaLength<GSP_DISPLAY_PUSH_OFFSET+0x3000 ||

@@ -5,6 +5,19 @@
 static UCHAR low[0x100000];
 static ULONG current, scenario, controllerCalls;
 static int frees, derefs;
+static BOOLEAN channelReleaseAllowed=TRUE;
+static ULONG channelReleases,biosModeSets;
+BOOLEAN NvxGspReleaseDisplayChannels(PVOID extension)
+{
+    PNVX_DEVICE_EXTENSION dev=extension;
+    channelReleases++;
+    if(!channelReleaseAllowed) return FALSE;
+    dev->NativeDisplayAttempted=FALSE;
+    dev->NativeDisplayChannelsReady=FALSE;
+    dev->NativeDualActive=FALSE;
+    memset(dev->NativeDisplayChannels,0,sizeof(dev->NativeDisplayChannels));
+    return TRUE;
+}
 VOID LogStr(const char *s) { (void)s; }
 VOID LogHex(unsigned long long x) { (void)x; }
 VOID VideoPortZeroMemory(PVOID p,ULONG n) { memset(p,0,n); }
@@ -60,8 +73,11 @@ VP_STATUS VideoPortQueryServices(PVOID e,ULONG type,PVOID ptr)
 }
 VP_STATUS VideoPortInt10(PVOID e,VIDEO_X86_BIOS_ARGUMENTS *a)
 {
-    (void)e;
+    PNVX_DEVICE_EXTENSION dev=e;
     if(a->Eax==0x4f02) {
+        assert(!dev->NativeDisplayChannelsReady && !dev->NativeDisplayAttempted);
+        for(ULONG i=0;i<3;i++) assert(!dev->NativeDisplayChannels[i]);
+        biosModeSets++;
         if(scenario==7 && (a->Ebx&0x3fff)==0x177) {a->Eax=0x014f;return 0;}
         if(scenario!=3) current=a->Ebx&0x3fff;
     }
@@ -87,6 +103,19 @@ int main(void)
         assert(dev.Modes[2].ScreenStride==8192 && dev.Modes[2].VisScreenWidth==1920);
         assert(dev.ModeFramebuffer[2].QuadPart==0xe0200000);
         assert(NvxVbeSetMode(&dev,2) && dev.ActiveWidth==1920 && dev.ActiveBpp==32);
+        dev.NativeDisplayAttempted=TRUE;dev.NativeDisplayChannelsReady=TRUE;
+        dev.NativeDualActive=TRUE;dev.NativeDisplayChannels[0]=0xc6700100;
+        assert(NvxVbeSetMode(&dev,2));
+        assert(channelReleases==1 && !dev.NativeDisplayChannelsReady && !dev.NativeDualActive);
+        dev.NativeDisplayAttempted=TRUE;dev.NativeDisplayChannelsReady=TRUE;
+        dev.NativeDisplayChannels[0]=0xc6700100;
+        channelReleaseAllowed=FALSE;
+        ULONG sets=biosModeSets;
+        assert(!NvxVbeSetMode(&dev,0));
+        assert(biosModeSets==sets && dev.CurrentModeIndex==2);
+        channelReleaseAllowed=TRUE;
+        assert(NvxVbeSetMode(&dev,2));
+        assert(channelReleases==3 && !dev.NativeDisplayAttempted);
         assert(!NvxVbeSetMode(&dev,3) && dev.CurrentModeIndex==2);
         scenario=3;
         assert(!NvxVbeSetMode(&dev,0) && dev.CurrentModeIndex==2 && dev.ActiveWidth==1920);
@@ -104,6 +133,6 @@ int main(void)
         assert(dev.NumModes==(scenario==5?5U:4U));
         if(scenario==5) assert(dev.ModeVbeIds[4]==0x177 && dev.Modes[4].VisScreenWidth==1920);
     }
-    puts("VBE tests passed: AX status, BIOS buffer/list, real stride/depth/base, native mode, rejected modes and cleanup.");
+    puts("VBE tests passed: modes, format/bounds, native-channel teardown before BIOS reset and blocked reset on teardown failure.");
     return 0;
 }

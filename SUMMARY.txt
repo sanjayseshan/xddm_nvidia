@@ -1,5 +1,35 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 4, 2026 (v183 display RAMHT/client hash and coherent notifier)
+Updated: November 4, 2026 (v184 restore v169 BIOS-before-native display handoff)
+
+v184 comparison against the confirmed v169 VM run:
+- v169 log lines 431/446: BIOS selects/restores 1080p. Lines 462-480:
+  display instance and Core/Window0/Window2 channels are initialized afterward.
+  Line 494: ownership notifier completes (0x80000000); line 510: both heads
+  activate and lock at 1080p/1440p.
+- v182 native log lines 319-337: channels are created in HwVidInitialize.
+  Lines 476/491: BIOS then selects/restores 1080p, potentially replacing native
+  display instance/channel state. The ready flag remains cached. Line 556:
+  ownership notifier times out, and Head 1 programming is never submitted.
+- The early initialization was introduced in v177. The ownership/head EVO
+  sequence is otherwise substantially the old successful VM sequence; the
+  primary framebuffer offset is intentionally still zero to preserve its
+  confirmed correct native appearance.
+
+v184 removes boot-time channel creation and requires a mapped primary surface
+before native channel initialization. Secondary lazy initialization respects
+that guard. Before any subsequent VBE modeset, it frees old RM display channel
+objects, clears the cached readiness/dual state, and allows fresh initialization.
+An unacknowledged free retains the handle and blocks BIOS reset/reuse. Primary
+mode changes remember whether native dual output needs restoring after reset.
+v183 coherent display memory and client-aware RAMHT corrections remain intact.
+
+Validation: miniport/display builds and both host suites pass. New regression
+checks cover no allocation before primary mapping, confirmed/retried RM channel
+teardown, and no BIOS reset when teardown fails. A new physical run is still
+required: expect BIOS SET_MODE lines before DMA NOP/channel initialization,
+then completed ownership and dual update notifiers. The latest inspected native
+log remains v182, so this is a candidate fix, not a confirmed restored display.
+
 
 v183 current finding (native XP, user-confirmed primary correct at 1080p):
 The latest mounted nvxmp.log has a v182 banner. GSP/copy and display DMA NOP

@@ -121,3 +121,24 @@ distinguish object lookup failure, command fetch failure and modeset supervision
 This context file is a handoff snapshot; inspect Git status, current source,
 mount state and newest logs before resuming because the workspace has advanced
 through additional versions between conversation turns.
+
+
+## v184 follow-up: comparison with the working VM
+
+The user requested restoring behavior from the last known working VM version.
+The decisive observed difference is ordering: v169 performs final BIOS 1080p
+mode selection before native display channel creation; v177-v182 creates
+channels in HwVidInitialize, then calls VBE SET_MODE afterward without clearing
+NativeDisplayChannelsReady. This can invalidate the native channel/instance
+state while the driver continues using its cached handles.
+
+v184 removes early channel creation, enforces a primary surface mapping before
+native initialization, and adds acknowledged RM display-channel teardown before
+later BIOS resets. Failure to free a channel blocks BIOS reset and prevents
+reinitialization over live objects. Restoring a previously active dual desktop
+after a primary mode change is handled explicitly. The primary base stays zero;
+v183 hash and coherence fixes remain. New host regressions cover this lifecycle.
+The physical log inspected for this work is still v182, so hardware confirmation
+is pending. Latest sources and staged binaries are v184; use update_xp_driver.sh
+once the offline native volume is writable. Do not infer hardware success from
+host mocks or treat the old VM log as a fresh native run.

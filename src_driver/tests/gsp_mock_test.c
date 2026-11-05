@@ -10,7 +10,7 @@ static ULONG regs[0x1000000/4];
 static UCHAR gpuMemory[0x10000];
 static UCHAR gpuVram[0x4000000];
 static NVX_DEVICE_EXTENSION dev;
-static int scenario, imemTransfers, dmemTransfers, cpuStarts,freeFailures;
+static int scenario, imemTransfers, dmemTransfers, cpuStarts,freeFailures,displayFreeFailures;
 static BOOLEAN dpLinkTrained;
 static ULONG regoff(PULONG p) { return (ULONG)((PUCHAR)p-(PUCHAR)regs); }
 static void gpuWrite64(ULONG offset,ULONG64 value) {memcpy(gpuMemory+offset,&value,8);}
@@ -317,6 +317,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             } else {
                 assert(request[21]==dev.NativeDisplayHandle);
                 assert(request[22]>=0xc6700100 && request[22]<=0xc6700102);
+                if(displayFreeFailures) {alloc[3]=0x40;displayFreeFailures--;}
             }
         }
         assert(NvxEncodeRpc((PUCHAR)packet,4096,f,write-1,alloc,replyBytes));
@@ -537,6 +538,13 @@ int main(void)
                            dev.SecondaryDpTrainReady && dev.SecondaryDpDisplayId==4);
             }
             if(dev.GspCopyVerified) {
+                /* Boot must not create channels that a later BIOS modeset
+                   can overwrite. Mapping the primary permits the handoff. */
+                ULONG beforeMap=dev.RpcTxSequence;
+                assert(!NvxGspInitDisplayChannels(&dev));
+                assert(!dev.NativeDisplayAttempted && !dev.NativeDisplayChannelsReady);
+                assert(dev.RpcTxSequence==beforeMap);
+                dev.FramebufferVirtual=(PVOID)1;
                 memset(gpuVram+0x1ff0000,0xa5,0x10000);
                 assert(NvxGspInitDisplayChannels(&dev)==(scenario==0 || scenario==12));
                 assert(dev.NativeDisplayChannelsReady==(scenario==0 || scenario==12));
@@ -616,6 +624,17 @@ int main(void)
             assert(NvxGspSequencerCore(&dev,6));
             assert(NvxGspSequencerCore(&dev,7));
             assert(dev.GspDmaVirtual);
+            /* Preserve any RM object whose release was not acknowledged;
+               block reuse until a later teardown confirms it is gone. */
+            dev.NativeDualActive=TRUE;
+            displayFreeFailures=1;
+            assert(!NvxGspReleaseDisplayChannels(&dev));
+            assert(!dev.NativeDisplayChannelsReady && !dev.NativeDualActive);
+            assert(dev.NativeDisplayAttempted && dev.NativeDisplayChannels[2]);
+            assert(!NvxGspInitDisplayChannels(&dev));
+            assert(NvxGspReleaseDisplayChannels(&dev));
+            assert(!dev.NativeDisplayAttempted && !dev.NativeDisplayFaulted);
+            for(ULONG i=0;i<3;i++) assert(!dev.NativeDisplayChannels[i]);
         }
         NvxGspShutdown(&dev);
         if(scenario==7) {

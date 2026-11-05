@@ -2,12 +2,13 @@
 
 This experimental driver brings up a Windows XP x64 desktop on NVIDIA Ampere
 GA104 hardware. The current native XP test has a visually correct 1920×1080
-primary desktop. Both 1080p and 1440p monitors are detected, but the secondary
-remains black: v182's log records a display ownership-update timeout and no
-active output on Head 1. v183 corrects the DMA-object hash to include the RM
-client ID and requests coherent display pushbuffer/notifier memory accesses.
-It also logs display-channel exceptions on timeouts. Native hardware validation
-of v183 is pending. Earlier v164/v169 VM tests drove both monitors successfully.
+primary desktop, with the secondary detected at 2560×1440 but still black.
+v184 restores the successful v169 VM initialization order: BIOS selects the
+primary mode before native display channels are created. Native channels are
+released before any later BIOS modeset and recreated at the handoff. This
+addresses a regression introduced by initializing channels during boot, before
+the BIOS's later display reset. Build and host tests pass; physical validation
+of v184 is pending. v183's DMA hash/coherency corrections are retained.
 
 The v168 hardware log confirms GSP initialization, both native display heads,
 and GPU solid-fill activity. The v168 run showed orange artifacts while

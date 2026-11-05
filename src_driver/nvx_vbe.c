@@ -68,6 +68,10 @@ BOOLEAN NvxVbeSetMode(PVOID extension, ULONG index)
     VP_STATUS status;
     ULONG id;
     if(index>=dev->NumModes) return FALSE;
+    if(dev->NativeDisplayAttempted || dev->NativeDisplayChannelsReady) {
+        LogStr("NVX [VBE]: releasing native channels before BIOS display reset.\n");
+        if(!NvxGspReleaseDisplayChannels(dev)) return FALSE;
+    }
     id=dev->ModeVbeIds[index];
     VideoPortZeroMemory(&a,sizeof(a));a.Eax=0x4f02;a.Ebx=id|0x4000;
     status=VideoPortInt10(extension,&a);

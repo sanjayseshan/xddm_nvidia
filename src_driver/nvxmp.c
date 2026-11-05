@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 1.0.0.183
+ * Driver Version: 1.0.0.184
  */
 
 #include "miniport.h"
@@ -1176,11 +1176,11 @@ BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
     LogStr(" scanout_mapped=");LogHex(devExt->GspScanoutMapped);
     LogStr(" gpu_va=");LogHex(devExt->GspVramGpuVa);LogStr("\n");
 
-    if (devExt->GspCopyVerified) {
-        LogStr("NVX [GSP]: Initializing display channels post-bootstrap.\n");
-        (void)NvxGspDiscoverScanout(HwDeviceExtension, devExt->CurrentModeIndex);
-        (void)NvxGspInitDisplayChannels(HwDeviceExtension);
-    }
+    /* Match the working v169 order: BIOS selects the primary desktop mode
+       before MAP_VIDEO_MEMORY creates our native channels and instance.
+       Initializing here lets the later VBE modeset overwrite live state. */
+    if (devExt->GspCopyVerified)
+        LogStr("NVX [NATIVE]: channel initialization deferred until after primary BIOS modeset.\n");
 
     /* Connector/EDID discovery runs after VideoPort's initial PnP child query.
        Ask XP to enumerate again now that MonitorCount and EDIDs are populated. */
@@ -1324,10 +1324,12 @@ BOOLEAN HwVidStartIO(
             break;
         }
 
+        BOOLEAN restoreNativeDual=devExt->NativeDualActive;
         if (!NvxVbeSetMode(HwDeviceExtension, requested)) {
             LogStr("NVX: VBE mode change failed; attempting previous mode.\n");
             if (!NvxVbeSetMode(HwDeviceExtension, devExt->CurrentModeIndex))
                 LogStr("NVX: Previous VBE mode could not be restored.\n");
+            if (restoreNativeDual) (void)NvxNativeSetSecondaryScanout(devExt);
             status = ERROR_INVALID_PARAMETER;
             break;
         }
@@ -1339,7 +1341,7 @@ BOOLEAN HwVidStartIO(
         LogStr("NVX: Mode switched to index: ");
         LogHex(requested);
         LogStr("\n");
-        if (devExt->NativeDualActive) {
+        if (restoreNativeDual) {
             (void)NvxNativeSetSecondaryScanout(devExt);
         } else if (devExt->Modes[requested].VisScreenWidth >= 1920 &&
                    devExt->Modes[requested].VisScreenHeight >= 1080 &&
@@ -1903,7 +1905,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 1.0.0.183 (client-aware display RAMHT and coherent notifier)\n");
+    LogStr(" NVX Video Miniport Driver 1.0.0.184 (restore VBE-before-native display handoff)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));
