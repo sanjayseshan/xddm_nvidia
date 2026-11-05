@@ -4,7 +4,7 @@ REGEDIT4
 "DriverDesc"="NVIDIA GeForce RTX 3070 (GA104 Win98)"
 "MatchingDeviceId"="PCI\\VEN_10DE&DEV_2488"
 "ProviderName"="NVIDIA Corporation (Win98SE Port)"
-"DriverDate"="11-04-2026"
+"DriverDate"="11-05-2026"
 "DriverVersion"="1.0.0.187"
 "InfPath"="nvx.inf"
 "InfSection"="NVX_Inst"
@@ -12,23 +12,34 @@ REGEDIT4
 
 [HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\DEFAULT]
 "drv"="nvx.drv"
-"minivdd"="nvx.vxd"
 "vdd"="*vdd,*vflatd"
-"Mode"="32,1920,1080"
 "RefreshRate"="-1"
 "DDC"="1"
 
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\8\640,480]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\8\800,600]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\8\1024,768]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\8\1280,720]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\8\1280,1024]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\8\1920,1080]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\8\2560,1440]
+
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\16\640,480]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\16\800,600]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\16\1024,768]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\16\1280,720]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\16\1280,1024]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\16\1920,1080]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\16\2560,1440]
+
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\32\640,480]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\32\800,600]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\32\1024,768]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\32\1280,720]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\32\1280,1024]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\32\1600,900]
 [HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\32\1920,1080]
-"drv"="nvx.drv"
-"minivdd"="nvx.vxd"
-"vdd"="*vdd,*vflatd"
-
-[HKEY_LOCAL_MACHINE\Config\0001\Display\Settings]
-"Resolution"="1920,1080"
-"BitsPerPixel"="32"
-"Color"="32"
-
-REGEDIT4
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\32\2560,1440]
 
 [HKEY_LOCAL_MACHINE\Enum\PCI\VEN_10DE&DEV_2488&SUBSYS_47553842&REV_A1]
 
@@ -40,4 +51,3 @@ REGEDIT4
 "ConfigFlags"=hex:00,00,00,00
 "HardwareID"="PCI\\VEN_10DE&DEV_2488&SUBSYS_47553842&REV_A1,PCI\\VEN_10DE&DEV_2488,PCI\\VEN_10DE&CC_030000,PCI\\VEN_10DE&CC_0300,PCI\\VEN_10DE,PCI\\CC_030000,PCI\\CC_0300"
 "CompatibleIDs"="PCI\\VEN_10DE&DEV_2488,PCI\\VEN_10DE,PCI\\CC_030000,PCI\\CC_0300"
-

@@ -29,8 +29,9 @@ upload "$PKG_DIR/nvx.drv" /WINDOWS/SYSTEM/nvx.drv
 upload "$PKG_DIR/nvx.drv" /DRIVERS/NVX/nvx.drv
 upload "$PKG_DIR/nvx.vxd" /WINDOWS/SYSTEM/nvx.vxd
 upload "$PKG_DIR/nvx.vxd" /DRIVERS/NVX/nvx.vxd
+upload "$NVX_ROOT/src_win98/nvx_reg.reg" /NVX_REG.REG
+upload "$NVX_ROOT/../qi/vbemp/128MB/VBE.vxd" /WINDOWS/SYSTEM/VBE.vxd
 sync
 EOF
 
 echo "==> Driver files successfully installed to Windows 98 disk image."
-
