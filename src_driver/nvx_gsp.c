@@ -1023,6 +1023,36 @@ static VOID NvxNativeReadOutputInfo(PNVX_DEVICE_EXTENSION dev)
     }
 }
 
+/* A common-buffer mapping does not establish the display engine's snoop
+   policy. Publish dirty CPU lines explicitly before PUT, and invalidate the
+   clean notifier line when polling device writes. CLFLUSH is ordered by the
+   final full fence; derive its line size from CPUID rather than assuming 64. */
+static BOOLEAN NvxNativeFlushDma(PVOID address,ULONG bytes)
+{
+    unsigned a,b,c,d,line;
+    uintptr_t start,end;
+    if(!bytes) return TRUE;
+    __asm__ __volatile__("cpuid" : "=a"(a),"=b"(b),"=c"(c),"=d"(d) : "a"(1),"c"(0));
+    line=((b>>8)&255)*8;
+    if(!(d&(1U<<19)) || !line || (line&(line-1))) return FALSE;
+    start=(uintptr_t)address&~((uintptr_t)line-1);
+    end=(uintptr_t)address+bytes;
+    for(;start<end;start+=line)
+        __asm__ __volatile__("clflush (%0)" : : "r"(start) : "memory");
+    __sync_synchronize();
+    return TRUE;
+}
+
+static BOOLEAN NvxNativeWaitNotifier(volatile ULONG *notifier)
+{
+    for(ULONG wait=0;wait<2000;wait++) {
+        if(!NvxNativeFlushDma((PVOID)notifier,16)) return FALSE;
+        if((notifier[0]>>30)==2) return TRUE;
+        VideoPortStallExecution(100);
+    }
+    return FALSE;
+}
+
 /* Deliberately only NOPs: GET progress proves DMA fetch, not a modeset. */
 BOOLEAN NvxGspInitDisplayChannels(PVOID extension)
 {
@@ -1097,7 +1127,7 @@ BOOLEAN NvxGspInitDisplayChannels(PVOID extension)
         if(!NvxGspAlloc(dev,dev->NativeDisplayHandle,handle,classes[channel],&args,sizeof(args))) goto failed;
         dev->NativeDisplayChannels[channel]=handle;
         /* MMIO PUT/GET pack the DWORD pointer into bits 11:2. */
-        __sync_synchronize();
+        if(!NvxNativeFlushDma(buffer,0x1000)) goto failed;
         VideoPortWriteRegisterUlong((PULONG)(bar0+offsets[channel]),NvxDisplayPutBytes(4));
         for(ULONG wait=0;wait<2000;wait++) {
             ULONG get=VideoPortReadRegisterUlong((PULONG)(bar0+offsets[channel]+4));
@@ -1302,7 +1332,7 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     PUCHAR bar0;
     PULONG core,windows[2];
     volatile ULONG *notifier;
-    ULONG counts[2],n,wait;
+    ULONG counts[2],n;
     ULONG widths[2],heights[2],pitches[2];
     const ULONG offsets[2]={0,0x2000000};
     const ULONG users[2]={1,3};
@@ -1417,6 +1447,13 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
             LogStr("NVX [NATIVE]: RAMHT or DMA bind failed for handle=");LogHex(handle);LogStr("\n");
             return FALSE;
         }
+        {
+            ULONG legacy=NvxDisplayRamhtV169Slot(handle,i?users[i-1]:0);
+            if(legacy!=slot && !NvxGspUpload(dev,instanceVa+legacy*8,entry,sizeof(entry)))
+                return FALSE;
+            LogStr("NVX [RAMHT]: handle=");LogHex(handle);
+            LogStr(" clientSlot=");LogHex(slot);LogStr(" v169Slot=");LogHex(legacy);LogStr("\n");
+        }
     }
     n=NvxDisplayGetWords(VideoPortReadRegisterUlong((PULONG)(bar0+0x680000)));
     if(n>600) {
@@ -1437,9 +1474,10 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
         NvxNativeMethod(core,&n,0x218,0);
         NvxNativeMethod(core,&n,0x21c,0);
         NvxNativeMethod(core,&n,0x200,1);
-        __sync_synchronize();
+        if(!NvxNativeFlushDma(core,0x1000) ||
+           !NvxNativeFlushDma((PVOID)notifier,16)) return FALSE;
         VideoPortWriteRegisterUlong((PULONG)(bar0+0x680000),NvxDisplayPutBytes(n));
-        for(wait=0;wait<2000 && (notifier[0]>>30)!=2;wait++) VideoPortStallExecution(100);
+        (void)NvxNativeWaitNotifier(notifier);
         LogStr("NVX [DISPLAY-VERIFY]: ownership updateNotifier=");LogHex(notifier[0]);LogStr("\n");
         if((notifier[0]>>30)!=2) {
             NvxNativeLogChannelState(dev);
@@ -1477,11 +1515,14 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     NvxNativeMethod(core,&n,0x218,0);
     NvxNativeMethod(core,&n,0x21c,5); /* Window0 and Window2. */
     NvxNativeMethod(core,&n,0x200,1);
-    __sync_synchronize();
+    if(!NvxNativeFlushDma(core,0x1000) ||
+       !NvxNativeFlushDma(windows[0],0x1000) ||
+       !NvxNativeFlushDma(windows[1],0x1000) ||
+       !NvxNativeFlushDma((PVOID)notifier,16)) return FALSE;
     VideoPortWriteRegisterUlong((PULONG)(bar0+0x690000),NvxDisplayPutBytes(counts[0]));
     VideoPortWriteRegisterUlong((PULONG)(bar0+0x692000),NvxDisplayPutBytes(counts[1]));
     VideoPortWriteRegisterUlong((PULONG)(bar0+0x680000),NvxDisplayPutBytes(n));
-    for(wait=0;wait<2000 && (notifier[0]>>30)!=2;wait++) VideoPortStallExecution(100);
+    (void)NvxNativeWaitNotifier(notifier);
     if((notifier[0]>>30)!=2) NvxNativeLogChannelState(dev);
     {
         BOOLEAN active=NvxGspVerifyDisplays(dev);

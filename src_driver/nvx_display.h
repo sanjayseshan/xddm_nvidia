@@ -289,6 +289,13 @@ static inline int NvxDisplayRamhtEntry(uint32_t handle,uint32_t channel,
     return 1;
 }
 
+/* Nouveau/v169 bucket layout, retained for the fixed three display objects.
+   Context words are identical; both buckets point at the same descriptor. */
+static inline uint32_t NvxDisplayRamhtV169Slot(uint32_t handle,uint32_t channel)
+{
+    return (handle^(handle>>10)^(handle>>20)^(handle>>30)^(channel<<6))&1023;
+}
+
 /* Decode a progressive, separate-sync EDID detailed timing descriptor.
  * An invalid descriptor must not become a hardware modeset request. */
 static inline int NvxDecodeDetailedTiming(const uint8_t *d,size_t length,

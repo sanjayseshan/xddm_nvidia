@@ -14,6 +14,9 @@ static int scenario, imemTransfers, dmemTransfers, cpuStarts,freeFailures,displa
 static BOOLEAN dpLinkTrained;
 static BOOLEAN injectPerfBeforeFree;
 static ULONG perfNotifications;
+static BOOLEAN emulateModeset;
+static ULONG emulatedHeads[2]={1,0};
+static ULONG emulatedUpdates;
 static ULONG regoff(PULONG p) { return (ULONG)((PUCHAR)p-(PUCHAR)regs); }
 static void gpuWrite64(ULONG offset,ULONG64 value) {memcpy(gpuMemory+offset,&value,8);}
 VOID LogStr(const char *s) {
@@ -225,8 +228,12 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             dpLinkTrained=TRUE;
         }
         if(f==76&&request[22]==NVX_CTRL_CMD_DP_AUXCH_CTRL) {
-            assert(scenario==12 && request[24]==48 && request[27]==4);
-            if(request[29]==9 && request[30]==0 && request[35]==3) {
+            assert(request[24]==48);
+            if(emulateModeset && request[29]==9 && request[30]==0x202) {
+                assert(request[27]==1 || request[27]==4);
+                alloc[11]=0x00017777;alloc[15]=3;alloc[16]=NVX_DP_AUX_REPLY_ACK;
+            } else if(request[29]==9 && request[30]==0 && request[35]==3) {
+                assert(scenario==12 && request[27]==4);
                 alloc[11]=0x00841414; /* DPCD 1.4, HBR2, 4 lanes, no downspread. */
                 alloc[15]=4;alloc[16]=NVX_DP_AUX_REPLY_ACK;
             } else if(request[29]==8 && request[30]==0x600 && request[35]==0) {
@@ -254,7 +261,8 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         if(f==76&&request[22]==0x730102) alloc[8]=4;
         if(f==76&&request[22]==0x730287) alloc[7]=15;
         if(f==76&&request[22]==0x730126) {
-            assert(request[27]<4);alloc[9]=request[27]==0?1:0;
+            assert(request[27]<4);
+            alloc[9]=emulateModeset && request[27]<2?emulatedHeads[request[27]]:(request[27]==0?1:0);
         }
         if(f==76&&request[22]==0x730125) {
             assert(request[27]==5 && request[28]==1 && request[29]==0);
@@ -340,6 +348,35 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         assert(!(value&3));value>>=2;
         ULONG channel=off==0x680000?0:(off==0x690000?1:2);
         PULONG buffer=(PULONG)((PUCHAR)dev.GspDmaVirtual+GSP_DISPLAY_PUSH_OFFSET+channel*0x1000);
+        if(emulateModeset) {
+            ULONG cursor=regs[off/4+1]>>2;
+            assert(value>cursor && value<1024);
+            while(cursor<value) {
+                ULONG header=buffer[cursor++];
+                if(!header) continue;
+                assert((header>>18)==1 && cursor<value);
+                ULONG method=header&0x3ffc,data=buffer[cursor++];
+                if(!channel && method==0x2020) emulatedHeads[0]=data;
+                if(!channel && method==0x2420) emulatedHeads[1]=data;
+                if(!channel && (method==0x1000 || method==0x1100))
+                    regs[(0x681000+(method-0x1000))/4]=data;
+                if(!channel && method==0x200) {
+                    /* Use the original v169 bucket, independent of the new
+                       client-aware helper, then resolve its actual DMA object. */
+                    PULONG entry=(PULONG)(gpuVram+dev.NativeDisplayInstance+0x117*8);
+                    assert(entry[0]==0xd1500001 && entry[1]==0x400001);
+                    ULONG offset=((entry[1]>>14)&0x7ff)<<5;
+                    PULONG desc=(PULONG)(gpuVram+dev.NativeDisplayInstance+offset);
+                    assert(desc[0]==0x47);
+                    ULONG64 physical=((ULONG64)desc[2]<<40)|((ULONG64)desc[1]<<8);
+                    assert(physical==dev.GspDmaPhysical.QuadPart+GSP_DISPLAY_PUSH_OFFSET+0x3000);
+                    *(PULONG)((PUCHAR)dev.GspDmaVirtual+physical-dev.GspDmaPhysical.QuadPart)=0x80000000;
+                    emulatedUpdates++;
+                }
+            }
+            regs[off/4+1]=value<<2;
+            return;
+        }
         assert(value==4);
         for(ULONG i=0;i<4;i++) assert(buffer[i]==0);
         if(scenario!=7) regs[off/4+1]=16; /* stall only the display channel */
@@ -638,6 +675,32 @@ int main(void)
             assert(NvxGspSequencerCore(&dev,6));
             assert(NvxGspSequencerCore(&dev,7));
             assert(dev.GspDmaVirtual);
+            {
+                NVX_DEVICE_EXTENSION secondary={0};
+                NVX_DISPLAY_TIMING timing={.pixelClockHz=148500000,
+                    .hActive=1920,.hTotal=2200,.hSyncStart=2008,.hSyncEnd=2052,
+                    .vActive=1080,.vTotal=1125,.vSyncStart=1084,.vSyncEnd=1089,
+                    .refreshMilliHz=60000,.flags=0x1e};
+                dev.SecondaryDeviceExtension=&secondary;
+                dev.NumModes=1;dev.CurrentModeIndex=0;
+                dev.Modes[0].VisScreenWidth=1920;dev.Modes[0].VisScreenHeight=1080;
+                dev.Modes[0].ScreenStride=7680;dev.Modes[0].BitsPerPlane=32;
+                secondary.NumModes=1;secondary.CurrentModeIndex=0;
+                secondary.Modes[0].VisScreenWidth=2560;secondary.Modes[0].VisScreenHeight=1440;
+                secondary.Modes[0].ScreenStride=10240;secondary.Modes[0].BitsPerPlane=32;
+                dev.MonitorTiming[0]=timing;
+                timing.hActive=2560;timing.hTotal=2720;timing.hSyncStart=2608;timing.hSyncEnd=2640;
+                timing.vActive=1440;timing.vTotal=1481;timing.vSyncStart=1443;timing.vSyncEnd=1448;
+                timing.pixelClockHz=241500000;
+                dev.MonitorTiming[1]=timing;
+                dev.MonitorProtocol[0]=dev.MonitorProtocol[1]=8;
+                dev.GspScanoutMapped=FALSE;
+                emulateModeset=TRUE;
+                assert(NvxNativeSetSecondaryScanout(&dev));
+                assert(dev.NativeDualActive && emulatedUpdates==2);
+                assert(emulatedHeads[0]==1 && emulatedHeads[1]==4);
+                emulateModeset=FALSE;dev.SecondaryDeviceExtension=NULL;
+            }
             /* Preserve any RM object whose release was not acknowledged;
                block reuse until a later teardown confirms it is gone. */
             dev.NativeDualActive=TRUE;
@@ -661,6 +724,6 @@ int main(void)
         assert(!dev.GspCopyVerified);
     }
     test_reusable_queue();
-    puts("GSP mock tests passed: boot, GA104 CE, copy submission/completion, timeout, corrupt data/guards, reusable queue and DMA teardown retention.");
+    puts("GSP mock tests passed: boot, CE queues, dual-head ownership/head commits, v169 notifier lookup, RPC events and teardown retention.");
     return 0;
 }

@@ -1,5 +1,35 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 4, 2026 (v185 RPC notification handling and v169 one-time DP training)
+Updated: November 4, 2026 (v186 display DMA publication and v169 lookup buckets)
+
+v186 findings from the actual v185 native run:
+The user confirms primary output remains correct. Both EDIDs and the extended
+GDI desktop are present, but the secondary remains black. The latest appended
+v185 run logs instance config 9/root 0x1ff exactly matching registered VRAM
+0x1ff0000, successful NOP fetches, and Core PUT=GET at 0x48/0x80/0xb8/0xf0.
+Ownership completion is still zero, Head 1 remains unassigned, and the full
+head-programming stage is therefore not reached. Startup order, repeated DP
+training and the performance-event queue fix did not resolve this remaining
+failure; do not claim those previous hypotheses were confirmed cures.
+
+v186 addresses two remaining command/notifier visibility and lookup candidates:
+- Flush CPU cache lines for display Core/window pushbuffers and cleared
+  notifier memory before publishing PUT, followed by a full ordering fence.
+  Query CLFLUSH support and cache-line size with CPUID. Common-buffer allocation
+  flags and progress through zero NOPs do not prove fresh nonzero method bytes
+  are visible to the display engine. CPU writes are published before any GPU
+  can update the notifier; polling then flushes/invalidates clean cache lines.
+- Install aliases in the original v169/Nouveau RAMHT buckets as well as the
+  client-aware NVIDIA buckets. Both context words identify the same client,
+  channel and descriptor. The six fixed buckets are checked for collisions in
+  host tests; no framebuffer bases, timings or primary drawing paths change.
+
+Validation: miniport/display builds and both host suites pass. The GSP mock now
+parses the real native ownership and dual-head command streams, resolves the
+actual notifier DMA descriptor through the original v169 bucket, completes the
+ownership/final notifiers and verifies both head display IDs. This exercises
+code previously tested only through DMA NOP initialization. It does not emulate
+physical cache snooping or confirm pixels. A fresh v186 hardware boot is needed.
+
 
 v185 evidence from the actual v184 native run:
 - v184 did run (banner at line 909 in the accumulated nvxmp.log). The BIOS

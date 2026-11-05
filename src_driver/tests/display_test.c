@@ -88,6 +88,7 @@ int main(void)
         assert(!NvxDisplayPushHeader(0x200,0,&header));
         assert(NvxDisplayRamhtEntry(0xd1500001,0,0x2000,0xc1d00001,&slot,entry));
         assert(slot==0x113); /* Client 1 contributes bit 2 to the hash. */
+        assert(NvxDisplayRamhtV169Slot(0xd1500001,0)==0x117);
         assert(entry[0]==0xd1500001 && entry[1]==0x400001);
         assert(NvxDisplayRamhtEntry(0xd1500001,3,0x2020,0xc1d00001,&slot,entry));
         assert(entry[1]==0x06404001);
@@ -103,6 +104,15 @@ int main(void)
         assert(!NvxDisplayRamhtEntry(1,0,0x2001,1,&slot,entry));
         assert(!NvxDisplayRamhtEntry(1,0,0x2010,1,&slot,entry));
         assert(!NvxDisplayRamhtEntry(1,0,0x10000,1,&slot,entry));
+        /* Both lookup layouts for our three fixed objects occupy distinct
+           buckets, so installing aliases cannot overwrite another object. */
+        uint32_t buckets[6],channels[3]={0,1,3};
+        for(uint32_t i=0;i<3;i++) {
+            assert(NvxDisplayRamhtEntry(0xd1500001+i,channels[i],0x2000+i*32,
+                                       0xc1d00001,&buckets[i*2],entry));
+            buckets[i*2+1]=NvxDisplayRamhtV169Slot(0xd1500001+i,channels[i]);
+        }
+        for(uint32_t i=0;i<6;i++) for(uint32_t j=i+1;j<6;j++) assert(buckets[i]!=buckets[j]);
     }
     puts("Display timing tests passed: 1080p60 totals/sync/clock, interlace, malformed sync, truncation and empty descriptor.");
 }

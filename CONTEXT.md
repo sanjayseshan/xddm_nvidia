@@ -172,3 +172,27 @@ pending. Stage matching binaries in dist_full and install using the existing
 update script when the offline XP volume is writable. Use a fresh v185 boot
 before assessing queue recovery; the prior v184 run already left RPC traffic
 blocked. Preserve v184 logs in test_logs before the next update.
+
+
+## v186: remaining secondary failure after v185 physical test
+
+The user confirms primary remains correct; secondary still black with Extend
+selected. Latest native log is v185, appended after older runs. Registered
+instance root is already correct (config 9/root 0x1ff); Core PUT/GET advance but
+ownership notifier stays zero and Head 1 is never assigned. v185's fixes did
+not resolve this remaining failure. Do not claim their underlying hypotheses
+were proven as the secondary root cause.
+
+v186 explicitly CLFLUSHes display command buffers and cleared notifiers before
+PUT, with a full fence, and invalidates notifier lines when polling completion.
+It queries actual CPUID feature/line size. It also installs the original v169
+RAMHT buckets alongside client-aware buckets, pointing at identical descriptor
+contexts. Host checks confirm six distinct buckets for the three fixed objects.
+
+The GSP host test now executes the entire real native modeset path under a
+packet interpreter, resolves the notifier from the v169 bucket, completes both
+ownership/final updates and checks both head IDs. This is new coverage beyond
+zero NOP fetches; it does not simulate physical cache behavior or prove display
+output. Builds and both suites pass. v186 still requires a native boot test;
+use update_xp_driver.sh when the offline volume is writable. Matching binaries
+are staged in dist_full. v185 logs are preserved in test_logs for comparison.

@@ -1,14 +1,14 @@
 # NVIDIA GA104 XDDM driver for Windows XP x64
 
 This experimental driver brings up a Windows XP x64 desktop on NVIDIA Ampere
-GA104 hardware. Native XP has a visually correct 1920×1080 primary desktop,
-but the secondary remains black. The v184 run also exposed fallback during
-display-setting changes: an unhandled GSP performance notification blocked
-channel teardown. v185 consumes that notification while waiting for the real
-RPC reply and preserves channels when the requested primary mode is unchanged.
-It also restores v169's one-time DP training before channel creation, avoiding
-v181's repeated transmitter wake/training while native channels are live.
-Build and host regression tests pass; physical validation of v185 is pending.
+GA104 hardware. Native XP has a visually correct 1920×1080 primary desktop.
+The v185 physical run still leaves the detected 1440p secondary black, with
+an ownership-update timeout despite display DMA GET advancing. v186 explicitly
+flushes CPU command-buffer writes before publishing display PUT pointers and
+invalidates notifier cache lines while polling completion. It also installs
+the original v169 DMA-object lookup buckets alongside the client-aware layout.
+The full two-head command path now has host mock coverage. Builds and host
+suites pass; physical validation of v186 is pending.
 
 The v168 hardware log confirms GSP initialization, both native display heads,
 and GPU solid-fill activity. The v168 run showed orange artifacts while
