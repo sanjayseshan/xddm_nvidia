@@ -158,8 +158,32 @@ static VOID NvxLogFlush(VOID)
     __sync_lock_release(&g_LogFlushBusy);
 }
 
+/* COM1 Direct Serial Logging (I/O Port 0x3F8) for QEMU VM */
+static inline unsigned char inb(unsigned short port) {
+    unsigned char val;
+    __asm__ __volatile__("inb %1, %0" : "=a"(val) : "Nd"(port));
+    return val;
+}
+
+static inline void outb(unsigned short port, unsigned char val) {
+    __asm__ __volatile__("outb %0, %1" : : "a"(val), "Nd"(port));
+}
+
+static void NvxLogSerial(const char *s, ULONG length) {
+    ULONG i;
+    for (i = 0; i < length; ++i) {
+        if (s[i] == '\n') {
+            while ((inb(0x3FD) & 0x20) == 0);
+            outb(0x3F8, '\r');
+        }
+        while ((inb(0x3FD) & 0x20) == 0);
+        outb(0x3F8, (unsigned char)s[i]);
+    }
+}
+
 void LogStr(const char *s) {
     ULONG length = (ULONG)__builtin_strlen(s);
+    NvxLogSerial(s, length);
     NvxLogAppend(s, length);
     /* VideoPortDebugPrint remains available for debugger capture. */
     VideoPortDebugPrint(Info, "%s", s);

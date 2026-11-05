@@ -1,0 +1,79 @@
+;
+; NVX Display and Mini-VDD Driver Installation File for Windows 98 SE
+; Architecture: NVIDIA GA104 (GeForce RTX 3070 / RTX 3060 Ti)
+; Target Resolution: 1920x1080 @ 32bpp (Primary Display)
+;
+
+[Version]
+Signature   = "$CHICAGO$"
+Provider    = %Mfg%
+Class       = DISPLAY
+ClassGUID   = {4D36E968-E325-11CE-BFC1-08002BE10318}
+DriverVer   = 11/04/2026, 1.0.0.187
+
+[DestinationDirs]
+DefaultDestDir = 11    ; LDID_SYS (C:\WINDOWS\SYSTEM)
+Driver.Copy    = 11
+
+[SourceDisksNames]
+1 = %DiskName%,,0
+
+[SourceDisksFiles]
+nvx.drv = 1
+nvx.vxd = 1
+
+[Manufacturer]
+%Mfg% = NVIDIA
+
+[NVIDIA]
+%NV3070%      = NVX_Inst, PCI\VEN_10DE&DEV_2484
+%NV3070_LHR%  = NVX_Inst, PCI\VEN_10DE&DEV_2488
+%NV3060TI%    = NVX_Inst, PCI\VEN_10DE&DEV_2486
+%NV3060TI_LHR%= NVX_Inst, PCI\VEN_10DE&DEV_2489
+%NV3060%      = NVX_Inst, PCI\VEN_10DE&DEV_2487
+%NV3060_GA104%= NVX_Inst, PCI\VEN_10DE&DEV_24C7
+
+[NVX_Inst]
+CopyFiles = Driver.Copy
+DelReg    = Driver.DelReg
+AddReg    = Driver.AddReg
+
+[Driver.Copy]
+nvx.drv
+nvx.vxd
+
+[Driver.DelReg]
+HKR,,Ver
+HKR,,DevLoader
+HKR,DEFAULT
+HKR,MODES
+
+[Driver.AddReg]
+HKR,,Ver,,4.0
+HKR,,DevLoader,,*vdd
+HKR,DEFAULT,Mode,,"32,1920,1080"
+HKR,DEFAULT,drv,,nvx.drv
+HKR,DEFAULT,vdd,,"*vdd,*vflatd"
+HKR,DEFAULT,minivdd,,nvx.vxd
+HKR,DEFAULT,RefreshRate,,-1
+HKR,DEFAULT,DDC,,1
+
+; Mode definition for 1920x1080 32bpp
+HKR,"MODES\32\1920,1080",drv,,nvx.drv
+HKR,"MODES\32\1920,1080",vdd,,"*vdd,*vflatd"
+HKR,"MODES\32\1920,1080",minivdd,,nvx.vxd
+
+; Standard fallback entries
+HKR,"MODES\32\1280,720",drv,,nvx.drv
+HKR,"MODES\32\1024,768",drv,,nvx.drv
+
+[Strings]
+Mfg           = "NVIDIA Corporation (Win98SE Port)"
+DiskName      = "NVIDIA RTX 3070 Windows 98 SE Driver Installation Disk"
+NV3070        = "NVIDIA GeForce RTX 3070 (GA104 Win98)"
+NV3070_LHR    = "NVIDIA GeForce RTX 3070 LHR (GA104 Win98)"
+NV3060TI      = "NVIDIA GeForce RTX 3060 Ti (GA104 Win98)"
+NV3060TI_LHR  = "NVIDIA GeForce RTX 3060 Ti LHR (GA104 Win98)"
+NV3060        = "NVIDIA GeForce RTX 3060 (GA104 Win98)"
+NV3060_GA104  = "NVIDIA GeForce RTX 3060 GA104 (GA104 Win98)"
+
