@@ -1,14 +1,20 @@
 # NVIDIA GA104 XDDM driver for Windows XP x64
 
 This experimental driver brings up a Windows XP x64 desktop on NVIDIA Ampere
-GA104 hardware. Native XP has a visually correct 1920×1080 primary desktop.
-The v185 physical run still leaves the detected 1440p secondary black, with
-an ownership-update timeout despite display DMA GET advancing. v186 explicitly
-flushes CPU command-buffer writes before publishing display PUT pointers and
-invalidates notifier cache lines while polling completion. It also installs
-the original v169 DMA-object lookup buckets alongside the client-aware layout.
-The full two-head command path now has host mock coverage. Builds and host
-suites pass; physical validation of v186 is pending.
+GA104 hardware. **v186 is confirmed working on bare metal on an AMD Ryzen AM5
+platform with an RTX 3070**, driving a correct 1920×1080 primary desktop and
+2560×1440 extended secondary desktop. Earlier v164/v169 builds also worked in
+a QEMU/KVM guest with the RTX 3070 passed through using VFIO.
+
+The bare-metal result was confirmed on November 4, 2026. The photo below shows
+both physical monitors displaying the extended Windows XP x64 desktop.
+
+![Windows XP x64 running on Ryzen AM5 with an RTX 3070 and both monitors active](20261104_205049.jpg)
+
+v186 explicitly publishes display command memory and refreshes completion
+notifier cache lines. It retains the original v169 DMA-object lookup buckets
+alongside the client-aware layout. Miniport/display builds and host regression
+tests pass, including the complete two-head command sequence.
 
 The v168 hardware log confirms GSP initialization, both native display heads,
 and GPU solid-fill activity. The v168 run showed orange artifacts while
@@ -56,18 +62,22 @@ doorbell, while maintaining safe VGA fallback if copy is unverified; see
 
 ## Compatibility and limits
 
-- **Guest OS:** Windows XP Professional x64 Edition (NT 5.2). Windows Server
+- **OS:** Windows XP Professional x64 Edition (NT 5.2), tested natively and
+  in a VFIO guest. Windows Server
   2003 x64 shares the target driver model but has not been validated here.
 - **Tested GPU:** EVGA GeForce RTX 3070 XC3 Ultra LHR, GA104, PCI ID
-  `10de:2488`, passed through to the guest with VFIO.
+  `10de:2488`, tested on bare metal and with VFIO passthrough.
+- **Native platform:** AMD Ryzen on AM5, confirmed working with the RTX 3070
+  in v186. Other native platforms have not been established.
 - **Tested display setup:** two DisplayPort displays, 1920×1080 primary and
   2560×1440 secondary. The tested EDID timings are approximately 60 Hz.
 - **Not established:** performance benefit beyond the tested fill path, 120 Hz
   operation, arbitrary resolutions, other Ampere boards, other GPU generations,
   HDMI, hot-plug/reconfiguration, broad GDI acceleration, OpenGL, or Direct3D.
 - The kernel driver is experimental and unsigned. Use a disposable XP guest
-  and a GPU reserved for passthrough. The test script writes the newly built
-  driver into the configured guest disk before launching it.
+  when testing in a VM. Native testing uses an offline XP installation updated
+  from Linux. The VM test script writes the newly built driver into the
+  configured guest disk before launching it.
 
 ## Build
 
@@ -98,6 +108,25 @@ The display driver's import library is generated from the checked-in
 firmware, and mock GSP checks. It requires the matching GSP firmware input.
 `make -C src_disp check` verifies the GDI color-to-pixel conversion used by
 the accelerated solid-fill path.
+
+## Native XP installation and update
+
+Download and extract the driver ZIP from [GitHub Releases](https://github.com/sanjayseshan/xddm_nvidia/releases).
+For a new installation, point Device Manager's driver update / Have Disk dialog
+at the extracted `nvx.inf`. The package contains the XP x64 miniport and display
+DLL; the matching GSP firmware is embedded in `nvxmp.sys`.
+
+For an existing NVX installation, shut down XP, boot Linux, and mount the XP
+volume read-write. From a source checkout, update both binaries with:
+
+```sh
+XP_MOUNT=/mnt/xp ./update_xp_driver.sh
+```
+
+Replace `/mnt/xp` with the mounted XP volume. The script builds both drivers,
+copies them to the existing XP installation and verifies source/destination
+hashes. Boot XP afterward. This updates an existing installation; it does not
+replace the initial INF installation.
 
 ## Hardware test execution
 
@@ -178,7 +207,8 @@ and ISOs are intentionally excluded from version control.
 - **GPT and Gemini** models assisted with code analysis, implementation, and
   debugging.
 - **Sanjay Seshan** performed the physical GPU and monitor tests and confirmed
-  the v164 dual-display result.
+  the v164/v169 VM dual-display results and the v186 Ryzen AM5 bare-metal
+  dual-display result.
 
 ## License and firmware
 

@@ -1,5 +1,18 @@
 NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 4, 2026 (v186 display DMA publication and v169 lookup buckets)
+Updated: November 4, 2026 (v186 confirmed bare-metal Ryzen AM5 / RTX 3070 dual display)
+
+CONFIRMED v186 PHYSICAL RESULT:
+The user reports that v186 works on bare metal with AMD Ryzen AM5 and an
+RTX 3070: primary 1920x1080 remains correct and the 2560x1440 secondary now
+activates as an extended desktop. Photo 20261104_205049.jpg shows both physical
+monitors displaying the XP x64 desktop and is embedded in README.md.
+The successful version includes explicit display command/notifier cache-line
+publication and both v169/client-aware RAMHT buckets. The combined change is
+confirmed working; this test does not isolate which individual change was
+necessary. Host builds and both test suites passed before hardware testing.
+This confirms native dual-display output and the existing limited 2D paths,
+not complete GDI acceleration or an OpenGL/Direct3D implementation.
+
 
 v186 findings from the actual v185 native run:
 The user confirms primary output remains correct. Both EDIDs and the extended
