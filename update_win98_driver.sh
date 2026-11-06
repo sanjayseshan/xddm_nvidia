@@ -19,6 +19,26 @@ done
 
 echo "==> Deploying NVX Windows 98 SE driver package to $WIN98_IMG"
 
+# Ensure [WINVBE] configuration is in SYSTEM.INI
+TMP_SYS_INI="/tmp/win98_system_ini.tmp"
+guestfish --ro -a "$WIN98_IMG" -m /dev/sda1 download /WINDOWS/SYSTEM.INI "$TMP_SYS_INI"
+
+if ! grep -q "\[WINVBE\]" "$TMP_SYS_INI"; then
+    echo "Adding [WINVBE] configuration to SYSTEM.INI..."
+    cat >> "$TMP_SYS_INI" <<'SYSINIBLOCK'
+
+[WINVBE]
+LfbAddr=0xE0000000
+LfbCheck=0
+Debug=2
+DebugPort=0x3F8
+Access=1
+SYSINIBLOCK
+fi
+
+# Ensure display.drv=nvx.drv in [boot]
+sed -i 's/^display\.drv=.*/display.drv=nvx.drv/' "$TMP_SYS_INI"
+
 guestfish --rw -a "$WIN98_IMG" -m /dev/sda1 <<EOF
 mkdir-p /WINDOWS/INF
 mkdir-p /WINDOWS/SYSTEM
@@ -30,8 +50,10 @@ upload "$PKG_DIR/nvx.drv" /DRIVERS/NVX/nvx.drv
 upload "$PKG_DIR/nvx.vxd" /WINDOWS/SYSTEM/nvx.vxd
 upload "$PKG_DIR/nvx.vxd" /DRIVERS/NVX/nvx.vxd
 upload "$NVX_ROOT/src_win98/nvx_reg.reg" /NVX_REG.REG
-upload "$NVX_ROOT/../qi/vbemp/128MB/VBE.vxd" /WINDOWS/SYSTEM/VBE.vxd
+upload "$TMP_SYS_INI" /WINDOWS/SYSTEM.INI
 sync
 EOF
+
+rm -f "$TMP_SYS_INI"
 
 echo "==> Driver files successfully installed to Windows 98 disk image."

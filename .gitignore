@@ -4,9 +4,11 @@
 *.img
 *.sys
 *.o
+*.obj
 *.a
 *.dll
 *.zip
+src_win98/winvbe_drv/obj/
 
 # Mutable hardware logs and local tools
 *.log
