@@ -21,6 +21,7 @@ echo "==> Deploying NVX Windows 98 SE dual-head driver package to $WIN98_IMG"
 
 TMP_SYS_INI="/tmp/win98_system_ini.tmp"
 guestfish --ro -a "$WIN98_IMG" -m /dev/sda1 download /WINDOWS/SYSTEM.INI "$TMP_SYS_INI"
+dos2unix "$TMP_SYS_INI"
 
 # Ensure [WINVBE] configuration is in SYSTEM.INI
 if ! grep -q "\[WINVBE\]" "$TMP_SYS_INI"; then
@@ -56,6 +57,20 @@ fi
 # Ensure display.drv=nvx.drv in [boot]
 sed -i 's/^display\.drv=.*/display.drv=nvx.drv/' "$TMP_SYS_INI"
 
+# Ensure mouse, keyboard and nvx VxDs in [386Enh]
+sed -i '/NoMouseWarning=1/d' "$TMP_SYS_INI"
+if ! grep -qi "mouse=\*vmouse" "$TMP_SYS_INI"; then
+    sed -i '/\[386Enh\]/a mouse=*vmouse, msmouse.vxd' "$TMP_SYS_INI"
+fi
+if ! grep -qi "keyboard=\*vkd" "$TMP_SYS_INI"; then
+    sed -i '/\[386Enh\]/a keyboard=*vkd' "$TMP_SYS_INI"
+fi
+if ! grep -qi "device=nvx\.vxd" "$TMP_SYS_INI"; then
+    sed -i '/\[386Enh\]/a device=nvx.vxd' "$TMP_SYS_INI"
+fi
+
+unix2dos "$TMP_SYS_INI"
+
 guestfish --rw -a "$WIN98_IMG" -m /dev/sda1 <<EOF
 mkdir-p /WINDOWS/INF
 mkdir-p /WINDOWS/SYSTEM
@@ -68,8 +83,12 @@ upload "$PKG_DIR/nvx2.drv" /WINDOWS/SYSTEM/nvx2.drv
 upload "$PKG_DIR/nvx2.drv" /DRIVERS/NVX/nvx2.drv
 upload "$PKG_DIR/nvx.vxd" /WINDOWS/SYSTEM/nvx.vxd
 upload "$PKG_DIR/nvx.vxd" /DRIVERS/NVX/nvx.vxd
+upload "$PKG_DIR/attach2.exe" /ATTACH2.EXE
 upload "$NVX_ROOT/src_win98/nvx_reg.reg" /NVX_REG.REG
+upload "$NVX_ROOT/src_win98/qipnp.reg" /QIPNP.REG
+upload "$NVX_ROOT/src_win98/autoexec.bat" /AUTOEXEC.BAT
 upload "$TMP_SYS_INI" /WINDOWS/SYSTEM.INI
+cp /WINDOWS/SYSTEM/MSMOUSE.VXD /WINDOWS/SYSTEM/MOUSE.VXD
 sync
 EOF
 

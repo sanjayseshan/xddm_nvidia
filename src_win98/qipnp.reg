@@ -1,0 +1,116 @@
+REGEDIT4
+
+[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion]
+"SetupFlags"=hex:09,05,00,00
+"OtherDevicePath"="C:\\DRIVER"
+"DevicePath"="C:\\WINDOWS\\INF;C:\\DRIVER;C:\\WINCD"
+
+
+[-HKEY_LOCAL_MACHINE\Enum\USB]
+
+[-HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\ASD]
+
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\ASD]
+
+; Class Silent Installation flags
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Monitor]
+"SilentInstall"="1"
+
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\USB]
+"SilentInstall"="1"
+
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\HID]
+"SilentInstall"="1"
+
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\HIDClass]
+"SilentInstall"="1"
+"NoInstallClass"="0"
+
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Keyboard]
+"SilentInstall"="1"
+"NoInstallClass"="0"
+
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Mouse]
+"SilentInstall"="1"
+"NoInstallClass"="0"
+
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\Class\{745A17A0-74D3-11D0-B6FE-00A0C90F57DA}]
+"SilentInstall"="1"
+"NoInstallClass"="0"
+
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\Class\{4D36E96B-E325-11CE-BFC1-08002BE10318}]
+"SilentInstall"="1"
+"NoInstallClass"="0"
+
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\Class\{4D36E96F-E325-11CE-BFC1-08002BE10318}]
+"SilentInstall"="1"
+"NoInstallClass"="0"
+
+; Mass storage and USB silent enumeration masks
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\USB\SilentClasses]
+"0"=hex:80,09,00,00
+"1"=hex:43,03,01,01
+"2"=hex:43,03,01,02
+"3"=hex:c3,08,06,50
+"4"=hex:83,03,01,01
+"5"=hex:83,03,01,02
+
+; Global PnP suppress flags
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Control\Pnp]
+"Silent"="1"
+"SuppressHardwareInstall"=dword:00000001
+"AutoInstall"=dword:00000001
+
+[HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Setup]
+"DriverSearchFlags"=dword:0000001f
+
+; Suppress missing mouse warning in User hives
+[HKEY_USERS\.Default\Control Panel\Desktop]
+"NoMouseWarning"="1"
+
+[HKEY_CURRENT_USER\Control Panel\Desktop]
+"NoMouseWarning"="1"
+
+; Pre-seed Standard Mouse into Enum\Root so USER.EXE detects an existing pointing device
+[-HKEY_LOCAL_MACHINE\Enum\Root\*PNP0F00]
+
+[HKEY_LOCAL_MACHINE\Enum\Root\*PNP0F13]
+
+[HKEY_LOCAL_MACHINE\Enum\Root\*PNP0F13\0000]
+"Class"="Mouse"
+"ClassGUID"="{4D36E96F-E325-11CE-BFC1-08002BE10318}"
+"ConfigFlags"=hex:00,00,00,00
+"DeviceDesc"="Standard PS/2 Port Mouse"
+"Driver"="Mouse\\0000"
+"HardwareID"="*PNP0F13"
+
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Mouse\0000]
+"DevLoader"="*vmouse"
+"DriverDesc"="Standard PS/2 Port Mouse"
+"MatchingDeviceId"="*PNP0F13"
+"InfPath"="MSMOUSE.INF"
+"InfSection"="StdPS2"
+"MouseType"="PS2"
+"MouseDriver"="mouse.drv"
+
+; --- Clean up manual/ghost nodes ---
+[-HKEY_LOCAL_MACHINE\Enum\HID\VID_046D&PID_C52B&MI_00]
+[-HKEY_LOCAL_MACHINE\Enum\Root\*PNP0300]
+[-HKEY_LOCAL_MACHINE\Enum\Root\*PNP0301]
+[-HKEY_LOCAL_MACHINE\Enum\Root\*PNP030B]
+[-HKEY_LOCAL_MACHINE\Enum\Root\*PNP0303]
+
+
+
+
+; --- Stop Explorer from polling floppy drives A: and B: ---
+[HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Policies\Explorer]
+"NoDrives"=dword:00000003
+
+; --- Disable Floppy Disk Controller node ---
+[HKEY_LOCAL_MACHINE\Enum\Root\*PNP0700]
+"ConfigFlags"=hex:40,00,00,00
+[HKEY_LOCAL_MACHINE\Enum\Root\*PNP0700\0000]
+"ConfigFlags"=hex:40,00,00,00
+"Problem"=dword:00000016
+

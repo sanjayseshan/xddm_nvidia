@@ -894,6 +894,13 @@ static void add_mode(WORD num, LPBYTE mi)
     if (bpp >= 24 && !m->rsize) { m->rsize = 8; m->rpos = 16; m->gsize = 8; m->gpos = 8; m->bsize = 8; m->bpos = 0; }
     if (g.vbever >= 0x200 && (attr & 0x80))
         m->physbase = *(LPDWORD)(mi + 0x28);
+    if (!m->physbase) {
+#ifdef SECONDARY_HEAD
+        m->physbase = 0xE2000000UL;
+#else
+        m->physbase = 0xE0000000UL;
+#endif
+    }
     m->lpitch = m->pitch;
     if (g.vbever >= 0x300 && *(LPWORD)(mi + 0x32))
         m->lpitch = *(LPWORD)(mi + 0x32);
@@ -1114,8 +1121,27 @@ int vbe_probe(void)
     /* copy the mode list before reusing the buffer */
     info = rm_ptr(g.dosbuf_seg, 0);
     ml = (LPWORD)rm_ptr(*(LPWORD)(info + 16), *(LPWORD)(info + 14));
-    while (ml && n < 160 && ml[n] != 0xFFFF)
+    while (ml && n < 140 && ml[n] != 0xFFFF)
         { list[n] = ml[n]; n++; }
+
+    /* RTX 3070 VBIOS omits 0x177 (1920x1080) and other modes from 4F00h enumeration list.
+       Proactively add high-res VESA modes so they get probed via 4F01h. */
+    {
+        static const WORD cand_modes[] = {
+            0x177, 0x171, 0x170, 0x11B, 0x11A, 0x118, 0x117, 0x115, 0x114, 0x112, 0x111, 0x107, 0x105, 0
+        };
+        const WORD *p = cand_modes;
+        while (*p) {
+            WORD c = *p++;
+            WORD found = 0;
+            for (i = 0; i < n; i++) {
+                if (list[i] == c) { found = 1; break; }
+            }
+            if (!found && n < 155) {
+                list[n++] = c;
+            }
+        }
+    }
     DBG("VBE %x mem=%uK caps=%x modes=%u oem='%s'\n", g.vbever, g.totalmem64k * 64, g.vbecaps_lo, n, g.oemstr);
 
     for (i = 0; i < n; i++) {
@@ -1126,6 +1152,17 @@ int vbe_probe(void)
         if (!int10(&rmr) || (WORD)rmr.eax != 0x004F)
             continue;
         mi = rm_ptr(g.dosbuf_seg, 0x200);
+        /* If VBIOS returns a valid width & height, ensure mode is marked supported with LFB */
+        if (*(LPWORD)(mi + 0x12) > 0 && *(LPWORD)(mi + 0x14) > 0) {
+            *(LPWORD)mi |= 0x0099; /* bit 0 (supported) | bit 3 (color) | bit 4 (graphics) | bit 7 (LFB) */
+            if (*(LPDWORD)(mi + 0x28) == 0) {
+#ifdef SECONDARY_HEAD
+                *(LPDWORD)(mi + 0x28) = 0xE2000000UL;
+#else
+                *(LPDWORD)(mi + 0x28) = 0xE0000000UL;
+#endif
+            }
+        }
         add_mode(list[i], mi);
     }
     nvx_init_modes();
@@ -1668,6 +1705,23 @@ int vbe_set_mode(void)
         /* Native NVX GA104 Direct Scanout Mode */
         g.pitch = g.mi.lpitch;
         g.dacbits = (g.bpp == 8) ? 8 : 0;
+#ifndef SECONDARY_HEAD
+        {
+            WORD vbe_cand = 0;
+            if (g.xres == 1920 && g.yres == 1080) vbe_cand = (g.bpp == 16) ? 0x171 : 0x177;
+            else if (g.xres == 1024 && g.yres == 768) vbe_cand = (g.bpp == 16) ? 0x117 : 0x118;
+            else if (g.xres == 800 && g.yres == 600) vbe_cand = (g.bpp == 16) ? 0x114 : 0x115;
+            else if (g.xres == 1280 && g.yres == 1024) vbe_cand = (g.bpp == 16) ? 0x11A : 0x11B;
+            else if (g.xres == 640 && g.yres == 480) vbe_cand = (g.bpp == 16) ? 0x111 : 0x112;
+            if (vbe_cand) {
+                rclear();
+                rmr.eax = 0x4F02;
+                rmr.ebx = vbe_cand | 0x4000;
+                int10(&rmr);
+                DBG("NVX: hardware modeset 0x%04x ax=%x\n", (WORD)(vbe_cand | 0x4000), (WORD)rmr.eax);
+            }
+        }
+#endif
         DBG("NVX: set_mode %ux%ux%u pitch=%u LFB=%lx\n", g.xres, g.yres, g.bpp, g.pitch, g.mi.physbase);
     } else if (m == 0xFFFE) {
         if (g.access != ACC_LFB) return 0;
@@ -1679,7 +1733,7 @@ int vbe_set_mode(void)
         g.dacbits = 6;
         dispi_set();
     } else {
-        if (g.access == ACC_LFB && !g.lfb_state) {
+        if (g.access == ACC_LFB && !g.lfb_state && mode_banked_ok(&g.mi)) {
             /* first time: set the mode with the VGA window and check that the
                LFB address really shows the same video memory */
             g.lfb_state = 1;

@@ -74,6 +74,36 @@ wlink @../display_sec.lnk file entry.obj,util.obj,vbe.obj,color.obj,rop.obj,surf
 cd ..
 
 python3 ../tools/stockres.py w9 - $RES obj_sec/res9x
+cat >> obj_sec/res9x/winvbe.rc <<'VEOF'
+1 VERSIONINFO
+FILEVERSION 1,2,0,0
+PRODUCTVERSION 1,2,0,0
+FILEFLAGSMASK 0x3F
+FILEFLAGS 0
+FILEOS 0x1
+FILETYPE 3
+FILESUBTYPE 4
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904E4"
+        BEGIN
+            VALUE "CompanyName", "NVIDIA Corporation (Win98SE Port)\0"
+            VALUE "FileDescription", "NVX GA104 Secondary Display Driver\0"
+            VALUE "FileVersion", "1.2\0"
+            VALUE "InternalName", "NVX2\0"
+            VALUE "LegalCopyright", "GNU General Public License v3\0"
+            VALUE "OriginalFilename", "NVX2.DRV\0"
+            VALUE "ProductName", "NVX GA104\0"
+            VALUE "ProductVersion", "1.2\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1252
+    END
+END
+VEOF
 wrc -q -r -bt=windows -30 -i=obj_sec/res9x -fo=obj_sec/winvbe9x.res obj_sec/res9x/winvbe.rc
 cp obj_sec/nvx2.drv obj_sec/winvbe9x.drv
 wrc -q -bt=windows -30 obj_sec/winvbe9x.res obj_sec/winvbe9x.drv -fe=obj_sec/winvbe9x.drv

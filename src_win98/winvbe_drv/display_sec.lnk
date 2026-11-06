@@ -1,6 +1,6 @@
 format windows dll
 name nvx2.drv
-option modname=DISPLAY2
+option modname=NVX2
 option description 'DISPLAY : 100, 96, 96 : NVX GA104 Secondary Display Driver'
 option map=nvx2.map
 option heapsize=1024
@@ -59,3 +59,4 @@ export GAMMARAMP.32
 export REENABLE.31
 export SELECTBITMAP.29=W_SELECTBITMAP
 export BITMAPBITS.30=W_BITMAPBITS
+
