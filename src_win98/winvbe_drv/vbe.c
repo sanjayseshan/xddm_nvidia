@@ -918,6 +918,17 @@ static const BYTE edid_dell_s2419hgf[128] = {
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x99
 };
 
+static const BYTE edid_lenovo_r27qe[128] = {
+    0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x30, 0xae, 0x24, 0x63, 0x01, 0x01, 0x01, 0x01,
+    0x10, 0x20, 0x01, 0x04, 0xa5, 0x3c, 0x22, 0x78, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x56, 0x5e, 0x00, 0xa0, 0xa0, 0xa0, 0x29, 0x50, 0x30, 0x20,
+    0x35, 0x00, 0x58, 0x54, 0x21, 0x00, 0x00, 0x1e, 0x00, 0x00, 0x00, 0xfc, 0x00, 0x52, 0x32, 0x37,
+    0x71, 0x65, 0x0a, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x17
+};
+
 static void read_edid(void)
 {
     LPBYTE p;
@@ -963,7 +974,13 @@ fallback_edid:
     DBG("NVX [COPY]: CE engine=0x0000000B capabilities=0x000003E2\n");
     DBG("NVX [COPY]: submitted guarded VRAM write/read/restore roundtrip and completion release.\n");
     DBG("NVX [COPY]: GPU copy completed and verified; guarded VRAM roundtrip and restore succeeded.\n");
+#ifdef SECONDARY_HEAD
+    DBG("NVX2 [DISPLAY]: Secondary Head 1 EDID selected (Lenovo R27qe 2560x1440@60Hz)\n");
+    far_memcpy(g.edid, (const void FAR *)edid_lenovo_r27qe, 128);
+#else
+    DBG("NVX [DISPLAY]: Primary Head 0 EDID selected (Dell S2419HGF 1920x1080@60Hz)\n");
     far_memcpy(g.edid, (const void FAR *)edid_dell_s2419hgf, 128);
+#endif
 
 parse_edid:
     g.have_edid = 1;
@@ -1005,7 +1022,11 @@ static void nvx_add_mode(WORD w, WORD h, BYTE bpp)
     m->pitch = w * m->Bpp;
     m->lpitch = m->pitch;
     m->memmodel = (bpp == 8) ? 4 : 6;
+#ifdef SECONDARY_HEAD
+    m->physbase = 0xE2000000UL;
+#else
     m->physbase = 0xE0000000UL;
+#endif
     m->pages = 1;
     if (bpp == 8) {
         m->rsize = 0; m->gsize = 0; m->bsize = 0;
@@ -1019,7 +1040,11 @@ static void nvx_add_mode(WORD w, WORD h, BYTE bpp)
 
 static int nvx_init_modes(void)
 {
+#ifdef SECONDARY_HEAD
+    DBG("NVX2: Initializing native GA104 secondary display modes (Head 1, LFB=0xE2000000)...\n");
+#else
     DBG("NVX: Initializing native GA104 display modes...\n");
+#endif
     g.vbever = 0x300;
     g.totalmem64k = 4096; /* 256MB */
     far_memset(g.oemstr, 0, sizeof(g.oemstr));
@@ -1170,7 +1195,11 @@ static int select_mode(void)
 
     if (!w || !h) {
         if (g.have_edid && g.edid_w >= 640 && g.edid_h >= 400) { w = g.edid_w; h = g.edid_h; }
+#ifdef SECONDARY_HEAD
+        else { w = 2560; h = 1440; }
+#else
         else { w = 1920; h = 1080; }
+#endif
     }
     if (!d) d = 32;
 
@@ -1523,6 +1552,12 @@ static int setup_lfb(void)
                 else break;
             }
             if (a) g.mi.physbase = a;
+        } else if (!g.mi.physbase) {
+#ifdef SECONDARY_HEAD
+            g.mi.physbase = 0xE2000000UL;
+#else
+            g.mi.physbase = 0xE0000000UL;
+#endif
         }
     }
     if (g.lfb_check && g.mi.mode != 0xFFFF && (g.mi.mode & 0xF000) != 0x6000 && lfb_pci_check(g.mi.physbase) == 0) {

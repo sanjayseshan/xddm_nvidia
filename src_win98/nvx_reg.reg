@@ -5,7 +5,7 @@ REGEDIT4
 [-HKEY_LOCAL_MACHINE\Enum\PCI\VEN_10DE&DEV_2488&SUBSYS_47553842&REV_A1]
 
 [HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000]
-"DriverDesc"="NVIDIA GeForce RTX 3070 (GA104 Win98)"
+"DriverDesc"="NVIDIA GeForce RTX 3070 (GA104 Win98 Primary)"
 "MatchingDeviceId"="PCI\\VEN_10DE&DEV_2488"
 "ProviderName"="NVIDIA Corporation (Win98SE Port)"
 "DriverDate"="11-05-2026"
@@ -45,16 +45,67 @@ REGEDIT4
 [HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\32\1920,1080]
 [HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0000\MODES\32\2560,1440]
 
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001]
+"DriverDesc"="NVIDIA GeForce RTX 3070 (GA104 Win98 Secondary 1440p)"
+"MatchingDeviceId"="PCI\\VEN_10DE&DEV_2488"
+"ProviderName"="NVIDIA Corporation (Win98SE Port)"
+"DriverDate"="11-05-2026"
+"DriverVersion"="1.0.0.187"
+"InfPath"="nvx.inf"
+"InfSection"="NVX_Inst"
+"DevLoader"="*vdd"
+
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\DEFAULT]
+"drv"="nvx2.drv"
+"vdd"="*vdd,*vflatd"
+"RefreshRate"="-1"
+"DDC"="1"
+
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\8\640,480]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\8\800,600]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\8\1024,768]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\8\1280,720]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\8\1280,1024]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\8\1920,1080]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\8\2560,1440]
+
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\16\640,480]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\16\800,600]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\16\1024,768]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\16\1280,720]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\16\1280,1024]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\16\1920,1080]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\16\2560,1440]
+
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\32\640,480]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\32\800,600]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\32\1024,768]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\32\1280,720]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\32\1280,1024]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\32\1600,900]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\32\1920,1080]
+[HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Display\0001\MODES\32\2560,1440]
+
 [HKEY_LOCAL_MACHINE\Enum\PCI\VEN_10DE&DEV_2488&SUBSYS_47553842&REV_A1]
 
 [HKEY_LOCAL_MACHINE\Enum\PCI\VEN_10DE&DEV_2488&SUBSYS_47553842&REV_A1\BUS_00&DEV_02&FUNC_00]
-"DeviceDesc"="NVIDIA GeForce RTX 3070 LHR (GA104 Win98)"
+"DeviceDesc"="NVIDIA GeForce RTX 3070 LHR (GA104 Win98 Primary)"
 "Driver"="Display\\0000"
 "Class"="Display"
 "ClassGUID"="{4D36E968-E325-11CE-BFC1-08002BE10318}"
 "ConfigFlags"=hex:00,00,00,00
 "HardwareID"="PCI\\VEN_10DE&DEV_2488&SUBSYS_47553842&REV_A1,PCI\\VEN_10DE&DEV_2488,PCI\\VEN_10DE&CC_030000,PCI\\VEN_10DE&CC_0300,PCI\\VEN_10DE,PCI\\CC_030000,PCI\\CC_0300"
 "CompatibleIDs"="PCI\\VEN_10DE&DEV_2488,PCI\\VEN_10DE,PCI\\CC_030000,PCI\\CC_0300"
+
+[HKEY_LOCAL_MACHINE\Enum\Root\Display]
+
+[HKEY_LOCAL_MACHINE\Enum\Root\Display\0001]
+"DeviceDesc"="NVIDIA GeForce RTX 3070 (GA104 Win98 Secondary 1440p)"
+"Driver"="Display\\0001"
+"Class"="Display"
+"ClassGUID"="{4D36E968-E325-11CE-BFC1-08002BE10318}"
+"ConfigFlags"=hex:00,00,00,00
+"HardwareID"="*PNP0900"
 
 [HKEY_LOCAL_MACHINE\System\CurrentControlSet\Services\Class\Monitor\0000]
 "DriverDesc"="Dell S2419HGF (1080p 144Hz Gaming Display)"
@@ -109,3 +160,29 @@ REGEDIT4
 
 [HKEY_LOCAL_MACHINE\Enum\MONITOR\DEFAULT_MONITOR\0001\MODES\2560,1440]
 "Mode1"="88.8,60.0,+,+"
+
+[HKEY_LOCAL_MACHINE\Config\0001\Display\Settings]
+"BitsPerPixel"="32"
+"Resolution"="1920,1080"
+"AttachToDesktop"="1"
+"DesktopPos"="0,0"
+"RefreshRate"="-1"
+
+[HKEY_LOCAL_MACHINE\Config\0001\Display\Settings\0001]
+"BitsPerPixel"="32"
+"Resolution"="2560,1440"
+"AttachToDesktop"="1"
+"DesktopPos"="1920,0"
+"RefreshRate"="-1"
+
+[HKEY_LOCAL_MACHINE\Config\0001\Display\Settings\Monitor0]
+"BitsPerPixel"="32"
+"Resolution"="1920,1080"
+"AttachToDesktop"="1"
+"DesktopPos"="0,0"
+
+[HKEY_LOCAL_MACHINE\Config\0001\Display\Settings\Monitor1]
+"BitsPerPixel"="32"
+"Resolution"="2560,1440"
+"AttachToDesktop"="1"
+"DesktopPos"="1920,0"

@@ -20,6 +20,7 @@ Driver.Copy    = 11
 
 [SourceDisksFiles]
 nvx.drv = 1
+nvx2.drv = 1
 nvx.vxd = 1
 
 [Manufacturer]
@@ -41,6 +42,7 @@ UpdateInis= Driver.Inis
 
 [Driver.Copy]
 nvx.drv
+nvx2.drv
 nvx.vxd
 
 [Driver.Inis]
@@ -58,6 +60,7 @@ HKR,CURRENT
 HKR,,Ver,,4.0
 HKR,,DevLoader,,*vdd
 HKR,DEFAULT,drv,,nvx.drv
+HKR,DEFAULT,drv2,,nvx2.drv
 HKR,DEFAULT,vdd,,"*vdd,*vflatd"
 HKR,DEFAULT,RefreshRate,,-1
 HKR,DEFAULT,DDC,,1

@@ -17,7 +17,11 @@ extern int  __far __pascal GetPrivateProfileInt(LPSTR app, LPSTR key, int def, L
 extern int  __far __pascal GetPrivateProfileString(LPSTR app, LPSTR key, LPSTR def, LPSTR ret, int size, LPSTR file);
 #endif
 
+#ifdef SECONDARY_HEAD
+static char ini_app[]  = "WINVBE2";
+#else
 static char ini_app[]  = "WINVBE";
+#endif
 static char ini_file[] = "SYSTEM.INI";
 WORD dbg_port = 0x3F8;
 
@@ -41,6 +45,9 @@ void dbg_puts(const char *s)
         if (at_line_start) {
             at_line_start = 0;
             dbg_putc('N'); dbg_putc('V'); dbg_putc('X');
+#ifdef SECONDARY_HEAD
+            dbg_putc('2');
+#endif
             dbg_putc('.'); dbg_putc('D'); dbg_putc('R'); dbg_putc('V');
             dbg_putc(':'); dbg_putc(' ');
         }
