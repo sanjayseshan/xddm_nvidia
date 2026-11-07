@@ -8,6 +8,7 @@
 *.a
 *.dll
 *.zip
+*.sha256
 src_win98/winvbe_drv/obj/
 src_win98/winvbe_drv/obj_sec/
 src_win98/obj_vxd/
