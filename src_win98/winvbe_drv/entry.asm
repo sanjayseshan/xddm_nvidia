@@ -382,30 +382,89 @@ W_BITBLT:
         mov     es,ax
         jmp     far BITBLT
 
-;        DIBFWD  W_BITBLT, BITBLT, 0
         DIBFWD  W_COLORINFO, COLORINFO, 1
         DIBFWD  W_ENUMDFONTS, ENUMDFONTS, 2
         DIBFWDP W_ENUMOBJ, ENUMOBJ, 3
-        DIBFWD  W_OUTPUT, OUTPUT, 4
-        DIBFWD  W_PIXEL, PIXEL, 5
+
+        global  W_OUTPUT
+        extern  OUTPUT
+W_OUTPUT:
+        mov     ax,DGROUP
+        mov     es,ax
+        jmp     far OUTPUT
+
+        global  W_PIXEL
+        extern  PIXEL
+W_PIXEL:
+        mov     ax,DGROUP
+        mov     es,ax
+        jmp     far PIXEL
+
         DIBFWDP W_REALIZEOBJECT, REALIZEOBJECT, 6
-        DIBFWD  W_STRBLT, STRBLT, 7
-        DIBFWD  W_SCANLR, SCANLR, 8
+
+        global  W_STRBLT
+        extern  STRBLT
+W_STRBLT:
+        mov     ax,DGROUP
+        mov     es,ax
+        jmp     far STRBLT
+
+        global  W_SCANLR
+        extern  SCANLR
+W_SCANLR:
+        mov     ax,DGROUP
+        mov     es,ax
+        jmp     far SCANLR
+
         DIBFWD  W_DEVICEMODE, DEVICEMODE, 9
-        DIBFWD  W_EXTTEXTOUT, EXTTEXTOUT, 10
+
+        global  W_EXTTEXTOUT
+        extern  EXTTEXTOUT
+W_EXTTEXTOUT:
+        mov     ax,DGROUP
+        mov     es,ax
+        jmp     far EXTTEXTOUT
+
         DIBFWD  W_GETCHARWIDTH, GETCHARWIDTH, 11
         DIBFWD  W_DEVICEBITMAP, DEVICEBITMAP, 12
-        DIBFWD  W_FASTBORDER, FASTBORDER, 13
+
+        global  W_FASTBORDER
+        extern  FASTBORDER
+W_FASTBORDER:
+        mov     ax,DGROUP
+        mov     es,ax
+        jmp     far FASTBORDER
+
         DIBFWD  W_SETATTRIBUTE, SETATTRIBUTE, 14
         DIBFWDW W_DEVICEBITMAPBITS, DEVICEBITMAPBITS, 15
         DIBFWD  W_CREATEBITMAP, CREATEBITMAP, 16
-        DIBFWD  W_DIBTODEVICE, DIBTODEVICE, 17
+
+        global  W_DIBTODEVICE
+        extern  DIBTODEVICE
+W_DIBTODEVICE:
+        mov     ax,DGROUP
+        mov     es,ax
+        jmp     far DIBTODEVICE
+
         DIBFWDP W_GETPALETTE, GETPALETTE, 18
         DIBFWDP W_SETPALETTETRANSLATE, SETPALETTETRANSLATE, 19
         DIBFWDP W_GETPALETTETRANSLATE, GETPALETTETRANSLATE, 20
         DIBFWDP W_UPDATECOLORS, UPDATECOLORS, 21
-        DIBFWD  W_STRETCHBLT, STRETCHBLT, 22
-        DIBFWD  W_STRETCHDIBITS, STRETCHDIBITS, 23
+
+        global  W_STRETCHBLT
+        extern  STRETCHBLT
+W_STRETCHBLT:
+        mov     ax,DGROUP
+        mov     es,ax
+        jmp     far STRETCHBLT
+
+        global  W_STRETCHDIBITS
+        extern  STRETCHDIBITS
+W_STRETCHDIBITS:
+        mov     ax,DGROUP
+        mov     es,ax
+        jmp     far STRETCHDIBITS
+
         DIBFWD  W_SELECTBITMAP, SELECTBITMAP, 24
         DIBFWD  W_BITMAPBITS, BITMAPBITS, 25
         DIBFWD  W_INQUIRE, INQUIRE, 26
