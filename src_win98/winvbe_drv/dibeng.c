@@ -144,6 +144,48 @@ static LPBYTE dib_bmi(void)
     return (LPBYTE)scr_pdev + dib_pdevsize;
 }
 
+static WORD dirty_l, dirty_t, dirty_r, dirty_b;
+static BYTE dirty_pending = 0;
+static WORD access_depth = 0;
+
+void __far __pascal my_BeginAccess(LPVOID lpDevice, WORD left, WORD top, WORD right, WORD bottom, WORD flags)
+{
+    if (dibe_tab[DT_BEGINACCESS])
+        ((PF_BEGIN)dibe_tab[DT_BEGINACCESS])(lpDevice, left, top, right, bottom, flags);
+
+    if (g.shadow && lpDevice == scr_pdev) {
+        WORD r = right < g.lw ? (WORD)(right + 1) : g.lw;
+        WORD b = bottom < g.lh ? (WORD)(bottom + 1) : g.lh;
+        access_depth++;
+        if (!dirty_pending) {
+            dirty_l = left;
+            dirty_t = top;
+            dirty_r = r;
+            dirty_b = b;
+            dirty_pending = 1;
+        } else {
+            if (left < dirty_l) dirty_l = left;
+            if (top < dirty_t) dirty_t = top;
+            if (r > dirty_r) dirty_r = r;
+            if (b > dirty_b) dirty_b = b;
+        }
+    }
+}
+
+void __far __pascal my_EndAccess(LPVOID lpDevice, WORD flags)
+{
+    if (dibe_tab[DT_ENDACCESS])
+        ((PF_END)dibe_tab[DT_ENDACCESS])(lpDevice, flags);
+
+    if (g.shadow && lpDevice == scr_pdev) {
+        if (access_depth) access_depth--;
+        if (access_depth == 0 && dirty_pending) {
+            dirty_pending = 0;
+            shadow_flush(dirty_l, dirty_t, dirty_r, dirty_b);
+        }
+    }
+}
+
 /* fill the DIBENGINE from the current mode (Enable, ReEnable, mode sets,
    screen switches); BUSY while a DOS box owns the screen */
 void pdev_sync(void)
@@ -151,23 +193,25 @@ void pdev_sync(void)
     LPDIBENGINE de = (LPDIBENGINE)scr_pdev;
     LPBYTE bmi;
     WORD fl = DE_MINIDRIVER | DE_VRAM;
+    DWORD target_base = g.shadow ? g.shlin : g.lfblin;
+    DWORD target_limit = g.shadow ? (g.shsize - 1) : (((DWORD)g.lfbtiles << 16) - 1);
     if (!dibeng_on || !de) return;
-    if (g.lfblin && (g.lfblin != de_base || ((DWORD)g.lfbtiles << 16) - 1 != de_limit)) {
+    if (target_base && (target_base != de_base || target_limit != de_limit)) {
         if (!de_sel) de_sel = sel_alloc(1);
-        if (de_sel && sel_setbase(de_sel, g.lfblin) && sel_setlimit(de_sel, ((DWORD)g.lfbtiles << 16) - 1)) {
-            de_base = g.lfblin; de_limit = ((DWORD)g.lfbtiles << 16) - 1;
+        if (de_sel && sel_setbase(de_sel, target_base) && sel_setlimit(de_sel, target_limit)) {
+            de_base = target_base; de_limit = target_limit;
         }
     }
     de->deType = 0x5250;                        /* 'RP' */
     de->deWidth = g.xres;
     de->deHeight = g.yres;
-    de->deWidthBytes = g.pitch;
+    de->deWidthBytes = g.shadow ? g.spitch : g.pitch;
     de->dePlanes = 1;
     de->deBitsPixel = g.bpp == 15 ? 16 : (BYTE)g.bpp;
     de->deReserved1 = 0;
-    de->deDeltaScan = g.pitch;
+    de->deDeltaScan = g.shadow ? g.spitch : g.pitch;
     de->delpPDevice = 0;
-    de->deBitsOffset = g.fbofs;
+    de->deBitsOffset = g.shadow ? 0 : g.fbofs;
     de->deBitsSelector = de_sel;
     de->deVersion = 0x400;
     /* CTCHANGE (0x0400): the color table is new - the DIB engine rebuilds
@@ -191,8 +235,13 @@ void pdev_sync(void)
         h[9] = 0;
     }
     de->deBitmapInfo = (LPVOID)bmi;
-    de->deBeginAccess = (LPVOID)dibe_tab[DT_BEGINACCESS];
-    de->deEndAccess = (LPVOID)dibe_tab[DT_ENDACCESS];
+    if (g.shadow) {
+        de->deBeginAccess = (LPVOID)my_BeginAccess;
+        de->deEndAccess = (LPVOID)my_EndAccess;
+    } else {
+        de->deBeginAccess = (LPVOID)dibe_tab[DT_BEGINACCESS];
+        de->deEndAccess = (LPVOID)dibe_tab[DT_ENDACCESS];
+    }
     dib_palettized = g.palettized;
 }
 
@@ -290,6 +339,7 @@ void dibeng_end(void)
     if (!scr_pdev || !de_access) return;
     if (--de_access) return;
     ((PF_END)dibe_tab[DT_ENDACCESS])((LPVOID)scr_pdev, CURSOREXCLUDE);
+    if (g.shadow) shadow_flush(0, 0, g.lw, g.lh);
 }
 
 /* ---- the pointer: the DIB engine draws it; WINVBE Mouse's color and

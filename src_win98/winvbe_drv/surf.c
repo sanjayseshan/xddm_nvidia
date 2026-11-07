@@ -386,7 +386,7 @@ void vram_clear(void)
 void scr_read(WORD y, WORD x, WORD n, BYTE *buf)
 {
     WORD len = n * g.Bpp;
-    if (g.shadow && !dibeng_on) { sh_read((DWORD)y * g.spitch + (DWORD)x * g.Bpp, len, buf); return; }
+    if (g.shadow) { sh_read((DWORD)y * g.spitch + (DWORD)x * g.Bpp, len, buf); return; }
     if (g.in_background) { memset(buf, 0, len); return; }
     if (g.xf) { xf_get(y, x, n, buf); return; }
     vram_read((DWORD)y * g.pitch + (DWORD)x * g.Bpp, len, buf);
