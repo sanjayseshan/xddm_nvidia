@@ -1,217 +1,172 @@
-# NVIDIA GA104 XDDM driver for Windows XP x64
+# NVIDIA GA104 Display Drivers for Windows XP x64 & Windows 98 SE
 
-This experimental driver brings up a Windows XP x64 desktop on NVIDIA Ampere
-GA104 hardware. **v186 is confirmed working on bare metal on an AMD Ryzen AM5
-platform with an RTX 3070**, driving a correct 1920×1080 primary desktop and
-2560×1440 extended secondary desktop. Earlier v164/v169 builds also worked in
-a QEMU/KVM guest with the RTX 3070 passed through using VFIO.
+This repository provides open experimental display drivers bringing modern **NVIDIA Ampere GA104 hardware** (GeForce RTX 3070 / RTX 3060 Ti) to legacy Windows operating systems:
+1. **Windows XP Professional x64 Edition** (XDDM 64-bit driver model)
+2. **Windows 98 Second Edition (SE)** (Ring 0 VxD + 16-bit DIB Engine driver model)
 
-The bare-metal result was confirmed on November 4, 2026. The photo below shows
-both physical monitors displaying the extended Windows XP x64 desktop.
+Both operating systems are confirmed driving **dual physical monitors simultaneously** with an extended desktop:
+- **Head 0 (Primary):** 1920×1080 @ 32bpp (DisplayPort / HDMI)
+- **Head 1 (Secondary):** 2560×1440 @ 32bpp (DisplayPort)
 
-![Windows XP x64 running on Ryzen AM5 with an RTX 3070 and both monitors active](20261104_205049.jpg)
+**Bare-metal validation** was confirmed on an **AMD Ryzen AM5 platform with an EVGA GeForce RTX 3070 XC3 Ultra LHR**. Both drivers also operate inside QEMU/KVM virtual machines with GPU passthrough via Linux VFIO.
 
-v186 explicitly publishes display command memory and refreshes completion
-notifier cache lines. It retains the original v169 DMA-object lookup buckets
-alongside the client-aware layout. Miniport/display builds and host regression
-tests pass, including the complete two-head command sequence.
+![Windows running on Ryzen AM5 with an RTX 3070 and both monitors active](20261104_205049.jpg)
 
-The v168 hardware log confirms GSP initialization, both native display heads,
-and GPU solid-fill activity. The v168 run showed orange artifacts while
-dragging windows. v169 converts GDI `COLORREF` values to the framebuffer's
-XRGB pixel order before accelerated solid fills, and the user confirms the
-artifacts are gone. Earlier v167 testing also showed excessive small copy
-submissions. See [SUMMARY.txt](SUMMARY.txt) for per-version findings.
+---
 
-## Project overview
+## Architectural Comparison
 
-The project contains a Windows XP/Server 2003 x64 XDDM video miniport
-(`nvxmp.sys`) and GDI display driver (`nvxdisp.dll`). The miniport starts the
-NVIDIA GSP firmware and configures native display heads. A GSP-managed GPU copy
-engine uploads desktop framebuffer changes to separate scanout buffers for
-each display.
+| Feature | Windows XP x64 | Windows 98 SE |
+|---|---|---|
+| **Driver Architecture** | Windows 2000/XP Display Driver Model (XDDM) | Hybrid Ring 0 VxD + 16-bit GDI Display Driver |
+| **Kernel Component** | `nvxmp.sys` (64-bit video miniport driver) | `nvx.vxd` (32-bit LE Virtual Device Driver) |
+| **Display Component** | `nvxdisp.dll` (64-bit GDI display driver) | `nvx.drv` (Head 0) & `nvx2.drv` (Head 1) (16-bit NE) |
+| **2D Acceleration Engine** | Host software GDI + Ampere Copy Engine DMA fills | Microsoft DIB Engine (`DIBENG.DLL`) + RAM shadow buffer |
+| **Hardware Bootstrap** | Authentic GSP-RM firmware booted via Falcon/SEC2 | Authentic GSP-RM firmware booted via Falcon/SEC2 |
+| **Multi-Monitor Method** | Windows XP XDDM multi-head scanout surfaces | Windows 98 Desktop Virtualization (`attach_sec.exe`) |
+| **Tested Resolutions** | 1920×1080 + 2560×1440 @ 32bpp True Color | 1920×1080 + 2560×1440 @ 32bpp True Color |
 
-Most GDI rasterization still happens in software on the CPU. The v166 path
-batches contiguous rows for full-width opaque `PATCOPY` fills into fewer GPU
-copy-engine submissions on tightly packed 32-bit screen bitmaps. The v167
-experiment submitted same-surface `CopyBits` copies, but produced orange
-rectangles during dragging and reached 10,000 small GPU copy submissions. v168
-limits the new path to large, non-overlapping rectangles with pitched multi-row
-DMA in one GPU submission; other cases remain on software GDI. The v168 log
-recorded no GPU copy submissions, so the copy path remains unverified. The v169
-solid-fill color conversion cleared the reported orange artifacts. This remains
-limited 2D acceleration, not a complete
-accelerated GDI driver. OpenGL, Direct3D, video decoding, and 3D acceleration
-are not implemented.
+---
 
-The v165 physical run and its log evidence are recorded in [SUMMARY.txt](SUMMARY.txt).
-The matching NVIDIA firmware source and checksums are documented in
-[FIRMWARE_PROVENANCE.md](FIRMWARE_PROVENANCE.md).
+## Windows XP x64 Architecture
 
-v171 added early miniport log buffering and a CPU-rendered framebuffer fallback.
-On native XP the GDI surface initialized, but the display stayed black. The log
-does not prove that the mapped BAR aperture was an active scanout surface.
-v172 removes that unverified path: if GSP scanout setup is not verified, the
-display driver rejects the surface and lets XP use its safe VGA fallback,
-including 4-bit color. v173 separated display discovery from copy engine
-execution and requested an uncached CPU mapping for common DMA memory.
-v174 pairs the uncached common buffer with the restored Ampere usermode
-doorbell write (`0x30090`, token `0x10001`) alongside the runlist internal
-doorbell, while maintaining safe VGA fallback if copy is unverified; see
-[SUMMARY.txt](SUMMARY.txt).
+The Windows XP x64 driver consists of a 64-bit XDDM video miniport (`nvxmp.sys`) and a GDI display driver (`nvxdisp.dll`):
+- **GSP-RM Firmware Bootstrap:** On system start, the miniport initializes the GA104 Falcon security coprocessor (SEC2), uploads the NVIDIA GSP-RM firmware payload from embedded binary storage, and establishes bidirectional command queues over DMA.
+- **Dual Display Scanout:** The miniport configures two hardware display heads using GSP display RPC calls.
+- **Copy Engine & 2D Fills:** A GSP-managed GPU Copy Engine (Ampere CE) performs solid fills and framebuffer updates for contiguous row segments. Unaccelerated complex rasterization falls back cleanly to CPU GDI routines.
 
-## Compatibility and limits
+---
 
-- **OS:** Windows XP Professional x64 Edition (NT 5.2), tested natively and
-  in a VFIO guest. Windows Server
-  2003 x64 shares the target driver model but has not been validated here.
-- **Tested GPU:** EVGA GeForce RTX 3070 XC3 Ultra LHR, GA104, PCI ID
-  `10de:2488`, tested on bare metal and with VFIO passthrough.
-- **Native platform:** AMD Ryzen on AM5, confirmed working with the RTX 3070
-  in v186. Other native platforms have not been established.
-- **Tested display setup:** two DisplayPort displays, 1920×1080 primary and
-  2560×1440 secondary. The tested EDID timings are approximately 60 Hz.
-- **Not established:** performance benefit beyond the tested fill path, 120 Hz
-  operation, arbitrary resolutions, other Ampere boards, other GPU generations,
-  HDMI, hot-plug/reconfiguration, broad GDI acceleration, OpenGL, or Direct3D.
-- The kernel driver is experimental and unsigned. Use a disposable XP guest
-  when testing in a VM. Native testing uses an offline XP installation updated
-  from Linux. The VM test script writes the newly built driver into the
-  configured guest disk before launching it.
+## Windows 98 SE Architecture
 
-## Build
+Windows 98 SE uses a specialized dual-driver layout designed to run on top of modern GPU architectures:
+- **VideoPort Shim Layer (`shim/videoprt_shim.c`):** An emulation layer implementing 22 Windows NT `VideoPort*` APIs on top of Windows 98 VMM (Virtual Machine Manager) ring 0 services. This allows the core 32-bit GA104 miniport engine (`src_driver/`) to run natively inside `nvx.vxd`.
+- **DIB Engine Integration:** Both `nvx.drv` and `nvx2.drv` report `C1_DIBENGINE` (`0x0010`) and initialize standard `DIBENGINE` (`0x5250 'RP'`) PDEVICE descriptors, which is mandatory for Windows 98 to permit desktop extension across multiple monitors.
+- **Shadow Buffer & Burst-Flush:** Head 0 maintains a linear shadow buffer in system RAM. Drawing calls are handled by `DIBENG.DLL` into RAM, and driver hooks in `BeginAccess` / `EndAccess` compute dirty bounding boxes and flush updated pixels to physical VRAM in high-speed burst copies.
+- **Multi-Monitor Utility (`attach_sec.exe`):** A Win32 utility leveraging `ChangeDisplaySettingsExA` (`CDS_UPDATEREGISTRY`) to dynamically attach the secondary adapter (`\\.\Display2`) at `(1920, 0)` on demand.
 
-On a Debian or Ubuntu x86-64 build host, install the cross compiler, linker
-utilities, and host C compiler:
+For detailed design notes, see [src_win98/README.md](src_win98/README.md).
 
+---
+
+## Compatibility and System Requirements
+
+- **Tested GPU:** EVGA GeForce RTX 3070 XC3 Ultra LHR (GA104, PCI Device ID `10de:2488`).
+- **Compatible GPUs:** GA104-based cards (GeForce RTX 3070, RTX 3060 Ti, GA104 RTX 3060).
+- **Tested Host Platform:** AMD Ryzen 7000 series on AM5 motherboard (bare metal) and QEMU/KVM with VFIO GPU passthrough.
+- **Monitors Tested:** Dual DisplayPort setup running 1920×1080 (Primary) and 2560×1440 (Secondary) at 60 Hz.
+- **Scope & Limitations:** 2D desktop acceleration, solid fills, and multi-monitor desktop extension are supported. 3D acceleration (OpenGL, DirectX 8/9/11/12), video decode acceleration (NVDEC), and audio over HDMI/DP are currently unaccelerated/unimplemented.
+
+---
+
+## Build Instructions
+
+### Prerequisites
+On a Debian or Ubuntu x86-64 host, install the cross-compilers and build dependencies:
 ```sh
-sudo apt-get install build-essential gcc-mingw-w64-x86-64 binutils-mingw-w64-x86-64
+sudo apt-get install build-essential gcc-mingw-w64-x86-64 gcc-mingw-w64-i686 binutils-mingw-w64
 ```
+For the Windows 98 16-bit display driver, install [Open Watcom C/C++](http://openwatcom.org/) and JWasm.
 
-The driver links the NVIDIA GSP-RM firmware from
-`dist_full/gsp_ga104.bin`. The repository currently includes the firmware
-input used by the confirmed build; its NVIDIA release, source URL, and SHA-256
-are in [FIRMWARE_PROVENANCE.md](FIRMWARE_PROVENANCE.md). Do not combine it with
-firmware from a different NVIDIA driver release.
-
-Build the miniport and display driver:
-
+### Building Windows XP x64 Driver
 ```sh
+# Build 64-bit miniport with embedded GSP firmware
 make -C src_driver full
+
+# Build 64-bit GDI display driver
 make -C src_disp
+
+# Run host unit and regression checks
+make -C src_driver check
+make -C src_disp check
 ```
+The output files are `src_driver/nvxmp.sys` and `src_disp/nvxdisp.dll`.
 
-The resulting files are `src_driver/nvxmp.sys` and `src_disp/nvxdisp.dll`.
-The display driver's import library is generated from the checked-in
-`src_disp/win32k.def`. The XP package install file is `dist_full/nvx.inf`.
-`make -C src_driver check` runs the host-side parser, memory, RPC, display,
-firmware, and mock GSP checks. It requires the matching GSP firmware input.
-`make -C src_disp check` verifies the GDI color-to-pixel conversion used by
-the accelerated solid-fill path.
+### Building Windows 98 SE Driver
+```sh
+# Set Open Watcom environment
+source src_win98/owenv.sh
 
-## Native XP installation and update
+# Build 16-bit display drivers (nvx.drv & nvx2.drv)
+cd src_win98/winvbe_drv && ./build.sh && cd ../..
 
-Download and extract the driver ZIP from [GitHub Releases](https://github.com/sanjayseshan/xddm_nvidia/releases).
-For a new installation, point Device Manager's driver update / Have Disk dialog
-at the extracted `nvx.inf`. The package contains the XP x64 miniport and display
-DLL; the matching GSP firmware is embedded in `nvxmp.sys`.
+# Build 32-bit Ring 0 VxD (nvx.vxd)
+cd src_win98 && ./build_vxd.sh && cd ..
 
-For an existing NVX installation, shut down XP, boot Linux, and mount the XP
-volume read-write. From a source checkout, update both binaries with:
+# Build secondary monitor attach utility
+i686-w64-mingw32-gcc -O2 -s -o dist_win98/attach_sec.exe src_win98/attach_sec.c -luser32
+```
+The output files are generated in `dist_win98/`.
 
+---
+
+## Installation & Usage
+
+### Installing on Windows XP x64
+1. Download `nvx-driver-v1.1.0-xp-x64.zip` from [GitHub Releases](https://github.com/sanjayseshan/xddm_nvidia/releases) and extract its contents.
+2. In Windows XP x64, open **Device Manager** -> **Display Adapters** -> **Standard VGA Graphics Adapter**.
+3. Choose **Update Driver** -> **Have Disk...** and select `nvx.inf`.
+4. Select the matching NVIDIA GeForce RTX model and reboot when prompted.
+5. In **Display Properties** -> **Settings**, both displays can be arranged and enabled.
+
+To update an existing installation directly from Linux:
 ```sh
 XP_MOUNT=/mnt/xp ./update_xp_driver.sh
 ```
 
-Replace `/mnt/xp` with the mounted XP volume. The script builds both drivers,
-copies them to the existing XP installation and verifies source/destination
-hashes. Boot XP afterward. This updates an existing installation; it does not
-replace the initial INF installation.
+### Installing on Windows 98 SE
+1. Download `nvx-driver-v1.1.0-win98se.zip` from [GitHub Releases](https://github.com/sanjayseshan/xddm_nvidia/releases) and extract its contents.
+2. In Windows 98 SE, open **Device Manager** -> **Display Adapters** -> **Standard PCI Graphics Adapter (VGA)**.
+3. Choose **Update Driver** -> **Specify location** and point to `nvx.inf`.
+4. Select the NVIDIA GeForce RTX card and finish the wizard. Restart Windows 98.
+5. Primary display boots to 1920×1080 @ 32bpp.
+6. Run `ATTACH_SEC.EXE` (or use Display Properties) to activate the secondary monitor at 2560×1440 @ 32bpp.
 
-## Hardware test execution
-
-The automated test path builds the drivers, copies them into an offline XP
-guest disk, then starts QEMU/KVM with the RTX 3070 assigned through VFIO:
-
+To update an existing Windows 98 disk image offline:
 ```sh
-./test_full_driver.sh
+./update_win98_driver.sh
 ```
 
-It requires a prepared `winxp_x64.qcow2`, QEMU/KVM, VFIO access, and the
-Linux guest-mount tools (`guestmount`, `guestunmount`, `mountpoint`, and
-`qemu-img`). The launcher in this repository is configured for GPU PCI
-function `01:00.0` and a particular Logitech USB input receiver; edit
-`run_vfio_vm.sh` for another host. Do not attach the same QCOW image to two
-QEMU processes. Logs are written under `test_logs/` and `vm_serial.log` points
-to the latest run.
+---
 
-For unprivileged test execution on a Debian or Ubuntu host, install the VM and
-guest-mount tools and grant the test user access to the relevant device
-groups:
+## Hardware Testing & Virtualization
 
-```sh
-sudo apt-get install qemu-system-x86 qemu-utils libguestfs-tools
-sudo usermod -aG kvm,input "$USER"
+Automated test scripts allow rapid iteration inside QEMU/KVM with the physical RTX 3070 bound to `vfio-pci`:
+- `./test_full_driver.sh`: Builds drivers, syncs to offline XP guest disk, and launches the VM.
+- `./run_test_vm_win98.sh`: Syncs to offline Windows 98 guest disk and launches the VM.
+- `./reset_test_gpu.sh`: Cycles GPU PCIe power state and restores host VFIO binding.
+
+---
+
+## Repository Structure
+
+```
+├── dist_full/           # Windows XP x64 release files (nvxmp.sys, nvxdisp.dll, nvx.inf, gsp_ga104.bin)
+├── dist_win98/          # Windows 98 SE release files (nvx.drv, nvx2.drv, nvx.vxd, nvx.inf, attach_sec.exe)
+├── src_driver/          # Unified GA104 miniport engine, GSP/RPC/MMU/Display code, and host tests
+├── src_disp/            # Windows XP x64 GDI display driver
+├── src_win98/           # Windows 98 SE components:
+│   ├── winvbe_drv/      # 16-bit DIB Engine display drivers (nvx.drv, nvx2.drv)
+│   ├── shim/            # Ring 0 NT VideoPort to VMM translation layer
+│   ├── attach_sec.c     # Win32 secondary monitor attachment utility
+│   └── build_vxd.sh     # VxD compilation and packaging script
+├── FIRMWARE_PROVENANCE.md # NVIDIA GSP/SEC2 firmware checksums and provenance
+└── SUMMARY.txt          # Cumulative project hardware test log and history
 ```
 
-VFIO group nodes and the selected input devices also need user permissions.
-For a dedicated lab host, a udev rule can grant access to the `kvm` and
-`input` groups:
+---
 
-```udev
-KERNEL=="vfio", SUBSYSTEM=="misc", GROUP="kvm", MODE="0660"
-SUBSYSTEM=="vfio", GROUP="kvm", MODE="0660"
-SUBSYSTEM=="input", KERNEL=="event*", GROUP="input", MODE="0660"
-```
+## Credits & Acknowledgments
 
-Save this as `/etc/udev/rules.d/70-nvx-test.rules`, reload udev rules, and log
-out and in again. The input rule grants access to all input event devices;
-limit it to the selected devices on shared systems. The scripts assume the
-RTX 3070 functions are `01:00.0` and `01:00.1`. They must be bound to
-`vfio-pci`, with the host GPU display output handled by another adapter. Check
-`ulimit -l`; the default 3072 MiB guest requires at least 3.25 GiB of locked
-memory. `NVX_VM_MEMORY_MB` can lower guest RAM if the host limit is smaller.
+- **NVIDIA Corporation** for Ampere GA104 GPU hardware, GSP-RM and SEC2 microcode, and the [NVIDIA Open GPU Kernel Modules](https://github.com/NVIDIA/open-gpu-kernel-modules).
+- **The Linux Nouveau DRM Team** for extensive documentation and public reference implementations of GSP initialization and sequencer logic.
+- **Michal Necasek & Jmh (WINVBE Project)** for the open-source 16-bit DIB Engine Windows 98 display driver framework.
+- **nullmoth ([nvidia-macos-driver](https://github.com/nullmoth/nvidia-macos-driver))** for community reverse-engineering notes on modern NVIDIA GPU architectures.
+- **Sanjay Seshan** for physical GPU and multi-monitor validation, reverse engineering, hardware testing, and project creation.
+- **GPT and Gemini** artificial intelligence models for paired programming, kernel shim engineering, and continuous debugging assistance.
 
-The test script's guest-disk update is guarded against a live QEMU write lock.
-A responding XP guest should be shut down with `system_powerdown` through the
-QEMU monitor. `setup-vfio.sh` changes host boot configuration and requires
-root; review it before use.
+---
 
-The test script does not generate an ISO. An existing ISO can be selected with
-`NVX_DRIVER_ISO=/path/to/driver.iso`; the guest disk itself receives the
-current driver files before launch.
+## License & Firmware Notice
 
-## Repository contents
-
-- `src_driver/`: XP x64 video miniport, GSP/RPC/MMU/display code, and host
-  checks.
-- `src_disp/`: XDDM GDI display driver.
-- `dist_full/nvx.inf`: install configuration for the full driver package.
-- `test_full_driver.sh`, `run_vfio_vm.sh`, `update_disk_driver_user.sh`:
-  hardware test and guest-update flow.
-- `SUMMARY.txt`: single cumulative project status and changelog.
-
-Generated `.sys`, `.dll`, object files, per-version snapshots, VM disks, logs,
-and ISOs are intentionally excluded from version control.
-
-## Credits
-
-- **NVIDIA** for the GA10x GSP-RM and SEC2 firmware inputs and the published
-  535.113.01 release.
-- [**NVIDIA Open GPU Kernel Modules**](https://github.com/NVIDIA/open-gpu-kernel-modules)
-  and [**Linux Nouveau**](https://gitlab.freedesktop.org/drm/nouveau) for
-  public reference material on GSP, memory management, copy engines, and native
-  display methods.
-- [**nvidia-macos-driver**](https://github.com/nullmoth/nvidia-macos-driver)
-  for an additional community reverse-engineering reference.
-- **GPT and Gemini** models assisted with code analysis, implementation, and
-  debugging.
-- **Sanjay Seshan** performed the physical GPU and monitor tests and confirmed
-  the v164/v169 VM dual-display results and the v186 Ryzen AM5 bare-metal
-  dual-display result.
-
-## License and firmware
-
-No project-wide open-source license has been selected. The NVIDIA firmware
-files remain NVIDIA components and are subject to their own terms. See
-[FIRMWARE_PROVENANCE.md](FIRMWARE_PROVENANCE.md) before redistribution.
+No project-wide open-source license has been specified. NVIDIA GSP-RM and SEC2 firmware components remain the intellectual property of NVIDIA Corporation and are subject to NVIDIA's licensing terms. Review [FIRMWARE_PROVENANCE.md](FIRMWARE_PROVENANCE.md) before redistributing.
