@@ -199,9 +199,7 @@ WORD EXPORT BitBlt(LPVOID lpDst, SHORT dx, SHORT dy, LPVOID lpSrc, SHORT sx, SHO
     {
         typedef WORD (__far __pascal *PF_DIB_BITBLT)(LPVOID, SHORT, SHORT, LPVOID, SHORT, SHORT, SHORT, SHORT, DWORD, LPPBRUSH, LPDRAWMODE);
         if (dibeng_on) {
-            /* If neither destination nor source is the screen (memory-to-memory), forward to DIB engine.
-             * Any screen write or read must be handled by WINVBE to keep the shadow buffer in sync. */
-            if (!((LPGBITMAP)lpDst)->bmType && !(needS && lpSrc && ((LPGBITMAP)lpSrc)->bmType)) {
+            if (!(((LPGBITMAP)lpDst)->bmType && needS && lpSrc && ((LPGBITMAP)lpSrc)->bmType && rop3 == 0xCC)) {
                 return ((PF_DIB_BITBLT)dibe_tab[0])(lpDst, dx, dy, lpSrc, sx, sy, w, h, rop, br, dm);
             }
         }
