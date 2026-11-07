@@ -94,7 +94,7 @@ int dibeng_check(void)
     /* VMware SVGA II: the host follows the frame buffer by itself (no
        command FIFO), as the DIB engine reports no drawn rectangles */
     if (g.svga) g.ini_vmfifo = 0;
-    g.ini_shadow = 0;
+    /* keep shadow buffer enabled for fast RAM reads during BitBlt */
     dibeng_on = 1;
     DBG("DIB engine: on\n");
     return 1;
