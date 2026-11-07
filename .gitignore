@@ -9,6 +9,10 @@
 *.dll
 *.zip
 src_win98/winvbe_drv/obj/
+src_win98/winvbe_drv/obj_sec/
+src_win98/obj_vxd/
+dist_win98/*.lst
+__pycache__/
 
 # Mutable hardware logs and local tools
 *.log

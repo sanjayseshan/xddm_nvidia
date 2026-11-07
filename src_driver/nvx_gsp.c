@@ -1873,23 +1873,24 @@ static VOID NvxGspDiscoverDisplays(PNVX_DEVICE_EXTENSION dev)
         if (primIdx > 0) {
             ULONG tempId = dev->MonitorIds[0];
             ULONG tempBytes = dev->MonitorEdidBytes[0];
-            UCHAR tempEdid[2048];
             NVX_DISPLAY_TIMING tempTiming = dev->MonitorTiming[0];
             ULONG tempSor = dev->MonitorSor[0];
             ULONG tempProt = dev->MonitorProtocol[0];
 
-            VideoPortMoveMemory(tempEdid, dev->MonitorEdid[0], sizeof(tempEdid));
+            for (ULONG b = 0; b < 2048; b++) {
+                UCHAR tmp = dev->MonitorEdid[0][b];
+                dev->MonitorEdid[0][b] = dev->MonitorEdid[primIdx][b];
+                dev->MonitorEdid[primIdx][b] = tmp;
+            }
 
             dev->MonitorIds[0] = dev->MonitorIds[primIdx];
             dev->MonitorEdidBytes[0] = dev->MonitorEdidBytes[primIdx];
-            VideoPortMoveMemory(dev->MonitorEdid[0], dev->MonitorEdid[primIdx], sizeof(tempEdid));
             dev->MonitorTiming[0] = dev->MonitorTiming[primIdx];
             dev->MonitorSor[0] = dev->MonitorSor[primIdx];
             dev->MonitorProtocol[0] = dev->MonitorProtocol[primIdx];
 
             dev->MonitorIds[primIdx] = tempId;
             dev->MonitorEdidBytes[primIdx] = tempBytes;
-            VideoPortMoveMemory(dev->MonitorEdid[primIdx], tempEdid, sizeof(tempEdid));
             dev->MonitorTiming[primIdx] = tempTiming;
             dev->MonitorSor[primIdx] = tempSor;
             dev->MonitorProtocol[primIdx] = tempProt;

@@ -173,10 +173,10 @@ static void NvxLogSerial(const char *s, ULONG length) {
     ULONG i;
     for (i = 0; i < length; ++i) {
         if (s[i] == '\n') {
-            while ((inb(0x3FD) & 0x20) == 0);
+            for (volatile ULONG to = 0; (inb(0x3FD) & 0x20) == 0 && to < 100000; to++);
             outb(0x3F8, '\r');
         }
-        while ((inb(0x3FD) & 0x20) == 0);
+        for (volatile ULONG to = 0; (inb(0x3FD) & 0x20) == 0 && to < 100000; to++);
         outb(0x3F8, (unsigned char)s[i]);
     }
 }
@@ -955,6 +955,98 @@ static VOID NvxInitSecondaryDisplayModes(PNVX_DEVICE_EXTENSION sec) {
     LogStr(" preferred native 2560x1440x32\n");
 }
 
+#ifdef __VXDKERNEL__
+static VOID NvxInitPrimaryDisplayModes(PNVX_DEVICE_EXTENSION devExt) {
+    VIDEO_MODE_INFORMATION *m;
+    ULONG idx = 0;
+    if (!devExt || devExt->IsSecondaryDisplay || devExt->NumModes > 0) return;
+
+    /* Mode 0: 1920x1080x32 @ 60Hz (Native Dell Head 0) */
+    m = &devExt->Modes[idx];
+    VideoPortZeroMemory(m, sizeof(*m));
+    m->Length = sizeof(*m);
+    m->ModeIndex = idx;
+    m->VisScreenWidth = 1920;
+    m->VisScreenHeight = 1080;
+    m->ScreenStride = 1920 * 4;
+    m->NumberOfPlanes = 1;
+    m->BitsPerPlane = 32;
+    m->Frequency = 60;
+    m->NumberRedBits = 8;
+    m->NumberGreenBits = 8;
+    m->NumberBlueBits = 8;
+    m->RedMask = 0x00FF0000;
+    m->GreenMask = 0x0000FF00;
+    m->BlueMask = 0x000000FF;
+    m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
+    devExt->ModeFramebuffer[idx].QuadPart = devExt->PhysicalBar1.QuadPart;
+    idx++;
+
+    /* Mode 1: 1024x768x32 */
+    m = &devExt->Modes[idx];
+    VideoPortZeroMemory(m, sizeof(*m));
+    m->Length = sizeof(*m);
+    m->ModeIndex = idx;
+    m->VisScreenWidth = 1024;
+    m->VisScreenHeight = 768;
+    m->ScreenStride = 1024 * 4;
+    m->NumberOfPlanes = 1;
+    m->BitsPerPlane = 32;
+    m->Frequency = 60;
+    m->RedMask = 0x00FF0000;
+    m->GreenMask = 0x0000FF00;
+    m->BlueMask = 0x000000FF;
+    m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
+    devExt->ModeFramebuffer[idx].QuadPart = devExt->PhysicalBar1.QuadPart;
+    idx++;
+
+    /* Mode 2: 800x600x32 */
+    m = &devExt->Modes[idx];
+    VideoPortZeroMemory(m, sizeof(*m));
+    m->Length = sizeof(*m);
+    m->ModeIndex = idx;
+    m->VisScreenWidth = 800;
+    m->VisScreenHeight = 600;
+    m->ScreenStride = 800 * 4;
+    m->NumberOfPlanes = 1;
+    m->BitsPerPlane = 32;
+    m->Frequency = 60;
+    m->RedMask = 0x00FF0000;
+    m->GreenMask = 0x0000FF00;
+    m->BlueMask = 0x000000FF;
+    m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
+    devExt->ModeFramebuffer[idx].QuadPart = devExt->PhysicalBar1.QuadPart;
+    idx++;
+
+    /* Mode 3: 640x480x32 */
+    m = &devExt->Modes[idx];
+    VideoPortZeroMemory(m, sizeof(*m));
+    m->Length = sizeof(*m);
+    m->ModeIndex = idx;
+    m->VisScreenWidth = 640;
+    m->VisScreenHeight = 480;
+    m->ScreenStride = 640 * 4;
+    m->NumberOfPlanes = 1;
+    m->BitsPerPlane = 32;
+    m->Frequency = 60;
+    m->RedMask = 0x00FF0000;
+    m->GreenMask = 0x0000FF00;
+    m->BlueMask = 0x000000FF;
+    m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
+    devExt->ModeFramebuffer[idx].QuadPart = devExt->PhysicalBar1.QuadPart;
+    idx++;
+
+    devExt->NumModes = idx;
+    devExt->CurrentModeIndex = 0;
+    devExt->ActiveBpp = 32;
+    devExt->ActiveWidth = 1920;
+    devExt->ActiveHeight = 1080;
+    LogStr("NVX [NATIVE]: Initialized primary modes count: ");
+    LogHex(devExt->NumModes);
+    LogStr(" preferred native 1920x1080x32\n");
+}
+#endif
+
 VP_STATUS HwVidFindAdapter(
     PVOID HwDeviceExtension,
     PVOID HwContext,
@@ -1135,12 +1227,17 @@ BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
         return TRUE;
     }
 
+#ifdef __VXDKERNEL__
+    LogStr("NVX [NATIVE]: Native GA104 Direct Modeset Selected (VBE bypassed)\n");
+    NvxInitPrimaryDisplayModes(devExt);
+#else
     /* Read real-mode information through VideoPort's INT10 service. Mapping
        physical address zero is not a substitute for its BIOS memory context. */
     if (!NvxVbeInitialize(HwDeviceExtension)) {
         LogStr("NVX: Cannot establish a verified VBE framebuffer; initialization failed.\n");
         return FALSE;
     }
+#endif
 
     if (devExt->PhysicalBar0.QuadPart != 0 && devExt->Bar0Length != 0) {
         devExt->Bar0MmioVirtual = VideoPortGetDeviceBase(
@@ -1200,8 +1297,8 @@ BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
     LogStr(" scanout_mapped=");LogHex(devExt->GspScanoutMapped);
     LogStr(" gpu_va=");LogHex(devExt->GspVramGpuVa);LogStr("\n");
 
-    /* Match the working v169 order: BIOS selects the primary desktop mode
-       before MAP_VIDEO_MEMORY creates our native channels and instance.
+    /* Match the working order: BIOS selects the primary desktop mode
+       before creating native channels.
        Initializing here lets the later VBE modeset overwrite live state. */
     if (devExt->GspCopyVerified)
         LogStr("NVX [NATIVE]: channel initialization deferred until after primary BIOS modeset.\n");
@@ -1348,6 +1445,20 @@ BOOLEAN HwVidStartIO(
             break;
         }
 
+#ifdef __VXDKERNEL__
+        devExt->CurrentModeIndex = requested;
+        devExt->ActiveWidth = devExt->Modes[requested].VisScreenWidth;
+        devExt->ActiveHeight = devExt->Modes[requested].VisScreenHeight;
+        devExt->ActiveBpp = devExt->Modes[requested].BitsPerPlane;
+        devExt->ActiveFreq = devExt->Modes[requested].Frequency;
+        LogStr("NVX [NATIVE]: Native primary mode switched to index: ");
+        LogHex(requested);
+        LogStr("\n");
+        if (devExt->SecondaryDpTrainReady && !devExt->SecondaryDpTrainingAttempted) {
+            NvxGspTrainSecondaryDpLink(HwDeviceExtension);
+        }
+        break;
+#else
         BOOLEAN restoreNativeDual=devExt->NativeDualActive;
         if (!NvxVbeSetMode(HwDeviceExtension, requested)) {
             LogStr("NVX: VBE mode change failed; attempting previous mode.\n");
@@ -1379,6 +1490,7 @@ BOOLEAN HwVidStartIO(
                 LogStr("NVX [DP]: primary VBE mode restore after link training failed.\n");
         }
         break;
+#endif
     }
 
     case IOCTL_VIDEO_MAP_VIDEO_MEMORY: {
@@ -1953,6 +2065,10 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
     LogHex(status);
     LogStr("\n");
 
+#ifdef __VXDKERNEL__
+    NvxLogFlush();
+    return status;
+#else
     if (status == 0) {
         unsigned char *drvObj = (unsigned char *)Context1;
         unsigned char *drvExt = *(unsigned char **)(drvObj + 0x30);
@@ -2004,6 +2120,7 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
         RealPowerDispatch = *(PDRIVER_DISPATCH *)(drvObj + 0x120);
         *(PDRIVER_DISPATCH *)(drvObj + 0x120) = HookedPowerDispatch;
     }
+#endif
 
     NvxLogFlush();
     return status;

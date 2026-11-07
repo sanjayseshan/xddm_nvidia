@@ -57,17 +57,16 @@ fi
 # Ensure display.drv=nvx.drv in [boot]
 sed -i 's/^display\.drv=.*/display.drv=nvx.drv/' "$TMP_SYS_INI"
 
-# Ensure mouse, keyboard and nvx VxDs in [386Enh]
+# Ensure mouse and keyboard in [386Enh], and remove static nvx.vxd (loaded dynamically by *vdd as minivdd)
 sed -i '/NoMouseWarning=1/d' "$TMP_SYS_INI"
-if ! grep -qi "mouse=\*vmouse" "$TMP_SYS_INI"; then
-    sed -i '/\[386Enh\]/a mouse=*vmouse, msmouse.vxd' "$TMP_SYS_INI"
+sed -i 's/^mouse=.*/mouse=*vmouse/' "$TMP_SYS_INI"
+if ! grep -qi "^mouse=" "$TMP_SYS_INI"; then
+    sed -i '/\[386Enh\]/a mouse=*vmouse' "$TMP_SYS_INI"
 fi
 if ! grep -qi "keyboard=\*vkd" "$TMP_SYS_INI"; then
     sed -i '/\[386Enh\]/a keyboard=*vkd' "$TMP_SYS_INI"
 fi
-if ! grep -qi "device=nvx\.vxd" "$TMP_SYS_INI"; then
-    sed -i '/\[386Enh\]/a device=nvx.vxd' "$TMP_SYS_INI"
-fi
+sed -i '/nvx\.vxd/d' "$TMP_SYS_INI"
 
 unix2dos "$TMP_SYS_INI"
 
@@ -82,8 +81,11 @@ upload "$PKG_DIR/nvx.drv" /DRIVERS/NVX/nvx.drv
 upload "$PKG_DIR/nvx2.drv" /WINDOWS/SYSTEM/nvx2.drv
 upload "$PKG_DIR/nvx2.drv" /DRIVERS/NVX/nvx2.drv
 upload "$PKG_DIR/nvx.vxd" /WINDOWS/SYSTEM/nvx.vxd
+upload "$PKG_DIR/nvx.vxd" /WINDOWS/SYSTEM/VMM32/nvx.vxd
 upload "$PKG_DIR/nvx.vxd" /DRIVERS/NVX/nvx.vxd
-upload "$PKG_DIR/attach2.exe" /ATTACH2.EXE
+rm-f /NVXLOAD.EXE
+rm-f /WINDOWS/SYSTEM/nvxload.exe
+rm-f /ATTACH2.EXE
 upload "$NVX_ROOT/src_win98/nvx_reg.reg" /NVX_REG.REG
 upload "$NVX_ROOT/src_win98/qipnp.reg" /QIPNP.REG
 upload "$NVX_ROOT/src_win98/autoexec.bat" /AUTOEXEC.BAT

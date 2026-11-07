@@ -1,5 +1,5 @@
 # Open Watcom 2 environment for building NVX Win98 Display Driver
-: "${WATCOM:=/tmp/watcom}"
+: "${WATCOM:=/home/sanjay/watcom}"
 export WATCOM
 export PATH="$WATCOM/binl64:$PATH"
 export INCLUDE="$WATCOM/h:$WATCOM/h/win"

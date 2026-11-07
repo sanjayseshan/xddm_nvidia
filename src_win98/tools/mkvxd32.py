@@ -26,12 +26,13 @@ def build(name, a0, a1):
     recs = [b''] * npages
     for off, tgt in relocs:
         pg = off // PAGE
+        stype = 0x07
         if (off % PAGE) + 4 > PAGE:
-            raise SystemExit('relocation across a page boundary at %x' % off)
+            stype |= 0x20
         if tgt < 0x10000:
-            recs[pg] += struct.pack('<BBHBH', 0x07, 0x00, off % PAGE, 1, tgt)
+            recs[pg] += struct.pack('<BBHBH', stype, 0x00, off % PAGE, 1, tgt)
         else:
-            recs[pg] += struct.pack('<BBHBI', 0x07, 0x10, off % PAGE, 1, tgt)
+            recs[pg] += struct.pack('<BBHBI', stype, 0x10, off % PAGE, 1, tgt)
     fixrec = b''.join(recs)
     fixpage = b''
     acc = 0

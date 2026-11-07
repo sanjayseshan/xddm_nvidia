@@ -39,14 +39,25 @@ print_crlf:
 send_char:
     push dx
     push ax
+    push cx
     mov dx, 0x3FD       ; Line Status Register (COM1)
+    mov cx, 0xFFFF
 wait_tx:
     in al, dx
     test al, 0x20       ; Transmitter Holding Register Empty?
-    jz wait_tx
+    jnz do_send
+    loop wait_tx
+    jmp done_send
+do_send:
+    pop cx
     pop ax
     mov dx, 0x3F8       ; Data register (COM1)
     out dx, al
+    pop dx
+    ret
+done_send:
+    pop cx
+    pop ax
     pop dx
     ret
 

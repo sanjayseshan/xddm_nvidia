@@ -372,8 +372,15 @@ typedef struct _NVX_DEVICE_EXTENSION {
 } NVX_DEVICE_EXTENSION, *PNVX_DEVICE_EXTENSION;
 
 /* GSP Firmware Blobs */
+#ifdef __VXDKERNEL__
+extern const unsigned char *g_pNvxFirmwareStart;
+extern const unsigned char *g_pNvxFirmwareEnd;
+#define _binary_dist_full_gsp_ga104_bin_start g_pNvxFirmwareStart
+#define _binary_dist_full_gsp_ga104_bin_end   g_pNvxFirmwareEnd
+#else
 extern const unsigned char _binary_dist_full_gsp_ga104_bin_start[];
 extern const unsigned char _binary_dist_full_gsp_ga104_bin_end[];
+#endif
 
 /* Logging utilities */
 VOID LogStr(const char *s);

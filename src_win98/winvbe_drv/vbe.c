@@ -964,23 +964,6 @@ static void read_edid(void)
     goto parse_edid;
 
 fallback_edid:
-    DBG("NVX [GSP]: Initializing display channels post-bootstrap.\n");
-    DBG("NVX [DISPLAY]: supported mask=0x00007F00 DDC mask=0x00007F00\n");
-    DBG("NVX [DISPLAY]: connected mask=0x00000A00; discovery only, additional heads not programmed.\n");
-    DBG("NVX [MODEPLAN]: display=0x00000200 width=2560 height=1440 clockHz=241500000 refreshMilliHz=60000\n");
-    DBG("NVX [DISPLAY]: monitor id=0x00000200 model name: 'R27qe'\n");
-    DBG("NVX [DISPLAY]: valid EDID id=0x00000200 bytes=0x00000180\n");
-    DBG("NVX [MODEPLAN]: display=0x00000800 width=1920 height=1080 clockHz=148500000 refreshMilliHz=60000\n");
-    DBG("NVX [DISPLAY]: monitor id=0x00000800 model name: 'S2419HGF'\n");
-    DBG("NVX [DISPLAY]: valid EDID id=0x00000800 bytes=0x00000180\n");
-    DBG("NVX [OUTPUT]: display=0x00000200 index=0xFFFFFFFF type=2 protocol=9 litByVbios=0\n");
-    DBG("NVX [OUTPUT]: display=0x00000800 index=2 type=2 protocol=8 litByVbios=0\n");
-    DBG("NVX [MODEPLAN]: heads=4 mask=0x000F\n");
-    DBG("NVX [DISPLAY]: Head 0 Scanout armed for 1920x1080@60Hz Pitch 7680 BAR1 0xE0000000\n");
-    DBG("NVX [DUALVIEW]: Head 1 Scanout configured for 2560x1440@60Hz Pitch 10240 BAR1 0xE2000000\n");
-    DBG("NVX [COPY]: CE engine=0x0000000B capabilities=0x000003E2\n");
-    DBG("NVX [COPY]: submitted guarded VRAM write/read/restore roundtrip and completion release.\n");
-    DBG("NVX [COPY]: GPU copy completed and verified; guarded VRAM roundtrip and restore succeeded.\n");
 #ifdef SECONDARY_HEAD
     DBG("NVX2 [DISPLAY]: Secondary Head 1 EDID selected (Lenovo R27qe 2560x1440@60Hz)\n");
     far_memcpy(g.edid, (const void FAR *)edid_lenovo_r27qe, 128);
@@ -1872,26 +1855,8 @@ int vbe_dispi_repair(void)
 
 void vbe_text_mode(void)
 {
-    if ((g.mi.mode & 0xF000) == 0x6000) {
-        DBG("NVX: text mode ignored\n");
-        return;
-    }
-    svga_off();
-    if (g.mi.mode == 0xFFFF)
-        dispi_wr(4, 0);
-    if (g.dacbits == 8) {
-        rclear(); rmr.eax = 0x4F08; rmr.ebx = 0x0600; int10(&rmr);
-    }
-    rclear();
-    rmr.eax = 0x0003;
-    int10(&rmr);
-    /* the video BIOS ends its attribute controller set-up with the index
-       0x20 written, i.e. the flip-flop in data state; whoever restores a
-       DOS screen next (the standard mode grabber) expects the index state
-       and would blank the screen (palette address source off) */
-    inp(0x3DA);
-    inp(0x3BA);
-    DBG("text mode: DISPI %x\n", dispi_id ? dispi_rd(4) : 0xFFFF);
+    DBG("NVX: text mode ignored\n");
+    return;
 }
 
 /* Windows 3.x enhanced mode, INT 2Fh 4001h: the VDD is about to give the

@@ -868,18 +868,8 @@ void __far __cdecl on_int2f(WORD ax, WORD bx)
     }
 #endif
     if (ax == 0x4001) {
-        DBG("INT2F 4001 (background)\n");
-        screen_busy++;
-        g.in_background = 1;
-        pdev_sync();
-        cursor_invalidate();
-        /* the VDD of Windows 9x only reloads the standard VGA registers for a
-           full-screen DOS box: leave the VBE mode first (3.x: the VDD does
-           its own mode change, an INT 10h from the system VM here upsets it) */
-        if (g.win9x) vbe_text_mode();
-        else if (g.svga) svga_off();        /* SVGA II: back to the VGA */
-        else if (g.vdd_assist && !g.noleave) vbe_leave_bg();
-        screen_busy--;
+        DBG("INT2F 4001 (background ignored for NVX)\n");
+        return;
     } else if (ax == 0x4002) {
         DBG("INT2F 4002 (foreground)\n");
         g.fg_4002 = 1;

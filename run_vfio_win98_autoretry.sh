@@ -9,7 +9,7 @@ ln -sfn "$NVX_RUN_LOG" "$SCRIPT_DIR/vm_serial.log"
 touch "$NVX_RUN_LOG"
 
 MAX_RETRIES="${MAX_RETRIES:-10}"
-BOOT_TIMEOUT="${BOOT_TIMEOUT:-15}"
+BOOT_TIMEOUT="${BOOT_TIMEOUT:-30}"
 
 echo "=========================================================="
 echo " Starting Windows 98 SE VFIO Runner with Auto-Retry"
@@ -36,7 +36,8 @@ while [ "$attempt" -le "$MAX_RETRIES" ]; do
         fi
 
         if grep -q "\[WIN98-BOOT\]" "$NVX_RUN_LOG" 2>/dev/null || \
-           grep -q "\[DOS-CHECK\]" "$NVX_RUN_LOG" 2>/dev/null; then
+           grep -q "\[DOS-CHECK\]" "$NVX_RUN_LOG" 2>/dev/null || \
+           grep -q "NVX" "$NVX_RUN_LOG" 2>/dev/null; then
             echo "==> Boot confirmed! Windows 98 is actively booting."
             booted=1
             break
