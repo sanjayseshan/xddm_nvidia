@@ -109,6 +109,12 @@ void solid_rect(SURF *d, SHORT x, SHORT y, SHORT w, SHORT h, DWORD phys, BYTE ro
     BYTE Bpp = d->Bpp;
     if (w <= 0 || h <= 0) return;
     if (rop3 == 0xF0 && d->screen) {
+        static WORD fill_count = 0;
+        if (fill_count < 10 || (fill_count % 100) == 0) {
+            DBG("NVX [2D-FILL #%u]: screen solid fill (%d,%d) %dx%d color=%08lx (wc=%u shadow=%u)\n",
+                fill_count, x, y, w, h, pix, g.wc ? 1 : 0, g.shadow);
+        }
+        fill_count++;
         if (g.svga && (DWORD)w * h >= 2048 && svga_fill(pix, x, y, w, h)) return;
         for (r = 0; r < (WORD)h; r++)
             scr_fill(y + r, x, w, pix);
@@ -189,6 +195,16 @@ WORD EXPORT BitBlt(LPVOID lpDst, SHORT dx, SHORT dy, LPVOID lpSrc, SHORT sx, SHO
     SHORT el, et, er, eb;
 
     if (!g.enabled && ((LPGBITMAP)lpDst)->bmType) return 1;
+#ifndef OLDWIN
+    {
+        typedef WORD (__far __pascal *PF_DIB_BITBLT)(LPVOID, SHORT, SHORT, LPVOID, SHORT, SHORT, SHORT, SHORT, DWORD, LPPBRUSH, LPDRAWMODE);
+        if (dibeng_on) {
+            if (!(((LPGBITMAP)lpDst)->bmType && needS && lpSrc && ((LPGBITMAP)lpSrc)->bmType && rop3 == 0xCC)) {
+                return ((PF_DIB_BITBLT)dibe_tab[0])(lpDst, dx, dy, lpSrc, sx, sy, w, h, rop, br, dm);
+            }
+        }
+    }
+#endif
     surf_from_dev(&d, lpDst);
     if (g.debug > 1)
         dbg_printf("BitBlt d=%u/%u (%d,%d) s=%u (%d,%d) %dx%d rop=%lx br=%x/%x fg=%lx\n", d.screen, d.Bpp, dx, dy,
@@ -259,6 +275,21 @@ WORD EXPORT BitBlt(LPVOID lpDst, SHORT dx, SHORT dy, LPVOID lpSrc, SHORT sx, SHO
 
     same = (d.screen && s.screen) ||
            (!d.screen && !s.screen && d.sel == s.sel && d.off == s.off);
+    if (d.screen && s.screen && rop3 == 0xCC) {
+        static WORD blt_copy_count = 0;
+        if (blt_copy_count < 10 || (blt_copy_count % 100) == 0) {
+            DBG("NVX [COPY #%u]: 2D screen copy (%d,%d)->(%d,%d) %dx%d (wc=%u shadow=%u)\n",
+                blt_copy_count, sx, sy, dx, dy, w, h, g.wc ? 1 : 0, g.shadow);
+        }
+        blt_copy_count++;
+    } else if (d.screen && needS) {
+        static WORD blt_src_count = 0;
+        if (blt_src_count < 5) {
+            DBG("NVX [2D-BLT #%u]: src->screen blt (%d,%d)->(%d,%d) %dx%d rop=%02x (wc=%u shadow=%u)\n",
+                blt_src_count, sx, sy, dx, dy, w, h, rop3, g.wc ? 1 : 0, g.shadow);
+        }
+        blt_src_count++;
+    }
     /* VMware SVGA II: screen to screen copy by the host */
     if (d.screen && s.screen && rop3 == 0xCC && g.svga && svga_copy(sx, sy, dx, dy, w, h)) goto done;
     rstart = 0; rend = h; rstep = 1;

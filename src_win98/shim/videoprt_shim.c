@@ -496,6 +496,35 @@ static int NvxLoadFirmwareIntoMemory(VOID) {
 /* VxD Device Init Entry Point (called from vxd_entry.asm) */
 extern ULONG DriverEntry(PVOID Context1, PVOID Context2);
 
+static void NvxEnableWriteCombining(uint32_t base, uint32_t size) {
+    if (!base || !size) return;
+    uint32_t cap_lo = 0, cap_hi = 0;
+    __asm__ __volatile__("rdmsr" : "=a"(cap_lo), "=d"(cap_hi) : "c"(0xFE));
+    if (!(cap_lo & 0x400)) {
+        NvxShimLog("NVX [MTRR]: WC not supported by CPU MTRRcap\n");
+        return;
+    }
+    uint32_t vcnt = cap_lo & 0xFF;
+    for (uint32_t i = 0; i < vcnt && i < 16; i++) {
+        uint32_t mask_lo = 0, mask_hi = 0;
+        __asm__ __volatile__("rdmsr" : "=a"(mask_lo), "=d"(mask_hi) : "c"(0x201 + 2 * i));
+        if (!(mask_lo & 0x800)) { /* Found an unallocated variable MTRR */
+            uint32_t base_val = (base & 0xFFFFF000) | 1; /* Type 1 = Write Combining */
+            uint32_t mask_val = (~(size - 1) & 0xFFFFF000) | 0x800; /* Valid bit 11 */
+            __asm__ __volatile__("wrmsr" : : "a"(base_val), "d"(0), "c"(0x200 + 2 * i));
+            __asm__ __volatile__("wrmsr" : : "a"(mask_val), "d"(0x0F), "c"(0x201 + 2 * i));
+            NvxShimLog("NVX [MTRR]: Hardware Write Combining enabled for 0x");
+            NvxShimLogHex(base);
+            NvxShimLog(" (size 0x");
+            NvxShimLogHex(size);
+            NvxShimLog(") in MTRR ");
+            NvxShimLogHex(i);
+            NvxShimLog("\n");
+            return;
+        }
+    }
+}
+
 VOID NvxVxDDeviceInit(VOID) {
     NvxShimLog("\n========================================\n");
     NvxShimLog(" NVX Miniport Driver (GA104 Win98 Ring 0 Authentic GSP)\n");
@@ -505,6 +534,9 @@ VOID NvxVxDDeviceInit(VOID) {
     NvxShimLog("NVX [SHIM]: DriverEntry returned: 0x");
     NvxShimLogHex(st);
     NvxShimLog("\n");
+    if (g_PrimaryDevExt.PhysicalBar1.LowPart) {
+        NvxEnableWriteCombining(g_PrimaryDevExt.PhysicalBar1.LowPart, 0x10000000); /* 256MB BAR1 aperture */
+    }
 }
 
 VOID NvxBootstrapGsp(VOID) {

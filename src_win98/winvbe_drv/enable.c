@@ -568,10 +568,13 @@ static void setup_shadow(void)
     g.spitch = g.xf ? (g.lw * g.Bpp + 3) & ~3 : g.pitch;
     if (!g.xf) { g.lw = g.xres; g.lh = g.yres; }
     if (g.ini_shadow && !g.svga && g.pmode && g.cpu386 && (g.enhanced || g.win9x) &&
-        shadow_alloc((DWORD)g.spitch * g.lh))
+        shadow_alloc((DWORD)g.spitch * g.lh)) {
         g.shadow = 1;
-    else
+        DBG("NVX [SHADOW]: Allocated %lu bytes shadow buffer (reads from RAM, writes to VRAM)\n", (DWORD)g.spitch * g.lh);
+    } else {
         shadow_free();
+        DBG("NVX [SHADOW]: Shadow buffer not active\n");
+    }
 }
 
 /* set the mode; restore = picture from the shadow (returns 1 when done,

@@ -31,9 +31,11 @@ if ! grep -q "\[WINVBE\]" "$TMP_SYS_INI"; then
 [WINVBE]
 LfbAddr=0xE0000000
 LfbCheck=0
-Debug=0
+Debug=1
 DebugPort=0x3F8
 Access=1
+DibEngine=0
+ShadowBuffer=1
 SYSINIBLOCK
 fi
 
@@ -45,12 +47,14 @@ if ! grep -q "\[WINVBE2\]" "$TMP_SYS_INI"; then
 [WINVBE2]
 LfbAddr=0xE2000000
 LfbCheck=0
-Debug=0
+Debug=1
 DebugPort=0x3F8
 Access=1
 Width=2560
 Height=1440
 Bpp=32
+DibEngine=0
+ShadowBuffer=1
 SYSINIBLOCK2
 fi
 
@@ -67,8 +71,10 @@ if ! grep -qi "keyboard=\*vkd" "$TMP_SYS_INI"; then
     sed -i '/\[386Enh\]/a keyboard=*vkd' "$TMP_SYS_INI"
 fi
 sed -i '/nvx\.vxd/d' "$TMP_SYS_INI"
-sed -i 's/^Debug=.*/Debug=0/' "$TMP_SYS_INI"
+sed -i 's/^Debug=.*/Debug=1/' "$TMP_SYS_INI"
 sed -i '/DibEngine=/d; /ShadowBuffer=/d' "$TMP_SYS_INI"
+sed -i '/\[WINVBE\]/a DibEngine=0\nShadowBuffer=1' "$TMP_SYS_INI"
+sed -i '/\[WINVBE2\]/a DibEngine=0\nShadowBuffer=1' "$TMP_SYS_INI"
 
 unix2dos "$TMP_SYS_INI"
 

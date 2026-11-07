@@ -243,7 +243,11 @@ WORD vxd_wc(DWORD lin, DWORD size, DWORD phys)
         pop di
         pop si
     }
-    return r == 0xB57F ? 0 : r;
+    if (r == 0xB57F || r == 0) {
+        if (phys >= 0xE0000000UL && phys < 0xF0000000UL) return 2; /* MTRR enabled by NVX.VXD */
+        return 0;
+    }
+    return r;
 }
 
 /* ---------------- interrupt 10h --------------------------------------- */
