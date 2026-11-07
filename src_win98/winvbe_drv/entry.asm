@@ -375,14 +375,7 @@ unhook_int2f:
         jmp     far [es:dibe_tab + 4*%3 wrt DGROUP]
 %endmacro
 
-        global  W_BITBLT
-        extern  BITBLT
-W_BITBLT:
-        mov     ax,DGROUP
-        mov     es,ax
-        jmp     far BITBLT
-
-;        DIBFWD  W_BITBLT, BITBLT, 0
+        DIBFWD  W_BITBLT, BITBLT, 0
         DIBFWD  W_COLORINFO, COLORINFO, 1
         DIBFWD  W_ENUMDFONTS, ENUMDFONTS, 2
         DIBFWDP W_ENUMOBJ, ENUMOBJ, 3
