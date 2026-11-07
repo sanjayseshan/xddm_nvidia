@@ -39,6 +39,11 @@ BYTE mono_of(DWORD phys)
 /* physical color -> raw pixel value */
 DWORD pix_of(DWORD phys)
 {
+    if (dibeng_on || g.win9x) {
+        if (g.pf == PF_8) return phys & 0xFFUL;
+        if (g.pf == PF_565 || g.pf == PF_555) return phys & 0xFFFFUL;
+        return phys & 0x00FFFFFFUL;
+    }
     if (g.pf == PF_24 || g.pf == PF_32) {
         WORD lo = (WORD)phys;
         BYTE hi = (BYTE)(phys >> 16);
@@ -229,6 +234,10 @@ DWORD rgb_to_phys(DWORD rgb)
         break;
     case PF_24:
     case PF_32:
+        if (dibeng_on || g.win9x) {
+            p = ((DWORD)r << 16) | ((DWORD)gg << 8) | b;
+            break;
+        }
         /* low word = RGB565 (GDI 3.0 keeps only 16 bits in DIB color tables),
            bits 16..23 carry the remaining precision */
         p = ((DWORD)(r >> 3) << 11) | ((DWORD)(gg >> 2) << 5) | (b >> 3) |
