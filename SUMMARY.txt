@@ -1,7 +1,21 @@
-NVIDIA GA104 XDDM driver — cumulative development summary
-Updated: November 4, 2026 (v186 confirmed bare-metal Ryzen AM5 / RTX 3070 dual display)
+NVIDIA GA104 Display Driver — cumulative development summary
+Updated: November 7, 2026 (v1.1.0: Windows 98 SE dual-monitor support confirmed on RTX 3070)
 
-CONFIRMED v186 PHYSICAL RESULT:
+CONFIRMED v1.1.0 WINDOWS 98 SE DUAL-MONITOR RESULT:
+The user confirms that Windows 98 SE dual-monitor output is working on modern NVIDIA
+Ampere GA104 (GeForce RTX 3070) hardware:
+- Head 0 (Primary): 1920x1080 @ 32bpp True Color
+- Head 1 (Secondary): 2560x1440 @ 32bpp True Color
+- Desktop extension enabled across both monitors via Windows 98 Multi-Monitor API
+  and ATTACH_SEC.EXE.
+- DIB Engine (DIBENG.DLL) integration active with C1_DIBENGINE (0x0010) on both heads.
+- RAM shadow buffer with BeginAccess/EndAccess dirty rectangle burst-flushing ensures
+  clean desktop dragging without black artifacts or purple color corruption.
+- Core 32-bit GA104 miniport boots authentic GSP-RM & SEC2 firmware inside Ring 0
+  via the custom VideoPort shim layer (NVX.VXD).
+
+
+CONFIRMED v186 XP x64 PHYSICAL RESULT:
 The user reports that v186 works on bare metal with AMD Ryzen AM5 and an
 RTX 3070: primary 1920x1080 remains correct and the 2560x1440 secondary now
 activates as an extended desktop. Photo 20261104_205049.jpg shows both physical
