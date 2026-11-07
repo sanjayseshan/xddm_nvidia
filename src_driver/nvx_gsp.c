@@ -1374,6 +1374,17 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
                 }
             }
         }
+        if (sec->CurrentModeIndex >= sec->NumModes || sec->Modes[sec->CurrentModeIndex].BitsPerPlane != 32 ||
+            sec->Modes[sec->CurrentModeIndex].VisScreenWidth < 1024) {
+            for (ULONG m = 0; m < sec->NumModes; m++) {
+                if (sec->Modes[m].VisScreenWidth == 2560 &&
+                    sec->Modes[m].VisScreenHeight == 1440 &&
+                    sec->Modes[m].BitsPerPlane == 32) {
+                    sec->CurrentModeIndex = m;
+                    break;
+                }
+            }
+        }
     }
     if(dev->CurrentModeIndex>=dev->NumModes || sec->CurrentModeIndex>=sec->NumModes) {
         LogStr("NVX [NATIVE]: invalid mode index prim=");

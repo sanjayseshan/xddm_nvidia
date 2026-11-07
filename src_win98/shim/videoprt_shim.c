@@ -567,6 +567,7 @@ VOID NvxVxDInitComplete(VOID) {
 #define IOCTL_NVX_GPU_COPY        0x0003
 #define IOCTL_NVX_INIT_GSP        0x0004
 #define IOCTL_NVX_TRAIN_DP        0x0005
+#define IOCTL_NVX_SET_SECONDARY_SCANOUT 0x0006
 
 typedef struct _NVX_HEAD_INFO {
     uint32_t PhysLfb;
@@ -578,6 +579,9 @@ typedef struct _NVX_HEAD_INFO {
 
 int NvxVxDDeviceIoControl(DIOCParams *params) {
     if (!params) return 0;
+    NvxShimLog("NVX [IOCTL]: Received dwIoControlCode=0x");
+    NvxShimLogHex(params->dwIoControlCode);
+    NvxShimLog("\n");
     switch (params->dwIoControlCode) {
         case 0: /* DIOC_OPEN */
         case -1: /* DIOC_CLOSEHANDLE */
@@ -623,6 +627,17 @@ int NvxVxDDeviceIoControl(DIOCParams *params) {
                 return 0;
             }
             return -1;
+
+        case IOCTL_NVX_SET_SECONDARY_SCANOUT:
+            NvxShimLog("NVX [IOCTL]: Triggering dual hardware scanout...\n");
+            if (!g_PrimaryDevExt.FramebufferVirtual && g_PrimaryDevExt.PhysicalBar1.LowPart) {
+                g_PrimaryDevExt.FramebufferVirtual = _MapPhysToLinear(g_PrimaryDevExt.PhysicalBar1.LowPart, 0x01000000, 0);
+            }
+            BOOLEAN scanOk = NvxNativeSetSecondaryScanout(&g_PrimaryDevExt);
+            NvxShimLog("NVX [IOCTL]: NvxNativeSetSecondaryScanout returned: ");
+            NvxShimLogHex(scanOk);
+            NvxShimLog("\n");
+            return scanOk ? 0 : -1;
 
         default:
             return 0;

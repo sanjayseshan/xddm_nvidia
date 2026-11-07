@@ -47,3 +47,4 @@ core
 
 # Keep the matching GSP firmware input needed by the experimental build.
 !dist_full/gsp_ga104.bin
+autoretry.out

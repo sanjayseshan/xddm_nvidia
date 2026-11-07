@@ -145,6 +145,22 @@ int WINAPI WinMain(HINSTANCE hInst, HINSTANCE hPrev, LPSTR lpCmdLine, int nShow)
         CheckDevice("DISPLAY2", pChange);
     }
 
+    /* Open NVX VxD and trigger authentic hardware dual scanout */
+    HANDLE hNvx = CreateFileA("\\\\.\\NVX", 0, 0, NULL, 0, FILE_FLAG_DELETE_ON_CLOSE, NULL);
+    if (hNvx != INVALID_HANDLE_VALUE) {
+        DWORD retBytes = 0;
+        LogCom1("ATTACH_SEC: Calling IOCTL_NVX_SET_SECONDARY_SCANOUT on \\\\.\\NVX...\r\n");
+        BOOL ioOk = DeviceIoControl(hNvx, 0x0006, NULL, 0, NULL, 0, &retBytes, NULL);
+        char ioBuf[80];
+        wsprintfA(ioBuf, "ATTACH_SEC: IOCTL_NVX_SET_SECONDARY_SCANOUT result=%d (bytes=%ld)\r\n", (int)ioOk, retBytes);
+        LogCom1(ioBuf);
+        CloseHandle(hNvx);
+    } else {
+        char errBuf[80];
+        wsprintfA(errBuf, "ATTACH_SEC: Failed to open \\\\.\\NVX (err=%ld)\r\n", GetLastError());
+        LogCom1(errBuf);
+    }
+
     LogCom1("ATTACH_SEC: [DONE] Exiting attach helper.\r\n");
     return 0;
 }

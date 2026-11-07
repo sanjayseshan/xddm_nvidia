@@ -95,6 +95,7 @@ typedef LONG (__far __pascal *PREGOPENKEY)(DWORD, LPSTR, DWORD __far *);
 typedef LONG (__far __pascal *PREGQUERYVALUEEX)(DWORD, LPSTR, DWORD __far *, DWORD __far *, LPBYTE, DWORD __far *);
 typedef LONG (__far __pascal *PREGCLOSEKEY)(DWORD);
 #define HKEY_CURRENT_CONFIG 0x80000005UL
+#define HKEY_LOCAL_MACHINE  0x80000002UL
 
 static WORD parse_num(char __far **pp)
 {
@@ -200,6 +201,33 @@ static void win9x_settings(void)
     WORD w, h, bpp;
     if (!ro || !rq || !rc) return;
     g.win9x = 1;
+#ifdef SECONDARY_HEAD
+    g.req_w = 2560; g.req_h = 1440; g.req_bpp = 32;
+    if (ro(HKEY_LOCAL_MACHINE, (LPSTR)"System\\CurrentControlSet\\Services\\Class\\Display\\0001\\DEFAULT", &key) == 0 ||
+        ro(HKEY_LOCAL_MACHINE, (LPSTR)"System\\CurrentControlSet\\Services\\Class\\Display\\0001", &key) == 0 ||
+        ro(HKEY_CURRENT_CONFIG, (LPSTR)"Display\\Display2\\Settings", &key) == 0 ||
+        ro(HKEY_CURRENT_CONFIG, (LPSTR)"Display2", &key) == 0) {
+        len = sizeof(buf) - 1;
+        if (rq(key, (LPSTR)"Resolution", 0, &type, (LPBYTE)buf, &len) == 0) {
+            buf[len < sizeof(buf) ? (WORD)len : sizeof(buf) - 1] = 0;
+            p = buf;
+            w = parse_num(&p);
+            if (*p == ',') p++;
+            h = parse_num(&p);
+            if (w >= 320 && h >= 200) { g.req_w = w; g.req_h = h; g.req_mode = 0; }
+        }
+        len = sizeof(buf) - 1;
+        if (rq(key, (LPSTR)"BitsPerPixel", 0, &type, (LPBYTE)buf, &len) == 0) {
+            buf[len < sizeof(buf) ? (WORD)len : sizeof(buf) - 1] = 0;
+            p = buf;
+            bpp = parse_num(&p);
+            if (bpp == 8 || bpp == 15 || bpp == 16 || bpp == 24 || bpp == 32) g.req_bpp = bpp;
+        }
+        rc(key);
+    }
+    DBG("Windows 9x settings: %ux%ux%u (secondary)\n", g.req_w, g.req_h, g.req_bpp);
+    return;
+#else
     if (ro(HKEY_CURRENT_CONFIG, (LPSTR)"Display\\Settings", &key) != 0) return;
     len = sizeof(buf) - 1;
     if (rq(key, (LPSTR)"Resolution", 0, &type, (LPBYTE)buf, &len) == 0) {
@@ -227,6 +255,7 @@ static void win9x_settings(void)
         }
     }
     DBG("Windows 9x settings: %ux%ux%u\n", g.req_w, g.req_h, g.req_bpp);
+#endif
 }
 #endif
 
@@ -562,6 +591,8 @@ int enable_hw(BYTE restore)
     setup_shadow();
     lut_update();
     pdev_sync();
+    DBG("NVX [2D-ACCEL]: 2D engine active: Mode=%ux%ux%u Pitch=%u WC=%u Shadow=%u DIBENG=%u\n",
+        g.xres, g.yres, g.bpp, g.pitch, g.wc, g.shadow, dibeng_on);
     if (g.xf == 2) vram_clear();            /* the borders of a scaled desktop */
     if (restore && had && g.shadow && opitch == g.spitch && oy == g.lh) {
         shadow_flush(0, 0, g.lw, g.lh);
@@ -707,6 +738,8 @@ WORD EXPORT ReEnable(LPVOID lpDevice, LPGDIINFO lpInfo)
     }
     if (g.mi.bpp != omi.bpp) palette_init();
     pdev_sync();
+    DBG("NVX [2D-ACCEL]: 2D engine active: Mode=%ux%ux%u Pitch=%u WC=%u Shadow=%u DIBENG=%u\n",
+        g.xres, g.yres, g.bpp, g.pitch, g.wc, g.shadow, dibeng_on);
 #ifndef OLDWIN
     if (dibeng_on) dibeng_reenable(lpDevice);
 #endif

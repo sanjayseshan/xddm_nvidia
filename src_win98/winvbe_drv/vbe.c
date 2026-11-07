@@ -1138,13 +1138,13 @@ int vbe_probe(void)
         /* If VBIOS returns a valid width & height, ensure mode is marked supported with LFB */
         if (*(LPWORD)(mi + 0x12) > 0 && *(LPWORD)(mi + 0x14) > 0) {
             *(LPWORD)mi |= 0x0099; /* bit 0 (supported) | bit 3 (color) | bit 4 (graphics) | bit 7 (LFB) */
-            if (*(LPDWORD)(mi + 0x28) == 0) {
 #ifdef SECONDARY_HEAD
-                *(LPDWORD)(mi + 0x28) = 0xE2000000UL;
+            *(LPDWORD)(mi + 0x28) = 0xE2000000UL;
 #else
+            if (*(LPDWORD)(mi + 0x28) == 0) {
                 *(LPDWORD)(mi + 0x28) = 0xE0000000UL;
-#endif
             }
+#endif
         }
         add_mode(list[i], mi);
     }
@@ -1755,7 +1755,9 @@ int vbe_set_mode(void)
             rmr.eax = 0x4F02; rmr.ebx = m | (g.access == ACC_LFB ? 0x4000 : 0);
             if (!int10(&rmr) || (WORD)rmr.eax != 0x004F) {
                 DBG("modeset %x failed ax=%x\n", m, (WORD)rmr.eax);
-                if (g.access == ACC_LFB && mode_banked_ok(&g.mi)) {
+                if (g.access == ACC_LFB && g.lfbsel) {
+                    DBG("modeset %x: preserving GA104 LFB scanout\n", m);
+                } else if (g.access == ACC_LFB && mode_banked_ok(&g.mi)) {
                     g.access = ACC_BANKED;
                     rclear(); rmr.eax = 0x4F02; rmr.ebx = m;
                     if (!int10(&rmr) || (WORD)rmr.eax != 0x004F) return 0;

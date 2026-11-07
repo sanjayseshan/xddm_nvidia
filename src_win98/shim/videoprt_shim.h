@@ -27,9 +27,6 @@ typedef struct _DIOCParams {
     uint32_t Internal1;
     uint32_t VMHandle;
     uint32_t Internal2;
-    uint32_t *Internal3;
-    uint32_t Address;
-    uint32_t cbInBuf;
     uint32_t dwIoControlCode;
     void    *lpvInBuffer;
     uint32_t cbInBuffer;
