@@ -1,5 +1,21 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 7, 2026 (v1.1.0: Windows 98 SE dual-monitor support confirmed on RTX 3070)
+Updated: November 8, 2026 (v2.0.0.1: open-gpu-kernel-modules unified architecture & upstream shims)
+
+CONFIRMED v2.0.0.1 UPSTREAM INTEGRATION RESULTS:
+- Integrated NVIDIA's official `open-gpu-kernel-modules` (tracking 535.113.01) as a git submodule.
+- Created `src_driver/include/nvx_nvidia_open_shim.h` utilizing official NVIDIA SDK headers
+  (`clc57e.h`, `cla06f.h`, `clc36f.h`, `ctrl0073.h`, `ctrl0080.h`, `ctrl2080.h`, `ctrl5070system.h`)
+  and published swref headers (`dev_gsp.h`, `dev_falcon_v4.h`, `dev_disp.h`, `dev_sec_pri.h`, `dev_riscv_pri.h`).
+- Eliminated raw magic numbers and hardcoded control hex constants in `nvx_gsp.c`.
+- Generated `src_driver/include/nvx_gpu_table.h` from official upstream `g_nv_name_released.h`
+  supporting 216 modern NVIDIA GPUs with authentic PCI Device ID and device name lookup.
+- Implemented dynamic EDID detailed timing and resolution generation on both primary and secondary
+  heads, replacing hardcoded resolution lists.
+- Full 32-bit and 64-bit cross-compilation verified:
+  - 64-bit XDDM driver (`nvxmp.sys` and `nvxdisp.dll`) builds cleanly and passes all host tests.
+  - 32-bit Windows 98 SE VxD driver (`nvx.vxd`) links cleanly against core 32-bit miniport routines.
+- Updated all driver version references to 2.0.0.1 across INF, driver binaries, and registry.
+- Cleaned untracked obsolete backups, old zip archives, and unneeded external DRM tree clones.
 
 CONFIRMED v1.1.0 WINDOWS 98 SE DUAL-MONITOR RESULT:
 The user confirms that Windows 98 SE dual-monitor output is working on modern NVIDIA

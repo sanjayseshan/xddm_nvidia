@@ -1,6 +1,6 @@
-# NVIDIA GA104 Display Driver for Windows 98 SE (Dual-Monitor)
+# NVIDIA Modern GPU Display Driver for Windows 98 SE (Dual-Monitor) — Version 2.0.0.1
 
-This experimental driver brings up **Windows 98 Second Edition (SE)** on modern **NVIDIA Ampere GA104 hardware** (GeForce RTX 3070 / RTX 3060 Ti) with **full multi-monitor dual-display support**.
+This experimental driver brings up **Windows 98 Second Edition (SE)** on modern **NVIDIA Turing, Ampere, and Ada Lovelace GPUs** (GeForce RTX 3070 / RTX 3060 Ti) with **full multi-monitor dual-display support**. Version 2 links directly against the upstream `open-gpu-kernel-modules` official SDK definitions, swref register tables, and dynamic monitor EDID resolution discovery.
 
 Both physical displays are driven simultaneously in 32-bit True Color:
 - **Head 0 (Primary):** 1920×1080 @ 32bpp (DisplayPort / HDMI)

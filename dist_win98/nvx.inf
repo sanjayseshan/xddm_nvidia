@@ -9,7 +9,7 @@ Signature   = "$CHICAGO$"
 Provider    = %Mfg%
 Class       = DISPLAY
 ClassGUID   = {4D36E968-E325-11CE-BFC1-08002BE10318}
-DriverVer   = 11/05/2026, 1.0.0.187
+DriverVer   = 11/08/2026, 2.0.0.1
 
 [DestinationDirs]
 DefaultDestDir = 11    ; LDID_SYS (C:\WINDOWS\SYSTEM)

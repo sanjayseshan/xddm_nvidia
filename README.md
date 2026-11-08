@@ -1,8 +1,14 @@
-# NVIDIA GA104 Display Drivers for Windows XP x64 & Windows 98 SE
+# NVIDIA Modern GPU Display Drivers for Windows XP x64 & Windows 98 SE (Version 2.0.0.1)
 
-This repository provides open experimental display drivers bringing modern **NVIDIA Ampere GA104 hardware** (GeForce RTX 3070 / RTX 3060 Ti) to legacy Windows operating systems:
+This repository provides open experimental display drivers bringing modern **NVIDIA Turing, Ampere, and Ada Lovelace GPUs** (GeForce RTX 3070, RTX 3060 Ti, and 200+ GPUs in the upstream database) to legacy Windows operating systems:
 1. **Windows XP Professional x64 Edition** (XDDM 64-bit driver model)
 2. **Windows 98 Second Edition (SE)** (Ring 0 VxD + 16-bit DIB Engine driver model)
+
+### Version 2.0.0.1 Upstream Architecture
+Version 2 integrates NVIDIA's official open-source kernel repository as a git submodule (`open-gpu-kernel-modules`, branch `535.113.01`):
+- **Upstream Open-GPU Headers & Shims (`nvx_nvidia_open_shim.h`):** Replaced hardcoded control hex constants and ad-hoc register declarations with official NVIDIA SDK classes (`clc57e.h`, `cla06f.h`, `clc36f.h`), controls (`ctrl0073.h`, `ctrl2080.h`, `ctrl5070system.h`), and swref registers (`dev_gsp.h`, `dev_falcon_v4.h`, `dev_disp.h`).
+- **Comprehensive Upstream GPU Table (`nvx_gpu_table.h`):** Auto-generated from official `g_nv_name_released.h` database covering 216 modern GPUs for authentic hardware detection and string reporting.
+- **Dynamic EDID Detailed Timing & Resolution Generation:** Eliminates hardcoded monitor resolution tables on both Windows XP and Windows 98 SE, reading native monitor modes directly from EDID detailed timing descriptors.
 
 Both operating systems are confirmed driving **dual physical monitors simultaneously** with an extended desktop:
 - **Head 0 (Primary):** 1920×1080 @ 32bpp (DisplayPort / HDMI)
