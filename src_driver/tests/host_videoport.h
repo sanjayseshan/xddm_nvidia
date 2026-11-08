@@ -42,6 +42,13 @@ typedef struct _VIDEO_MODE_INFORMATION {
 #define VIDEO_MODE_GRAPHICS 0x0002
 
 
+#ifndef VPAPI
+#define VPAPI
+#endif
+#ifndef NTAPI
+#define NTAPI
+#endif
+
 typedef struct {
     BOOLEAN ScatterGather, Dma32BitAddresses, Dma64BitAddresses;
     ULONG MaximumLength;

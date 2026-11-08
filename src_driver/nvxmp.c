@@ -938,7 +938,6 @@ static VOID NvxInitSecondaryDisplayModes(PNVX_DEVICE_EXTENSION sec) {
     LogStr("\n");
 }
 
-#ifdef __VXDKERNEL__
 static VOID NvxInitPrimaryDisplayModes(PNVX_DEVICE_EXTENSION devExt) {
     VIDEO_MODE_INFORMATION *m;
     ULONG idx = 0;
@@ -1037,7 +1036,6 @@ static VOID NvxInitPrimaryDisplayModes(PNVX_DEVICE_EXTENSION devExt) {
     LogHex(devExt->ActiveHeight);
     LogStr("\n");
 }
-#endif
 
 VP_STATUS NTAPI HwVidFindAdapter(
     PVOID HwDeviceExtension,
@@ -1248,6 +1246,11 @@ BOOLEAN NTAPI HwVidInitialize(PVOID HwDeviceExtension) {
         LogStr("NVX: Cannot establish a verified VBE framebuffer; initialization failed.\n");
         return FALSE;
     }
+    if (devExt->NumModes <= 4) {
+        LogStr("NVX [NATIVE]: VBE reported degraded mode list (<=4 modes); upgrading to full native/DMT modes\n");
+        devExt->NumModes = 0;
+        NvxInitPrimaryDisplayModes(devExt);
+    }
 #endif
 
     if (devExt->PhysicalBar0.QuadPart != 0 && devExt->Bar0Length != 0) {
@@ -1372,6 +1375,9 @@ BOOLEAN NTAPI HwVidStartIO(
         }
         if (devExt->IsSecondaryDisplay && devExt->NumModes == 0) {
             NvxInitSecondaryDisplayModes(devExt);
+        } else if (!devExt->IsSecondaryDisplay && devExt->NumModes <= 4) {
+            devExt->NumModes = 0;
+            NvxInitPrimaryDisplayModes(devExt);
         }
         numModes->NumModes = devExt->NumModes;
         numModes->ModeInformationLength = sizeof(VIDEO_MODE_INFORMATION);
@@ -1388,6 +1394,9 @@ BOOLEAN NTAPI HwVidStartIO(
         ULONG requiredSize;
         if (devExt->IsSecondaryDisplay && devExt->NumModes == 0) {
             NvxInitSecondaryDisplayModes(devExt);
+        } else if (!devExt->IsSecondaryDisplay && devExt->NumModes <= 4) {
+            devExt->NumModes = 0;
+            NvxInitPrimaryDisplayModes(devExt);
         }
         requiredSize = devExt->NumModes * sizeof(VIDEO_MODE_INFORMATION);
         if (RequestPacket->OutputBufferLength < requiredSize) {
@@ -1473,13 +1482,19 @@ BOOLEAN NTAPI HwVidStartIO(
         break;
 #else
         BOOLEAN restoreNativeDual=devExt->NativeDualActive;
-        if (!NvxVbeSetMode(HwDeviceExtension, requested)) {
-            LogStr("NVX: VBE mode change failed; attempting previous mode.\n");
-            if (!NvxVbeSetMode(HwDeviceExtension, devExt->CurrentModeIndex))
-                LogStr("NVX: Previous VBE mode could not be restored.\n");
-            if (restoreNativeDual) (void)NvxNativeSetSecondaryScanout(devExt);
-            status = ERROR_INVALID_PARAMETER;
-            break;
+        BOOLEAN vbeOk = FALSE;
+        /* If mode index is within VBE modes, try VBE first; otherwise switch directly via native scanout */
+        if (requested < 4) {
+            vbeOk = NvxVbeSetMode(HwDeviceExtension, requested);
+        }
+        if (!vbeOk) {
+            LogStr("NVX [NATIVE]: Direct primary native modeset for index ");
+            LogHex(requested);
+            LogStr(" (");
+            LogHex(devExt->Modes[requested].VisScreenWidth);
+            LogStr("x");
+            LogHex(devExt->Modes[requested].VisScreenHeight);
+            LogStr(")\n");
         }
         devExt->CurrentModeIndex = requested;
         devExt->ActiveWidth = devExt->Modes[requested].VisScreenWidth;
@@ -1489,7 +1504,7 @@ BOOLEAN NTAPI HwVidStartIO(
         LogStr("NVX: Mode switched to index: ");
         LogHex(requested);
         LogStr("\n");
-        if (restoreNativeDual) {
+        if (restoreNativeDual || !vbeOk) {
             (void)NvxNativeSetSecondaryScanout(devExt);
         } else if (devExt->Modes[requested].VisScreenWidth >= 1920 &&
                    devExt->Modes[requested].VisScreenHeight >= 1080 &&

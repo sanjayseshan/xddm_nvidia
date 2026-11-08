@@ -17,16 +17,16 @@ make -C "$ROOT_DIR/src_driver" full
 make -C "$ROOT_DIR/src_disp"
 
 # Build XP-compatible ucrtbase shim
-x86_64-w64-mingw32-gcc -O2 -shared "$ROOT_DIR/test/ucrtbase_xp.c" "$ROOT_DIR/test/ucrtbase.def" -o "$ROOT_DIR/test/ucrtbase.dll" -lm
-i686-w64-mingw32-gcc -O2 -shared "$ROOT_DIR/test/ucrtbase_xp.c" "$ROOT_DIR/test/ucrtbase.def" -o "$ROOT_DIR/test/ucrtbase32.dll" -lm
+x86_64-w64-mingw32-gcc -O2 -shared -static-libgcc "$ROOT_DIR/test/ucrtbase_xp.c" "$ROOT_DIR/test/ucrtbase.def" -o "$ROOT_DIR/test/ucrtbase.dll" -lm
+i686-w64-mingw32-gcc -O2 -shared -static-libgcc "$ROOT_DIR/test/ucrtbase_xp.c" "$ROOT_DIR/test/ucrtbase.def" -o "$ROOT_DIR/test/ucrtbase32.dll" -lm
 
 # Build acceleration test suite
-x86_64-w64-mingw32-gcc -O2 -Wall -Wextra "$ROOT_DIR/test/test_gpu_accel.c" -lopengl32 -lgdi32 -luser32 -o "$ROOT_DIR/test/test_gpu_accel.exe"
-i686-w64-mingw32-gcc -O2 -Wall -Wextra "$ROOT_DIR/test/test_gpu_accel.c" -lopengl32 -lgdi32 -luser32 -o "$ROOT_DIR/test/test_gpu_accel32.exe"
+x86_64-w64-mingw32-gcc -O2 -Wall -Wextra -static-libgcc "$ROOT_DIR/test/test_gpu_accel.c" -lopengl32 -lgdi32 -luser32 -o "$ROOT_DIR/test/test_gpu_accel.exe"
+i686-w64-mingw32-gcc -O2 -Wall -Wextra -static-libgcc "$ROOT_DIR/test/test_gpu_accel.c" -lopengl32 -lgdi32 -luser32 -o "$ROOT_DIR/test/test_gpu_accel32.exe"
 
 # Build online 3D benchmark (wglgears)
-x86_64-w64-mingw32-gcc -x c -O2 "$ROOT_DIR/test/3d_tests/glxgears_main.cpp" -lopengl32 -lgdi32 -luser32 -o "$ROOT_DIR/test/3d_tests/wglgears.exe"
-i686-w64-mingw32-gcc -x c -O2 "$ROOT_DIR/test/3d_tests/glxgears_main.cpp" -lopengl32 -lgdi32 -luser32 -o "$ROOT_DIR/test/3d_tests/wglgears32.exe"
+x86_64-w64-mingw32-gcc -x c -O2 -static-libgcc "$ROOT_DIR/test/3d_tests/glxgears_main.cpp" -lopengl32 -lgdi32 -luser32 -o "$ROOT_DIR/test/3d_tests/wglgears.exe"
+i686-w64-mingw32-gcc -x c -O2 -static-libgcc "$ROOT_DIR/test/3d_tests/glxgears_main.cpp" -lopengl32 -lgdi32 -luser32 -o "$ROOT_DIR/test/3d_tests/wglgears32.exe"
 
 cp "$ROOT_DIR/src_driver/nvxmp.sys" "$ROOT_DIR/dist_full/nvxmp.sys"
 cp "$ROOT_DIR/src_disp/nvxdisp.dll" "$ROOT_DIR/dist_full/nvxdisp.dll"
@@ -71,28 +71,30 @@ guestfish -a "$QCOW" -i << EOF
 upload "$ROOT_DIR/src_driver/nvxmp.sys" /WINDOWS/system32/drivers/nvxmp.sys
 upload "$ROOT_DIR/src_disp/nvxdisp.dll" /WINDOWS/system32/nvxdisp.dll
 
-# 2. Setup C:\test_accel test environment with 64-bit WineD3D & ucrtbase shim
+# 2. Setup C:\test_accel test environment with 64-bit binaries & ucrtbase shim
 mkdir-p /test_accel
+rm-f /test_accel/wined3d.dll
+rm-f /test_accel/d3d9.dll
+rm-f /test_accel/d3d8.dll
 upload "$ROOT_DIR/test/test_gpu_accel.exe" /test_accel/test_gpu_accel.exe
 upload "$ROOT_DIR/test/3d_tests/wglgears.exe" /test_accel/wglgears.exe
 upload "$RUN_TEST_BAT" /test_accel/run_test.bat
 upload "$ROOT_DIR/test/ucrtbase.dll" /test_accel/ucrtbase.dll
-upload /usr/lib/x86_64-linux-gnu/wine/x86_64-windows/wined3d.dll /test_accel/wined3d.dll
-upload /usr/lib/x86_64-linux-gnu/wine/x86_64-windows/d3d9.dll /test_accel/d3d9.dll
-upload /usr/lib/x86_64-linux-gnu/wine/x86_64-windows/d3d8.dll /test_accel/d3d8.dll
 
-# 3. Setup C:\test_accel\x86 with 32-bit WineD3D & ucrtbase shim
+# 3. Setup C:\test_accel\x86 with 32-bit binaries & ucrtbase shim
 mkdir-p /test_accel/x86
+rm-f /test_accel/x86/wined3d.dll
+rm-f /test_accel/x86/d3d9.dll
+rm-f /test_accel/x86/d3d8.dll
 upload "$ROOT_DIR/test/test_gpu_accel32.exe" /test_accel/x86/test_gpu_accel32.exe
 upload "$ROOT_DIR/test/3d_tests/wglgears32.exe" /test_accel/x86/wglgears32.exe
 upload "$ROOT_DIR/test/ucrtbase32.dll" /test_accel/x86/ucrtbase.dll
-upload /usr/lib/i386-linux-gnu/wine/i386-windows/wined3d.dll /test_accel/x86/wined3d.dll
-upload /usr/lib/i386-linux-gnu/wine/i386-windows/d3d9.dll /test_accel/x86/d3d9.dll
-upload /usr/lib/i386-linux-gnu/wine/i386-windows/d3d8.dll /test_accel/x86/d3d8.dll
+upload "$ROOT_DIR/test/libgcc_s_dw2-1.dll" /test_accel/x86/libgcc_s_dw2-1.dll
 
-# 4. System-wide DLLs (ucrtbase shim)
+# 4. System-wide DLLs (ucrtbase shim and libgcc fallback)
 upload "$ROOT_DIR/test/ucrtbase.dll" /WINDOWS/system32/ucrtbase.dll
 upload "$ROOT_DIR/test/ucrtbase32.dll" /WINDOWS/SysWOW64/ucrtbase.dll
+upload "$ROOT_DIR/test/libgcc_s_dw2-1.dll" /WINDOWS/SysWOW64/libgcc_s_dw2-1.dll
 
 # 5. Desktop shortcuts and Startup auto-runner
 upload "$ROOT_DIR/test/test_gpu_accel.exe" "/Documents and Settings/All Users/Desktop/test_gpu_accel.exe"
