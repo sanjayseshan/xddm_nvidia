@@ -31,7 +31,7 @@ if ! grep -q "\[WINVBE\]" "$TMP_SYS_INI"; then
 [WINVBE]
 LfbAddr=0xE0000000
 LfbCheck=0
-Debug=0
+Debug=2
 DebugPort=0x3F8
 Access=1
 DibEngine=1
@@ -47,7 +47,7 @@ if ! grep -q "\[WINVBE2\]" "$TMP_SYS_INI"; then
 [WINVBE2]
 LfbAddr=0xE2000000
 LfbCheck=0
-Debug=0
+Debug=2
 DebugPort=0x3F8
 Access=1
 Width=2560
@@ -84,15 +84,33 @@ sed -i '/MaxPhysPage=/d' "$TMP_SYS_INI"
 sed -i '/\[386Enh\]/a MaxPhysPage=30000' "$TMP_SYS_INI"
 sed -i '/MaxFileCache=/d' "$TMP_SYS_INI"
 sed -i '/\[386Enh\]/a MaxFileCache=524288' "$TMP_SYS_INI"
+sed -i '/device=nvx\.vxd/d' "$TMP_SYS_INI"
 sed -i '/display=/d' "$TMP_SYS_INI"
 sed -i '/\[386Enh\]/a display=*vdd,*vflatd' "$TMP_SYS_INI"
-sed -i '/nvx\.vxd/d' "$TMP_SYS_INI"
-sed -i 's/^Debug=.*/Debug=0/' "$TMP_SYS_INI"
+sed -i '/minivdd=/d' "$TMP_SYS_INI"
+sed -i '/\[386Enh\]/a minivdd=nvx.vxd' "$TMP_SYS_INI"
+sed -i 's/^Debug=.*/Debug=2/' "$TMP_SYS_INI"
 sed -i '/DibEngine=/d; /ShadowBuffer=/d' "$TMP_SYS_INI"
 sed -i '/\[WINVBE\]/a DibEngine=1\nShadowBuffer=1' "$TMP_SYS_INI"
 sed -i '/\[WINVBE2\]/a DibEngine=1\nShadowBuffer=1' "$TMP_SYS_INI"
 
 unix2dos "$TMP_SYS_INI"
+
+TMP_MSDOS_SYS="/tmp/win98_msdos_sys.tmp"
+guestfish --ro -a "$WIN98_IMG" -m /dev/sda1 download /MSDOS.SYS "$TMP_MSDOS_SYS"
+dos2unix "$TMP_MSDOS_SYS"
+sed -i 's/^BootGUI=.*/BootGUI=1/' "$TMP_MSDOS_SYS"
+sed -i 's/^BootMenu=.*/BootMenu=0/' "$TMP_MSDOS_SYS"
+sed -i 's/^Logo=.*/Logo=0/' "$TMP_MSDOS_SYS"
+unix2dos "$TMP_MSDOS_SYS"
+
+TMP_CONFIG_SYS="/tmp/win98_config_sys.tmp"
+cat << 'EOF' > "$TMP_CONFIG_SYS"
+SHELL=C:\WINDOWS\COMMAND.COM C:\WINDOWS /P
+DOS=HIGH,UMB
+DEVICE=C:\WINDOWS\HIMEM.SYS /TESTMEM:OFF
+EOF
+unix2dos "$TMP_CONFIG_SYS"
 
 TMP_WIN_INI="/tmp/win98_win_ini.tmp"
 guestfish --ro -a "$WIN98_IMG" -m /dev/sda1 download /WINDOWS/WIN.INI "$TMP_WIN_INI"
@@ -104,6 +122,11 @@ guestfish --rw -a "$WIN98_IMG" -m /dev/sda1 <<EOF
 mkdir-p /WINDOWS/INF
 mkdir-p /WINDOWS/SYSTEM
 mkdir-p /DRIVERS/NVX
+rm-f "/WINDOWS/Start Menu/Programs/StartUp/DISMISS.BAT"
+rm-f /WINDOWS/AUTONEXT.EXE
+rm-f /WINDOWS/SYSTEM/AUTONEXT.EXE
+rm-f /AUTONEXT.EXE
+rm-f /DISMISS.BAT
 upload "$PKG_DIR/nvx.inf" /WINDOWS/INF/nvx.inf
 upload "$PKG_DIR/nvx.inf" /DRIVERS/NVX/nvx.inf
 upload "$PKG_DIR/nvx.drv" /WINDOWS/SYSTEM/nvx.drv
@@ -123,12 +146,14 @@ upload "$NVX_ROOT/src_win98/qipnp.reg" /QIPNP.REG
 upload "$NVX_ROOT/src_win98/slog.com" /SLOG.COM
 upload "$NVX_ROOT/src_win98/slog.com" /WINDOWS/SLOG.COM
 upload "$NVX_ROOT/src_win98/autoexec.bat" /AUTOEXEC.BAT
+upload "$TMP_CONFIG_SYS" /CONFIG.SYS
 upload "$TMP_SYS_INI" /WINDOWS/SYSTEM.INI
+upload "$TMP_MSDOS_SYS" /MSDOS.SYS
 upload "$TMP_WIN_INI" /WINDOWS/WIN.INI
 cp /WINDOWS/SYSTEM/MSMOUSE.VXD /WINDOWS/SYSTEM/MOUSE.VXD
 sync
 EOF
 
-rm -f "$TMP_SYS_INI" "$TMP_WIN_INI"
+rm -f "$TMP_SYS_INI" "$TMP_MSDOS_SYS" "$TMP_CONFIG_SYS" "$TMP_WIN_INI"
 
 echo "==> Dual-head driver files successfully installed to Windows 98 disk image."

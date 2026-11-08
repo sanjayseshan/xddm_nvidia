@@ -126,5 +126,9 @@ $OBJCOPY -O binary "$OBJ_DIR/a1.pe" "$OBJ_DIR/a1.bin"
 echo "==> 6. Generating final 32-bit LE VxD (nvx.vxd)..."
 python3 "$SCRIPT_DIR/tools/mkvxd32.py" NVX "$OBJ_DIR/a0.bin" "$OBJ_DIR/a1.bin" "$ROOT_DIR/dist_win98/nvx.vxd"
 
-ls -lh "$ROOT_DIR/dist_win98/nvx.vxd"
+echo "==> 7. Compiling attach_sec.exe (pure GUI) and assembling slog.com..."
+$CC -O2 -s -mwindows -o "$ROOT_DIR/dist_win98/attach_sec.exe" "$SCRIPT_DIR/attach_sec.c" -luser32
+nasm -f bin "$SCRIPT_DIR/serial_log.asm" -o "$SCRIPT_DIR/slog.com"
+
+ls -lh "$ROOT_DIR/dist_win98/nvx.vxd" "$ROOT_DIR/dist_win98/attach_sec.exe" "$SCRIPT_DIR/slog.com"
 echo "==> VxD build complete!"

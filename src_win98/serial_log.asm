@@ -4,6 +4,24 @@ ORG 0x100
 
 start:
     cld
+
+    ; Initialize COM1 UART: 115200 baud, 8N1, DTR/RTS
+    mov dx, 0x3FB       ; Line Control Register
+    mov al, 0x80        ; Enable DLAB
+    out dx, al
+    mov dx, 0x3F8       ; Divisor Low (115200 baud -> 1)
+    mov al, 0x01
+    out dx, al
+    inc dx              ; 0x3F9: Divisor High
+    xor al, al
+    out dx, al
+    mov dx, 0x3FB       ; Line Control Register
+    mov al, 0x03        ; 8 bits, no parity, 1 stop bit
+    out dx, al
+    mov dx, 0x3FC       ; Modem Control Register
+    mov al, 0x03        ; DTR + RTS
+    out dx, al
+
     mov si, 0x82        ; PSP command tail offset
 
     ; Skip leading spaces
