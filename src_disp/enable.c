@@ -23,6 +23,9 @@ static DRVFN DrvFunctionTable[] =
     {INDEX_DrvTextOut,          (PFN)DrvTextOut},
     {INDEX_DrvDitherColor,      (PFN)DrvDitherColor},
     {INDEX_DrvSynchronize,      (PFN)DrvSynchronize},
+    {INDEX_DrvDescribePixelFormat, (PFN)DrvDescribePixelFormat},
+    {INDEX_DrvSetPixelFormat,   (PFN)DrvSetPixelFormat},
+    {INDEX_DrvSwapBuffers,      (PFN)DrvSwapBuffers},
     {INDEX_DrvDisableDriver,    (PFN)DrvDisableDriver}
 };
 

@@ -8,14 +8,14 @@
 #include "color.h"
 
 /*
- * GPU-rendered XDDM solid PATCOPY fills on the primary bitmap.
+ * GPU-rendered XDDM solid fills (PATCOPY, BLACKNESS, WHITENESS) on the primary bitmap.
  * GDI keeps an authoritative system-memory shadow, while the GPU copy engine
  * writes the corresponding scanout pixels directly. Unsupported operations
  * continue through EngBitBlt and the normal upload path.
  */
 static BOOL
-NvxTrySolidPatCopy(PPDEV ppdev, SURFOBJ *pso, CLIPOBJ *pco,
-                   BRUSHOBJ *pbo, RECTL *prcl, ROP4 rop4)
+NvxTrySolidFill(PPDEV ppdev, SURFOBJ *pso, CLIPOBJ *pco,
+                BRUSHOBJ *pbo, RECTL *prcl, ROP4 rop4)
 {
     NVX_ACCEL_FILL_PARAMS params;
     RECTL rect;
@@ -34,16 +34,20 @@ NvxTrySolidPatCopy(PPDEV ppdev, SURFOBJ *pso, CLIPOBJ *pco,
         (pco && pco->iDComplexity == DC_COMPLEX))
         return FALSE;
 
-    /* Keep the proven path restricted to PATCOPY; other ROPs use GDI. */
-    if (rop4 != 0xF0F0 || !pbo)
+    /* Accelerated ROPs: PATCOPY (0xF0F0), BLACKNESS (0x0000), WHITENESS (0xFFFF) */
+    if (rop4 == 0xF0F0) {
+        if (!pbo) return FALSE;
+        color = BRUSHOBJ_ulGetBrushColor(pbo);
+        if (color == CLR_INVALID) return FALSE;
+        /* BRUSHOBJ returns COLORREF (0x00BBGGRR); convert to 32bpp XRGB (0x00RRGGBB). */
+        color = NvxColorRefToXrgb(color);
+    } else if (rop4 == 0x0000) {
+        color = 0x00000000UL; /* BLACKNESS */
+    } else if (rop4 == 0xFFFF) {
+        color = 0x00FFFFFFUL; /* WHITENESS */
+    } else {
         return FALSE;
-    color = BRUSHOBJ_ulGetBrushColor(pbo);
-    if (color == CLR_INVALID)
-        return FALSE;
-    /* BRUSHOBJ returns COLORREF (0x00BBGGRR); the 32bpp framebuffer masks
-       above describe XRGB memory pixels (0x00RRGGBB). Convert before writing
-       either VRAM or the system-memory surface shadow. */
-    color = NvxColorRefToXrgb(color);
+    }
 
     rect = *prcl;
     if (pco && pco->iDComplexity == DC_RECT) {
@@ -233,82 +237,119 @@ DrvCopyBits(
         psoDest->iBitmapFormat == BMF_32BPP && psoSrc->iBitmapFormat == BMF_32BPP &&
         psoDest->lDelta > 0 && psoSrc->lDelta > 0 &&
         (ULONG)psoDest->lDelta == ppdev->ScreenDelta &&
-        (ULONG)psoSrc->lDelta == ppdev->ScreenDelta && !pco && !pxlo &&
-        prclDest->left >= 0 && prclDest->top >= 0 &&
-        prclDest->right <= (LONG)ppdev->ScreenWidth &&
-        prclDest->bottom <= (LONG)ppdev->ScreenHeight &&
-        pptlSrc->x >= 0 && pptlSrc->y >= 0 &&
+        (ULONG)psoSrc->lDelta == ppdev->ScreenDelta &&
+        (!pco || pco->iDComplexity == DC_TRIVIAL || pco->iDComplexity == DC_RECT) &&
+        (!pxlo || (pxlo->flXlate & XO_TRIVIAL)) &&
         prclDest->right > prclDest->left && prclDest->bottom > prclDest->top) {
-        width = (ULONG)(prclDest->right - prclDest->left);
-        height = (ULONG)(prclDest->bottom - prclDest->top);
-        srcX = (ULONG)pptlSrc->x;
-        srcY = (ULONG)pptlSrc->y;
-        dstX = (ULONG)prclDest->left;
-        dstY = (ULONG)prclDest->top;
-        if (srcX <= ppdev->ScreenWidth && width <= ppdev->ScreenWidth - srcX &&
-            srcY <= ppdev->ScreenHeight && height <= ppdev->ScreenHeight - srcY &&
-            width <= 0x003FFFFFUL && height >= 2) {
-            rowBytes = width * 4;
-            overlaps = srcX < dstX + width && dstX < srcX + width &&
-                srcY < dstY + height && dstY < srcY + height;
-            srcOffset = (ULONG64)srcY * ppdev->ScreenDelta + (ULONG64)srcX * 4;
-            dstOffset = (ULONG64)dstY * ppdev->ScreenDelta + (ULONG64)dstX * 4;
-            srcSpan = (ULONG64)(height - 1) * ppdev->ScreenDelta + rowBytes;
-            dstSpan = (ULONG64)(height - 1) * ppdev->ScreenDelta + rowBytes;
-            /* One pitched CE operation only for large disjoint rectangles.
-               Small and overlapping window moves stay on the GDI path. */
-            if (!overlaps &&
-                (srcOffset + srcSpan <= dstOffset || dstOffset + dstSpan <= srcOffset) &&
-                (ULONG64)rowBytes * height >= 4096 &&
-                srcSpan <= 0x01000000ULL && dstSpan <= 0x01000000ULL) {
-                params.SrcGpuVa = ppdev->ScreenGpuVaBase + srcOffset;
-                params.DstGpuVa = ppdev->ScreenGpuVaBase + dstOffset;
-                params.BytesPerLine = rowBytes;
-                params.SrcPitch = ppdev->ScreenDelta;
-                params.DstPitch = ppdev->ScreenDelta;
-                params.LineCount = height;
-                scratchBytes = rowBytes * height;
-                if (ppdev->CopyScratchBytes < scratchBytes) {
-                    if (ppdev->CopyScratch)
-                        EngFreeMem(ppdev->CopyScratch);
-                    ppdev->CopyScratch = EngAllocMem(0, scratchBytes, ALLOC_TAG);
-                    ppdev->CopyScratchBytes = ppdev->CopyScratch ? scratchBytes : 0;
-                }
-                if (!ppdev->CopyScratch)
-                    goto copybits_fallback;
-                shadow = (PULONG)ppdev->ScreenPtr;
-                presented = (PULONG)ppdev->PresentedPixels;
-                /* Save source pixels before changing either surface so the
-                   GDI fallback can still read the original source. */
-                for (row = 0; row < height; ++row) {
-                    sourceIndex = (srcY + row) * (ppdev->ScreenDelta / 4) + srcX;
-                    memcpy((PUCHAR)ppdev->CopyScratch + row * rowBytes,
-                           shadow + sourceIndex, rowBytes);
-                }
-                /* Make the software bitmap coherent before attempting DMA.
-                   On failure restore the source and let GDI perform the copy. */
-                for (row = 0; row < height; ++row) {
-                    targetIndex = (dstY + row) * (ppdev->ScreenDelta / 4) + dstX;
-                    memcpy(shadow + targetIndex,
-                           (PUCHAR)ppdev->CopyScratch + row * rowBytes, rowBytes);
-                }
-                if (!EngDeviceIoControl(ppdev->hDriver, IOCTL_NVX_ACCEL_COPY,
-                                        &params, sizeof(params), NULL, 0, &ulTemp)) {
+
+        LONG clipDstLeft = prclDest->left;
+        LONG clipDstTop = prclDest->top;
+        LONG clipDstRight = prclDest->right;
+        LONG clipDstBottom = prclDest->bottom;
+        LONG clipSrcX = pptlSrc->x;
+        LONG clipSrcY = pptlSrc->y;
+
+        if (pco && pco->iDComplexity == DC_RECT) {
+            if (clipDstLeft < pco->rclBounds.left) {
+                clipSrcX += (pco->rclBounds.left - clipDstLeft);
+                clipDstLeft = pco->rclBounds.left;
+            }
+            if (clipDstTop < pco->rclBounds.top) {
+                clipSrcY += (pco->rclBounds.top - clipDstTop);
+                clipDstTop = pco->rclBounds.top;
+            }
+            if (clipDstRight > pco->rclBounds.right)
+                clipDstRight = pco->rclBounds.right;
+            if (clipDstBottom > pco->rclBounds.bottom)
+                clipDstBottom = pco->rclBounds.bottom;
+        }
+
+        if (clipDstLeft < 0) {
+            clipSrcX -= clipDstLeft;
+            clipDstLeft = 0;
+        }
+        if (clipDstTop < 0) {
+            clipSrcY -= clipDstTop;
+            clipDstTop = 0;
+        }
+        if (clipDstRight > (LONG)ppdev->ScreenWidth)
+            clipDstRight = (LONG)ppdev->ScreenWidth;
+        if (clipDstBottom > (LONG)ppdev->ScreenHeight)
+            clipDstBottom = (LONG)ppdev->ScreenHeight;
+
+        if (clipDstRight > clipDstLeft && clipDstBottom > clipDstTop &&
+            clipSrcX >= 0 && clipSrcY >= 0) {
+            width = (ULONG)(clipDstRight - clipDstLeft);
+            height = (ULONG)(clipDstBottom - clipDstTop);
+            srcX = (ULONG)clipSrcX;
+            srcY = (ULONG)clipSrcY;
+            dstX = (ULONG)clipDstLeft;
+            dstY = (ULONG)clipDstTop;
+            if (srcX <= ppdev->ScreenWidth && width <= ppdev->ScreenWidth - srcX &&
+                srcY <= ppdev->ScreenHeight && height <= ppdev->ScreenHeight - srcY &&
+                width <= 0x003FFFFFUL && height >= 2) {
+                rowBytes = width * 4;
+                overlaps = srcX < dstX + width && dstX < srcX + width &&
+                    srcY < dstY + height && dstY < srcY + height;
+                srcOffset = (ULONG64)srcY * ppdev->ScreenDelta + (ULONG64)srcX * 4;
+                dstOffset = (ULONG64)dstY * ppdev->ScreenDelta + (ULONG64)dstX * 4;
+                srcSpan = (ULONG64)(height - 1) * ppdev->ScreenDelta + rowBytes;
+                dstSpan = (ULONG64)(height - 1) * ppdev->ScreenDelta + rowBytes;
+                /* One pitched CE operation only for large disjoint rectangles.
+                   Small and overlapping window moves stay on the GDI path. */
+                if (!overlaps &&
+                    (srcOffset + srcSpan <= dstOffset || dstOffset + dstSpan <= srcOffset) &&
+                    (ULONG64)rowBytes * height >= 4096 &&
+                    srcSpan <= 0x01000000ULL && dstSpan <= 0x01000000ULL) {
+                    params.SrcGpuVa = ppdev->ScreenGpuVaBase + srcOffset;
+                    params.DstGpuVa = ppdev->ScreenGpuVaBase + dstOffset;
+                    params.BytesPerLine = rowBytes;
+                    params.SrcPitch = ppdev->ScreenDelta;
+                    params.DstPitch = ppdev->ScreenDelta;
+                    params.LineCount = height;
+                    scratchBytes = rowBytes * height;
+                    if (ppdev->CopyScratchBytes < scratchBytes) {
+                        if (ppdev->CopyScratch)
+                            EngFreeMem(ppdev->CopyScratch);
+                        ppdev->CopyScratch = EngAllocMem(0, scratchBytes, ALLOC_TAG);
+                        ppdev->CopyScratchBytes = ppdev->CopyScratch ? scratchBytes : 0;
+                    }
+                    if (!ppdev->CopyScratch)
+                        goto copybits_fallback;
+                    shadow = (PULONG)ppdev->ScreenPtr;
+                    presented = (PULONG)ppdev->PresentedPixels;
+                    /* Save source pixels before changing either surface so the
+                       GDI fallback can still read the original source. */
+                    for (row = 0; row < height; ++row) {
+                        sourceIndex = (srcY + row) * (ppdev->ScreenDelta / 4) + srcX;
+                        memcpy((PUCHAR)ppdev->CopyScratch + row * rowBytes,
+                               shadow + sourceIndex, rowBytes);
+                    }
+                    /* Make the software bitmap coherent before attempting DMA.
+                       On failure restore the source and let GDI perform the copy. */
                     for (row = 0; row < height; ++row) {
                         targetIndex = (dstY + row) * (ppdev->ScreenDelta / 4) + dstX;
-                        memcpy(presented + targetIndex,
+                        memcpy(shadow + targetIndex,
                                (PUCHAR)ppdev->CopyScratch + row * rowBytes, rowBytes);
                     }
-                    ppdev->AccelCopies++;
-                    return TRUE;
+                    if (!EngDeviceIoControl(ppdev->hDriver, IOCTL_NVX_ACCEL_COPY,
+                                            &params, sizeof(params), NULL, 0, &ulTemp)) {
+                        for (row = 0; row < height; ++row) {
+                            targetIndex = (dstY + row) * (ppdev->ScreenDelta / 4) + dstX;
+                            memcpy(presented + targetIndex,
+                                   (PUCHAR)ppdev->CopyScratch + row * rowBytes, rowBytes);
+                        }
+                        ppdev->AccelCopies++;
+                        return TRUE;
+                    }
+                    /* An incomplete or failed CE transfer is repaired by upload. */
+                    for (row = 0; row < height; ++row) {
+                        sourceIndex = (srcY + row) * (ppdev->ScreenDelta / 4) + srcX;
+                        memcpy(shadow + sourceIndex,
+                               (PUCHAR)ppdev->CopyScratch + row * rowBytes, rowBytes);
+                    }
+                    ppdev->PresentationValid = FALSE;
                 }
-                /* An incomplete or failed CE transfer is repaired by upload. */
-                for (row = 0; row < height; ++row) {
-                    sourceIndex = (srcY + row) * (ppdev->ScreenDelta / 4) + srcX;
-                    memcpy(shadow + sourceIndex,
-                           (PUCHAR)ppdev->CopyScratch + row * rowBytes, rowBytes);
-                }
-                ppdev->PresentationValid = FALSE;
             }
         }
     }
@@ -340,11 +381,22 @@ DrvBitBlt(
     POINTL *pptlBrush,
     ROP4 rop4)
 {
-    /* Restrict the GPU path to simple, opaque, rectangular solid fills. */
+    PPDEV ppdev = (PPDEV)(psoTrg ? psoTrg->dhpdev : NULL);
+    (void)pptlMask;
+    (void)pptlBrush;
+
+    /* Accelerated solid fills: PATCOPY (0xF0F0), BLACKNESS (0x0000), WHITENESS (0xFFFF) */
     if (!psoSrc && !psoMask && !pxlo &&
-        NvxTrySolidPatCopy((PPDEV)(psoTrg ? psoTrg->dhpdev : NULL),
-                           psoTrg, pco, pbo, prclTrg, rop4))
+        NvxTrySolidFill(ppdev, psoTrg, pco, pbo, prclTrg, rop4))
         return TRUE;
+
+    /* Accelerated screen-to-screen blits: SRCCOPY (0xCCCC / 0xCCAA) */
+    if (ppdev && psoSrc && !psoMask && (!pxlo || (pxlo->flXlate & XO_TRIVIAL)) &&
+        (rop4 == 0xCCCC || rop4 == 0xCCAA) &&
+        psoSrc->pvBits == ppdev->ScreenPtr && psoTrg && psoTrg->pvBits == ppdev->ScreenPtr) {
+        if (DrvCopyBits(psoTrg, psoSrc, pco, pxlo, prclTrg, pptlSrc))
+            return TRUE;
+    }
 
     BOOL result=EngBitBlt(psoTrg,psoSrc,psoMask,pco,pxlo,prclTrg,pptlSrc,
                            pptlMask,pbo,pptlBrush,rop4);

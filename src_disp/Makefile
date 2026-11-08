@@ -4,7 +4,7 @@ CFLAGS = -Wall -Wextra -O2 -nostdlib -I. -I./include -D_WIN32_WINNT=0x0502
 LDFLAGS = -shared -nostdlib -Wl,-e,DrvEnableDriver -Wl,--subsystem,native:5.2 -L. -lwin32k -lntoskrnl
 HOSTCC ?= cc
 
-OBJS = enable.o screen.o blt.o text.o diagnostic.o
+OBJS = enable.o screen.o blt.o text.o diagnostic.o opengl.o
 
 all: nvxdisp.dll
 

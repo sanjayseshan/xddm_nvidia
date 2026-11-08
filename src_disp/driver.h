@@ -121,5 +121,8 @@ BOOL APIENTRY DrvSetPalette(DHPDEV dhpdev, PALOBJ *ppalo, ULONG fl, ULONG iStart
 VOID APIENTRY DrvSynchronize(DHPDEV dhpdev, RECTL *prcl);
 ULONG APIENTRY DrvSetPointerShape(SURFOBJ *pso, SURFOBJ *psoMask, SURFOBJ *psoColor, XLATEOBJ *pxlo, LONG xHot, LONG yHot, LONG x, LONG y, RECTL *prcl, FLONG fl);
 VOID APIENTRY DrvMovePointer(SURFOBJ *pso, LONG x, LONG y, RECTL *prcl);
+LONG APIENTRY DrvDescribePixelFormat(DHPDEV dhpdev, LONG iPixelFormat, ULONG cjDesc, PPIXELFORMATDESCRIPTOR ppfd);
+BOOL APIENTRY DrvSetPixelFormat(SURFOBJ *pso, LONG iPixelFormat, HWND hwnd);
+BOOL APIENTRY DrvSwapBuffers(SURFOBJ *pso, WNDOBJ *pwo);
 
 #endif /* _NVX_DISP_DRIVER_H_ */
