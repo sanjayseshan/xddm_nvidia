@@ -950,10 +950,10 @@ static VOID NvxInitPrimaryDisplayModes(PNVX_DEVICE_EXTENSION devExt) {
     static const struct {
         ULONG w, h;
     } standardModes[] = {
-        { 3840, 2160 },
+        { 1920, 1080 },
         { 2560, 1440 },
         { 1920, 1200 },
-        { 1920, 1080 },
+        { 3840, 2160 },
         { 1680, 1050 },
         { 1600, 900 },
         { 1440, 900 },
