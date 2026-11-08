@@ -2,10 +2,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$ROOT_DIR"
 
-NVX_DRIVER_ISO="${NVX_DRIVER_ISO:-$SCRIPT_DIR/nvx_driver_full.iso}"
-NVX_SERIAL_LOG="${NVX_SERIAL_LOG:-$SCRIPT_DIR/vm_serial.log}"
+NVX_DRIVER_ISO="${NVX_DRIVER_ISO:-$ROOT_DIR/nvx_driver_full.iso}"
+NVX_SERIAL_LOG="${NVX_SERIAL_LOG:-$ROOT_DIR/vm_serial.log}"
 NVX_VM_MEMORY_MB="${NVX_VM_MEMORY_MB:-3072}"
 
 NVX_QEMU_CDROM_ARGS=()
@@ -51,10 +52,10 @@ for dev in /dev/vfio/vfio "${VFIO_GROUP_NODES[@]}" "$LOGITECH_KBD" "$LOGITECH_MO
 done
 
 for _ in $(seq 1 50); do
-    qemu-img info "$SCRIPT_DIR/winxp_x64.qcow2" >/dev/null 2>&1 && break
+    qemu-img info "$ROOT_DIR/winxp_x64.qcow2" >/dev/null 2>&1 && break
     sleep 0.1
 done
-if ! qemu-img info "$SCRIPT_DIR/winxp_x64.qcow2" >/dev/null 2>&1; then
+if ! qemu-img info "$ROOT_DIR/winxp_x64.qcow2" >/dev/null 2>&1; then
     echo "Error: winxp_x64.qcow2 is still locked; refusing to start QEMU." >&2
     exit 1
 fi
@@ -78,7 +79,7 @@ qemu-system-x86_64 \
     -net none \
     -device vfio-pci,host=01:00.0,multifunction=on,x-vga=on,addr=02.0 \
     -device vfio-pci,host=01:00.1,addr=02.1 \
-    -drive file=winxp_x64.qcow2,format=qcow2,if=ide \
+    -drive file="$ROOT_DIR/winxp_x64.qcow2",format=qcow2,if=ide \
     "${NVX_QEMU_CDROM_ARGS[@]}" \
     -object input-linux,id=logitech_kbd,evdev="$LOGITECH_KBD",grab_all=on,repeat=on \
     -object input-linux,id=logitech_mouse,evdev="$LOGITECH_MOUSE" \

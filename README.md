@@ -121,7 +121,7 @@ The output files are generated in `dist_win98/`.
 
 To update an existing installation directly from Linux:
 ```sh
-XP_MOUNT=/mnt/xp ./update_xp_driver.sh
+XP_MOUNT=/mnt/xp ./test/update_xp_driver.sh
 ```
 
 ### Installing on Windows 98 SE
@@ -134,7 +134,7 @@ XP_MOUNT=/mnt/xp ./update_xp_driver.sh
 
 To update an existing Windows 98 disk image offline:
 ```sh
-./update_win98_driver.sh
+./test/update_win98_driver.sh
 ```
 
 ---

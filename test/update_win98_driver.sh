@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WIN98_IMG="$NVX_ROOT/win98_small.img"
 PKG_DIR="$NVX_ROOT/dist_win98"
 
@@ -58,10 +58,11 @@ ShadowBuffer=1
 SYSINIBLOCK2
 fi
 
-# Ensure display.drv=nvx.drv in [boot]
+# Ensure display.drv=nvx.drv in [boot] and remove any broken *vdd override
 sed -i 's/^display\.drv=.*/display.drv=nvx.drv/' "$TMP_SYS_INI"
+sed -i '/\*vdd=/d' "$TMP_SYS_INI"
 
-# Ensure mouse and keyboard in [386Enh], and remove static nvx.vxd (loaded dynamically by *vdd as minivdd)
+# Ensure mouse, keyboard, and stability limits in [386Enh]
 sed -i '/NoMouseWarning=1/d' "$TMP_SYS_INI"
 sed -i 's/^mouse=.*/mouse=*vmouse/' "$TMP_SYS_INI"
 if ! grep -qi "^mouse=" "$TMP_SYS_INI"; then
@@ -70,6 +71,21 @@ fi
 if ! grep -qi "keyboard=\*vkd" "$TMP_SYS_INI"; then
     sed -i '/\[386Enh\]/a keyboard=*vkd' "$TMP_SYS_INI"
 fi
+if ! grep -qi "32BitDiskAccess=" "$TMP_SYS_INI"; then
+    sed -i '/\[386Enh\]/a 32BitDiskAccess=Off' "$TMP_SYS_INI"
+fi
+if ! grep -qi "cr0wpoff\.vxd" "$TMP_SYS_INI"; then
+    sed -i '/\[386Enh\]/a device=cr0wpoff.vxd' "$TMP_SYS_INI"
+fi
+if ! grep -qi "FastA20=" "$TMP_SYS_INI"; then
+    sed -i '/\[386Enh\]/a FastA20=1\nA20Mode=1' "$TMP_SYS_INI"
+fi
+sed -i '/MaxPhysPage=/d' "$TMP_SYS_INI"
+sed -i '/\[386Enh\]/a MaxPhysPage=30000' "$TMP_SYS_INI"
+sed -i '/MaxFileCache=/d' "$TMP_SYS_INI"
+sed -i '/\[386Enh\]/a MaxFileCache=524288' "$TMP_SYS_INI"
+sed -i '/display=/d' "$TMP_SYS_INI"
+sed -i '/\[386Enh\]/a display=*vdd,*vflatd' "$TMP_SYS_INI"
 sed -i '/nvx\.vxd/d' "$TMP_SYS_INI"
 sed -i 's/^Debug=.*/Debug=0/' "$TMP_SYS_INI"
 sed -i '/DibEngine=/d; /ShadowBuffer=/d' "$TMP_SYS_INI"

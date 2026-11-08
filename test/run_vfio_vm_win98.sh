@@ -3,11 +3,12 @@ set -euo pipefail
 trap '' HUP
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$ROOT_DIR"
 
-NVX_DRIVER_ISO="${NVX_DRIVER_ISO:-$SCRIPT_DIR/nvx_driver_full.iso}"
-NVX_SERIAL_LOG="${NVX_SERIAL_LOG:-$SCRIPT_DIR/vm_serial.log}"
-NVX_VM_MEMORY_MB="${NVX_VM_MEMORY_MB:-3072}"
+NVX_DRIVER_ISO="${NVX_DRIVER_ISO:-$ROOT_DIR/nvx_driver_full.iso}"
+NVX_SERIAL_LOG="${NVX_SERIAL_LOG:-$ROOT_DIR/vm_serial.log}"
+NVX_VM_MEMORY_MB="${NVX_VM_MEMORY_MB:-1024}"
 
 NVX_QEMU_CDROM_ARGS=()
 if [ -f "$NVX_DRIVER_ISO" ]; then
@@ -17,8 +18,8 @@ else
     NVX_CDROM_STATUS="not attached (optional)"
 fi
 
-if ! [[ "$NVX_VM_MEMORY_MB" =~ ^[0-9]+$ ]] || [ "$NVX_VM_MEMORY_MB" -lt 1024 ]; then
-    echo "Error: NVX_VM_MEMORY_MB must be an integer of at least 1024." >&2
+if ! [[ "$NVX_VM_MEMORY_MB" =~ ^[0-9]+$ ]] || [ "$NVX_VM_MEMORY_MB" -lt 512 ]; then
+    echo "Error: NVX_VM_MEMORY_MB must be an integer of at least 512." >&2
     exit 1
 fi
 NVX_MEMLOCK_KB="$(ulimit -Sl)"
@@ -52,10 +53,10 @@ for dev in /dev/vfio/vfio "${VFIO_GROUP_NODES[@]}" "$LOGITECH_KBD" "$LOGITECH_MO
 done
 
 for _ in $(seq 1 50); do
-    qemu-img info "$SCRIPT_DIR/win98_small.img" >/dev/null 2>&1 && break
+    qemu-img info "$ROOT_DIR/win98_small.img" >/dev/null 2>&1 && break
     sleep 0.1
 done
-if ! qemu-img info "$SCRIPT_DIR/win98_small.img" >/dev/null 2>&1; then
+if ! qemu-img info "$ROOT_DIR/win98_small.img" >/dev/null 2>&1; then
     echo "Error: win98_small.img is still locked; refusing to start QEMU." >&2
     exit 1
 fi
@@ -74,15 +75,16 @@ qemu-system-x86_64 \
     -enable-kvm \
     -m "$NVX_VM_MEMORY_MB" \
     -cpu host,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time \
-    -smp 4 \
+    -smp 2 \
     -vga none \
     -net none \
     -device vfio-pci,host=01:00.0,multifunction=on,x-vga=on,addr=02.0 \
     -device vfio-pci,host=01:00.1,addr=02.1 \
-    -drive file=win98_small.img,format=raw,if=ide \
+    -drive file="$ROOT_DIR/win98_small.img",format=raw,if=ide \
     "${NVX_QEMU_CDROM_ARGS[@]}" \
     -object input-linux,id=logitech_kbd,evdev="$LOGITECH_KBD",grab_all=on,repeat=on \
     -object input-linux,id=logitech_mouse,evdev="$LOGITECH_MOUSE" \
     -serial "file:$NVX_SERIAL_LOG" \
-    -no-reboot \
-    -qmp unix:/tmp/qmp-win98.sock,server,nowait -monitor unix:/tmp/monitor-win98.sock,server,nowait
+    -qmp unix:/tmp/qmp-win98.sock,server,nowait \
+    -monitor unix:/tmp/qemu-monitor.sock,server,nowait \
+    -monitor stdio

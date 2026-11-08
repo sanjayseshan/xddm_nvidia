@@ -32,7 +32,7 @@ echo "==> Verified miniport/display package pairing"
 sha256sum "$NVX_ROOT/dist_full/nvxmp.sys" "$NVX_ROOT/dist_full/nvxdisp.dll"
 
 echo "==> Updating the offline XP guest with dist_full"
-"$NVX_ROOT/update_disk_driver_user.sh" full
+"$NVX_ROOT/test/update_disk_driver_user.sh" full
 
 if [ ! -e /dev/vfio/vfio ]; then
     echo "VFIO is not ready. See ROOTLESS_TESTING.md." >&2
@@ -102,4 +102,4 @@ echo "==> Use 'quit' only for a pre-boot hang or failed graceful shutdown."
 ln -sfn "$NVX_RUN_LOG" "$NVX_ROOT/vm_serial.log"
 NVX_DRIVER_ISO="${NVX_DRIVER_ISO:-$NVX_ROOT/nvx_driver_full.iso}" \
 NVX_SERIAL_LOG="$NVX_RUN_LOG" \
-    "$NVX_ROOT/run_vfio_vm.sh"
+    "$NVX_ROOT/test/run_vfio_vm.sh"

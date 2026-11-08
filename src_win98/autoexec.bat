@@ -1,7 +1,10 @@
 @echo off
-C:\SLOG.COM [WIN98-BOOT] Applying hardware configuration (NVX.DRV + NVX.VXD)...
-rem C:\WINDOWS\FAKEMOU.COM
+C:\WINDOWS\FAKEMOU.COM
 C:\WINDOWS\FAKEKBD.COM
-C:\SLOG.COM [WIN98-BOOT] Launching Windows 98 GUI...
-win /b
-C:\SLOG.COM [WIN98-BOOT] Windows session terminated.
+if exist C:\AUTOPNP.REG C:\WINDOWS\regedit.exe /L:C:\WINDOWS\SYSTEM.DAT /R:C:\WINDOWS\USER.DAT C:\AUTOPNP.REG
+if exist C:\QIPNP.REG C:\WINDOWS\regedit.exe /L:C:\WINDOWS\SYSTEM.DAT /R:C:\WINDOWS\USER.DAT C:\QIPNP.REG
+if exist C:\NO8042.REG C:\WINDOWS\regedit.exe /L:C:\WINDOWS\SYSTEM.DAT /R:C:\WINDOWS\USER.DAT C:\NO8042.REG
+if exist C:\NVX_REG.REG C:\WINDOWS\regedit.exe /L:C:\WINDOWS\SYSTEM.DAT /R:C:\WINDOWS\USER.DAT C:\NVX_REG.REG
+if exist C:\SLOG.COM C:\SLOG.COM [WIN98-BOOT] Launching Windows 98 GUI...
+win
+if exist C:\SLOG.COM C:\SLOG.COM [WIN98-BOOT] Windows session terminated.

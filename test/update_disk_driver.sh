@@ -6,7 +6,7 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 QCOW="$DIR/winxp_x64.qcow2"
 PACKAGE_DIR="$DIR/dist"
 if [ "${1:-}" = "full" ]; then

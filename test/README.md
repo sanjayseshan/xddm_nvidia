@@ -48,6 +48,22 @@ sudo ./test/reset_test_gpu.sh
 ./test/reset_test_gpu.sh --check
 ```
 
-### 6. Emulated QEMU Runners (No VFIO / Cirrus)
+### 6. VM Launchers (VFIO Passthrough)
+- `run_vfio_vm.sh`: Launches Windows XP x64 VM with dedicated RTX 3070 VFIO passthrough.
+- `run_vfio_vm_win98.sh`: Launches Windows 98 SE VM with dedicated RTX 3070 VFIO passthrough.
+
+### 7. Disk Image Updaters
+- `update_disk_driver_user.sh`: Rootless disk updater for `winxp_x64.qcow2` using `guestmount`.
+- `update_disk_driver.sh`: Root disk updater for `winxp_x64.qcow2` using NBD.
+- `update_win98_driver.sh`: Deploys VxD, display drivers, and INI configuration to `win98_small.img` using `guestfish`.
+- `update_xp_driver.sh`: Copies built XP drivers to a mounted Windows XP partition.
+
+### 8. Host GPU / VFIO Management
+- `setup-vfio.sh`: Configures modprobe and modules for RTX 3070 VFIO isolation.
+- `switch-gpu.sh`: Switches between host display and VFIO passthrough.
+- `dynamic_vfio_switch.sh`: Dynamically binds/unbinds RTX 3070 between host drivers and `vfio-pci`.
+- `capture_vbios.sh`: Dumps GA104 VBIOS ROM from PCI sysfs node.
+
+### 9. Emulated QEMU Runners (No VFIO / Cirrus)
 - `run_test_vm.sh`: Launches basic QEMU VM for Windows XP.
 - `run_test_vm_win98.sh`: Launches basic QEMU VM for Windows 98 SE.

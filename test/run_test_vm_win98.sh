@@ -1,19 +1,28 @@
-#!/bin/bash
-# Launch Windows XP x64 VM for testing RTX 3070 XDDM Driver
-# Attach nvx_driver_full.iso as secondary CD-ROM (ide1-cd1)
+#!/usr/bin/env bash
+set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
-DISPLAY=:2 qemu-system-x86_64 \
+NVX_VM_MEMORY_MB="${NVX_VM_MEMORY_MB:-512}"
+NVX_IMG="${1:-$ROOT_DIR/win98_small.img}"
+
+if [ ! -f "$NVX_IMG" ]; then
+    echo "Error: $NVX_IMG not found!" >&2
+    exit 1
+fi
+
+qemu-system-x86_64 \
     -enable-kvm \
     -cpu host \
     -smp 2 \
-    -m 2048 \
+    -m "$NVX_VM_MEMORY_MB" \
     -vga cirrus \
-    -drive file=win98_small.img,format=raw,if=ide \
+    -drive file="$NVX_IMG",format=raw,if=ide \
     -boot c \
     -net nic,model=rtl8139 -net user \
-    -serial "file:vm_serial.log" \
-    -qmp unix:/tmp/qmp-sock,server,nowait \
+    -serial "file:$ROOT_DIR/vm_serial.log" \
+    -qmp unix:/tmp/qmp-win98-test.sock,server,nowait \
+    -monitor unix:/tmp/qemu-monitor.sock,server,nowait \
     -monitor stdio

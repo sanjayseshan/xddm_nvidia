@@ -25,7 +25,7 @@ while [ "$attempt" -le "$MAX_RETRIES" ]; do
     > "$NVX_RUN_LOG"
 
     # Start VM in background
-    NVX_SERIAL_LOG="$NVX_RUN_LOG" ./run_vfio_vm.sh < /dev/null &
+    NVX_SERIAL_LOG="$NVX_RUN_LOG" "$SCRIPT_DIR/run_vfio_vm.sh" < /dev/null &
     VM_PID=$!
 
     # Watch for serial progress

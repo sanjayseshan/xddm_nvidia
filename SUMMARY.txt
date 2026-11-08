@@ -360,3 +360,28 @@ display-update notifiers, four-lane DisplayPort link locks, 1920x1080 and
 2560x1440 surfaces, and successful secondary framebuffer readbacks. See
 README.md for compatibility and execution instructions. Firmware origins and
 checksums are in FIRMWARE_PROVENANCE.md.
+
+---
+
+### v2.0.0 Architecture & Test Consolidation
+1. **Root Directory Cleanup & Test Directory Consolidation**:
+   - All test runners, disk image updaters, and host VFIO management scripts have been moved to `test/`:
+     - `test/run_all_tests.sh`: Unified runner for unit tests and 64-bit / 32-bit builds.
+     - `test/test_full_driver.sh`: End-to-end integration and verification harness.
+     - `test/run_vfio_xp_autoretry.sh` / `test/run_vfio_win98_autoretry.sh`: Auto-retry VM runners with serial monitoring.
+     - `test/run_vfio_vm.sh` / `test/run_vfio_vm_win98.sh`: VFIO passthrough QEMU scripts.
+     - `test/update_disk_driver_user.sh` / `test/update_win98_driver.sh` / `test/update_xp_driver.sh`: Disk updaters.
+     - `test/setup-vfio.sh` / `test/switch-gpu.sh` / `test/dynamic_vfio_switch.sh` / `test/capture_vbios.sh`: Host VFIO tools.
+     - `test/reset_test_gpu.sh`: PCI subordinate bridge reset utility.
+   - The root directory now contains only core repository assets and build trees.
+
+2. **Windows 98 SE VM Failure Analysis & Fixes**:
+   - **Bash Continuation Bug**: `run_vfio_vm_win98.sh` contained `# -no-reboot \` after a line ending with `\`, treating the comment as a line terminator, dropping `-qmp` and `-monitor`, and causing bash to exit with error code 127 under `set -e`.
+   - **VMM32 Memory Limit**: Clamped default guest RAM to 1024MB (with 512MB minimum) and injected `MaxPhysPage=40000` (1024MB) and `MaxFileCache=524288` into `SYSTEM.INI` [386Enh] to prevent Windows 98 VMM32 memory manager crashes.
+   - **VDD Corruption Fix**: Removed obsolete `*vdd=*vxd` in `SYSTEM.INI` [boot], which caused `LoadFailed (Damaged) = vdd` in `BOOTLOG.TXT`.
+   - **Binary Deployment**: Recompiled `nvx.vxd` with the new OpenRM HAL shims and deployed it to `/WINDOWS/SYSTEM/VMM32/nvx.vxd` and `/WINDOWS/SYSTEM/nvx.vxd` in `win98_small.img`.
+
+3. **OpenRM Integration & `nvx_gsp.c` Modularization**:
+   - Upstream `open-gpu-kernel-modules` relies on a monolithic 1M-line Linux kernel framework that cannot be linked into 16-bit/32-bit Windows 98 VxDs or Windows XP XDDM miniports without an OS adaptation layer.
+   - `src_driver/nvx_openrm_shim.c` and official OpenRM headers (`msgq.c`, `gsp_fw_wpr_meta.h`, `nvtypes.h`) provide hardware register access, doorbell notifications, and Falcon booter execution.
+   - Refactoring roadmap for `nvx_gsp.c`: separate monolithic RPC and channel code into clean logical modules (`nvx_ce.c` for 2D Copy Engine acceleration, `nvx_disp_rpc.c` for display scanout, and `nvx_gsp.c` for core bootstrap) using official upstream SDK data structures.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [[ -z "${XP_MOUNT:-}" ]]; then
     XP_MOUNT="/media/sanjay/winxp1"
     if [[ ! -d "$XP_MOUNT/WINDOWS/system32/drivers" ]] && command -v findmnt >/dev/null 2>&1; then

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVX_QCOW="$NVX_ROOT/winxp_x64.qcow2"
 NVX_PACKAGE="$NVX_ROOT/dist"
 if [ "${1:-}" = full ]; then

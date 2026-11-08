@@ -2,7 +2,7 @@
 set -euo pipefail
 
 NVX_PCI_ID="${1:-0000:01:00.0}"
-NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVX_ROM_NODE="/sys/bus/pci/devices/$NVX_PCI_ID/rom"
 NVX_OUTPUT="$NVX_ROOT/firmware/ga104-vbios.rom"
 
