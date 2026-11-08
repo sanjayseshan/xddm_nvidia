@@ -442,6 +442,15 @@ VOID VideoPortWriteRegisterUlong(
     ULONG Value
 );
 
+UCHAR VideoPortReadRegisterUchar(
+    PUCHAR Register
+);
+
+VOID VideoPortWriteRegisterUchar(
+    PUCHAR Register,
+    UCHAR Value
+);
+
 VP_STATUS VideoPortMapMemory(
     PVOID HwDeviceExtension,
     PHYSICAL_ADDRESS PhysicalAddress,

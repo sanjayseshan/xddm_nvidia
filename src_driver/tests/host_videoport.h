@@ -59,4 +59,6 @@ PVOID VideoPortAllocateCommonBuffer(PVOID,PVOID,ULONG,PPHYSICAL_ADDRESS,BOOLEAN,
 VOID VideoPortFreeCommonBuffer(PVOID,ULONG,PVOID,PHYSICAL_ADDRESS,BOOLEAN);
 ULONG VideoPortReadRegisterUlong(PULONG);
 VOID VideoPortWriteRegisterUlong(PULONG,ULONG);
+UCHAR VideoPortReadRegisterUchar(PUCHAR);
+VOID VideoPortWriteRegisterUchar(PUCHAR,UCHAR);
 #endif

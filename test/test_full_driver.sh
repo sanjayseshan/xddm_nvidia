@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="169"
+NVX_TEST_VERSION="2.0.0.1"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
@@ -32,11 +32,7 @@ echo "==> Verified miniport/display package pairing"
 sha256sum "$NVX_ROOT/dist_full/nvxmp.sys" "$NVX_ROOT/dist_full/nvxdisp.dll"
 
 echo "==> Updating the offline XP guest with dist_full"
-if [ "$EUID" -eq 0 ]; then
-    "$NVX_ROOT/update_disk_driver.sh" full
-else
-    "$NVX_ROOT/update_disk_driver_user.sh" full
-fi
+"$NVX_ROOT/update_disk_driver_user.sh" full
 
 if [ ! -e /dev/vfio/vfio ]; then
     echo "VFIO is not ready. See ROOTLESS_TESTING.md." >&2

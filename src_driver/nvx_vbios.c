@@ -1,5 +1,6 @@
 /* Bounded, read-only parser derived from the OpenRM 535 VBIOS/FWSEC layout. */
 #include "nvx_vbios.h"
+#include "include/nvx_nvidia_open_shim.h"
 #include <stddef.h>
 
 typedef struct _READER {
@@ -145,8 +146,8 @@ static int find_bit(READER *r, uint32_t biosSize, uint32_t *bit)
         uint16_t id;
         uint32_t sig, sum = 0, i;
         uint8_t size, b;
-        if (!rd16(r,off,&id) || id != 0xb8ff ||
-            !u32at(r,off+2,&sig) || sig != 0x00544942 ||
+        if (!rd16(r,off,&id) || id != NV_VBIOS_BIT_HEADER_ID ||
+            !u32at(r,off+2,&sig) || sig != NV_VBIOS_BIT_HEADER_SIGNATURE ||
             !rd8(r,off+8,&size) || size < 12 || off > biosSize - size)
             continue;
         for (i=0; i<size; i++) { if (!rd8(r,off+i,&b)) return 0; sum += b; }
@@ -179,12 +180,12 @@ int NvxParseFwsecRom(NVX_ROM_READ32 read32, void *context,
             !range_fits(tok,6,info->BiosSize)) return NVX_VBIOS_NO_BIT;
         if (!rd8(&r,tok,&id)||!rd8(&r,tok+1,&ver)||!rd16(&r,tok+2,&size)||!rd16(&r,tok+4,&ptr))
             return NVX_VBIOS_IO_ERROR;
-        if (id==0x42 && (ver==1||ver==2) && size>=5) {
+        if (id==NV_VBIOS_BIT_TOKEN_BIOSDATA && (ver==1||ver==2) && size>=5) {
             uint32_t version; uint8_t oem;
             if (u32at(&r,ptr,&version)&&rd8(&r,ptr+4,&oem))
                 info->VbiosVersion=((uint64_t)version<<8)|oem;
         }
-        if (id==0x70 && ver==2 && size>=4 && u32at(&r,ptr,&tableRel)) break;
+        if (id==NV_VBIOS_BIT_TOKEN_FALCON_DATA && ver==2 && size>=4 && u32at(&r,ptr,&tableRel)) break;
     }
     if (!tableRel || !add(info->ExpansionRomOffset,tableRel,info->BiosSize,&table))
         return NVX_VBIOS_NO_FWSEC;
@@ -198,7 +199,7 @@ int NvxParseFwsecRom(NVX_ROM_READ32 read32, void *context,
             !range_fits(entry,6,info->BiosSize)) return NVX_VBIOS_NO_FWSEC;
         if (!rd8(&r,entry,&app)||!rd8(&r,entry+1,&target)||!u32at(&r,entry+2,&descRel))
             return NVX_VBIOS_IO_ERROR;
-        if (app!=0x05 && app!=0x85) continue;
+        if (app!=NV_VBIOS_FALCON_UCODE_ENTRY_APPID_SEC_LIC && app!=NV_VBIOS_FALCON_UCODE_ENTRY_APPID_FWSEC_PR) continue;
         if (!add(info->ExpansionRomOffset,descRel,info->BiosSize,&desc)||
             !u32at(&r,desc,&vdesc)) return NVX_VBIOS_BAD_DESCRIPTOR;
         info->DescriptorVersion=(uint8_t)(vdesc>>8);
@@ -230,13 +231,13 @@ int NvxParseFwsecRom(NVX_ROM_READ32 read32, void *context,
             info->SignaturesOffset=desc+44;
             info->SignaturesSize=info->DescriptorSize-44;
             if (!info->SignatureCount ||
-                info->SignaturesSize!=(uint32_t)info->SignatureCount*384U ||
+                info->SignaturesSize!=(uint32_t)info->SignatureCount*NV_VBIOS_BCRT30_RSA3K_SIG_SIZE ||
                 !add(info->SignaturesOffset,info->SignaturesSize,info->BiosSize,&signaturesEnd) ||
                 signaturesEnd!=info->ImageOffset ||
                 !add(info->ImemLoadSize,info->DmemLoadSize,info->StoredSize,&dmemEnd) ||
                 dmemEnd>info->StoredSize ||
                 !add(info->ImageOffset,info->ImemLoadSize,info->BiosSize,&info->DmemImageOffset) ||
-                !add(info->PkcDataOffset,384U,info->DmemLoadSize,&pkcEnd) ||
+                !add(info->PkcDataOffset,NV_VBIOS_BCRT30_RSA3K_SIG_SIZE,info->DmemLoadSize,&pkcEnd) ||
                 pkcEnd>info->DmemLoadSize ||
                 !add(info->DmemImageOffset,info->InterfaceOffset,info->BiosSize,&info->InterfaceImageOffset) ||
                 !add(info->InterfaceOffset,4U,info->DmemLoadSize,&interfaceEnd))

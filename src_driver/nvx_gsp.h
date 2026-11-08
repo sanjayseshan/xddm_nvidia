@@ -185,44 +185,10 @@ typedef struct _NVX_MSGQ_HEADER {
     ULONG ReadPtr;
 } NVX_MSGQ_HEADER;
 
-/* GSP firmware WPR metadata V1 (Used by Booter to verify and unlock WPR) */
-typedef struct _GSP_FW_WPR_META_V1 {
-    unsigned long long Magic;
-    unsigned long long Revision;
-    unsigned long long SysmemAddrOfRadix3Elf;
-    unsigned long long SizeOfRadix3Elf;
-    unsigned long long SysmemAddrOfBootloader;
-    unsigned long long SizeOfBootloader;
-    unsigned long long BootloaderCodeOffset;
-    unsigned long long BootloaderDataOffset;
-    unsigned long long BootloaderManifestOffset;
-    unsigned long long SysmemAddrOfSignature;
-    unsigned long long SizeOfSignature;
-    unsigned long long GspFwRsvdStart;
-    unsigned long long NonWprHeapOffset;
-    unsigned long long NonWprHeapSize;
-    unsigned long long GspFwWprStart;
-    unsigned long long GspFwHeapOffset;
-    unsigned long long GspFwHeapSize;
-    unsigned long long GspFwOffset;
-    unsigned long long BootBinOffset;
-    unsigned long long FrtsOffset;
-    unsigned long long FrtsSize;
-    unsigned long long GspFwWprEnd;
-    unsigned long long FbSize;
-    unsigned long long VgaWorkspaceOffset;
-    unsigned long long VgaWorkspaceSize;
-    unsigned long long BootCount;
-    unsigned char      Reserved1[16];
-    unsigned long long SysmemAddrOfCrashReportQueue;
-    unsigned int       SizeOfCrashReportQueue;
-    unsigned int       Reserved2;
-    unsigned char      GspFwHeapVfPartitionCount;
-    unsigned char      Flags;
-    unsigned short     PagingConfig;
-    unsigned int       Reserved3;
-    unsigned long long Verified;
-} GSP_FW_WPR_META_V1, *PGSP_FW_WPR_META_V1;
+/* Use official upstream GspFwWprMeta from open-gpu-kernel-modules (aliased for existing call sites) */
+typedef GspFwWprMeta GSP_FW_WPR_META_V1;
+typedef GspFwWprMeta *PGSP_FW_WPR_META_V1;
+
 /* VBE 2.0/3.0 Controller Information Block */
 typedef struct _VBE_INFO_BLOCK {
     CHAR   VbeSignature[4];       /* "VESA" */

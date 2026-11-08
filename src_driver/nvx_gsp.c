@@ -12,13 +12,14 @@
 #include "nvx_rpc.h"
 #include "nvx_seq.h"
 #include "nvx_mmu.h"
+#include "nvx_openrm_shim.h"
 #include <stddef.h>
 #include "bootloader_blob.h"
 #include "booter_load_blob.h"
 
 /* ABI checks deliberately target firmware 535, not the current OpenRM ABI. */
-_Static_assert(sizeof(GSP_FW_WPR_META_V1) == 256, "WPR ABI");
-_Static_assert(offsetof(GSP_FW_WPR_META_V1, Verified) == 248, "WPR verified ABI");
+_Static_assert(sizeof(GspFwWprMeta) == 256, "WPR ABI");
+_Static_assert(offsetof(GspFwWprMeta, verified) == 248, "WPR verified ABI");
 _Static_assert(sizeof(GSP_ARGUMENTS_CACHED) == 80, "535 RM args ABI");
 _Static_assert(sizeof(LIBOS_MEMORY_REGION_INIT_ARGUMENT) == 32, "LibOS ABI");
 _Static_assert(offsetof(RM_RISCV_UCODE_DESC, MonitorCodeOffset) == 48, "BL ABI");
@@ -58,7 +59,7 @@ static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
         4096,expected,dev->RpcTxSequence,payload,bytes)) return FALSE;
     __sync_synchronize();cmd->WritePtr=next;__sync_synchronize();
     dev->RpcTxSequence++;
-    VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x110c00),0);
+    nvx_msgq_notify_remote(FCN_FLAG_NOTIFY_MSG_WRITE, dev);
     LogStr("NVX [RM]: RPC submitted function=");LogHex(expected);LogStr("\n");
     for(ULONG wait=0;wait<20000;wait++) {
         ULONG read=cmd->ReadPtr,head=stat->WritePtr;
@@ -278,15 +279,15 @@ static BOOLEAN NvxGspGetFbLayout(PNVX_DEVICE_EXTENSION dev)
     for(ULONG i=0;i<count;i++) {
         NVX_FB_REGION_535 region;
         VideoPortMoveMemory(&region,dev->RpcRxRecord+80+entriesOffset+i*sizeof(region),sizeof(region));
-        if(region.base>region.limit||region.limit>=wpr->FbSize) return FALSE;
+        if(region.base>region.limit||region.limit>=wpr->fbSize) return FALSE;
         LogStr("NVX [FB]: region=");LogHex(i);LogStr(" base=");LogHex(region.base);
         LogStr(" limit=");LogHex(region.limit);LogStr(" reserved=");LogHex(region.reserved);
         LogStr(" protected=");LogHex(region.protectedMemory);LogStr(" iso=");LogHex(region.iso);LogStr("\n");
         if(!freeLimit&&!region.reserved&&!region.protectedMemory&&region.compressed&&region.iso) {
             ULONG64 base=(region.base+0xffffULL)&~0xffffULL,limit=region.limit;
-            if(base<wpr->GspFwWprEnd&&limit>=wpr->GspFwWprStart) {
-                if(base<wpr->GspFwWprStart) limit=wpr->GspFwWprStart-1;
-                else base=(wpr->GspFwWprEnd+0xffffULL)&~0xffffULL;
+            if(base<wpr->gspFwWprEnd&&limit>=wpr->gspFwWprStart) {
+                if(base<wpr->gspFwWprStart) limit=wpr->gspFwWprStart-1;
+                else base=(wpr->gspFwWprEnd+0xffffULL)&~0xffffULL;
             }
             if(base<=limit&&limit-base>=0xffff) {freeBase=base;freeLimit=limit;}
         }
@@ -339,7 +340,7 @@ BOOLEAN NvxGspDiscoverScanout(PVOID extension,ULONG index)
     block=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x1704));
     if(!(block&0x80000000U)||(block&0x70000000U)) return FALSE;
     instance=(ULONG64)(block&0x0fffffffU)<<12;
-    context.dev=dev;context.bytes=wpr->FbSize;context.reads=0;
+    context.dev=dev;context.bytes=wpr->fbSize;context.reads=0;
     if(!NvxPraminRead64(&context,instance+0x200,&pdbRaw)) return FALSE;
     LogStr("NVX [FBMAP]: BAR1 block=");LogHex(block);LogStr(" instance=");LogHex(instance);
     LogStr(" pdbRaw=");LogHex(pdbRaw);LogStr(" firmware root=");LogHex(dev->GspBar1PageDirectory);LogStr("\n");
@@ -348,7 +349,7 @@ BOOLEAN NvxGspDiscoverScanout(PVOID extension,ULONG index)
     while(mapped<bytes) {
         NVX_MMU_MAPPING map;
         ULONG64 chunk;
-        int status=NvxMmuTranslateVram(NvxPraminRead64,&context,pdb,offset+mapped,wpr->FbSize,bigShift,&map);
+        int status=NvxMmuTranslateVram(NvxPraminRead64,&context,pdb,offset+mapped,wpr->fbSize,bigShift,&map);
         if(status!=NVX_MMU_OK||!map.writable) {
             LogStr("NVX [FBMAP]: translation unavailable offset=");LogHex(offset+mapped);
             LogStr(" status=");LogHex((ULONG)status);LogStr("\n");return FALSE;
@@ -361,7 +362,7 @@ BOOLEAN NvxGspDiscoverScanout(PVOID extension,ULONG index)
         if(chunk>bytes-mapped) chunk=bytes-mapped;
         mapped+=chunk;
     }
-    if(first<wpr->GspFwWprEnd&&first+bytes>wpr->GspFwWprStart) return FALSE;
+    if(first<wpr->gspFwWprEnd&&first+bytes>wpr->gspFwWprStart) return FALSE;
     dev->GspScanoutPhysical=first;dev->GspScanoutBytes=bytes;dev->GspScanoutMapped=TRUE;
     LogStr("NVX [FBMAP]: linear writable scanout VRAM=");LogHex(first);
     LogStr(" bytes=");LogHex(bytes);LogStr("; discovery only.\n");return TRUE;
@@ -2342,75 +2343,75 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
     wprPhys.QuadPart = devExt->GspDmaPhysical.QuadPart + GSP_WPR_META_OFFSET;
 
     VideoPortZeroMemory(wprMeta, sizeof(GSP_FW_WPR_META_V1));
-    wprMeta->Magic = GSP_FW_WPR_META_MAGIC;
-    wprMeta->Revision = GSP_FW_WPR_META_REVISION;
+    wprMeta->magic = GSP_FW_WPR_META_MAGIC;
+    wprMeta->revision = GSP_FW_WPR_META_REVISION;
 
     /* SYSMEM pointers for SEC2 to verify and copy */
-    wprMeta->SysmemAddrOfRadix3Elf = devExt->GspDmaPhysical.QuadPart + GSP_RADIX3_LVL0_OFFSET;
-    wprMeta->SizeOfRadix3Elf = GSP_FW_IMAGE_SIZE;
-    wprMeta->SysmemAddrOfSignature = devExt->GspDmaPhysical.QuadPart + GSP_SIG_OFFSET;
-    wprMeta->SizeOfSignature = GSP_SIG_SIZE;
+    wprMeta->sysmemAddrOfRadix3Elf = devExt->GspDmaPhysical.QuadPart + GSP_RADIX3_LVL0_OFFSET;
+    wprMeta->sizeOfRadix3Elf = GSP_FW_IMAGE_SIZE;
+    wprMeta->sysmemAddrOfSignature = devExt->GspDmaPhysical.QuadPart + GSP_SIG_OFFSET;
+    wprMeta->sizeOfSignature = GSP_SIG_SIZE;
 
-    wprMeta->SysmemAddrOfBootloader = devExt->GspDmaPhysical.QuadPart + GSP_BOOTLOADER_OFFSET;
-    wprMeta->SizeOfBootloader = blCodeSize;
-    wprMeta->BootloaderCodeOffset = blDesc ? blDesc->MonitorCodeOffset : 0x1000;
-    wprMeta->BootloaderDataOffset = blDesc ? blDesc->MonitorDataOffset : 0x800;
-    wprMeta->BootloaderManifestOffset = blDesc ? blDesc->ManifestOffset : 0x0;
+    wprMeta->sysmemAddrOfBootloader = devExt->GspDmaPhysical.QuadPart + GSP_BOOTLOADER_OFFSET;
+    wprMeta->sizeOfBootloader = blCodeSize;
+    wprMeta->bootloaderCodeOffset = blDesc ? blDesc->MonitorCodeOffset : 0x1000;
+    wprMeta->bootloaderDataOffset = blDesc ? blDesc->MonitorDataOffset : 0x800;
+    wprMeta->bootloaderManifestOffset = blDesc ? blDesc->ManifestOffset : 0x0;
 
     /* Authentic GA104 (8GB VRAM) Descending Framebuffer Layout */
-    wprMeta->FbSize = (ULONG64)VideoPortReadRegisterUlong((PULONG)(bar0+0x1183a4)) << 20;
-    if (wprMeta->FbSize < 0x20000000ULL || wprMeta->FbSize > 0x1000000000ULL) {
+    wprMeta->fbSize = (ULONG64)VideoPortReadRegisterUlong((PULONG)(bar0+0x1183a4)) << 20;
+    if (wprMeta->fbSize < 0x20000000ULL || wprMeta->fbSize > 0x1000000000ULL) {
         LogStr("NVX [GSP]: Invalid hardware VRAM size.\n");
         NvxGspShutdown(HwDeviceExtension);
         return FALSE;
     }
-    LogStr("NVX [GSP]: Physical VRAM bytes "); LogHex(wprMeta->FbSize); LogStr("\n");
-    wprMeta->VgaWorkspaceOffset = wprMeta->FbSize - 0x100000ULL;
+    LogStr("NVX [GSP]: Physical VRAM bytes "); LogHex(wprMeta->fbSize); LogStr("\n");
+    wprMeta->vgaWorkspaceOffset = wprMeta->fbSize - 0x100000ULL;
     {
         ULONG workspace = VideoPortReadRegisterUlong((PULONG)(bar0+0x625f04));
         if (workspace & 8) {
             ULONG64 addr = (ULONG64)(workspace & 0xffffff00) << 8;
-            wprMeta->VgaWorkspaceOffset = addr < wprMeta->VgaWorkspaceOffset ?
-                wprMeta->FbSize - 0x20000 : addr;
+            wprMeta->vgaWorkspaceOffset = addr < wprMeta->vgaWorkspaceOffset ?
+                wprMeta->fbSize - 0x20000 : addr;
         }
-        if (wprMeta->VgaWorkspaceOffset >= wprMeta->FbSize) {
+        if (wprMeta->vgaWorkspaceOffset >= wprMeta->fbSize) {
             LogStr("NVX [GSP]: Invalid VGA workspace.\n");
             NvxGspShutdown(HwDeviceExtension);
             return FALSE;
         }
     }
-    wprMeta->VgaWorkspaceSize = wprMeta->FbSize - wprMeta->VgaWorkspaceOffset;
-    wprMeta->GspFwWprEnd = wprMeta->VgaWorkspaceOffset & ~0x1ffffULL;
-    wprMeta->FrtsSize = 0x100000ULL;
-    wprMeta->FrtsOffset = wprMeta->GspFwWprEnd - wprMeta->FrtsSize;
+    wprMeta->vgaWorkspaceSize = wprMeta->fbSize - wprMeta->vgaWorkspaceOffset;
+    wprMeta->gspFwWprEnd = wprMeta->vgaWorkspaceOffset & ~0x1ffffULL;
+    wprMeta->frtsSize = 0x100000ULL;
+    wprMeta->frtsOffset = wprMeta->gspFwWprEnd - wprMeta->frtsSize;
     if (devExt->FwsecFrtsReady) {
         if (devExt->VerifiedWprEnd < 0x100000ULL ||
             devExt->VerifiedFrtsOffset != devExt->VerifiedWprEnd-0x100000ULL ||
-            devExt->VerifiedWprEnd > wprMeta->FbSize ||
-            devExt->VerifiedVgaWorkspaceOffset >= wprMeta->FbSize) {
+            devExt->VerifiedWprEnd > wprMeta->fbSize ||
+            devExt->VerifiedVgaWorkspaceOffset >= wprMeta->fbSize) {
             LogStr("NVX [GSP]: Invalid verified FRTS layout; bootstrap blocked.\n");
             return FALSE;
         }
-        wprMeta->VgaWorkspaceOffset=devExt->VerifiedVgaWorkspaceOffset;
-        wprMeta->VgaWorkspaceSize=wprMeta->FbSize-wprMeta->VgaWorkspaceOffset;
-        wprMeta->GspFwWprEnd=devExt->VerifiedWprEnd;
-        wprMeta->FrtsOffset=devExt->VerifiedFrtsOffset;
-        LogStr("NVX [GSP]: Using verified WPR end ");LogHex(wprMeta->GspFwWprEnd);
-        LogStr(" FRTS ");LogHex(wprMeta->FrtsOffset);LogStr("\n");
+        wprMeta->vgaWorkspaceOffset=devExt->VerifiedVgaWorkspaceOffset;
+        wprMeta->vgaWorkspaceSize=wprMeta->fbSize-wprMeta->vgaWorkspaceOffset;
+        wprMeta->gspFwWprEnd=devExt->VerifiedWprEnd;
+        wprMeta->frtsOffset=devExt->VerifiedFrtsOffset;
+        LogStr("NVX [GSP]: Using verified WPR end ");LogHex(wprMeta->gspFwWprEnd);
+        LogStr(" FRTS ");LogHex(wprMeta->frtsOffset);LogStr("\n");
     }
-    wprMeta->BootBinOffset = (wprMeta->FrtsOffset - wprMeta->SizeOfBootloader) & ~0xFFFULL;
-    wprMeta->GspFwOffset = (wprMeta->BootBinOffset - wprMeta->SizeOfRadix3Elf) & ~0xFFFFULL;
+    wprMeta->bootBinOffset = (wprMeta->frtsOffset - wprMeta->sizeOfBootloader) & ~0xFFFULL;
+    wprMeta->gspFwOffset = (wprMeta->bootBinOffset - wprMeta->sizeOfRadix3Elf) & ~0xFFFFULL;
     /* 535 LibOS2: 8MB base + 1MB per-GB allowance + 96MB client heap. */
-    wprMeta->GspFwHeapSize = 0x6800000ULL +
-        ((((wprMeta->FbSize + 0x3fffffffULL) >> 30) * (96ULL << 10) + 0xfffffULL) & ~0xfffffULL);
-    wprMeta->GspFwHeapOffset = (wprMeta->GspFwOffset - wprMeta->GspFwHeapSize) & ~0xFFFFFULL;
-    wprMeta->GspFwHeapSize = (wprMeta->GspFwOffset-wprMeta->GspFwHeapOffset) & ~0xfffffULL;
-    wprMeta->GspFwWprStart = (wprMeta->GspFwHeapOffset-sizeof(*wprMeta)) & ~0xfffffULL;
-    wprMeta->NonWprHeapSize = 0x100000ULL;
-    wprMeta->NonWprHeapOffset = wprMeta->GspFwWprStart - wprMeta->NonWprHeapSize;
-    wprMeta->GspFwRsvdStart = wprMeta->NonWprHeapOffset;
-    wprMeta->BootCount = 0;
-    wprMeta->Verified = 0;
+    wprMeta->gspFwHeapSize = 0x6800000ULL +
+        ((((wprMeta->fbSize + 0x3fffffffULL) >> 30) * (96ULL << 10) + 0xfffffULL) & ~0xfffffULL);
+    wprMeta->gspFwHeapOffset = (wprMeta->gspFwOffset - wprMeta->gspFwHeapSize) & ~0xFFFFFULL;
+    wprMeta->gspFwHeapSize = (wprMeta->gspFwOffset-wprMeta->gspFwHeapOffset) & ~0xfffffULL;
+    wprMeta->gspFwWprStart = (wprMeta->gspFwHeapOffset-sizeof(*wprMeta)) & ~0xfffffULL;
+    wprMeta->nonWprHeapSize = 0x100000ULL;
+    wprMeta->nonWprHeapOffset = wprMeta->gspFwWprStart - wprMeta->nonWprHeapSize;
+    wprMeta->gspFwRsvdStart = wprMeta->nonWprHeapOffset;
+    wprMeta->bootCount = 0;
+    wprMeta->verified = 0;
 
     /* 535 shared memory: PTE page followed by two 256KB queues. */
     {
@@ -2605,7 +2606,7 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
         while (timeout) {
             ULONG ctl = VideoPortReadRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_CPUCTL));
             ULONG status = VideoPortReadRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_MAILBOX0));
-            ULONG64 verified = ((volatile GSP_FW_WPR_META_V1 *)wprMeta)->Verified;
+            ULONG64 verified = ((volatile GspFwWprMeta *)wprMeta)->verified;
             if (ctl != lastCtl) {
                 LogStr("NVX [SEC2]: CPUCTL transition: 0x"); LogHex(lastCtl);
                 LogStr(" -> 0x"); LogHex(ctl); LogStr("\n");
@@ -2614,7 +2615,7 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
             if (ctl != 0xffffffff) {
                 if (!(ctl & 0x10)) sawRunning = TRUE;
                 if ((ctl & 0x10) && (sawRunning || status != (ULONG)wprPhys.QuadPart ||
-                                     verified == GSP_FW_WPR_VERIFIED)) break;
+                                     verified == GSP_FW_WPR_META_VERIFIED)) break;
             }
             timeout--;
             VideoPortStallExecution(50);
@@ -2627,7 +2628,7 @@ BOOLEAN NvxGspInitSubsystem(PVOID HwDeviceExtension) {
     {
         ULONG status = VideoPortReadRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_MAILBOX0));
         ULONG status1 = VideoPortReadRegisterUlong((PULONG)(bar0+NV_PSEC_FALCON_MAILBOX1));
-        ULONG64 verified = ((volatile GSP_FW_WPR_META_V1 *)wprMeta)->Verified;
+        ULONG64 verified = ((volatile GspFwWprMeta *)wprMeta)->verified;
         LogStr("NVX [SEC2]: Halted. Mailbox0: "); LogHex(status);
         LogStr(" Mailbox1: "); LogHex(status1);
         LogStr(" Verified: "); LogHex(verified);

@@ -39,6 +39,26 @@
 #define NVX_SEC2_REG(offset)           (NVX_SEC2_BASE + (offset))
 #define NVX_GSP_RISCV_REG(offset)      (NVX_GSP_RISCV_BASE + (offset))
 
+/* Official Upstream OpenRM GSP Metadata & Layout definitions */
+#include "gsp/gsp_fw_wpr_meta.h"
+
+/* Official Upstream OpenRM Message Queue definitions */
+#include "msgq/msgq.h"
+#include "msgq/msgq_priv.h"
+
+/* Upstream OpenRM VBIOS BIT (BIOS Information Table) definitions */
+#define NV_VBIOS_BIT_HEADER_ID                     0xB8FF
+#define NV_VBIOS_BIT_HEADER_SIGNATURE              0x00544942  /* "BIT\0" */
+#define NV_VBIOS_BIT_HEADER_SIZE_OFFSET            8
+
+#define NV_VBIOS_BIT_TOKEN_BIOSDATA                0x42
+#define NV_VBIOS_BIT_TOKEN_FALCON_DATA             0x70
+
+#define NV_VBIOS_FALCON_UCODE_ENTRY_APPID_SEC_LIC  0x05
+#define NV_VBIOS_FALCON_UCODE_ENTRY_APPID_FWSEC_PR 0x85
+
+#define NV_VBIOS_BCRT30_RSA3K_SIG_SIZE             384
+
 /* Upstream OpenRM GPU Device Database */
 #include "include/nvx_gpu_table.h"
 

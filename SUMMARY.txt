@@ -6,14 +6,20 @@ CONFIRMED v2.0.0.1 UPSTREAM INTEGRATION RESULTS:
 - Created `src_driver/include/nvx_nvidia_open_shim.h` utilizing official NVIDIA SDK headers
   (`clc57e.h`, `cla06f.h`, `clc36f.h`, `ctrl0073.h`, `ctrl0080.h`, `ctrl2080.h`, `ctrl5070system.h`)
   and published swref headers (`dev_gsp.h`, `dev_falcon_v4.h`, `dev_disp.h`, `dev_sec_pri.h`, `dev_riscv_pri.h`).
-- Eliminated raw magic numbers and hardcoded control hex constants in `nvx_gsp.c`.
+- Completed 3-step bringup transitioning GPU init to upstream NVIDIA OpenRM:
+  * Step 1: Upstream shared messaging queue engine (`msgq.c`) and official WPR metadata layouts (`gsp_fw_wpr_meta.h`).
+  * Step 2: OpenRM HAL shim (`nvx_openrm_shim.c`, `nvx_openrm_shim.h`) mapping VideoPort/VMM to OpenRM primitives.
+  * Step 3: Upstream GSP booter sequence and BIT/Falcon table parser with RSA-3K BCRT30 structures.
+- Tested and verified each step on bare-metal RTX 3070 VFIO in Windows XP x64 with clean ACPI soft shutdowns (`system_powerdown`).
+- Eliminated raw magic numbers and hardcoded control hex constants in `nvx_gsp.c` and `nvx_vbios.c`.
 - Generated `src_driver/include/nvx_gpu_table.h` from official upstream `g_nv_name_released.h`
   supporting 216 modern NVIDIA GPUs with authentic PCI Device ID and device name lookup.
 - Implemented dynamic EDID detailed timing and resolution generation on both primary and secondary
   heads, replacing hardcoded resolution lists.
 - Full 32-bit and 64-bit cross-compilation verified:
-  - 64-bit XDDM driver (`nvxmp.sys` and `nvxdisp.dll`) builds cleanly and passes all host tests.
+  - 64-bit XDDM driver (`nvxmp.sys` and `nvxdisp.dll`) builds cleanly and passes all 8 host unit tests.
   - 32-bit Windows 98 SE VxD driver (`nvx.vxd`) links cleanly against core 32-bit miniport routines.
+  - Architecture ready for future Windows 2000 / XP 32-bit XDDM bringup and OpenGL context scaffolding.
 - Updated all driver version references to 2.0.0.1 across INF, driver binaries, and registry.
 - Cleaned untracked obsolete backups, old zip archives, and unneeded external DRM tree clones.
 

@@ -3,28 +3,29 @@ set -euo pipefail
 trap '' HUP
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$ROOT_DIR"
 
-NVX_RUN_LOG="$SCRIPT_DIR/test_logs/win98-$(date +%Y%m%d-%H%M%S).log"
-ln -sfn "$NVX_RUN_LOG" "$SCRIPT_DIR/vm_serial.log"
+NVX_RUN_LOG="$ROOT_DIR/test_logs/xp_v2_$(date +%Y%m%d-%H%M%S).log"
+ln -sfn "$NVX_RUN_LOG" "$ROOT_DIR/vm_serial.log"
 touch "$NVX_RUN_LOG"
 
 MAX_RETRIES="${MAX_RETRIES:-10}"
-BOOT_TIMEOUT="${BOOT_TIMEOUT:-30}"
+BOOT_TIMEOUT="${BOOT_TIMEOUT:-35}"
 
 echo "=========================================================="
-echo " Starting Windows 98 SE VFIO Runner with Auto-Retry"
+echo " Starting Windows XP x64 VFIO Runner with Auto-Retry"
 echo " Serial log: $NVX_RUN_LOG"
 echo " Max retries: $MAX_RETRIES | Boot detection timeout: ${BOOT_TIMEOUT}s"
 echo "=========================================================="
 
 attempt=1
 while [ "$attempt" -le "$MAX_RETRIES" ]; do
-    echo "==> [Attempt $attempt/$MAX_RETRIES] Launching Windows 98 VM..."
+    echo "==> [Attempt $attempt/$MAX_RETRIES] Launching Windows XP VM..."
     > "$NVX_RUN_LOG"
 
     # Start VM in background
-    ./run_vfio_vm_win98.sh < /dev/null &
+    NVX_SERIAL_LOG="$NVX_RUN_LOG" ./run_vfio_vm.sh < /dev/null &
     VM_PID=$!
 
     # Watch for serial progress
@@ -36,19 +37,18 @@ while [ "$attempt" -le "$MAX_RETRIES" ]; do
             break
         fi
 
-        if grep -q "\[WIN98-BOOT\]" "$NVX_RUN_LOG" 2>/dev/null || \
-           grep -q "\[DOS-CHECK\]" "$NVX_RUN_LOG" 2>/dev/null || \
-           grep -q "NVX" "$NVX_RUN_LOG" 2>/dev/null; then
-            echo "==> Boot confirmed! Windows 98 is actively booting."
+        if grep -q "NVX" "$NVX_RUN_LOG" 2>/dev/null || \
+           grep -q "Miniport" "$NVX_RUN_LOG" 2>/dev/null; then
+            echo "==> Boot confirmed! Windows XP kernel/driver is actively booting."
             booted=1
             break
         fi
     done
 
     if [ "$booted" -eq 1 ]; then
-        echo "==> Connected to guest (PID $VM_PID). Monitoring session..."
+        echo "==> Driver activity confirmed (PID $VM_PID). Monitoring session..."
         wait "$VM_PID" || true
-        echo "==> Windows 98 session completed."
+        echo "==> Windows XP session completed."
         exit 0
     else
         echo "==> No serial activity within ${BOOT_TIMEOUT}s; GPU did not boot cleanly. Retrying..."

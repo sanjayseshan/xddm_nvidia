@@ -84,4 +84,5 @@ qemu-system-x86_64 \
     -object input-linux,id=logitech_mouse,evdev="$LOGITECH_MOUSE" \
     -serial "file:$NVX_SERIAL_LOG" \
     -no-reboot \
+    -monitor unix:/tmp/qemu-monitor.sock,server,nowait \
     -monitor stdio

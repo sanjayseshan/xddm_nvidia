@@ -6,8 +6,12 @@ This repository provides open experimental display drivers bringing modern **NVI
 
 ### Version 2.0.0.1 Upstream Architecture
 Version 2 integrates NVIDIA's official open-source kernel repository as a git submodule (`open-gpu-kernel-modules`, branch `535.113.01`):
-- **Upstream Open-GPU Headers & Shims (`nvx_nvidia_open_shim.h`):** Replaced hardcoded control hex constants and ad-hoc register declarations with official NVIDIA SDK classes (`clc57e.h`, `cla06f.h`, `clc36f.h`), controls (`ctrl0073.h`, `ctrl2080.h`, `ctrl5070system.h`), and swref registers (`dev_gsp.h`, `dev_falcon_v4.h`, `dev_disp.h`).
+- **Upstream OpenRM HAL Shim (`nvx_openrm_shim.c` / `nvx_openrm_shim.h`):** Provides a clean Hardware Abstraction Layer mapping VideoPort (NT/2000/XP 32-bit & 64-bit) and VMM (Win98 SE VxD) to OpenRM primitives (`GPU_REG_RD32`/`GPU_REG_WR32`, memory manipulation, microsecond stalls, and GSP doorbell notifications).
+- **Official OpenRM Message Queue (`msgq.c`):** Directly compiles and links upstream `src/common/shared/msgq/msgq.c` into both 64-bit and 32-bit driver binaries for bidirectional host-GSP messaging queues.
+- **Upstream VBIOS BIT & Falcon Parser:** Uses official OpenRM specifications (`NV_VBIOS_BIT_HEADER_ID`, `NV_VBIOS_BIT_TOKEN_*`, `FALCON_UCODE_TABLE_*`, RSA-3K BCRT30 structures) for authentic VBIOS probing and FWSEC/FRTS booter execution.
+- **Upstream Open-GPU Headers & Shims (`nvx_nvidia_open_shim.h`):** Official NVIDIA SDK classes (`clc57e.h`, `cla06f.h`, `clc36f.h`), controls (`ctrl0073.h`, `ctrl2080.h`, `ctrl5070system.h`), and swref registers (`dev_gsp.h`, `dev_falcon_v4.h`, `dev_disp.h`).
 - **Comprehensive Upstream GPU Table (`nvx_gpu_table.h`):** Auto-generated from official `g_nv_name_released.h` database covering 216 modern GPUs for authentic hardware detection and string reporting.
+- **Cross-Target Architecture (XP x64, Win2K/XP 32-bit, Win98 SE):** Unifies core miniport logic across 64-bit and 32-bit platforms, establishing foundations for future Windows 2000 / XP 32-bit XDDM releases and OpenGL context scaffolding.
 - **Dynamic EDID Detailed Timing & Resolution Generation:** Eliminates hardcoded monitor resolution tables on both Windows XP and Windows 98 SE, reading native monitor modes directly from EDID detailed timing descriptors.
 
 Both operating systems are confirmed driving **dual physical monitors simultaneously** with an extended desktop:
@@ -137,10 +141,12 @@ To update an existing Windows 98 disk image offline:
 
 ## Hardware Testing & Virtualization
 
-Automated test scripts allow rapid iteration inside QEMU/KVM with the physical RTX 3070 bound to `vfio-pci`:
-- `./test_full_driver.sh`: Builds drivers, syncs to offline XP guest disk, and launches the VM.
-- `./run_test_vm_win98.sh`: Syncs to offline Windows 98 guest disk and launches the VM.
-- `./reset_test_gpu.sh`: Cycles GPU PCIe power state and restores host VFIO binding.
+Automated test scripts in `test/` allow rapid iteration inside QEMU/KVM with the physical RTX 3070 bound to `vfio-pci`:
+- `./test/run_all_tests.sh`: Runs all driver host unit tests and builds both 64-bit and 32-bit driver binaries.
+- `./test/test_full_driver.sh`: Builds drivers, syncs to offline XP guest disk, and launches the VM.
+- `./test/run_vfio_xp_autoretry.sh`: Auto-retrying Windows XP x64 VFIO bringup and monitoring.
+- `./test/run_vfio_win98_autoretry.sh`: Auto-retrying Windows 98 SE VFIO bringup and monitoring.
+- `./test/reset_test_gpu.sh`: Cycles GPU PCIe power state and restores host VFIO binding.
 
 ---
 
@@ -149,13 +155,15 @@ Automated test scripts allow rapid iteration inside QEMU/KVM with the physical R
 ```
 ├── dist_full/           # Windows XP x64 release files (nvxmp.sys, nvxdisp.dll, nvx.inf, gsp_ga104.bin)
 ├── dist_win98/          # Windows 98 SE release files (nvx.drv, nvx2.drv, nvx.vxd, nvx.inf, attach_sec.exe)
-├── src_driver/          # Unified GA104 miniport engine, GSP/RPC/MMU/Display code, and host tests
+├── src_driver/          # Unified GA104 miniport engine, GSP/RPC/MMU/Display code, and OpenRM HAL shim
 ├── src_disp/            # Windows XP x64 GDI display driver
 ├── src_win98/           # Windows 98 SE components:
 │   ├── winvbe_drv/      # 16-bit DIB Engine display drivers (nvx.drv, nvx2.drv)
 │   ├── shim/            # Ring 0 NT VideoPort to VMM translation layer
 │   ├── attach_sec.c     # Win32 secondary monitor attachment utility
 │   └── build_vxd.sh     # VxD compilation and packaging script
+├── test/                # Test infrastructure, automated test runners, and QEMU/VFIO harness
+├── open-gpu-kernel-modules/ # Official NVIDIA OpenRM upstream repository (submodule)
 ├── FIRMWARE_PROVENANCE.md # NVIDIA GSP/SEC2 firmware checksums and provenance
 └── SUMMARY.txt          # Cumulative project hardware test log and history
 ```

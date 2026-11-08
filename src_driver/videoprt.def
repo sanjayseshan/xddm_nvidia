@@ -17,6 +17,8 @@ EXPORTS
     VideoPortStallExecution
     VideoPortReadRegisterUlong
     VideoPortWriteRegisterUlong
+    VideoPortReadRegisterUchar
+    VideoPortWriteRegisterUchar
     VideoPortGetDmaAdapter
     VideoPortPutDmaAdapter
     VideoPortSetBusData

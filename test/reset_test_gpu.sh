@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 
-workspace = Path(__file__).resolve().parent
+workspace = Path(__file__).resolve().parent.parent
 pci = Path('/sys/bus/pci/devices')
 gpu = pci / '0000:01:00.0'
 functions = ['0000:01:00.0', '0000:01:00.1']

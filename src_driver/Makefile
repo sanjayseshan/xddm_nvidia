@@ -2,7 +2,7 @@ CC = x86_64-w64-mingw32-gcc
 EXPERIMENTAL_GSP ?= 0
 UNSAFE_GSP_PROBE ?= 0
 OPEN_GPU_DIR = ../open-gpu-kernel-modules
-CFLAGS = -DNVX_ENABLE_EXPERIMENTAL_GSP=$(EXPERIMENTAL_GSP) -DNVX_ENABLE_UNSAFE_GSP_PROBE=$(UNSAFE_GSP_PROBE) -Wall -Wextra -O2 -nostdlib -m64 -fno-builtin -fno-stack-protector -I. -Iinclude -I$(OPEN_GPU_DIR)/src/common/sdk/nvidia/inc -I$(OPEN_GPU_DIR)/src/common/inc
+CFLAGS = -DNVX_ENABLE_EXPERIMENTAL_GSP=$(EXPERIMENTAL_GSP) -DNVX_ENABLE_UNSAFE_GSP_PROBE=$(UNSAFE_GSP_PROBE) -Wall -Wextra -O2 -nostdlib -m64 -fno-builtin -fno-stack-protector -I. -Iinclude -I$(OPEN_GPU_DIR)/src/common/sdk/nvidia/inc -I$(OPEN_GPU_DIR)/src/common/inc -I$(OPEN_GPU_DIR)/src/nvidia/arch/nvalloc/common/inc -I$(OPEN_GPU_DIR)/src/common/shared/msgq/inc
 LDFLAGS = -shared -Wl,--entry=DriverEntry -Wl,--subsystem,native:5.2 -nostartfiles -Wl,--image-base,0x10000 -Wl,--file-alignment,0x200 -Wl,--section-alignment,0x1000 -L. -lvideoprt -lntoskrnl
 
 all: nvxmp.sys
@@ -15,8 +15,8 @@ nvxmp.sys: FORCE
 gsp_blob.o: ../dist_full/gsp_ga104.bin
 	cd .. && x86_64-w64-mingw32-objcopy -I binary -O pe-x86-64 -B i386:x86-64 dist_full/gsp_ga104.bin src_driver/gsp_blob.o
 
-nvxmp.sys: nvxmp.c nvx_gsp.c nvx_mmu.c nvx_mmu.h nvx_vbe.c nvx_vbe.h nvx_fw.c nvx_fw.h nvx_vbios.c nvx_vbios.h nvx_gsp.h miniport.h bootloader_blob.h booter_load_blob.h gsp_blob.o nvxmp.def libvideoprt.a
-	$(CC) $(CFLAGS) -o $@ nvxmp.c nvx_gsp.c nvx_mmu.c nvx_vbe.c nvx_fw.c nvx_vbios.c nvx_rpc.c nvx_seq.c gsp_blob.o nvxmp.def $(LDFLAGS)
+nvxmp.sys: nvxmp.c nvx_gsp.c nvx_mmu.c nvx_mmu.h nvx_vbe.c nvx_vbe.h nvx_fw.c nvx_fw.h nvx_vbios.c nvx_vbios.h nvx_gsp.h nvx_openrm_shim.c nvx_openrm_shim.h miniport.h bootloader_blob.h booter_load_blob.h gsp_blob.o nvxmp.def libvideoprt.a $(OPEN_GPU_DIR)/src/common/shared/msgq/msgq.c
+	$(CC) $(CFLAGS) -o $@ nvxmp.c nvx_gsp.c nvx_mmu.c nvx_vbe.c nvx_fw.c nvx_vbios.c nvx_rpc.c nvx_seq.c nvx_openrm_shim.c $(OPEN_GPU_DIR)/src/common/shared/msgq/msgq.c gsp_blob.o nvxmp.def $(LDFLAGS)
 
 libvideoprt.a: videoprt.def
 	x86_64-w64-mingw32-dlltool -d videoprt.def -l libvideoprt.a
@@ -38,7 +38,8 @@ check:
 	ASAN_OPTIONS=detect_leaks=0 /tmp/nvx-firmware-test
 	sh tests/run_gsp_host_test.sh
 	sh tests/run_vbe_host_test.sh
-	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I. -o /tmp/nvx-vbios-test tests/vbios_test.c nvx_vbios.c
+	sh tests/run_openrm_shim_test.sh
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I. -Iinclude -I$(OPEN_GPU_DIR)/src/common/sdk/nvidia/inc -I$(OPEN_GPU_DIR)/src/common/inc -I$(OPEN_GPU_DIR)/src/nvidia/arch/nvalloc/common/inc -I$(OPEN_GPU_DIR)/src/common/shared/msgq/inc -o /tmp/nvx-vbios-test tests/vbios_test.c nvx_vbios.c
 	ASAN_OPTIONS=detect_leaks=0 /tmp/nvx-vbios-test
 
 HOSTCC ?= cc
@@ -54,7 +55,7 @@ full: nvxmp.sys
 
 package-full: EXPERIMENTAL_GSP=1
 package-full: all
-	cp ../dist/nvxdisp.dll ../dist_full/nvxdisp.dll
+	[ ! -f ../dist/nvxdisp.dll ] || cp ../dist/nvxdisp.dll ../dist_full/nvxdisp.dll
 	cp nvxmp.sys ../dist_full/nvxmp.sys
 	genisoimage -quiet -J -R -o ../nvx_driver_full.iso ../dist_full
 

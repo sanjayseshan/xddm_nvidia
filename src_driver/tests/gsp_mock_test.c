@@ -46,6 +46,14 @@ PVOID VideoPortAllocateCommonBuffer(PVOID e,PVOID a,ULONG n,PPHYSICAL_ADDRESS pa
 }
 VOID VideoPortFreeCommonBuffer(PVOID e,ULONG n,PVOID p,PHYSICAL_ADDRESS pa,BOOLEAN c)
 { (void)e;(void)n;(void)pa;(void)c; free(p); }
+UCHAR VideoPortReadRegisterUchar(PUCHAR p) {
+    ULONG off = (ULONG)((uintptr_t)p - (uintptr_t)regs);
+    return ((UCHAR *)regs)[off % sizeof(regs)];
+}
+VOID VideoPortWriteRegisterUchar(PUCHAR p, UCHAR val) {
+    ULONG off = (ULONG)((uintptr_t)p - (uintptr_t)regs);
+    ((UCHAR *)regs)[off % sizeof(regs)] = val;
+}
 ULONG VideoPortReadRegisterUlong(PULONG p) {
     ULONG off=regoff(p);
     if(off>=0x700000&&off<0x710000) {
@@ -461,15 +469,15 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             volatile GSP_FW_WPR_META_V1 *meta=(void *)((PUCHAR)dev.GspDmaVirtual+GSP_WPR_META_OFFSET);
             NVX_MSGQ_HEADER *q=dev.StatQueueVirtual;
             ULONG *entry=(void *)((PUCHAR)q+4096);
-            assert(meta->FbSize==0x200000000ULL); /* not BAR1's 256MB */
-            assert(meta->BootloaderCodeOffset==0x1800);
-            assert(meta->BootloaderDataOffset==0x800);
-            assert(meta->GspFwHeapSize>=0x6900000);
-            assert(meta->GspFwWprEnd==0x10000000ULL);
-            assert(meta->FrtsOffset==0x0ff00000ULL);
-            assert(meta->GspFwWprStart<meta->FrtsOffset);
+            assert(meta->fbSize==0x200000000ULL); /* not BAR1's 256MB */
+            assert(meta->bootloaderCodeOffset==0x1800);
+            assert(meta->bootloaderDataOffset==0x800);
+            assert(meta->gspFwHeapSize>=0x6900000);
+            assert(meta->gspFwWprEnd==0x10000000ULL);
+            assert(meta->frtsOffset==0x0ff00000ULL);
+            assert(meta->gspFwWprStart<meta->frtsOffset);
             /* Booter need not write the sysmem metadata back. */
-            meta->Verified=0;
+            meta->verified=0;
             regs[NV_PSEC_FALCON_MAILBOX0/4]=0;
             regs[NV_PGSP_FALCON_RISCV_STAT/4]=0x80;
             q->MsgSize=4096;q->MsgCount=63;q->EntryOff=4096;q->WritePtr=7;
