@@ -39,6 +39,7 @@ extern LONG NTAPI ZwWriteFile(HANDLE, HANDLE, PVOID, PVOID, PNVX_IO_STATUS_BLOCK
     PVOID, ULONG, PLARGE_INTEGER, PULONG);
 extern UCHAR NTAPI KeGetCurrentIrql(VOID);
 
+#ifndef __VXDKERNEL__
 #define NVX_LOG_RING_BYTES 1048576UL
 #define NVX_LOG_FLUSH_CHUNK 1024UL
 #define NVX_LOG_PASSIVE_LEVEL 0
@@ -157,6 +158,10 @@ static VOID NvxLogFlush(VOID)
     }
     __sync_lock_release(&g_LogFlushBusy);
 }
+#else
+static VOID NvxLogAppend(const CHAR *text, ULONG length) { (void)text; (void)length; }
+static VOID NvxLogFlush(VOID) {}
+#endif
 
 /* COM1 Direct Serial Logging (I/O Port 0x3F8) for QEMU VM */
 static inline unsigned char inb(unsigned short port) {
@@ -1042,7 +1047,7 @@ VP_STATUS HwVidFindAdapter(
     (void)ArgumentString;
 
     NvxLogFlush();
-    *Again = 0;
+    if (Again) *Again = 0;
 
     LogStr("NVX: HwVidFindAdapter entered\n");
 
@@ -1255,7 +1260,7 @@ BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
             LogStr("\n");
         }
 
-#if NVX_ENABLE_EXPERIMENTAL_GSP
+#if NVX_ENABLE_EXPERIMENTAL_GSP && !defined(__VXDKERNEL__)
 #if NVX_ENABLE_UNSAFE_GSP_PROBE
         {
             BOOLEAN initOk=NvxGspInitSubsystem(HwDeviceExtension);
@@ -1280,6 +1285,8 @@ BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
             }
         }
 #endif
+#elif defined(__VXDKERNEL__)
+        LogStr("NVX [GSP]: Win98 VxD deferred GSP bootstrap (scheduled for Init_Complete)\n");
 #else
         LogStr("NVX [GSP]: Experimental bootstrap disabled; preserving BIOS scanout.\n");
 #endif
@@ -1875,6 +1882,7 @@ BOOLEAN HwVidStartIO(
     }
 
     case IOCTL_NVX_GET_LOG: {
+#ifndef __VXDKERNEL__
         ULONG maxBytes = RequestPacket->OutputBufferLength;
         PUCHAR outBuf = (PUCHAR)RequestPacket->OutputBuffer;
         ULONG count = 0;
@@ -1895,6 +1903,9 @@ BOOLEAN HwVidStartIO(
         g_LogReadSequence += count;
         statusBlock->Information = count;
         status = NO_ERROR;
+#else
+        status = ERROR_INVALID_FUNCTION;
+#endif
         break;
     }
 

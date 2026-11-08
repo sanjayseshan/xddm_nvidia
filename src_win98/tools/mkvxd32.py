@@ -26,13 +26,17 @@ def build(name, a0, a1):
     recs = [b''] * npages
     for off, tgt in relocs:
         pg = off // PAGE
-        stype = 0x07
-        if (off % PAGE) + 4 > PAGE:
-            stype |= 0x20
-        if tgt < 0x10000:
-            recs[pg] += struct.pack('<BBHBH', stype, 0x00, off % PAGE, 1, tgt)
+        tgt_flag = 0x10 if tgt >= 0x10000 else 0x00
+        tgt_fmt = 'I' if tgt >= 0x10000 else 'H'
+        if (off % PAGE) + 4 <= PAGE:
+            recs[pg] += struct.pack(f'<BBHB{tgt_fmt}', 0x07, tgt_flag, off % PAGE, 1, tgt)
         else:
-            recs[pg] += struct.pack('<BBHBI', stype, 0x10, off % PAGE, 1, tgt)
+            # Fixup straddles 4KB page boundary: per LE spec, page N uses positive offset,
+            # and page N+1 uses negative offset. Bit 5 (0x20) is SOURCE_LIST and must NOT be set.
+            recs[pg] += struct.pack(f'<BBHB{tgt_fmt}', 0x07, tgt_flag, off % PAGE, 1, tgt)
+            if pg + 1 < npages:
+                neg_off = (off % PAGE) - PAGE
+                recs[pg + 1] += struct.pack(f'<BBhB{tgt_fmt}', 0x07, tgt_flag, neg_off, 1, tgt)
     fixrec = b''.join(recs)
     fixpage = b''
     acc = 0

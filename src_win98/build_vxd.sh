@@ -14,7 +14,7 @@ OBJCOPY="i686-w64-mingw32-objcopy"
 LIBGCC="/usr/lib/gcc/i686-w64-mingw32/12-win32/libgcc.a"
 
 OPEN_GPU_DIR="$ROOT_DIR/open-gpu-kernel-modules"
-CFLAGS="-m32 -O2 -Wall -Wextra -Wno-unused-parameter -Wno-pointer-to-int-cast -fno-pie -fno-stack-protector -falign-functions=16 -falign-labels=16 -falign-loops=16 -falign-jumps=16 -D__VXDKERNEL__ -DNVX_ENABLE_EXPERIMENTAL_GSP=1 -I$ROOT_DIR/src_driver -I$ROOT_DIR/src_driver/include -I$OPEN_GPU_DIR/src/common/sdk/nvidia/inc -I$OPEN_GPU_DIR/src/common/inc -I$OPEN_GPU_DIR/src/nvidia/arch/nvalloc/common/inc -I$OPEN_GPU_DIR/src/common/shared/msgq/inc -I$SCRIPT_DIR/shim -nostdlib -fno-builtin"
+CFLAGS="-m32 -O2 -Wall -Wextra -Wno-unused-parameter -Wno-pointer-to-int-cast -fno-pie -fno-stack-protector -falign-functions=32 -falign-labels=16 -falign-loops=16 -falign-jumps=16 -D__VXDKERNEL__ -DNVX_ENABLE_EXPERIMENTAL_GSP=1 -I$ROOT_DIR/src_driver -I$ROOT_DIR/src_driver/include -I$OPEN_GPU_DIR/src/common/sdk/nvidia/inc -I$OPEN_GPU_DIR/src/common/inc -I$OPEN_GPU_DIR/src/nvidia/arch/nvalloc/common/inc -I$OPEN_GPU_DIR/src/common/shared/msgq/inc -I$SCRIPT_DIR/shim -nostdlib -fno-builtin"
 
 echo "==> 1. Assembling VxD entry and VMM wrappers..."
 nasm -f win32 "$SCRIPT_DIR/vxd_entry.asm" -o "$OBJ_DIR/vxd_entry.o"
@@ -41,10 +41,27 @@ SECTIONS
     .all : {
         *(.text.entry)
         . = ALIGN(64);
+        *videoprt_shim.o(.text*)
+        . = ALIGN(64);
+        *nvxmp.o(.text*)
+        . = ALIGN(64);
+        *nvx_openrm_shim.o(.text*)
+        . = ALIGN(64);
+        *nvx_gsp.o(.text*)
+        . = ALIGN(64);
+        *nvx_fw.o(.text*)
+        . = ALIGN(64);
+        *nvx_rpc.o(.text*)
+        . = ALIGN(64);
+        *msgq.o(.text*)
+        . = ALIGN(64);
         *(.text*)
+        . = ALIGN(4096);
         *(.rdata*)
         *(.rodata*)
+        . = ALIGN(4096);
         *(.data*)
+        . = ALIGN(4096);
         *(.bss*)
         *(COMMON)
     }
@@ -64,10 +81,27 @@ SECTIONS
     .all : {
         *(.text.entry)
         . = ALIGN(64);
+        *videoprt_shim.o(.text*)
+        . = ALIGN(64);
+        *nvxmp.o(.text*)
+        . = ALIGN(64);
+        *nvx_openrm_shim.o(.text*)
+        . = ALIGN(64);
+        *nvx_gsp.o(.text*)
+        . = ALIGN(64);
+        *nvx_fw.o(.text*)
+        . = ALIGN(64);
+        *nvx_rpc.o(.text*)
+        . = ALIGN(64);
+        *msgq.o(.text*)
+        . = ALIGN(64);
         *(.text*)
+        . = ALIGN(4096);
         *(.rdata*)
         *(.rodata*)
+        . = ALIGN(4096);
         *(.data*)
+        . = ALIGN(4096);
         *(.bss*)
         *(COMMON)
     }

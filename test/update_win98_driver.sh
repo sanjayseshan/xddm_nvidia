@@ -120,6 +120,8 @@ upload "$PKG_DIR/attach_sec.exe" /DRIVERS/NVX/attach_sec.exe
 upload "$PKG_DIR/attach_sec.exe" /ATTACH2.EXE
 upload "$NVX_ROOT/src_win98/nvx_reg.reg" /NVX_REG.REG
 upload "$NVX_ROOT/src_win98/qipnp.reg" /QIPNP.REG
+upload "$NVX_ROOT/src_win98/slog.com" /SLOG.COM
+upload "$NVX_ROOT/src_win98/slog.com" /WINDOWS/SLOG.COM
 upload "$NVX_ROOT/src_win98/autoexec.bat" /AUTOEXEC.BAT
 upload "$TMP_SYS_INI" /WINDOWS/SYSTEM.INI
 upload "$TMP_WIN_INI" /WINDOWS/WIN.INI

@@ -17,7 +17,7 @@ _DDB:
     db 1, 0                 ; 08h: DDB_Dev_Major_Version, DDB_Dev_Minor_Version
     dw 0                    ; 0Ah: DDB_Flags
     db "NVX     "           ; 0Ch: DDB_Name (8 chars blank padded)
-    dd 0x28000000           ; 14h: DDB_Init_Order (VDD_Init_Order)
+    dd 0x02800001           ; 14h: DDB_Init_Order (VDD_Init_Order + 1 for MiniVDD)
     dd _Control_Dispatcher  ; 18h: DDB_Control_Proc
     dd 0                    ; 1Ch: DDB_V86_API_Proc
     dd 0                    ; 20h: DDB_PM_API_Proc
@@ -38,8 +38,6 @@ _Control_Dispatcher:
     je .on_device_init
     cmp eax, 0x00000002     ; Init_Complete
     je .on_init_complete
-    cmp eax, 0x0000003A     ; PNP_NEW_DEVNODE
-    je .on_device_init
     cmp eax, 0x00000023     ; W32_DeviceIOControl
     je .on_device_io_control
     clc                     ; Success

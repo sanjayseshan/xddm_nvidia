@@ -378,7 +378,8 @@ ULONG VideoPortInitialize(PVOID Context1, PVOID Context2, PVIDEO_HW_INITIALIZATI
     VideoPortZeroMemory(&g_SecondaryDevExt, sizeof(g_SecondaryDevExt));
 
     /* 1. Find Primary Adapter */
-    ULONG status = HwInitData->HwFindAdapter(&g_PrimaryDevExt, NULL, NULL, &configInfo, NULL);
+    UCHAR again = 0;
+    ULONG status = HwInitData->HwFindAdapter(&g_PrimaryDevExt, NULL, NULL, &configInfo, &again);
     if (status != NO_ERROR) {
         NvxShimLog("NVX [SHIM]: HwFindAdapter failed!\n");
         return status;
@@ -534,9 +535,10 @@ VOID NvxVxDDeviceInit(VOID) {
     NvxShimLog("NVX [SHIM]: DriverEntry returned: 0x");
     NvxShimLogHex(st);
     NvxShimLog("\n");
-    if (g_PrimaryDevExt.PhysicalBar1.LowPart) {
-        NvxEnableWriteCombining(g_PrimaryDevExt.PhysicalBar1.LowPart, 0x10000000); /* 256MB BAR1 aperture */
-    }
+    /* MTRR manipulation via rdmsr/wrmsr deferred to avoid hypervisor #GP faults */
+    /* if (g_PrimaryDevExt.PhysicalBar1.LowPart) {
+        NvxEnableWriteCombining(g_PrimaryDevExt.PhysicalBar1.LowPart, 0x10000000);
+    } */
 }
 
 VOID NvxBootstrapGsp(VOID) {
