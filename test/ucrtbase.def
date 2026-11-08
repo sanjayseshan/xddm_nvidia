@@ -1,0 +1,60 @@
+LIBRARY ucrtbase.dll
+EXPORTS
+    __acrt_iob_func
+    __stdio_common_vfprintf
+    __stdio_common_vsprintf
+    __stdio_common_vsscanf
+    _assert
+    _dclass
+    _dsign
+    _errno = msvcrt._errno
+    _fdclass
+    _fdsign
+    _fileno = msvcrt._fileno
+    _fstat64i32
+    _putenv = msvcrt._putenv
+    _strdup = msvcrt._strdup
+    _stricmp = msvcrt._stricmp
+    abort = msvcrt.abort
+    atof = msvcrt.atof
+    atoi = msvcrt.atoi
+    bsearch = msvcrt.bsearch
+    calloc = msvcrt.calloc
+    clearerr = msvcrt.clearerr
+    cosf = msvcrt.cosf
+    exit = msvcrt.exit
+    expf = msvcrt.expf
+    fclose = msvcrt.fclose
+    feof = msvcrt.feof
+    ferror = msvcrt.ferror
+    fopen = msvcrt.fopen
+    fread = msvcrt.fread
+    free = msvcrt.free
+    fwrite = msvcrt.fwrite
+    getc = msvcrt.getc
+    getenv = msvcrt.getenv
+    isprint = msvcrt.isprint
+    isspace = msvcrt.isspace
+    logf = msvcrt.logf
+    malloc = msvcrt.malloc
+    memchr = msvcrt.memchr
+    memcmp = msvcrt.memcmp
+    memcpy = msvcrt.memcpy
+    memmove = msvcrt.memmove
+    memset = msvcrt.memset
+    modf = msvcrt.modf
+    powf = msvcrt.powf
+    qsort = msvcrt.qsort
+    realloc = msvcrt.realloc
+    sqrtf = msvcrt.sqrtf
+    strcat = msvcrt.strcat
+    strchr = msvcrt.strchr
+    strcmp = msvcrt.strcmp
+    strcpy = msvcrt.strcpy
+    strcspn = msvcrt.strcspn
+    strlen = msvcrt.strlen
+    strnlen
+    strpbrk = msvcrt.strpbrk
+    strrchr = msvcrt.strrchr
+    strstr = msvcrt.strstr
+    strtoul = msvcrt.strtoul

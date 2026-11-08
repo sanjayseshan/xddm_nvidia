@@ -47,6 +47,45 @@ while [ "$attempt" -le "$MAX_RETRIES" ]; do
 
     if [ "$booted" -eq 1 ]; then
         echo "==> Driver activity confirmed (PID $VM_PID). Monitoring session..."
+
+        # Monitor loop for test completion or timeout, then soft powerdown
+        for s in $(seq 1 120); do
+            sleep 1
+            if ! kill -0 "$VM_PID" 2>/dev/null; then
+                break
+            fi
+
+            # Send Enter key at key startup points to ensure automated logon
+            if [ "$s" -ge 8 ] && [ "$s" -le 24 ] && [ $((s % 4)) -eq 0 ]; then
+                echo "sendkey ret" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock 2>/dev/null || true
+            fi
+
+            if grep -q "TEST_COMPLETE" "$NVX_RUN_LOG" 2>/dev/null; then
+                echo "==> Test completion detected! Sending soft ACPI powerdown..."
+                echo "system_powerdown" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock 2>/dev/null || true
+                sleep 5
+                break
+            fi
+
+            # If desktop has been active for 55s, perform soft powerdown
+            if [ "$s" -ge 55 ] && grep -q "GPU solid fill" "$NVX_RUN_LOG" 2>/dev/null; then
+                echo "==> Desktop active session completed ($s s). Sending soft ACPI powerdown..."
+                echo "system_powerdown" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock 2>/dev/null || true
+                sleep 6
+                break
+            fi
+        done
+
+        # Graceful wait for VM exit, fallback to quit
+        if kill -0 "$VM_PID" 2>/dev/null; then
+            echo "system_powerdown" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock 2>/dev/null || true
+            sleep 4
+        fi
+        if kill -0 "$VM_PID" 2>/dev/null; then
+            echo "quit" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock 2>/dev/null || true
+            sleep 2
+        fi
+
         wait "$VM_PID" || true
         echo "==> Windows XP session completed."
         exit 0

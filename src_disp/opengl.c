@@ -54,10 +54,10 @@ DrvDescribePixelFormat(
 
     if (iPixelFormat == 1) {
         /* Format 1: Hardware double-buffered OpenGL */
-        ppfd->dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER | PFD_SUPPORT_GDI;
+        ppfd->dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER | PFD_SUPPORT_GDI | PFD_GENERIC_FORMAT | PFD_GENERIC_ACCELERATED;
     } else {
         /* Format 2: Single-buffered OpenGL */
-        ppfd->dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_SUPPORT_GDI;
+        ppfd->dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_SUPPORT_GDI | PFD_GENERIC_FORMAT | PFD_GENERIC_ACCELERATED;
     }
 
     return 2;
