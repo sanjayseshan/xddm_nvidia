@@ -557,6 +557,7 @@ VOID NvxBootstrapGsp(VOID) {
         NvxShimLog("NVX [BAR1]: VBIOS 0x1704 (NV_PBUS_BAR1_BLOCK) = 0x");
         NvxShimLogHex(vbiosBar1Block);
         NvxShimLog("\n");
+        NvxProbeFwsecRom(&g_PrimaryDevExt, bar0);
     }
 
     BOOLEAN ok = NvxGspInitSubsystem(&g_PrimaryDevExt);

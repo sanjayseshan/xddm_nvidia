@@ -570,7 +570,7 @@ cleanup:
     LogStr("NVX [FWSEC-DMA]: buffer scrubbed and released.\n");
 }
 
-static VOID NvxProbeFwsecRom(PVOID hwDeviceExtension,PUCHAR bar0)
+VOID NvxProbeFwsecRom(PVOID hwDeviceExtension,PUCHAR bar0)
 {
     NVX_PROM_CONTEXT prom;
     NVX_FWSEC_INFO info;
@@ -852,10 +852,10 @@ static VOID NvxInitSecondaryDisplayModes(PNVX_DEVICE_EXTENSION sec) {
     static const struct {
         ULONG w, h;
     } standardModes[] = {
-        { 3840, 2160 },
         { 2560, 1440 },
-        { 1920, 1200 },
         { 1920, 1080 },
+        { 1920, 1200 },
+        { 3840, 2160 },
         { 1680, 1050 },
         { 1600, 900 },
         { 1440, 900 },

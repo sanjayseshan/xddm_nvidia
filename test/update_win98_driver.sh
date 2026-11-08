@@ -89,6 +89,7 @@ sed -i '/display=/d' "$TMP_SYS_INI"
 sed -i '/\[386Enh\]/a display=*vdd,*vflatd' "$TMP_SYS_INI"
 sed -i '/minivdd=/d' "$TMP_SYS_INI"
 sed -i '/\[386Enh\]/a minivdd=nvx.vxd' "$TMP_SYS_INI"
+sed -i '/\[386Enh\]/a device=nvx.vxd' "$TMP_SYS_INI"
 sed -i 's/^Debug=.*/Debug=2/' "$TMP_SYS_INI"
 sed -i '/DibEngine=/d; /ShadowBuffer=/d' "$TMP_SYS_INI"
 sed -i '/\[WINVBE\]/a DibEngine=1\nShadowBuffer=1' "$TMP_SYS_INI"
@@ -138,6 +139,8 @@ upload "$PKG_DIR/nvx2.drv" /DRIVERS/NVX/nvx2.drv
 upload "$PKG_DIR/nvx.vxd" /WINDOWS/SYSTEM/nvx.vxd
 upload "$PKG_DIR/nvx.vxd" /WINDOWS/SYSTEM/VMM32/nvx.vxd
 upload "$PKG_DIR/nvx.vxd" /DRIVERS/NVX/nvx.vxd
+upload "$NVX_ROOT/dist_full/gsp_ga104.bin" /WINDOWS/SYSTEM/GSP_GA104.BIN
+upload "$NVX_ROOT/dist_full/gsp_ga104.bin" /GSP_GA104.BIN
 upload "$PKG_DIR/attach_sec.exe" /WINDOWS/ATTACH_SEC.EXE
 upload "$PKG_DIR/attach_sec.exe" /DRIVERS/NVX/attach_sec.exe
 upload "$PKG_DIR/attach_sec.exe" /ATTACH2.EXE
