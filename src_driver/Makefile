@@ -1,28 +1,39 @@
 CC = x86_64-w64-mingw32-gcc
+CC32 = i686-w64-mingw32-gcc
 EXPERIMENTAL_GSP ?= 0
 UNSAFE_GSP_PROBE ?= 0
 OPEN_GPU_DIR = ../open-gpu-kernel-modules
 CFLAGS = -DNVX_ENABLE_EXPERIMENTAL_GSP=$(EXPERIMENTAL_GSP) -DNVX_ENABLE_UNSAFE_GSP_PROBE=$(UNSAFE_GSP_PROBE) -Wall -Wextra -O2 -nostdlib -m64 -fno-builtin -fno-stack-protector -I. -Iinclude -I$(OPEN_GPU_DIR)/src/common/sdk/nvidia/inc -I$(OPEN_GPU_DIR)/src/common/inc -I$(OPEN_GPU_DIR)/src/nvidia/arch/nvalloc/common/inc -I$(OPEN_GPU_DIR)/src/common/shared/msgq/inc
+CFLAGS32 = -DNVX_ENABLE_EXPERIMENTAL_GSP=$(EXPERIMENTAL_GSP) -DNVX_ENABLE_UNSAFE_GSP_PROBE=$(UNSAFE_GSP_PROBE) -Wall -Wextra -O2 -nostdlib -m32 -fno-builtin -fno-stack-protector -I. -Iinclude -I$(OPEN_GPU_DIR)/src/common/sdk/nvidia/inc -I$(OPEN_GPU_DIR)/src/common/inc -I$(OPEN_GPU_DIR)/src/nvidia/arch/nvalloc/common/inc -I$(OPEN_GPU_DIR)/src/common/shared/msgq/inc
 LDFLAGS = -shared -Wl,--entry=DriverEntry -Wl,--subsystem,native:5.2 -nostartfiles -Wl,--image-base,0x10000 -Wl,--file-alignment,0x200 -Wl,--section-alignment,0x1000 -L. -lvideoprt -lntoskrnl
+LDFLAGS32 = -shared -Wl,--entry=_DriverEntry@8 -Wl,--subsystem,native:5.1 -nostartfiles -Wl,--image-base,0x10000 -Wl,--file-alignment,0x200 -Wl,--section-alignment,0x1000 -lvideoprt -lntoskrnl -lgcc
 
-all: nvxmp.sys
+all: nvxmp.sys nvxmp32.sys
 
 .PHONY: FORCE
 FORCE:
 
 nvxmp.sys: FORCE
+nvxmp32.sys: FORCE
 
 gsp_blob.o: ../dist_full/gsp_ga104.bin
 	cd .. && x86_64-w64-mingw32-objcopy -I binary -O pe-x86-64 -B i386:x86-64 dist_full/gsp_ga104.bin src_driver/gsp_blob.o
 
+gsp_blob32.o: ../dist_full/gsp_ga104.bin
+	cd .. && i686-w64-mingw32-objcopy -I binary -O pe-i386 -B i386 dist_full/gsp_ga104.bin src_driver/gsp_blob32.o
+	i686-w64-mingw32-objcopy --redefine-sym _binary_dist_full_gsp_ga104_bin_start=__binary_dist_full_gsp_ga104_bin_start --redefine-sym _binary_dist_full_gsp_ga104_bin_end=__binary_dist_full_gsp_ga104_bin_end gsp_blob32.o
+
 nvxmp.sys: nvxmp.c nvx_gsp.c nvx_mmu.c nvx_mmu.h nvx_vbe.c nvx_vbe.h nvx_fw.c nvx_fw.h nvx_vbios.c nvx_vbios.h nvx_gsp.h nvx_openrm_shim.c nvx_openrm_shim.h miniport.h bootloader_blob.h booter_load_blob.h gsp_blob.o nvxmp.def libvideoprt.a $(OPEN_GPU_DIR)/src/common/shared/msgq/msgq.c
 	$(CC) $(CFLAGS) -o $@ nvxmp.c nvx_gsp.c nvx_mmu.c nvx_vbe.c nvx_fw.c nvx_vbios.c nvx_rpc.c nvx_seq.c nvx_openrm_shim.c $(OPEN_GPU_DIR)/src/common/shared/msgq/msgq.c gsp_blob.o nvxmp.def $(LDFLAGS)
+
+nvxmp32.sys: nvxmp.c nvx_gsp.c nvx_mmu.c nvx_mmu.h nvx_vbe.c nvx_vbe.h nvx_fw.c nvx_fw.h nvx_vbios.c nvx_vbios.h nvx_gsp.h nvx_openrm_shim.c nvx_openrm_shim.h miniport.h bootloader_blob.h booter_load_blob.h gsp_blob32.o $(OPEN_GPU_DIR)/src/common/shared/msgq/msgq.c
+	$(CC32) $(CFLAGS32) -o $@ nvxmp.c nvx_gsp.c nvx_mmu.c nvx_vbe.c nvx_fw.c nvx_vbios.c nvx_rpc.c nvx_seq.c nvx_openrm_shim.c $(OPEN_GPU_DIR)/src/common/shared/msgq/msgq.c gsp_blob32.o $(LDFLAGS32)
 
 libvideoprt.a: videoprt.def
 	x86_64-w64-mingw32-dlltool -d videoprt.def -l libvideoprt.a
 
 clean:
-	rm -f nvxmp.sys libvideoprt.a gsp_blob.o
+	rm -f nvxmp.sys nvxmp32.sys libvideoprt.a gsp_blob.o gsp_blob32.o
 
 .PHONY: check
 check:

@@ -136,7 +136,14 @@ typedef struct _VIDEO_POWER_MANAGEMENT {
     ULONG PowerState;
 } VIDEO_POWER_MANAGEMENT, *PVIDEO_POWER_MANAGEMENT;
 
-typedef VP_STATUS (*PVIDEO_HW_FIND_ADAPTER)(
+#ifndef NTAPI
+#define NTAPI __stdcall
+#endif
+#ifndef VPAPI
+#define VPAPI NTAPI
+#endif
+
+typedef VP_STATUS (NTAPI *PVIDEO_HW_FIND_ADAPTER)(
     PVOID HwDeviceExtension,
     PVOID HwContext,
     PWSTR ArgumentString,
@@ -144,8 +151,8 @@ typedef VP_STATUS (*PVIDEO_HW_FIND_ADAPTER)(
     PUCHAR Again
 );
 
-typedef BOOLEAN (*PVIDEO_HW_INITIALIZE)(PVOID HwDeviceExtension);
-typedef BOOLEAN (*PVIDEO_HW_INTERRUPT)(PVOID HwDeviceExtension);
+typedef BOOLEAN (NTAPI *PVIDEO_HW_INITIALIZE)(PVOID HwDeviceExtension);
+typedef BOOLEAN (NTAPI *PVIDEO_HW_INTERRUPT)(PVOID HwDeviceExtension);
 
 typedef struct _STATUS_BLOCK {
     VP_STATUS Status;
@@ -161,30 +168,30 @@ typedef struct _VIDEO_REQUEST_PACKET {
     ULONG OutputBufferLength;
 } VIDEO_REQUEST_PACKET, *PVIDEO_REQUEST_PACKET;
 
-typedef BOOLEAN (*PVIDEO_HW_START_IO)(
+typedef BOOLEAN (NTAPI *PVIDEO_HW_START_IO)(
     PVOID HwDeviceExtension,
     PVIDEO_REQUEST_PACKET RequestPacket
 );
 
-typedef BOOLEAN (*PVIDEO_HW_RESET_HW)(
+typedef BOOLEAN (NTAPI *PVIDEO_HW_RESET_HW)(
     PVOID HwDeviceExtension,
     ULONG Columns,
     ULONG Rows
 );
 
-typedef VP_STATUS (*PVIDEO_HW_SET_POWER_STATE)(
+typedef VP_STATUS (NTAPI *PVIDEO_HW_SET_POWER_STATE)(
     PVOID HwDeviceExtension,
     ULONG HwId,
     PVIDEO_POWER_MANAGEMENT VideoPowerControl
 );
 
-typedef VP_STATUS (*PVIDEO_HW_GET_POWER_STATE)(
+typedef VP_STATUS (NTAPI *PVIDEO_HW_GET_POWER_STATE)(
     PVOID HwDeviceExtension,
     ULONG HwId,
     PVIDEO_POWER_MANAGEMENT VideoPowerControl
 );
 
-typedef VP_STATUS (*PVIDEO_HW_GET_CHILD_DESCRIPTOR)(
+typedef VP_STATUS (NTAPI *PVIDEO_HW_GET_CHILD_DESCRIPTOR)(
     PVOID HwDeviceExtension,
     PVIDEO_CHILD_ENUM_INFO ChildEnumInfo,
     PVIDEO_CHILD_TYPE VideoChildType,
@@ -373,24 +380,24 @@ typedef struct _PCI_COMMON_CONFIG {
 } PCI_COMMON_CONFIG, *PPCI_COMMON_CONFIG;
 
 /* VideoPort API function prototypes */
-ULONG VideoPortInitialize(
+ULONG VPAPI VideoPortInitialize(
     PVOID Context1,
     PVOID Context2,
     PVIDEO_HW_INITIALIZATION_DATA HwInitializationData,
     PVOID HwContext
 );
 
-VOID VideoPortZeroMemory(PVOID Destination, ULONG Length);
-VOID VideoPortMoveMemory(PVOID Destination, PVOID Source, ULONG Length);
+VOID VPAPI VideoPortZeroMemory(PVOID Destination, ULONG Length);
+VOID VPAPI VideoPortMoveMemory(PVOID Destination, PVOID Source, ULONG Length);
 
-PVOID VideoPortGetDeviceBase(
+PVOID VPAPI VideoPortGetDeviceBase(
     PVOID HwDeviceExtension,
     PHYSICAL_ADDRESS IoAddress,
     ULONG NumberOfBytes,
     UCHAR InIoSpace
 );
 
-VOID VideoPortFreeDeviceBase(
+VOID VPAPI VideoPortFreeDeviceBase(
     PVOID HwDeviceExtension,
     PVOID MappedAddress
 );
@@ -402,17 +409,17 @@ typedef struct _VP_DEVICE_DESCRIPTION {
     ULONG MaximumLength;
 } VP_DEVICE_DESCRIPTION, *PVP_DEVICE_DESCRIPTION;
 
-PVOID VideoPortGetDmaAdapter(
+PVOID VPAPI VideoPortGetDmaAdapter(
     PVOID HwDeviceExtension,
     PVP_DEVICE_DESCRIPTION DeviceDescription
 );
 
-VOID VideoPortPutDmaAdapter(
+VOID VPAPI VideoPortPutDmaAdapter(
     PVOID HwDeviceExtension,
     PVOID DmaAdapter
 );
 
-PVOID VideoPortAllocateCommonBuffer(
+PVOID VPAPI VideoPortAllocateCommonBuffer(
     PVOID HwDeviceExtension,
     PVOID DmaAdapter,
     ULONG DesiredLength,
@@ -421,7 +428,7 @@ PVOID VideoPortAllocateCommonBuffer(
     PVOID Reserved
 );
 
-VOID VideoPortFreeCommonBuffer(
+VOID VPAPI VideoPortFreeCommonBuffer(
     PVOID HwDeviceExtension,
     ULONG Length,
     PVOID VirtualAddress,
@@ -429,29 +436,29 @@ VOID VideoPortFreeCommonBuffer(
     BOOLEAN CacheEnabled
 );
 
-VOID VideoPortStallExecution(
+VOID VPAPI VideoPortStallExecution(
     ULONG Microseconds
 );
 
-ULONG VideoPortReadRegisterUlong(
+ULONG VPAPI VideoPortReadRegisterUlong(
     PULONG Register
 );
 
-VOID VideoPortWriteRegisterUlong(
+VOID VPAPI VideoPortWriteRegisterUlong(
     PULONG Register,
     ULONG Value
 );
 
-UCHAR VideoPortReadRegisterUchar(
+UCHAR VPAPI VideoPortReadRegisterUchar(
     PUCHAR Register
 );
 
-VOID VideoPortWriteRegisterUchar(
+VOID VPAPI VideoPortWriteRegisterUchar(
     PUCHAR Register,
     UCHAR Value
 );
 
-VP_STATUS VideoPortMapMemory(
+VP_STATUS VPAPI VideoPortMapMemory(
     PVOID HwDeviceExtension,
     PHYSICAL_ADDRESS PhysicalAddress,
     PULONG Length,
@@ -459,13 +466,13 @@ VP_STATUS VideoPortMapMemory(
     PVOID *VirtualAddress
 );
 
-VP_STATUS VideoPortUnmapMemory(
+VP_STATUS VPAPI VideoPortUnmapMemory(
     PVOID HwDeviceExtension,
     PVOID VirtualAddress,
     HANDLE ProcessHandle
 );
 
-ULONG VideoPortGetBusData(
+ULONG VPAPI VideoPortGetBusData(
     PVOID HwDeviceExtension,
     BUS_DATA_TYPE BusDataType,
     ULONG SlotNumber,
@@ -474,7 +481,7 @@ ULONG VideoPortGetBusData(
     ULONG Length
 );
 
-ULONG VideoPortSetBusData(
+ULONG VPAPI VideoPortSetBusData(
     PVOID HwDeviceExtension,
     BUS_DATA_TYPE BusDataType,
     ULONG SlotNumber,
@@ -483,7 +490,7 @@ ULONG VideoPortSetBusData(
     ULONG Length
 );
 
-VP_STATUS VideoPortGetAccessRanges(
+VP_STATUS VPAPI VideoPortGetAccessRanges(
     PVOID HwDeviceExtension,
     ULONG NumRequestedResources,
     PVOID RequestedResources,
@@ -510,15 +517,15 @@ typedef struct _VIDEO_X86_BIOS_ARGUMENTS {
     ULONG Ebp;
 } VIDEO_X86_BIOS_ARGUMENTS, *PVIDEO_X86_BIOS_ARGUMENTS;
 
-VP_STATUS VideoPortInt10(
+VP_STATUS VPAPI VideoPortInt10(
     PVOID HwDeviceExtension,
     PVIDEO_X86_BIOS_ARGUMENTS BiosArguments
 );
 
-VP_STATUS VideoPortCreateSecondaryDisplay(
+VP_STATUS VPAPI VideoPortCreateSecondaryDisplay(
     PVOID HwDeviceExtension,
     PVOID *SecondaryDeviceExtension,
     ULONG ulFlag
 );
-VP_STATUS VideoPortEnumerateChildren(PVOID HwDeviceExtension, PVOID Reserved);
+VP_STATUS VPAPI VideoPortEnumerateChildren(PVOID HwDeviceExtension, PVOID Reserved);
 VOID NvxProbeFwsecRom(PVOID hwDeviceExtension, PUCHAR bar0);

@@ -37,7 +37,15 @@ extern LONG NTAPI ZwCreateFile(PHANDLE, ACCESS_MASK, PNVX_OBJECT_ATTRIBUTES,
     PNVX_IO_STATUS_BLOCK, PLARGE_INTEGER, ULONG, ULONG, ULONG, ULONG, PVOID, ULONG);
 extern LONG NTAPI ZwWriteFile(HANDLE, HANDLE, PVOID, PVOID, PNVX_IO_STATUS_BLOCK,
     PVOID, ULONG, PLARGE_INTEGER, PULONG);
+#if defined(__i386__)
+static inline UCHAR NTAPI KeGetCurrentIrql(VOID) {
+    UCHAR irql;
+    __asm__ __volatile__("movb %%fs:0x24, %0" : "=q"(irql));
+    return irql;
+}
+#else
 extern UCHAR NTAPI KeGetCurrentIrql(VOID);
+#endif
 
 #ifndef __VXDKERNEL__
 #define NVX_LOG_RING_BYTES 1048576UL
@@ -710,13 +718,13 @@ static const GPU_DEVICE_ID SupportedGpus[] __attribute__((unused)) = {
     { 0, NULL }
 };
 
-BOOLEAN HwVidInterrupt(PVOID HwDeviceExtension) {
+BOOLEAN NTAPI HwVidInterrupt(PVOID HwDeviceExtension) {
     (void)HwDeviceExtension;
     /* RM queue interrupts need their own dispatcher/acknowledgement path. */
     return FALSE;
 }
 
-BOOLEAN HwVidResetHw(PVOID HwDeviceExtension, ULONG Columns, ULONG Rows) {
+BOOLEAN NTAPI HwVidResetHw(PVOID HwDeviceExtension, ULONG Columns, ULONG Rows) {
     (void)HwDeviceExtension;
     (void)Columns;
     (void)Rows;
@@ -726,7 +734,7 @@ BOOLEAN HwVidResetHw(PVOID HwDeviceExtension, ULONG Columns, ULONG Rows) {
     return TRUE;
 }
 
-VP_STATUS HwVidSetPowerState(
+VP_STATUS NTAPI HwVidSetPowerState(
     PVOID HwDeviceExtension,
     ULONG HwId,
     PVIDEO_POWER_MANAGEMENT VideoPowerControl
@@ -737,7 +745,7 @@ VP_STATUS HwVidSetPowerState(
     return NO_ERROR;
 }
 
-VP_STATUS HwVidGetPowerState(
+VP_STATUS NTAPI HwVidGetPowerState(
     PVOID HwDeviceExtension,
     ULONG HwId,
     PVIDEO_POWER_MANAGEMENT VideoPowerControl
@@ -750,7 +758,7 @@ VP_STATUS HwVidGetPowerState(
     return NO_ERROR;
 }
 
-VP_STATUS HwVidGetVideoChildDescriptor(
+VP_STATUS NTAPI HwVidGetVideoChildDescriptor(
     PVOID HwDeviceExtension,
     PVIDEO_CHILD_ENUM_INFO ChildEnumInfo,
     PVIDEO_CHILD_TYPE VideoChildType,
@@ -1031,7 +1039,7 @@ static VOID NvxInitPrimaryDisplayModes(PNVX_DEVICE_EXTENSION devExt) {
 }
 #endif
 
-VP_STATUS HwVidFindAdapter(
+VP_STATUS NTAPI HwVidFindAdapter(
     PVOID HwDeviceExtension,
     PVOID HwContext,
     PWSTR ArgumentString,
@@ -1203,7 +1211,7 @@ VP_STATUS HwVidFindAdapter(
     return NO_ERROR;
 }
 
-BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
+BOOLEAN NTAPI HwVidInitialize(PVOID HwDeviceExtension) {
     PNVX_DEVICE_EXTENSION devExt = (PNVX_DEVICE_EXTENSION)HwDeviceExtension;
     VP_STATUS enumStatus;
 
@@ -1334,7 +1342,7 @@ BOOLEAN HwVidInitialize(PVOID HwDeviceExtension) {
     return TRUE;
 }
 
-BOOLEAN HwVidStartIO(
+BOOLEAN NTAPI HwVidStartIO(
     PVOID HwDeviceExtension,
     PVIDEO_REQUEST_PACKET RequestPacket
 ) {

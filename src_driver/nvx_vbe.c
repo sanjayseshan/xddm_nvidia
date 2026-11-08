@@ -4,7 +4,7 @@
 #include <stddef.h>
 
 _Static_assert(sizeof(NVX_INT10_ARGS) == 32, "INT10 register ABI");
-_Static_assert(sizeof(NVX_INT10_INTERFACE) == 72, "INT10 service ABI");
+_Static_assert(sizeof(NVX_INT10_INTERFACE) == (sizeof(void*) == 8 ? 72 : 36), "INT10 service ABI");
 _Static_assert(sizeof(VBE_INFO_BLOCK) == 512, "VBE controller ABI");
 _Static_assert(sizeof(VBE_MODE_INFO) == 256, "VBE mode ABI");
 

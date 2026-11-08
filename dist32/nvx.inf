@@ -1,0 +1,84 @@
+;
+; NVX Display and Miniport Driver Installation File
+; Target: Windows XP Professional x64 Edition / Windows Server 2003 x64 (NT 5.2)
+; Architecture: GA104 (GeForce RTX 3070 / RTX 3060 Ti)
+;
+
+[Version]
+Signature   = "$CHICAGO$"
+Provider    = %NVIDIA%
+ClassGUID   = {4D36E968-E325-11CE-BFC1-08002BE10318}
+Class       = Display
+DriverVer   = 11/08/2026, 2.0.0.1
+
+[DestinationDirs]
+DefaultDestDir      = 11
+nvx.Miniport        = 12
+nvx.Display         = 11
+
+[Manufacturer]
+%NVIDIA% = NVIDIA.Mfg, NTamd64
+
+[NVIDIA.Mfg.NTamd64]
+%NV3070%            = nvx_Inst, PCI\VEN_10DE&DEV_2484
+%NV3070_ALT%        = nvx_Inst, PCI\VEN_10DE&DEV_2488
+%NV3070_MOBILE%     = nvx_Inst, PCI\VEN_10DE&DEV_249D
+%NV3070_TI_MOBILE%  = nvx_Inst, PCI\VEN_10DE&DEV_24A0
+%NV3060TI%          = nvx_Inst, PCI\VEN_10DE&DEV_2486
+%NV3060TI_ALT%      = nvx_Inst, PCI\VEN_10DE&DEV_2489
+%NV3060%            = nvx_Inst, PCI\VEN_10DE&DEV_2487
+%NV3060_GA104%      = nvx_Inst, PCI\VEN_10DE&DEV_24C7
+
+[nvx_Inst]
+CopyFiles = nvx.Miniport, nvx.Display
+
+[nvx_Inst.Services]
+AddService = nvxmp, 0x00000002, nvxmp_Service_Inst, nvxmp_EventLog_Inst
+
+[nvxmp_Service_Inst]
+ServiceType    = 1                  ; SERVICE_KERNEL_DRIVER
+StartType      = 1                  ; SERVICE_SYSTEM_START
+ErrorControl   = 0                  ; SERVICE_ERROR_IGNORE
+LoadOrderGroup = Video
+ServiceBinary  = %12%\nvxmp.sys
+
+[nvxmp_EventLog_Inst]
+AddReg = nvxmp_EventLog_AddReg
+
+[nvxmp_EventLog_AddReg]
+HKR,,EventMessageFile,0x00020000,"%SystemRoot%\System32\IoLogMsg.dll;%12%\nvxmp.sys"
+HKR,,TypesSupported,0x00010001,7
+
+[nvx_Inst.SoftwareSettings]
+AddReg = nvx_SoftwareSettings_AddReg
+
+[nvx_SoftwareSettings_AddReg]
+HKR,, InstalledDisplayDrivers,     0x00010000, "nvxdisp"
+HKR,, VgaCompatible,               0x00010001, 0
+HKR,, Device Description,          0x00000000, %NV3070%
+
+[nvx.Miniport]
+nvxmp.sys
+
+[nvx.Display]
+nvxdisp.dll
+
+[SourceDisksNames]
+1 = %DiskId%,,,""
+
+[SourceDisksFiles]
+nvxmp.sys  = 1
+nvxdisp.dll = 1
+
+[Strings]
+NVIDIA              = "NVIDIA Corporation (XDDM Community Port)"
+DiskId              = "NVIDIA RTX 3070 XDDM Installation Disk"
+NV3070              = "NVIDIA GeForce RTX 3070 (GA104 XDDM)"
+NV3070_ALT          = "NVIDIA GeForce RTX 3070 (GA104 XDDM)"
+NV3070_MOBILE       = "NVIDIA GeForce RTX 3070 Laptop GPU (GA104 XDDM)"
+NV3070_TI_MOBILE    = "NVIDIA GeForce RTX 3070 Ti Laptop GPU (GA104 XDDM)"
+NV3060TI            = "NVIDIA GeForce RTX 3060 Ti (GA104 XDDM)"
+NV3060TI_ALT        = "NVIDIA GeForce RTX 3060 Ti (GA104 XDDM)"
+NV3060              = "NVIDIA GeForce RTX 3060 (GA104 XDDM)"
+NV3060_GA104        = "NVIDIA GeForce RTX 3060 GA104 (GA104 XDDM)"
+

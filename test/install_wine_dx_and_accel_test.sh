@@ -24,6 +24,10 @@ i686-w64-mingw32-gcc -O2 -shared "$ROOT_DIR/test/ucrtbase_xp.c" "$ROOT_DIR/test/
 x86_64-w64-mingw32-gcc -O2 -Wall -Wextra "$ROOT_DIR/test/test_gpu_accel.c" -lopengl32 -lgdi32 -luser32 -o "$ROOT_DIR/test/test_gpu_accel.exe"
 i686-w64-mingw32-gcc -O2 -Wall -Wextra "$ROOT_DIR/test/test_gpu_accel.c" -lopengl32 -lgdi32 -luser32 -o "$ROOT_DIR/test/test_gpu_accel32.exe"
 
+# Build online 3D benchmark (wglgears)
+x86_64-w64-mingw32-gcc -x c -O2 "$ROOT_DIR/test/3d_tests/glxgears_main.cpp" -lopengl32 -lgdi32 -luser32 -o "$ROOT_DIR/test/3d_tests/wglgears.exe"
+i686-w64-mingw32-gcc -x c -O2 "$ROOT_DIR/test/3d_tests/glxgears_main.cpp" -lopengl32 -lgdi32 -luser32 -o "$ROOT_DIR/test/3d_tests/wglgears32.exe"
+
 cp "$ROOT_DIR/src_driver/nvxmp.sys" "$ROOT_DIR/dist_full/nvxmp.sys"
 cp "$ROOT_DIR/src_disp/nvxdisp.dll" "$ROOT_DIR/dist_full/nvxdisp.dll"
 
@@ -40,6 +44,19 @@ if exist x86\test_gpu_accel32.exe (
     test_gpu_accel32.exe >> C:\test_accel.log 2>&1
     echo [TEST] 32-bit Test Return Code: %ERRORLEVEL% >> C:\test_accel.log
 )
+if exist C:\test_accel\wglgears.exe (
+    cd /d C:\test_accel
+    echo [TEST] Running 64-bit wglgears 3D benchmark... >> C:\test_accel.log
+    wglgears.exe -seconds 6 >> C:\test_accel.log 2>&1
+    echo [TEST] 64-bit wglgears Return Code: %ERRORLEVEL% >> C:\test_accel.log
+)
+if exist C:\test_accel\x86\wglgears32.exe (
+    cd /d C:\test_accel\x86
+    echo [TEST] Running 32-bit wglgears 3D benchmark... >> C:\test_accel.log
+    wglgears32.exe -seconds 6 >> C:\test_accel.log 2>&1
+    echo [TEST] 32-bit wglgears Return Code: %ERRORLEVEL% >> C:\test_accel.log
+)
+echo [ALL_BENCHMARKS_FINISHED] Status: PASS >> C:\test_accel.log
 echo [TEST] ALL TESTS COMPLETE >> C:\test_accel.log
 EOF
 unix2dos "$RUN_TEST_BAT"
@@ -57,6 +74,7 @@ upload "$ROOT_DIR/src_disp/nvxdisp.dll" /WINDOWS/system32/nvxdisp.dll
 # 2. Setup C:\test_accel test environment with 64-bit WineD3D & ucrtbase shim
 mkdir-p /test_accel
 upload "$ROOT_DIR/test/test_gpu_accel.exe" /test_accel/test_gpu_accel.exe
+upload "$ROOT_DIR/test/3d_tests/wglgears.exe" /test_accel/wglgears.exe
 upload "$RUN_TEST_BAT" /test_accel/run_test.bat
 upload "$ROOT_DIR/test/ucrtbase.dll" /test_accel/ucrtbase.dll
 upload /usr/lib/x86_64-linux-gnu/wine/x86_64-windows/wined3d.dll /test_accel/wined3d.dll
@@ -66,6 +84,7 @@ upload /usr/lib/x86_64-linux-gnu/wine/x86_64-windows/d3d8.dll /test_accel/d3d8.d
 # 3. Setup C:\test_accel\x86 with 32-bit WineD3D & ucrtbase shim
 mkdir-p /test_accel/x86
 upload "$ROOT_DIR/test/test_gpu_accel32.exe" /test_accel/x86/test_gpu_accel32.exe
+upload "$ROOT_DIR/test/3d_tests/wglgears32.exe" /test_accel/x86/wglgears32.exe
 upload "$ROOT_DIR/test/ucrtbase32.dll" /test_accel/x86/ucrtbase.dll
 upload /usr/lib/i386-linux-gnu/wine/i386-windows/wined3d.dll /test_accel/x86/wined3d.dll
 upload /usr/lib/i386-linux-gnu/wine/i386-windows/d3d9.dll /test_accel/x86/d3d9.dll

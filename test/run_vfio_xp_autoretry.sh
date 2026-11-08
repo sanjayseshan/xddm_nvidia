@@ -60,15 +60,15 @@ while [ "$attempt" -le "$MAX_RETRIES" ]; do
                 echo "sendkey ret" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock 2>/dev/null || true
             fi
 
-            if grep -q "TEST_COMPLETE" "$NVX_RUN_LOG" 2>/dev/null; then
-                echo "==> Test completion detected! Sending soft ACPI powerdown..."
+            if grep -q "ALL_BENCHMARKS_FINISHED" "$NVX_RUN_LOG" 2>/dev/null; then
+                echo "==> All benchmarks completed! Sending soft ACPI powerdown..."
                 echo "system_powerdown" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock 2>/dev/null || true
                 sleep 5
                 break
             fi
 
-            # If desktop has been active for 55s, perform soft powerdown
-            if [ "$s" -ge 55 ] && grep -q "GPU solid fill" "$NVX_RUN_LOG" 2>/dev/null; then
+            # If desktop has been active for 75s, perform soft powerdown
+            if [ "$s" -ge 75 ] && grep -q "GPU solid fill" "$NVX_RUN_LOG" 2>/dev/null; then
                 echo "==> Desktop active session completed ($s s). Sending soft ACPI powerdown..."
                 echo "system_powerdown" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock 2>/dev/null || true
                 sleep 6
