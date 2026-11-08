@@ -3,45 +3,112 @@
 
 #include "miniport.h"
 #include "nvx_display.h"
+#include "include/nvx_nvidia_open_shim.h"
 
 #define MAX_NVX_MODES 32
 
-/* GSP Mailbox & Falcon Register Offsets */
+/* GSP Mailbox & Falcon Register Offsets (derived from NVIDIA swref) */
+#ifndef NV_PGSP_FALCON_MAILBOX0
 #define NV_PGSP_FALCON_MAILBOX0        0x110040
+#endif
+#ifndef NV_PGSP_FALCON_MAILBOX1
 #define NV_PGSP_FALCON_MAILBOX1        0x110044
+#endif
+#ifndef NV_PGSP_FALCON_OS
 #define NV_PGSP_FALCON_OS              0x110080
+#endif
+#ifndef NV_PGSP_FALCON_DOORBELL
 #define NV_PGSP_FALCON_DOORBELL        0x110004
+#endif
+#ifndef NV_PGSP_FALCON_CPUCTL
 #define NV_PGSP_FALCON_CPUCTL          0x110100
+#endif
+#ifndef NV_PGSP_FALCON_BOOTVEC
 #define NV_PGSP_FALCON_BOOTVEC         0x110104
+#endif
+#ifndef NV_PGSP_FALCON_DMATRFBASE
 #define NV_PGSP_FALCON_DMATRFBASE      0x110110
+#endif
+#ifndef NV_PGSP_FALCON_DMATRFMOFF
 #define NV_PGSP_FALCON_DMATRFMOFF      0x110114
+#endif
+#ifndef NV_PGSP_FALCON_DMATRFCMD
 #define NV_PGSP_FALCON_DMATRFCMD       0x110118
+#endif
+#ifndef NV_PGSP_FALCON_DMATRFFBOFF
 #define NV_PGSP_FALCON_DMATRFFBOFF     0x11011C
+#endif
+#ifndef NV_PGSP_FALCON_DMATRFBASE1
 #define NV_PGSP_FALCON_DMATRFBASE1     0x110128
+#endif
+#ifndef NV_PGSP_FALCON_CPUCTL_ALIAS
 #define NV_PGSP_FALCON_CPUCTL_ALIAS    0x110130
+#endif
+#ifndef NV_PGSP_FALCON_ENGINE
 #define NV_PGSP_FALCON_ENGINE          0x1103C0
+#endif
+#ifndef NV_PGSP_FBIF_BASE
 #define NV_PGSP_FBIF_BASE              0x110600
+#endif
+#ifndef NV_PGSP_MAILBOX_ARG0
 #define NV_PGSP_MAILBOX_ARG0           0x110804
+#endif
+#ifndef NV_PGSP_MAILBOX_ARG1
 #define NV_PGSP_MAILBOX_ARG1           0x110808
+#endif
+#ifndef NV_PGSP_QUEUE_HEAD0
 #define NV_PGSP_QUEUE_HEAD0            0x110C00
+#endif
+#ifndef NV_PGSP_QUEUE_TAIL0
 #define NV_PGSP_QUEUE_TAIL0            0x110C04
+#endif
+#ifndef NV_PGSP_QUEUE_HEAD1
 #define NV_PGSP_QUEUE_HEAD1            0x110C08
+#endif
+#ifndef NV_PGSP_QUEUE_TAIL1
 #define NV_PGSP_QUEUE_TAIL1            0x110C0C
+#endif
+#ifndef NV_PGSP_FALCON_RISCV_STAT
 #define NV_PGSP_FALCON_RISCV_STAT      0x111388
+#endif
+#ifndef NV_PGSP_FALCON_BCR
 #define NV_PGSP_FALCON_BCR             0x111668
+#endif
 
 /* SEC2 Security Falcon Register Offsets (Ampere GA102/GA104) */
+#ifndef NV_PSEC_FALCON_MAILBOX0
 #define NV_PSEC_FALCON_MAILBOX0        0x840040
+#endif
+#ifndef NV_PSEC_FALCON_MAILBOX1
 #define NV_PSEC_FALCON_MAILBOX1        0x840044
+#endif
+#ifndef NV_PSEC_FALCON_CPUCTL
 #define NV_PSEC_FALCON_CPUCTL          0x840100
+#endif
+#ifndef NV_PSEC_FALCON_BOOTVEC
 #define NV_PSEC_FALCON_BOOTVEC         0x840104
+#endif
+#ifndef NV_PSEC_FALCON_DMATRFBASE
 #define NV_PSEC_FALCON_DMATRFBASE      0x840110
+#endif
+#ifndef NV_PSEC_FALCON_DMATRFMOFF
 #define NV_PSEC_FALCON_DMATRFMOFF      0x840114
+#endif
+#ifndef NV_PSEC_FALCON_DMATRFCMD
 #define NV_PSEC_FALCON_DMATRFCMD       0x840118
+#endif
+#ifndef NV_PSEC_FALCON_DMATRFFBOFF
 #define NV_PSEC_FALCON_DMATRFFBOFF     0x84011C
+#endif
+#ifndef NV_PSEC_FALCON_DMATRFBASE1
 #define NV_PSEC_FALCON_DMATRFBASE1     0x840128
+#endif
+#ifndef NV_PSEC_FALCON_CPUCTL_ALIAS
 #define NV_PSEC_FALCON_CPUCTL_ALIAS    0x840130
+#endif
+#ifndef NV_PSEC_FALCON_ENGINE
 #define NV_PSEC_FALCON_ENGINE          0x8403C0
+#endif
 #define NV_PSEC_FBIF_BASE              0x840600
 #define NV_PSEC_FALCON2_MOD_SEL        0x841180
 #define NV_PSEC_FALCON2_UCODE_ID       0x841198

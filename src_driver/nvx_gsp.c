@@ -250,7 +250,7 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
     setDirectory[2]=4; /* top-level 49-bit directory has four entries */
     setDirectory[3]=1; /* SYSMEM_COH */
     setDirectory[4]=dev->GspVaSpaceHandle;
-    if(!NvxGspControl(dev,dev->GspDeviceHandle,0x801813,setDirectory,sizeof(setDirectory))) return FALSE;
+    if(!NvxGspControl(dev,dev->GspDeviceHandle,NV0080_CTRL_CMD_DMA_SET_PAGE_DIRECTORY,setDirectory,sizeof(setDirectory))) return FALSE;
     dev->GspScratchGpuVa=0x10000000;
     LogStr("NVX [RM]: scratch memory mapped at GPU VA 0x10000000.\n");return TRUE;
 }
@@ -374,7 +374,7 @@ static BOOLEAN NvxGspSelectCopyEngine(PNVX_DEVICE_EXTENSION dev)
     dev->GspCopyEngineType=0;
     for(ULONG engine=9;engine<19;engine++) {
         ULONG caps[2]={engine,0};
-        if(!NvxGspControl(dev,dev->GspSubdeviceHandle,0x20802a07,caps,sizeof(caps))) continue;
+        if(!NvxGspControl(dev,dev->GspSubdeviceHandle,NV2080_CTRL_CMD_CE_GET_PHYSICAL_CAPS,caps,sizeof(caps))) continue;
         ULONG bits=((const ULONG *)dev->RpcRxRecord)[27]&0xffff;
         LogStr("NVX [COPY]: CE engine=");LogHex(engine);LogStr(" capabilities=");LogHex(bits);LogStr("\n");
         if((bits&0x21)==0x20) {
@@ -412,7 +412,7 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
     ULONG ceMthdParam=0;
 
     /* Query CE fault method buffer size on Subdevice (NV2080_CTRL_CMD_CE_GET_FAULT_METHOD_BUFFER_SIZE) */
-    if(NvxGspControl(dev,dev->GspSubdeviceHandle,0x20802a08,&ceMthdParam,sizeof(ceMthdParam))) {
+    if(NvxGspControl(dev,dev->GspSubdeviceHandle,NV2080_CTRL_CMD_CE_GET_FAULT_METHOD_BUFFER_SIZE,&ceMthdParam,sizeof(ceMthdParam))) {
         const ULONG *words=(const ULONG *)dev->RpcRxRecord;
         if(words[24]>=4) {
             mthdSize=*(const ULONG *)(dev->RpcRxRecord+104);
@@ -496,14 +496,14 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
     LogStr("NVX [RM]: AMPERE_CHANNEL_GPFIFO_A allocated under TSG.\n");
 
     /* Bind channel to the capability-selected dedicated CE. */
-    if(!NvxGspControl(dev,dev->GspChannelHandle,0xa06f0104,&bindEngine,sizeof(bindEngine))) {
+    if(!NvxGspControl(dev,dev->GspChannelHandle,NVA06F_CTRL_CMD_BIND,&bindEngine,sizeof(bindEngine))) {
         LogStr("NVX [RM]: NVA06F_CTRL_CMD_BIND failed.\n");
         return FALSE;
     }
     LogStr("NVX [RM]: channel bound to dedicated CE engine=");LogHex(bindEngine);LogStr("\n");
 
     /* Schedule channel */
-    if(!NvxGspControl(dev,dev->GspChannelHandle,0xa06f0103,schedEnable,sizeof(schedEnable))) {
+    if(!NvxGspControl(dev,dev->GspChannelHandle,NVA06F_CTRL_CMD_GPFIFO_SCHEDULE,schedEnable,sizeof(schedEnable))) {
         LogStr("NVX [RM]: NVA06F_CTRL_CMD_GPFIFO_SCHEDULE failed.\n");
         return FALSE;
     }
@@ -539,7 +539,7 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
     dev->GspCopyVerified=FALSE;
     dev->GspChannelFaulted=FALSE;
     if(dev->Bar0Length<0x94||!dev->GspCopyEngineHandle||!va) return FALSE;
-    if(!NvxGspControl(dev,dev->GspChannelHandle,0xc36f0108,&token,sizeof(token))) {
+    if(!NvxGspControl(dev,dev->GspChannelHandle,NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN,&token,sizeof(token))) {
         LogStr("NVX [COPY]: work-submit token unavailable; no commands submitted.\n");
         return FALSE;
     }
@@ -548,7 +548,7 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
     /* GSP-RM returns zero for the external work-submit token. Do not invent a
        non-GSP token from the runlist selector; use the GSP internal doorbell. */
     runlistQuery[0]=dev->GspCopyEngineType;
-    if(!NvxGspControl(dev,dev->GspSubdeviceHandle,0x20800179,runlistQuery,sizeof(runlistQuery))) {
+    if(!NvxGspControl(dev,dev->GspSubdeviceHandle,NV2080_CTRL_CMD_GPU_GET_ENGINE_RUNLIST_PRI_BASE,runlistQuery,sizeof(runlistQuery))) {
         LogStr("NVX [COPY]: selected CE runlist query failed; no commands submitted.\n");return FALSE;
     }
     {
@@ -687,7 +687,7 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
         LogStr("NVX [COPY]: RAMFC userdLo=");LogHex(ramfc[0x8/4]);
         LogStr(" userdHi=");LogHex(ramfc[0xc/4]);LogStr(" gpBaseLo=");LogHex(ramfc[0x48/4]);
         LogStr(" gpBaseHi=");LogHex(ramfc[0x4c/4]);LogStr(" chid=");LogHex(ramfc[0xe8/4]);LogStr("\n");
-        if(NvxGspControl(dev,dev->GspChannelHandle,0xa06f0107,fault,sizeof(fault))) {
+        if(NvxGspControl(dev,dev->GspChannelHandle,NVA06F_CTRL_CMD_GET_MMU_FAULT_INFO,fault,sizeof(fault))) {
             const ULONG *reply=(const ULONG *)dev->RpcRxRecord;
             LogStr("NVX [COPY]: MMU fault addrHi=");LogHex(reply[26]);
             LogStr(" addrLo=");LogHex(reply[27]);LogStr(" type=");LogHex(reply[28]);LogStr("\n");
@@ -1014,7 +1014,7 @@ static VOID NvxNativeReadOutputInfo(PNVX_DEVICE_EXTENSION dev)
     for(ULONG monitor=0;monitor<dev->MonitorCount;monitor++) {
         /* RM 535 OR_GET_INFO: 40-byte prefix, u64 VBIOS, two bools, pad. */
         ULONG params[14]={0,dev->MonitorIds[monitor]},*reply=(ULONG *)dev->RpcRxRecord;
-        if(!NvxGspControl(dev,dev->GspDisplayHandle,0x73028b,params,sizeof(params))) continue;
+        if(!NvxGspControl(dev,dev->GspDisplayHandle,NV0073_CTRL_CMD_SPECIFIC_OR_GET_INFO,params,sizeof(params))) continue;
         dev->MonitorSor[monitor]=reply[28];
         dev->MonitorProtocol[monitor]=reply[30];
         LogStr("NVX [OUTPUT]: display=");LogHex(dev->MonitorIds[monitor]);
@@ -1097,7 +1097,7 @@ BOOLEAN NvxGspInitDisplayChannels(PVOID extension)
         for(ULONG i=0;i<0x1000;i++) if(scratch[0xa000+i]) return FALSE;
     }
     instance.physical=base;instance.size=0x10000;instance.addressSpace=2;instance.cache=2;
-    if(!NvxGspControl(dev,dev->GspSubdeviceHandle,0x20800a49,&instance,sizeof(instance))) {
+    if(!NvxGspControl(dev,dev->GspSubdeviceHandle,NV2080_CTRL_CMD_INTERNAL_DISPLAY_WRITE_INST_MEM,&instance,sizeof(instance))) {
         LogStr("NVX [NATIVE]: display instance registration failed; no channels submitted.\n");return FALSE;
     }
     /* Audit the hardware root after RM registration; do not override GSP's
@@ -1122,7 +1122,7 @@ BOOLEAN NvxGspInitDisplayChannels(PVOID extension)
         push.limit=0xfff;push.cache=0;push.hclass=classes[channel];
         push.instance=instances[channel];push.valid=1;
         __sync_synchronize();
-        if(!NvxGspControl(dev,dev->GspSubdeviceHandle,0x20800a58,&push,sizeof(push))) goto failed;
+        if(!NvxGspControl(dev,dev->GspSubdeviceHandle,NV2080_CTRL_CMD_INTERNAL_DISPLAY_CHANNEL_PUSHBUFFER,&push,sizeof(push))) goto failed;
         args.instance=instances[channel];
         if(!NvxGspAlloc(dev,dev->NativeDisplayHandle,handle,classes[channel],&args,sizeof(args))) goto failed;
         dev->NativeDisplayChannels[channel]=handle;
@@ -1224,7 +1224,7 @@ static BOOLEAN NvxGspVerifyDisplays(PNVX_DEVICE_EXTENSION dev)
     for(ULONG head=0;head<2;head++) {
         ULONG active[4]={0,head,0,0};
         ULONG id=0;
-        if(!NvxGspControl(dev,dev->GspDisplayHandle,0x730126,active,sizeof(active))) return FALSE;
+        if(!NvxGspControl(dev,dev->GspDisplayHandle,NV0073_CTRL_CMD_SYSTEM_GET_ACTIVE,active,sizeof(active))) return FALSE;
         id=((const ULONG *)dev->RpcRxRecord)[29];
         LogStr("NVX [DISPLAY-VERIFY]: head=");LogHex(head);
         LogStr(" activeDisplay=");LogHex(id);LogStr("\n");
@@ -1363,10 +1363,13 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
     {
         ULONG primMode = dev->CurrentModeIndex;
         if (primMode >= dev->NumModes || dev->Modes[primMode].BitsPerPlane != 32 ||
-            dev->Modes[primMode].VisScreenWidth < 1024) {
+            dev->Modes[primMode].VisScreenWidth < 640) {
+            /* Match dynamically against Head 0 decoded EDID timing if available */
+            ULONG targetW = dev->MonitorTiming[0].hActive ? dev->MonitorTiming[0].hActive : 1920;
+            ULONG targetH = dev->MonitorTiming[0].vActive ? dev->MonitorTiming[0].vActive : 1080;
             for (ULONG m = 0; m < dev->NumModes; m++) {
-                if (dev->Modes[m].VisScreenWidth == 1920 &&
-                    dev->Modes[m].VisScreenHeight == 1080 &&
+                if (dev->Modes[m].VisScreenWidth == targetW &&
+                    dev->Modes[m].VisScreenHeight == targetH &&
                     dev->Modes[m].BitsPerPlane == 32) {
                     primMode = m;
                     dev->CurrentModeIndex = m;
@@ -1375,10 +1378,13 @@ BOOLEAN NvxNativeSetSecondaryScanout(PVOID extension)
             }
         }
         if (sec->CurrentModeIndex >= sec->NumModes || sec->Modes[sec->CurrentModeIndex].BitsPerPlane != 32 ||
-            sec->Modes[sec->CurrentModeIndex].VisScreenWidth < 1024) {
+            sec->Modes[sec->CurrentModeIndex].VisScreenWidth < 640) {
+            /* Match dynamically against Head 1 decoded EDID timing if available */
+            ULONG targetW = dev->MonitorTiming[1].hActive ? dev->MonitorTiming[1].hActive : 2560;
+            ULONG targetH = dev->MonitorTiming[1].vActive ? dev->MonitorTiming[1].vActive : 1440;
             for (ULONG m = 0; m < sec->NumModes; m++) {
-                if (sec->Modes[m].VisScreenWidth == 2560 &&
-                    sec->Modes[m].VisScreenHeight == 1440 &&
+                if (sec->Modes[m].VisScreenWidth == targetW &&
+                    sec->Modes[m].VisScreenHeight == targetH &&
                     sec->Modes[m].BitsPerPlane == 32) {
                     sec->CurrentModeIndex = m;
                     break;
@@ -1554,7 +1560,7 @@ static VOID NvxGspReadMonitorEdid(PNVX_DEVICE_EXTENSION dev,ULONG displayId)
     static const UCHAR header[8]={0,255,255,255,255,255,255,0};
     if(dev->MonitorCount>=8) return;
     params[1]=displayId;params[2]=2048;
-    if(!NvxGspControl(dev,dev->GspDisplayHandle,0x730245,params,sizeof(params))) {
+    if(!NvxGspControl(dev,dev->GspDisplayHandle,NV0073_CTRL_CMD_SPECIFIC_GET_EDID_V2,params,sizeof(params))) {
         LogStr("NVX [DISPLAY]: EDID unavailable id=");LogHex(displayId);LogStr("\n");return;
     }
     reply=(const ULONG *)dev->RpcRxRecord;
@@ -1609,12 +1615,12 @@ static VOID NvxGspNativeDisplayRoot(PNVX_DEVICE_EXTENSION dev)
         LogStr("NVX [NATIVE]: GA102 display root allocation failed.\n");return;
     }
     dev->NativeDisplayHandle=0xc6700001;
-    if(NvxGspControl(dev,dev->NativeDisplayHandle,0x50700709,caps,sizeof(caps))) {
+    if(NvxGspControl(dev,dev->NativeDisplayHandle,NV5070_CTRL_CMD_SYSTEM_GET_CAPS_V2,caps,sizeof(caps))) {
         reply=(const ULONG *)dev->RpcRxRecord;
         dev->NativeDisplayCaps=reply[27]&255;
         LogStr("NVX [NATIVE]: display caps=");LogHex(dev->NativeDisplayCaps);LogStr("\n");
     }
-    if(NvxGspControl(dev,dev->GspSubdeviceHandle,0x20800a01,info,sizeof(info))) {
+    if(NvxGspControl(dev,dev->GspSubdeviceHandle,NV2080_CTRL_CMD_INTERNAL_DISPLAY_GET_STATIC_INFO,info,sizeof(info))) {
         reply=(const ULONG *)dev->RpcRxRecord;
         dev->DisplayWindowMask=reply[27];
         LogStr("NVX [NATIVE]: windows=");LogHex(dev->DisplayWindowMask);
@@ -1627,11 +1633,11 @@ static VOID NvxGspPlanHeads(PNVX_DEVICE_EXTENSION dev)
 {
     ULONG heads[3]={0,0,0},mask[2]={0,0},route[5]={0,0,0,0,0};
     const ULONG *reply;
-    if(!NvxGspControl(dev,dev->GspDisplayHandle,0x730102,heads,sizeof(heads))) return;
+    if(!NvxGspControl(dev,dev->GspDisplayHandle,NV0073_CTRL_CMD_SYSTEM_GET_NUM_HEADS,heads,sizeof(heads))) return;
     reply=(const ULONG *)dev->RpcRxRecord;
     dev->DisplayHeadCount=reply[28];
     if(!dev->DisplayHeadCount || dev->DisplayHeadCount>4) return;
-    if(!NvxGspControl(dev,dev->GspDisplayHandle,0x730287,mask,sizeof(mask))) return;
+    if(!NvxGspControl(dev,dev->GspDisplayHandle,NV0073_CTRL_CMD_SPECIFIC_GET_ALL_HEAD_MASK,mask,sizeof(mask))) return;
     reply=(const ULONG *)dev->RpcRxRecord;
     dev->DisplayHeadMask=reply[27]&((1UL<<dev->DisplayHeadCount)-1);
     LogStr("NVX [MODEPLAN]: heads=");LogHex(dev->DisplayHeadCount);
@@ -1639,7 +1645,7 @@ static VOID NvxGspPlanHeads(PNVX_DEVICE_EXTENSION dev)
     for(ULONG head=0;head<dev->DisplayHeadCount;head++) {
         ULONG active[4]={0,head,0,0};
         if(!(dev->DisplayHeadMask&(1UL<<head))) continue;
-        if(!NvxGspControl(dev,dev->GspDisplayHandle,0x730126,active,sizeof(active))) return;
+        if(!NvxGspControl(dev,dev->GspDisplayHandle,NV0073_CTRL_CMD_SYSTEM_GET_ACTIVE,active,sizeof(active))) return;
         reply=(const ULONG *)dev->RpcRxRecord;
         dev->DisplayActiveIds[head]=reply[29];
         route[2]|=reply[29];
@@ -1656,7 +1662,7 @@ static VOID NvxGspPlanHeads(PNVX_DEVICE_EXTENSION dev)
         }
     }
     route[1]=dev->GspConnectedDisplays;
-    if(!NvxGspControl(dev,dev->GspDisplayHandle,0x730125,route,sizeof(route))) return;
+    if(!NvxGspControl(dev,dev->GspDisplayHandle,NV0073_CTRL_CMD_SYSTEM_GET_HEAD_ROUTING_MAP,route,sizeof(route))) return;
     reply=(const ULONG *)dev->RpcRxRecord;
     dev->DisplayRoutableMask=reply[27]&dev->GspConnectedDisplays;
     dev->DisplayHeadRoutingMap=reply[30];
@@ -1848,7 +1854,7 @@ static VOID NvxGspDiscoverDisplays(PNVX_DEVICE_EXTENSION dev)
         return;
     }
     dev->GspDisplayHandle=0x73000001;
-    if(!NvxGspControl(dev,dev->GspDisplayHandle,0x730120,supported,sizeof(supported))) {
+    if(!NvxGspControl(dev,dev->GspDisplayHandle,NV0073_CTRL_CMD_SYSTEM_GET_SUPPORTED,supported,sizeof(supported))) {
         LogStr("NVX [DISPLAY]: connector support query unavailable.\n");
         return;
     }
@@ -1858,7 +1864,7 @@ static VOID NvxGspDiscoverDisplays(PNVX_DEVICE_EXTENSION dev)
     LogStr(" DDC mask=");LogHex(reply[28]);LogStr("\n");
     if(!dev->GspSupportedDisplays) return;
     connected[2]=dev->GspSupportedDisplays;
-    if(!NvxGspControl(dev,dev->GspDisplayHandle,0x730122,connected,sizeof(connected))) {
+    if(!NvxGspControl(dev,dev->GspDisplayHandle,NV0073_CTRL_CMD_SYSTEM_GET_CONNECT_STATE,connected,sizeof(connected))) {
         LogStr("NVX [DISPLAY]: connected-state query unavailable.\n");
         return;
     }

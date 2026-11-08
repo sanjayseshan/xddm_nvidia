@@ -1,0 +1,45 @@
+#ifndef NVX_NVIDIA_OPEN_SHIM_H
+#define NVX_NVIDIA_OPEN_SHIM_H
+
+/*
+ * Shim header integrating NVIDIA open-gpu-kernel-modules official SDK definitions
+ * into the NT/XP VideoPort miniport (64-bit) and Win98 VxD (32-bit) builds.
+ */
+
+#include "nvtypes.h"
+#include "nvstatus.h"
+
+/* Official SDK Command & Class definitions */
+#include "class/clc57e.h"
+#include "class/cla06f.h"
+#include "class/clc36f.h"
+
+#include "ctrl/ctrl0073.h"
+#include "ctrl/ctrl0080.h"
+#include "ctrl/ctrl2080.h"
+#include "ctrl/ctrl5070/ctrl5070system.h"
+#include "ctrl/ctrla06f.h"
+#include "ctrl/ctrlc36f.h"
+
+/* Display & Coprocessor Register definitions from swref */
+#include "swref/published/disp/v03_00/dev_disp.h"
+#include "swref/published/ampere/ga102/dev_gsp.h"
+#include "swref/published/ampere/ga102/dev_falcon_v4.h"
+#include "swref/published/ampere/ga102/dev_falcon_v4_addendum.h"
+#include "swref/published/ampere/ga102/dev_fbif_v4.h"
+#include "swref/published/ampere/ga102/dev_riscv_pri.h"
+#include "swref/published/ampere/ga102/dev_sec_pri.h"
+
+/* Helper macro mapping for Falcon engine apertures */
+#define NVX_GSP_BASE                   0x00110000
+#define NVX_SEC2_BASE                  0x00840000
+#define NVX_GSP_RISCV_BASE             0x00111000
+
+#define NVX_GSP_REG(offset)            (NVX_GSP_BASE + (offset))
+#define NVX_SEC2_REG(offset)           (NVX_SEC2_BASE + (offset))
+#define NVX_GSP_RISCV_REG(offset)      (NVX_GSP_RISCV_BASE + (offset))
+
+/* Upstream OpenRM GPU Device Database */
+#include "include/nvx_gpu_table.h"
+
+#endif /* NVX_NVIDIA_OPEN_SHIM_H */

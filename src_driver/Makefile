@@ -1,7 +1,8 @@
 CC = x86_64-w64-mingw32-gcc
 EXPERIMENTAL_GSP ?= 0
 UNSAFE_GSP_PROBE ?= 0
-CFLAGS = -DNVX_ENABLE_EXPERIMENTAL_GSP=$(EXPERIMENTAL_GSP) -DNVX_ENABLE_UNSAFE_GSP_PROBE=$(UNSAFE_GSP_PROBE) -Wall -Wextra -O2 -nostdlib -m64 -fno-builtin -fno-stack-protector -I.
+OPEN_GPU_DIR = ../open-gpu-kernel-modules
+CFLAGS = -DNVX_ENABLE_EXPERIMENTAL_GSP=$(EXPERIMENTAL_GSP) -DNVX_ENABLE_UNSAFE_GSP_PROBE=$(UNSAFE_GSP_PROBE) -Wall -Wextra -O2 -nostdlib -m64 -fno-builtin -fno-stack-protector -I. -Iinclude -I$(OPEN_GPU_DIR)/src/common/sdk/nvidia/inc -I$(OPEN_GPU_DIR)/src/common/inc
 LDFLAGS = -shared -Wl,--entry=DriverEntry -Wl,--subsystem,native:5.2 -nostartfiles -Wl,--image-base,0x10000 -Wl,--file-alignment,0x200 -Wl,--section-alignment,0x1000 -L. -lvideoprt -lntoskrnl
 
 all: nvxmp.sys

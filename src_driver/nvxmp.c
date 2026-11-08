@@ -828,222 +828,201 @@ static VOID NvxInitSecondaryDisplayModes(PNVX_DEVICE_EXTENSION sec) {
     PNVX_DEVICE_EXTENSION prim;
     VIDEO_MODE_INFORMATION *m;
     ULONG idx = 0;
+    ULONG edidW = 0, edidH = 0, edidHz = 60;
     if (!sec || !sec->IsSecondaryDisplay || sec->NumModes > 0) return;
     prim = (PNVX_DEVICE_EXTENSION)sec->PrimaryDeviceExtension;
     if (!prim) return;
 
-    /* Mode 0: 2560x1440x32 @ 60Hz (Native 1440p for secondary DP monitor) */
-    m = &sec->Modes[idx];
-    VideoPortZeroMemory(m, sizeof(*m));
-    m->Length = sizeof(*m);
-    m->ModeIndex = idx;
-    m->VisScreenWidth = 2560;
-    m->VisScreenHeight = 1440;
-    m->ScreenStride = 2560 * 4; /* 10240 */
-    m->NumberOfPlanes = 1;
-    m->BitsPerPlane = 32;
-    m->Frequency = 60;
-    m->NumberRedBits = 8;
-    m->NumberGreenBits = 8;
-    m->NumberBlueBits = 8;
-    m->RedMask = 0x00FF0000;
-    m->GreenMask = 0x0000FF00;
-    m->BlueMask = 0x000000FF;
-    m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
-    m->VideoMemoryBitmapWidth = 2560;
-    m->VideoMemoryBitmapHeight = 1440;
-    sec->ModeFramebuffer[idx].QuadPart = prim->PhysicalBar1.QuadPart + 0x2000000ULL; /* +32MB */
-    idx++;
+    /* If EDID detailed timing was discovered for secondary head, prioritize it as Mode 0 */
+    if (sec->MonitorTiming[0].hActive >= 640 && sec->MonitorTiming[0].vActive >= 480) {
+        edidW = sec->MonitorTiming[0].hActive;
+        edidH = sec->MonitorTiming[0].vActive;
+        if (sec->MonitorTiming[0].refreshMilliHz >= 20000)
+            edidHz = (sec->MonitorTiming[0].refreshMilliHz + 500) / 1000;
+        LogStr("NVX [DUALVIEW]: Secondary EDID detailed timing found: ");
+        LogHex(edidW); LogStr("x"); LogHex(edidH); LogStr("@"); LogHex(edidHz); LogStr("Hz\n");
+    }
 
-    /* Mode 1: 1920x1080x32 @ 60Hz */
-    m = &sec->Modes[idx];
-    VideoPortZeroMemory(m, sizeof(*m));
-    m->Length = sizeof(*m);
-    m->ModeIndex = idx;
-    m->VisScreenWidth = 1920;
-    m->VisScreenHeight = 1080;
-    m->ScreenStride = 1920 * 4; /* 7680 */
-    m->NumberOfPlanes = 1;
-    m->BitsPerPlane = 32;
-    m->Frequency = 60;
-    m->NumberRedBits = 8;
-    m->NumberGreenBits = 8;
-    m->NumberBlueBits = 8;
-    m->RedMask = 0x00FF0000;
-    m->GreenMask = 0x0000FF00;
-    m->BlueMask = 0x000000FF;
-    m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
-    m->VideoMemoryBitmapWidth = 1920;
-    m->VideoMemoryBitmapHeight = 1080;
-    sec->ModeFramebuffer[idx].QuadPart = prim->PhysicalBar1.QuadPart + 0x2000000ULL; /* +32MB */
-    idx++;
+    /* Standard resolution candidates for secondary display */
+    static const struct {
+        ULONG w, h;
+    } standardModes[] = {
+        { 3840, 2160 },
+        { 2560, 1440 },
+        { 1920, 1200 },
+        { 1920, 1080 },
+        { 1680, 1050 },
+        { 1600, 900 },
+        { 1440, 900 },
+        { 1366, 768 },
+        { 1280, 1024 },
+        { 1280, 720 },
+        { 1024, 768 },
+        { 800, 600 },
+        { 640, 480 }
+    };
 
-    /* Mode 2: 1280x720x32 @ 60Hz */
-    m = &sec->Modes[idx];
-    VideoPortZeroMemory(m, sizeof(*m));
-    m->Length = sizeof(*m);
-    m->ModeIndex = idx;
-    m->VisScreenWidth = 1280;
-    m->VisScreenHeight = 720;
-    m->ScreenStride = 1280 * 4; /* 5120 */
-    m->NumberOfPlanes = 1;
-    m->BitsPerPlane = 32;
-    m->Frequency = 60;
-    m->NumberRedBits = 8;
-    m->NumberGreenBits = 8;
-    m->NumberBlueBits = 8;
-    m->RedMask = 0x00FF0000;
-    m->GreenMask = 0x0000FF00;
-    m->BlueMask = 0x000000FF;
-    m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
-    m->VideoMemoryBitmapWidth = 1280;
-    m->VideoMemoryBitmapHeight = 720;
-    sec->ModeFramebuffer[idx].QuadPart = prim->PhysicalBar1.QuadPart + 0x2000000ULL; /* +32MB */
-    idx++;
+    /* Add EDID preferred native mode first if present */
+    if (edidW && edidH) {
+        m = &sec->Modes[idx];
+        VideoPortZeroMemory(m, sizeof(*m));
+        m->Length = sizeof(*m);
+        m->ModeIndex = idx;
+        m->VisScreenWidth = edidW;
+        m->VisScreenHeight = edidH;
+        m->ScreenStride = edidW * 4;
+        m->NumberOfPlanes = 1;
+        m->BitsPerPlane = 32;
+        m->Frequency = edidHz;
+        m->NumberRedBits = 8;
+        m->NumberGreenBits = 8;
+        m->NumberBlueBits = 8;
+        m->RedMask = 0x00FF0000;
+        m->GreenMask = 0x0000FF00;
+        m->BlueMask = 0x000000FF;
+        m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
+        m->VideoMemoryBitmapWidth = edidW;
+        m->VideoMemoryBitmapHeight = edidH;
+        sec->ModeFramebuffer[idx].QuadPart = prim->PhysicalBar1.QuadPart + 0x2000000ULL; /* +32MB */
+        idx++;
+    }
 
-    /* Mode 3: 1024x768x32 @ 60Hz */
-    m = &sec->Modes[idx];
-    VideoPortZeroMemory(m, sizeof(*m));
-    m->Length = sizeof(*m);
-    m->ModeIndex = idx;
-    m->VisScreenWidth = 1024;
-    m->VisScreenHeight = 768;
-    m->ScreenStride = 1024 * 4; /* 4096 */
-    m->NumberOfPlanes = 1;
-    m->BitsPerPlane = 32;
-    m->Frequency = 60;
-    m->NumberRedBits = 8;
-    m->NumberGreenBits = 8;
-    m->NumberBlueBits = 8;
-    m->RedMask = 0x00FF0000;
-    m->GreenMask = 0x0000FF00;
-    m->BlueMask = 0x000000FF;
-    m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
-    m->VideoMemoryBitmapWidth = 1024;
-    m->VideoMemoryBitmapHeight = 768;
-    sec->ModeFramebuffer[idx].QuadPart = prim->PhysicalBar1.QuadPart + 0x2000000ULL; /* +32MB */
-    idx++;
-
-    /* Mode 4: 800x600x32 @ 60Hz */
-    m = &sec->Modes[idx];
-    VideoPortZeroMemory(m, sizeof(*m));
-    m->Length = sizeof(*m);
-    m->ModeIndex = idx;
-    m->VisScreenWidth = 800;
-    m->VisScreenHeight = 600;
-    m->ScreenStride = 800 * 4; /* 3200 */
-    m->NumberOfPlanes = 1;
-    m->BitsPerPlane = 32;
-    m->Frequency = 60;
-    m->NumberRedBits = 8;
-    m->NumberGreenBits = 8;
-    m->NumberBlueBits = 8;
-    m->RedMask = 0x00FF0000;
-    m->GreenMask = 0x0000FF00;
-    m->BlueMask = 0x000000FF;
-    m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
-    m->VideoMemoryBitmapWidth = 800;
-    m->VideoMemoryBitmapHeight = 600;
-    sec->ModeFramebuffer[idx].QuadPart = prim->PhysicalBar1.QuadPart + 0x2000000ULL; /* +32MB */
-    idx++;
+    /* Populate standard DMT/VESA modes (skipping duplicate of EDID mode) */
+    for (ULONG i = 0; i < sizeof(standardModes)/sizeof(standardModes[0]) && idx < MAX_NVX_MODES; i++) {
+        if (standardModes[i].w == edidW && standardModes[i].h == edidH) continue;
+        m = &sec->Modes[idx];
+        VideoPortZeroMemory(m, sizeof(*m));
+        m->Length = sizeof(*m);
+        m->ModeIndex = idx;
+        m->VisScreenWidth = standardModes[i].w;
+        m->VisScreenHeight = standardModes[i].h;
+        m->ScreenStride = standardModes[i].w * 4;
+        m->NumberOfPlanes = 1;
+        m->BitsPerPlane = 32;
+        m->Frequency = 60;
+        m->NumberRedBits = 8;
+        m->NumberGreenBits = 8;
+        m->NumberBlueBits = 8;
+        m->RedMask = 0x00FF0000;
+        m->GreenMask = 0x0000FF00;
+        m->BlueMask = 0x000000FF;
+        m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
+        m->VideoMemoryBitmapWidth = standardModes[i].w;
+        m->VideoMemoryBitmapHeight = standardModes[i].h;
+        sec->ModeFramebuffer[idx].QuadPart = prim->PhysicalBar1.QuadPart + 0x2000000ULL; /* +32MB */
+        idx++;
+    }
 
     sec->NumModes = idx;
     sec->CurrentModeIndex = 0;
     sec->ActiveBpp = 32;
     LogStr("NVX [DUALVIEW]: Initialized secondary modes count: ");
     LogHex(sec->NumModes);
-    LogStr(" preferred native 2560x1440x32\n");
+    LogStr(" preferred native: ");
+    LogHex(sec->Modes[0].VisScreenWidth);
+    LogStr("x");
+    LogHex(sec->Modes[0].VisScreenHeight);
+    LogStr("\n");
 }
 
 #ifdef __VXDKERNEL__
 static VOID NvxInitPrimaryDisplayModes(PNVX_DEVICE_EXTENSION devExt) {
     VIDEO_MODE_INFORMATION *m;
     ULONG idx = 0;
+    ULONG edidW = 0, edidH = 0, edidHz = 60;
     if (!devExt || devExt->IsSecondaryDisplay || devExt->NumModes > 0) return;
 
-    /* Mode 0: 1920x1080x32 @ 60Hz (Native Dell Head 0) */
-    m = &devExt->Modes[idx];
-    VideoPortZeroMemory(m, sizeof(*m));
-    m->Length = sizeof(*m);
-    m->ModeIndex = idx;
-    m->VisScreenWidth = 1920;
-    m->VisScreenHeight = 1080;
-    m->ScreenStride = 1920 * 4;
-    m->NumberOfPlanes = 1;
-    m->BitsPerPlane = 32;
-    m->Frequency = 60;
-    m->NumberRedBits = 8;
-    m->NumberGreenBits = 8;
-    m->NumberBlueBits = 8;
-    m->RedMask = 0x00FF0000;
-    m->GreenMask = 0x0000FF00;
-    m->BlueMask = 0x000000FF;
-    m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
-    devExt->ModeFramebuffer[idx].QuadPart = devExt->PhysicalBar1.QuadPart;
-    idx++;
+    /* Check if Head 0 EDID detailed timing is available */
+    if (devExt->MonitorTiming[0].hActive >= 640 && devExt->MonitorTiming[0].vActive >= 480) {
+        edidW = devExt->MonitorTiming[0].hActive;
+        edidH = devExt->MonitorTiming[0].vActive;
+        if (devExt->MonitorTiming[0].refreshMilliHz >= 20000)
+            edidHz = (devExt->MonitorTiming[0].refreshMilliHz + 500) / 1000;
+        LogStr("NVX [NATIVE]: Primary EDID detailed timing found: ");
+        LogHex(edidW); LogStr("x"); LogHex(edidH); LogStr("@"); LogHex(edidHz); LogStr("Hz\n");
+    }
 
-    /* Mode 1: 1024x768x32 */
-    m = &devExt->Modes[idx];
-    VideoPortZeroMemory(m, sizeof(*m));
-    m->Length = sizeof(*m);
-    m->ModeIndex = idx;
-    m->VisScreenWidth = 1024;
-    m->VisScreenHeight = 768;
-    m->ScreenStride = 1024 * 4;
-    m->NumberOfPlanes = 1;
-    m->BitsPerPlane = 32;
-    m->Frequency = 60;
-    m->RedMask = 0x00FF0000;
-    m->GreenMask = 0x0000FF00;
-    m->BlueMask = 0x000000FF;
-    m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
-    devExt->ModeFramebuffer[idx].QuadPart = devExt->PhysicalBar1.QuadPart;
-    idx++;
+    static const struct {
+        ULONG w, h;
+    } standardModes[] = {
+        { 3840, 2160 },
+        { 2560, 1440 },
+        { 1920, 1200 },
+        { 1920, 1080 },
+        { 1680, 1050 },
+        { 1600, 900 },
+        { 1440, 900 },
+        { 1366, 768 },
+        { 1280, 1024 },
+        { 1280, 720 },
+        { 1024, 768 },
+        { 800, 600 },
+        { 640, 480 }
+    };
 
-    /* Mode 2: 800x600x32 */
-    m = &devExt->Modes[idx];
-    VideoPortZeroMemory(m, sizeof(*m));
-    m->Length = sizeof(*m);
-    m->ModeIndex = idx;
-    m->VisScreenWidth = 800;
-    m->VisScreenHeight = 600;
-    m->ScreenStride = 800 * 4;
-    m->NumberOfPlanes = 1;
-    m->BitsPerPlane = 32;
-    m->Frequency = 60;
-    m->RedMask = 0x00FF0000;
-    m->GreenMask = 0x0000FF00;
-    m->BlueMask = 0x000000FF;
-    m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
-    devExt->ModeFramebuffer[idx].QuadPart = devExt->PhysicalBar1.QuadPart;
-    idx++;
+    /* Add EDID preferred native mode first if present */
+    if (edidW && edidH) {
+        m = &devExt->Modes[idx];
+        VideoPortZeroMemory(m, sizeof(*m));
+        m->Length = sizeof(*m);
+        m->ModeIndex = idx;
+        m->VisScreenWidth = edidW;
+        m->VisScreenHeight = edidH;
+        m->ScreenStride = edidW * 4;
+        m->NumberOfPlanes = 1;
+        m->BitsPerPlane = 32;
+        m->Frequency = edidHz;
+        m->NumberRedBits = 8;
+        m->NumberGreenBits = 8;
+        m->NumberBlueBits = 8;
+        m->RedMask = 0x00FF0000;
+        m->GreenMask = 0x0000FF00;
+        m->BlueMask = 0x000000FF;
+        m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
+        m->VideoMemoryBitmapWidth = edidW;
+        m->VideoMemoryBitmapHeight = edidH;
+        devExt->ModeFramebuffer[idx].QuadPart = devExt->PhysicalBar1.QuadPart;
+        idx++;
+    }
 
-    /* Mode 3: 640x480x32 */
-    m = &devExt->Modes[idx];
-    VideoPortZeroMemory(m, sizeof(*m));
-    m->Length = sizeof(*m);
-    m->ModeIndex = idx;
-    m->VisScreenWidth = 640;
-    m->VisScreenHeight = 480;
-    m->ScreenStride = 640 * 4;
-    m->NumberOfPlanes = 1;
-    m->BitsPerPlane = 32;
-    m->Frequency = 60;
-    m->RedMask = 0x00FF0000;
-    m->GreenMask = 0x0000FF00;
-    m->BlueMask = 0x000000FF;
-    m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
-    devExt->ModeFramebuffer[idx].QuadPart = devExt->PhysicalBar1.QuadPart;
-    idx++;
+    /* Populate standard DMT/VESA modes (skipping duplicate of EDID mode) */
+    for (ULONG i = 0; i < sizeof(standardModes)/sizeof(standardModes[0]) && idx < MAX_NVX_MODES; i++) {
+        if (standardModes[i].w == edidW && standardModes[i].h == edidH) continue;
+        m = &devExt->Modes[idx];
+        VideoPortZeroMemory(m, sizeof(*m));
+        m->Length = sizeof(*m);
+        m->ModeIndex = idx;
+        m->VisScreenWidth = standardModes[i].w;
+        m->VisScreenHeight = standardModes[i].h;
+        m->ScreenStride = standardModes[i].w * 4;
+        m->NumberOfPlanes = 1;
+        m->BitsPerPlane = 32;
+        m->Frequency = 60;
+        m->NumberRedBits = 8;
+        m->NumberGreenBits = 8;
+        m->NumberBlueBits = 8;
+        m->RedMask = 0x00FF0000;
+        m->GreenMask = 0x0000FF00;
+        m->BlueMask = 0x000000FF;
+        m->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
+        m->VideoMemoryBitmapWidth = standardModes[i].w;
+        m->VideoMemoryBitmapHeight = standardModes[i].h;
+        devExt->ModeFramebuffer[idx].QuadPart = devExt->PhysicalBar1.QuadPart;
+        idx++;
+    }
 
     devExt->NumModes = idx;
     devExt->CurrentModeIndex = 0;
     devExt->ActiveBpp = 32;
-    devExt->ActiveWidth = 1920;
-    devExt->ActiveHeight = 1080;
+    devExt->ActiveWidth = devExt->Modes[0].VisScreenWidth;
+    devExt->ActiveHeight = devExt->Modes[0].VisScreenHeight;
     LogStr("NVX [NATIVE]: Initialized primary modes count: ");
     LogHex(devExt->NumModes);
-    LogStr(" preferred native 1920x1080x32\n");
+    LogStr(" preferred native: ");
+    LogHex(devExt->ActiveWidth);
+    LogStr("x");
+    LogHex(devExt->ActiveHeight);
+    LogStr("\n");
 }
 #endif
 
@@ -1084,6 +1063,25 @@ VP_STATUS HwVidFindAdapter(
     LogStr("NVX: VideoPortGetAccessRanges status: ");
     LogHex(status);
     LogStr("\n");
+
+    /* Read PCI Device ID and query Upstream OpenRM Database */
+    {
+        USHORT pciDev[2] = {0, 0};
+        VideoPortGetBusData(HwDeviceExtension, PCIConfiguration, 0, pciDev, 0x00, sizeof(pciDev));
+        LogStr("NVX: PCI Vendor: 0x");
+        LogHex(pciDev[0]);
+        LogStr(" Device: 0x");
+        LogHex(pciDev[1]);
+        if (pciDev[0] == 0x10DE) {
+            const char *gpuName = NvxLookupGpuName(pciDev[1]);
+            if (gpuName) {
+                LogStr(" ('");
+                LogStr(gpuName);
+                LogStr("')");
+            }
+        }
+        LogStr("\n");
+    }
 
     /* Ensure PCI Command Register has Memory Space & Bus Master enabled */
     {

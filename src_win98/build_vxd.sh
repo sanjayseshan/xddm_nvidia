@@ -13,7 +13,8 @@ LD="i686-w64-mingw32-ld"
 OBJCOPY="i686-w64-mingw32-objcopy"
 LIBGCC="/usr/lib/gcc/i686-w64-mingw32/12-win32/libgcc.a"
 
-CFLAGS="-m32 -O2 -Wall -Wextra -Wno-unused-parameter -Wno-pointer-to-int-cast -fno-pie -fno-stack-protector -falign-functions=16 -falign-labels=16 -falign-loops=16 -falign-jumps=16 -D__VXDKERNEL__ -DNVX_ENABLE_EXPERIMENTAL_GSP=1 -I$ROOT_DIR/src_driver -I$SCRIPT_DIR/shim -nostdlib -fno-builtin"
+OPEN_GPU_DIR="$ROOT_DIR/open-gpu-kernel-modules"
+CFLAGS="-m32 -O2 -Wall -Wextra -Wno-unused-parameter -Wno-pointer-to-int-cast -fno-pie -fno-stack-protector -falign-functions=16 -falign-labels=16 -falign-loops=16 -falign-jumps=16 -D__VXDKERNEL__ -DNVX_ENABLE_EXPERIMENTAL_GSP=1 -I$ROOT_DIR/src_driver -I$ROOT_DIR/src_driver/include -I$OPEN_GPU_DIR/src/common/sdk/nvidia/inc -I$OPEN_GPU_DIR/src/common/inc -I$SCRIPT_DIR/shim -nostdlib -fno-builtin"
 
 echo "==> 1. Assembling VxD entry and VMM wrappers..."
 nasm -f win32 "$SCRIPT_DIR/vxd_entry.asm" -o "$OBJ_DIR/vxd_entry.o"

@@ -32,7 +32,7 @@ __pycache__/
 /framebuf.dll
 
 # Generated/extracted third-party source trees and historical snapshots
-/open-gpu-kernel-modules/
+# /open-gpu-kernel-modules/ (converted to git submodule)
 /nvidia-macos-driver/
 /linux-drm/
 /linux-nouveau-drm/
