@@ -1,6 +1,19 @@
 #include "nvx_gr_context.h"
 #include <limits.h>
 
+int NvxGrBuildPtes(uint64_t *entries, uint32_t capacity, uint64_t physical, uint64_t bytes)
+{
+    uint64_t pages, i;
+    if(!entries||!bytes||(physical&4095)||(bytes&4095)||
+       physical>UINT64_MAX-bytes) return 0;
+    pages=bytes>>12;
+    if(pages>capacity||physical+bytes>UINT64_C(0x100000000)) return 0;
+    for(i=0;i<pages;i++)
+        /* Pascal VER2 PTE: valid, SYS_COH, volatile, privileged. */
+        entries[i]=((physical+(i<<12))>>4)|UINT64_C(0x2d);
+    return 1;
+}
+
 int NvxGrBuildLayout(const NVX_GR_REQUIREMENT *req, uint32_t subcontexts,
                      int perSubcontextHeader, uint64_t capacity, NVX_GR_LAYOUT *out)
 {

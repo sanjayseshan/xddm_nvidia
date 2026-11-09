@@ -1021,6 +1021,10 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
     LogStr("NVX [RM]: private GPU virtual address space allocated.\n");
     if(!NvxGspRegisterScratch(dev)) return FALSE;
     if(!NvxGspGetFbLayout(dev)) LogStr("NVX [FB]: static VRAM layout unavailable; retaining system-memory copy probe.\n");
+#if NVX_ENABLE_GR_CHANNEL_PROBE
+    if(!NvxGspAllocateGrBacking(dev))
+        LogStr("NVX [GR]: continuing display bring-up without context backing.\n");
+#endif
     if(!NvxGspMapScratch(dev)) return FALSE;
     if(!NvxGspSelectCopyEngine(dev)) return FALSE;
     if(!NvxGspAllocChannel(dev)) return FALSE;

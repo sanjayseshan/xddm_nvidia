@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.20: calculate GR context layout)
+Updated: November 9, 2026 (v2.0.0.21: reserve GR context backing)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -28,10 +28,11 @@ Hardware OpenGL roadmap — November 8, 2026:
   Mesa NVK patch MIT. Reuse the architecture and upstream Mesa instead. Mesa's
   current NVK docs state Linux 6.6 minimum; XP support is unproven and must be
   established by the XP shim/build, not inferred from macOS success.
-- Current state: the GA104 RM advertises AMPERE_B. v2.0.0.20 calculates a
-  bounded, page-isolated candidate context-buffer layout using RM's reported
-  sizes and per-subcontext header requirements. It does not allocate, map, or
-  promote the buffers; GR submission is disabled for this layout-only probe.
+- Current state: the GA104 RM advertises AMPERE_B. v2.0.0.21 reserves 12MB of
+  low-address common DMA memory and installs candidate privileged GPU PTEs
+  for a bounded context-buffer layout based on RM's reported requirements.
+  GPU access to this new mapping has not yet been tested, and no buffers have
+  been promoted to RM; GR submission remains disabled for the layout probe.
   v2.0.0.19 observed firmware assertions while the FIFO advanced, which is not
   evidence of GR method completion or working rendering. The per-channel
   context-buffer query still returns NV_ERR_INVALID_OBJECT.
@@ -140,6 +141,17 @@ Hardware OpenGL roadmap — November 8, 2026:
   CE roundtrip passed, and XP received ACPI powerdown. OpenGL remains GDI
   Generic; D3D9 returns 0x8876086A. Evidence:
   `test_logs/v2.0.0.20-20261109-124259.log`.
+- v2.0.0.21 adds a probe-only, 12MB noncached common-buffer allocation below
+  4GB and builds privileged coherent 4KB GPU PTEs at VA 0x10200000 before
+  installing the page directory. The candidate 0xB54000-byte layout fits.
+  Backing memory is retained if RM teardown cannot be confirmed and released
+  only after channel teardown and engine halt. Host tests cover PTE bounds,
+  alignment, and physical-address limits. XP allocated the buffer at
+  0x05581000; the existing CE roundtrip and both display links passed, and XP
+  shut down via ACPI. Those checks do not access the new mapping: a dedicated
+  guarded GPU read/write test and RM buffer promotion are still required.
+  OpenGL remains GDI Generic; D3D9 returns 0x8876086A. Evidence:
+  `test_logs/v2.0.0.21-20261109-124651.log`.
 - Latest confirmed XP log before v2.0.0.11: `test_logs/v2.0.0.9-20261109-114617.log`.
   GSP-RM init, verified CE copy, and active/locked dual heads passed. The
   direct GR channel allocated and fetched SET_OBJECT, then faulted with

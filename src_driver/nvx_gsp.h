@@ -139,7 +139,9 @@
 #define GSP_SCRATCH_OFFSET             0x02F00000ULL
 #define GSP_SCRATCH_SIZE               0x10000UL
 #define GSP_PAGE_TABLES_OFFSET         0x02E00000ULL
-#define GSP_PAGE_TABLES_SIZE           0x9000UL
+#define GSP_PAGE_TABLES_SIZE           0xF000UL
+#define GSP_GR_CONTEXT_BYTES           0x00C00000UL
+#define GSP_GR_CONTEXT_GPU_VA          0x10200000ULL
 #define GSP_DISPLAY_PUSH_OFFSET        0x02E10000ULL
 #define GSP_UPLOAD_OFFSET              0x02600000ULL
 #define GSP_UPLOAD_SIZE                0x00800000UL
@@ -320,6 +322,9 @@ typedef struct _NVX_DEVICE_EXTENSION {
     PVOID DmaAdapter;
     PHYSICAL_ADDRESS GspDmaPhysical;
     PVOID GspDmaVirtual;
+    PVOID GspGrContextVirtual;
+    PHYSICAL_ADDRESS GspGrContextPhysical;
+    ULONG GspGrContextLength;
     ULONG GspDmaLength;
     ULONG Reserved6;
     PHYSICAL_ADDRESS CmdQueuePhysical;

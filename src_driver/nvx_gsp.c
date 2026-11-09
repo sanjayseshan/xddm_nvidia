@@ -273,6 +273,35 @@ static BOOLEAN NvxGspRegisterScratch(PNVX_DEVICE_EXTENSION dev)
     LogStr("NVX [RM]: 64KB coherent scratch memory registered.\n");return TRUE;
 }
 
+#if NVX_ENABLE_GR_CHANNEL_PROBE
+static BOOLEAN NvxGspAllocateGrBacking(PNVX_DEVICE_EXTENSION dev)
+{
+    ULONG64 physical;
+    if(!dev||!dev->DmaAdapter||dev->GspGrContextVirtual) return FALSE;
+    dev->GspGrContextLength=GSP_GR_CONTEXT_BYTES;
+    dev->GspGrContextVirtual=VideoPortAllocateCommonBuffer(dev,dev->DmaAdapter,
+        dev->GspGrContextLength,&dev->GspGrContextPhysical,FALSE,NULL);
+    if(!dev->GspGrContextVirtual) {
+        dev->GspGrContextLength=0;
+        LogStr("NVX [GR]: 12MB context backing allocation failed.\n");
+        return FALSE;
+    }
+    physical=(ULONG64)dev->GspGrContextPhysical.QuadPart;
+    if((physical&4095)||physical>0x100000000ULL-GSP_GR_CONTEXT_BYTES) {
+        VideoPortFreeCommonBuffer(dev,dev->GspGrContextLength,dev->GspGrContextVirtual,
+                                  dev->GspGrContextPhysical,FALSE);
+        dev->GspGrContextVirtual=NULL;dev->GspGrContextLength=0;
+        LogStr("NVX [GR]: context backing outside aligned 32-bit DMA range.\n");
+        return FALSE;
+    }
+    VideoPortZeroMemory(dev->GspGrContextVirtual,dev->GspGrContextLength);
+    __sync_synchronize();
+    LogStr("NVX [GR]: reserved zeroed context backing physical=");LogHex(physical);
+    LogStr(" bytes=");LogHex(dev->GspGrContextLength);LogStr("\n");
+    return TRUE;
+}
+#endif
+
 static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
 {
     /* GSP rejects MAP_MEMORY_DMA (v75: INVALID_FUNCTION). Use externally
@@ -294,6 +323,33 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
     tables[1536+128*2+1]=((physical+0x4000)>>4)|0xc;
     for(ULONG i=0;i<16;i++)
         tables[2048+i]=((dev->GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET+i*4096)>>4)|0xd;
+#if NVX_ENABLE_GR_CHANNEL_PROBE
+    if(dev->GspGrContextVirtual&&dev->GspGrContextLength==GSP_GR_CONTEXT_BYTES) {
+        ULONG slice;
+        /* Six 4KB SPTs cover 12MB at 0x10200000; each leaf is privileged.
+           Build before installing the directory so no TLB update is needed. */
+        for(slice=0;slice<6;slice++) {
+            PULONG64 spt=(PULONG64)((PUCHAR)tables+0x9000+slice*0x1000);
+            if(!NvxGrBuildPtes((uint64_t *)spt,512,
+                               (ULONG64)dev->GspGrContextPhysical.QuadPart+
+                                   (ULONG64)slice*0x200000,0x200000)) {
+                break;
+            }
+            tables[1536+(129+slice)*2+1]=((physical+0x9000+slice*0x1000)>>4)|0xc;
+        }
+        if(slice==6) {
+            LogStr("NVX [GR]: context backing mapped at GPU VA=");
+            LogHex(GSP_GR_CONTEXT_GPU_VA);LogStr("; no GR promotion submitted.\n");
+        } else {
+            ULONG i;
+            for(i=0;i<6;i++) tables[1536+(129+i)*2+1]=0;
+            VideoPortFreeCommonBuffer(dev,dev->GspGrContextLength,dev->GspGrContextVirtual,
+                                      dev->GspGrContextPhysical,FALSE);
+            dev->GspGrContextVirtual=NULL;dev->GspGrContextLength=0;
+            LogStr("NVX [GR]: context PTE construction failed; display path retained.\n");
+        }
+    }
+#endif
     /* VA 0x20000000 selects level-2 index 1, so it needs a second PD0 page.
        Its paired PD0 entries point to a 64KB LPT and 4KB SPT. Each 256-byte
        LPT covers one 2MB VA slice. Map VRAM physical 0..64MB in CE VA space. */
@@ -839,7 +895,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     LogStr(" propertiesValid=");LogHex(grHeaderInfoValid?1:0);LogStr("\n");
     if(grRequirementsValid&&grHeaderInfoValid&&
        NvxGrBuildLayout(grRequirements,grMaxSubcontexts,(int)grHeaderSupported,
-                        0x1000000ULL,&grLayout)) {
+                        GSP_GR_CONTEXT_BYTES,&grLayout)) {
         ULONG i;
         LogStr("NVX [GR]: checked context layout bytes=");LogHex(grLayout.bytes);
         LogStr(" buffers=");LogHex(grLayout.count);LogStr("\n");
@@ -849,7 +905,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
             LogStr(" size=");LogHex(grLayout.buffers[i].size);
             LogStr(" align=");LogHex(grLayout.buffers[i].alignment);LogStr("\n");
         }
-    } else LogStr("NVX [GR]: context layout unavailable or exceeds 16MB; no memory promoted.\n");
+    } else LogStr("NVX [GR]: context layout unavailable or exceeds 12MB; no memory promoted.\n");
 #if !NVX_ENABLE_GR_SUBMISSION_PROBE
     LogStr("NVX [GR]: layout-only probe; GR submission remains disabled.\n");
     return FALSE;
