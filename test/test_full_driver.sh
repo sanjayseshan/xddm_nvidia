@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="2.0.0.29"
+NVX_TEST_VERSION="2.0.0.30"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
@@ -79,7 +79,7 @@ finish() {
             echo "DISPLAY RESULT: No display verification recorded; monitor activation is unverified."
         fi
         grep -E "Miniport Driver|\[SEC2\]|\[GSP\]|\[RM\]|\[GR\]|\[COPY\]|\[FB\]|\[FBMAP\]|\[RESET\]" "$NVX_RUN_LOG" | tail -80 || true
-        if grep -q 'NVX \[GR\]: layout-only probe' "$NVX_RUN_LOG"; then
+        if grep -q 'NVX \[GR\]: GR submission disabled' "$NVX_RUN_LOG"; then
             echo "GR RESULT: context layout queried; no graphics submission or rendering was tested."
         elif grep -q 'NVX \[GR\]: firmware assertions observed during submission' "$NVX_RUN_LOG"; then
             echo "GR RESULT: firmware assertions occurred during the probe; graphics execution is unverified."

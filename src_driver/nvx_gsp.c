@@ -709,6 +709,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     NV906F_CTRL_GET_CLASS_ENGINEID_PARAMS classEngineParams={0};
     NVB06F_CTRL_GET_ENGINE_CTX_SIZE_PARAMS grCtxSize={0};
     NVB06F_CTRL_GET_CHANNEL_HW_STATE_PARAMS grHwState={0};
+    NV2080_CTRL_INTERNAL_GMMU_GET_STATIC_INFO_PARAMS faultStatic={0};
     NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS *grBufferInfo;
     NVX_GR_REQUIREMENT grRequirements[NVX_GR_REQUIREMENT_COUNT]={0};
     NVX_GR_LAYOUT grLayout;
@@ -876,6 +877,18 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         return FALSE;
     }
     LogStr("NVX [GR]: GR object bound and channel scheduled.\n");
+    /* Needed to size an NVIDIA-compatible non-replayable fault shadow queue;
+       this read-only query does not register a buffer or service faults. */
+    if(NvxGspControl(dev,dev->GspSubdeviceHandle,
+                     NV2080_CTRL_CMD_INTERNAL_GMMU_GET_STATIC_INFO,
+                     &faultStatic,sizeof(faultStatic))) {
+        const NV2080_CTRL_INTERNAL_GMMU_GET_STATIC_INFO_PARAMS *reply=
+            (const NV2080_CTRL_INTERNAL_GMMU_GET_STATIC_INFO_PARAMS *)(dev->RpcRxRecord+104);
+        LogStr("NVX [GR-FAULT]: nonreplay bytes=");LogHex(reply->nonReplayableFaultBufferSize);
+        LogStr(" metadata=");LogHex(reply->nonReplayableShadowFaultBufferMetadataSize);
+        LogStr(" replay bytes=");LogHex(reply->replayableFaultBufferSize);
+        LogStr(" metadata=");LogHex(reply->replayableShadowFaultBufferMetadataSize);LogStr("\n");
+    } else LogStr("NVX [GR-FAULT]: static fault-buffer requirements unavailable.\n");
     /* This is the same physical-RM query used by OpenRM to learn the
        required GR buffer sizes before client RM allocates them. Reuse the
        device-extension storage to avoid a large VideoPort kernel stack frame. */
@@ -1011,7 +1024,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
 #endif
     } else LogStr("NVX [GR]: context layout unavailable or exceeds 12MB; no memory promoted.\n");
 #if !NVX_ENABLE_GR_SUBMISSION_PROBE
-    LogStr("NVX [GR]: layout-only probe; GR submission remains disabled.\n");
+    LogStr("NVX [GR]: GR submission disabled; no draw tested.\n");
     return FALSE;
 #else
     if(!dev->GspGrPromotionAccepted||!dev->GspGrContextAliasVerified||
