@@ -868,7 +868,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     BOOLEAN ampereAFound=FALSE,ampereBFound=FALSE;
     ULONG runlistQuery[124]={0},token=0,runlistBase=0;
     ULONG dbcfg,chcfg,enable,wait,chramBase,fault[26]={0},assertCountBefore;
-    ULONG64 pushVa;
+    ULONG64 pushVa,grFenceVa;
     PUCHAR scratch;
     PULONG push;
     volatile ULONG *userd;
@@ -1298,20 +1298,29 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     push=(PULONG)(scratch+0xf000);
     pushVa=dev->GspScratchGpuVa+0xf000;
     grFence=(volatile ULONG *)((PUCHAR)dev->GspGrContextVirtual+GSP_GR_CONTEXT_BYTES-0xf00);
-    grFence[0]=0x13579bdf;grFence[1]=0;grFence[2]=0x2468ace0;
+    grFenceVa=GSP_GR_CONTEXT_GPU_VA+GSP_GR_CONTEXT_BYTES-0xf00;
+    /* v47 used an address four bytes into this aligned context location.
+       v50 targets the naturally aligned first word and guards its neighbors. */
+    grFence[0]=0;grFence[1]=0x13579bdf;grFence[2]=0x2468ace0;
     if(userd[0x88/4]||userd[0x8c/4]) {
         LogStr("NVX [GR]: fresh graphics USERD is not empty; submission skipped.\n");
         return FALSE;
     }
     VideoPortZeroMemory((PVOID)(scratch+0x9000),0x1000);
     VideoPortZeroMemory((PVOID)(scratch+0xf000),0x1000);
-    /* v2.0.0.48 showed SET_OBJECT alone is accepted; add WAIT_FOR_IDLE but
-       continue to omit the report-semaphore method. */
+    /* v49 proved SET_OBJECT + WAIT_FOR_IDLE is fetched without a fault.
+       Test the report semaphore at its natural 4-byte-aligned context address. */
     push[0]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|NVC56F_SET_OBJECT;
     push[1]=classEngineId;
     push[2]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|NVC797_WAIT_FOR_IDLE;
     push[3]=0;
-    fifo[0]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|(4ULL<<42);
+    push[4]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(5U<<16)|NVC797_SET_REPORT_SEMAPHORE_PAYLOAD_LOWER;
+    push[5]=0x47524631;push[6]=0;
+    push[7]=(ULONG)grFenceVa;push[8]=(ULONG)(grFenceVa>>32);
+    push[9]=DRF_DEF(C797,_REPORT_SEMAPHORE_EXECUTE,_OPERATION,_RELEASE)|
+            DRF_DEF(C797,_REPORT_SEMAPHORE_EXECUTE,_PIPELINE_LOCATION,_ALL)|
+            DRF_DEF(C797,_REPORT_SEMAPHORE_EXECUTE,_STRUCTURE_SIZE,_SEMAPHORE_ONE_WORD);
+    fifo[0]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|(10ULL<<42);
     __sync_synchronize();
     userd[0x8c/4]=1;
     __sync_synchronize();
@@ -1324,21 +1333,20 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),token);
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x90),2);
     LogStr("NVX [GR]: rang channel doorbell token=");LogHex(token);LogStr(" chid=0x2\n");
-    LogStr("NVX [GR]: submitted SET_OBJECT and WAIT_FOR_IDLE; no semaphore method.\n");
+    LogStr("NVX [GR]: submitted SET_OBJECT, WAIT_FOR_IDLE and aligned semaphore release.\n");
     for(wait=0;wait<100000;wait++) {
-        if(userd[0x88/4]==1) break;
-        if(grFence[1]==0x47524631) {
+        if(grFence[0]==0x47524631) {
             break;
         }
         if(wait&&!(wait%10000)) {
             LogStr("NVX [GR]: waiting seconds=");LogHex(wait/10000);
             LogStr(" GPGet=");LogHex(userd[0x88/4]);
             LogStr(" GPPut=");LogHex(userd[0x8c/4]);
-            LogStr(" fence=");LogHex(grFence[1]);LogStr("\n");
+            LogStr(" fence=");LogHex(grFence[0]);LogStr("\n");
         }
         VideoPortStallExecution(100);
     }
-    if(userd[0x88/4]==1||grFence[1]==0x47524631) {
+    if(userd[0x88/4]==1||grFence[0]==0x47524631) {
         /* Drain asynchronous firmware diagnostics before judging completion. */
         VideoPortStallExecution(100000);
         grStatusAvailable=NvxGspGetName(dev);
@@ -1349,8 +1357,8 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
             LogStr("NVX [GR]: firmware assertions observed during submission: before=");
             LogHex(assertCountBefore);LogStr(" after=");LogHex(dev->GspAssertCount);LogStr("\n");
         } else if(grStatusAvailable&&!dev->GspGraphicsChannelFaulted&&!dev->GspMmuFaultQueued&&
-                  userd[0x88/4]==1&&grFence[1]==0x47524631&&
-                  grFence[0]==0x13579bdf&&grFence[2]==0x2468ace0) {
+                  userd[0x88/4]==1&&grFence[0]==0x47524631&&
+                  grFence[1]==0x13579bdf&&grFence[2]==0x2468ace0) {
             dev->GspGraphicsCommandVerified=TRUE;
         }
     }
@@ -1391,7 +1399,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
             LogStr("NVX [GR]: command fetch timed out; GPGet=");
         LogHex(userd[0x88/4]);
         LogStr(" GPPut=");LogHex(userd[0x8c/4]);
-        LogStr(" fence=");LogHex(grFence[1]);LogStr("\n");
+        LogStr(" fence=");LogHex(grFence[0]);LogStr("\n");
         chramBase=chcfg&0xfffffff0U;
         if(chramBase&&chramBase<=dev->Bar0Length-16) {
             LogStr("NVX [GR]: CHRAM slots=");
