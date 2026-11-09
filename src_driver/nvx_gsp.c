@@ -20,6 +20,7 @@
 #include <class/clb069.h>
 #include <ctrl/ctrlb069.h>
 #include <ctrl/ctrl2080/ctrl2080internal.h>
+#include <ctrl/ctrl2080/ctrl2080nvd.h>
 #include <stddef.h>
 #include "bootloader_blob.h"
 #include "booter_load_blob.h"
@@ -260,6 +261,54 @@ static BOOLEAN NvxGspControl(PNVX_DEVICE_EXTENSION dev,ULONG object,ULONG cmd,
     }
     return TRUE;
 }
+
+#if NVX_ENABLE_GR_CHANNEL_PROBE
+static VOID NvxGspDumpNocatJournal(PNVX_DEVICE_EXTENSION dev)
+{
+    NV2080_CTRL_NVD_GET_NOCAT_JOURNAL_PARAMS *params;
+    const NV2080_CTRL_NVD_GET_NOCAT_JOURNAL_PARAMS *reply;
+    ULONG count,i;
+    if(sizeof(*params)>sizeof(dev->RpcControlPayload)-24) {
+        LogStr("NVX [GR]: NOCAT journal query exceeds the RPC payload buffer.\n");
+        return;
+    }
+    /* The control helper copies parameters before reusing RpcTxRecord to
+       construct the framed request, so use that scratch area as our input. */
+    params=(NV2080_CTRL_NVD_GET_NOCAT_JOURNAL_PARAMS *)dev->RpcTxRecord;
+    VideoPortZeroMemory(params,sizeof(*params));
+    if(!NvxGspControl(dev,dev->GspSubdeviceHandle,
+                      NV2080_CTRL_CMD_NVD_GET_NOCAT_JOURNAL,params,sizeof(*params))) {
+        LogStr("NVX [GR]: OpenRM NOCAT journal query unavailable.\n");
+        return;
+    }
+    reply=(const NV2080_CTRL_NVD_GET_NOCAT_JOURNAL_PARAMS *)(dev->RpcRxRecord+104);
+    count=reply->nocatRecordCount;
+    if(count>NV2080_NOCAT_JOURNAL_MAX_JOURNAL_RECORDS)
+        count=NV2080_NOCAT_JOURNAL_MAX_JOURNAL_RECORDS;
+    LogStr("NVX [GR]: NOCAT records=");LogHex(reply->nocatRecordCount);
+    LogStr(" outstanding=");LogHex(reply->nocatOutstandingRecordCount);LogStr("\n");
+    for(i=0;i<count;i++) {
+        const NV2080_NOCAT_JOURNAL_ENTRY *entry=&reply->journalRecords[i].nocatJournalEntry;
+        char source[NV2080_NOCAT_JOURNAL_MAX_STR_LEN+1];
+        char engine[NV2080_NOCAT_JOURNAL_MAX_STR_LEN+1];
+        ULONG j;
+        VideoPortMoveMemory(source,(PVOID)entry->source,NV2080_NOCAT_JOURNAL_MAX_STR_LEN);
+        VideoPortMoveMemory(engine,(PVOID)entry->faultingEngine,NV2080_NOCAT_JOURNAL_MAX_STR_LEN);
+        source[NV2080_NOCAT_JOURNAL_MAX_STR_LEN]=0;
+        engine[NV2080_NOCAT_JOURNAL_MAX_STR_LEN]=0;
+        LogStr("NVX [GR]: NOCAT record=");LogHex(i);LogStr(" type=");
+        LogHex(entry->recType);LogStr(" subsystem=");LogHex(entry->subsystem);
+        LogStr(" error=");LogHex((ULONG)entry->errorCode);
+        LogStr(" engine=");LogStr(engine);
+        LogStr(" source=");LogStr(source);LogStr(" diagBytes=");
+        LogHex(entry->diagBufferLen);LogStr("\n");
+        for(j=0;j<entry->diagBufferLen&&j<16;j++) {
+            LogStr("NVX [GR]: NOCAT diag[");LogHex(j);LogStr("]=");
+            LogHex(entry->diagBuffer[j]);LogStr("\n");
+        }
+    }
+}
+#endif
 
 static BOOLEAN NvxGspGetName(PNVX_DEVICE_EXTENSION dev)
 {
@@ -1352,6 +1401,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         if(dev->GspAssertCount!=assertCountBefore) {
             LogStr("NVX [GR]: firmware assertions observed during submission: before=");
             LogHex(assertCountBefore);LogStr(" after=");LogHex(dev->GspAssertCount);LogStr("\n");
+            NvxGspDumpNocatJournal(dev);
         } else if(grStatusAvailable&&!dev->GspGraphicsChannelFaulted&&!dev->GspMmuFaultQueued&&
                   userd[0x88/4]==1&&grFence[0]==0x47524631&&
                   grFence[1]==0x13579bdf&&grFence[2]==0x2468ace0) {
