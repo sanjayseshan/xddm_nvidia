@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.55: isolate report-semaphore setup)
+Updated: November 9, 2026 (v2.0.0.56: isolate semaphore method A)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -361,6 +361,14 @@ Hardware OpenGL roadmap — November 8, 2026:
   at the release. No MMU notification was logged; the VM completed ACPI
   powerdown and retained the existing 2D/copy results. Evidence:
   `test_logs/v2.0.0.55-20261109-142959.log`.
+- v2.0.0.56 submitted only C797 semaphore method A (upper address) after the
+  known-good SET_OBJECT/WAIT_FOR_IDLE pair. The same two assertions appeared;
+  method A alone is sufficient to trigger them. The fence stayed zero, no MMU
+  notification appeared, and the VM completed ACPI powerdown. This isolates
+  the boundary to C797 report-semaphore method dispatch, but the GSP shared-data
+  callback exposes only an assertion count. Next, query OpenRM's NOCAT journal
+  for the assertion source instead of guessing at further packet changes.
+  Evidence: `test_logs/v2.0.0.56-20261109-143219.log`.
 
 ### Linux and macOS Reference Architecture
 
