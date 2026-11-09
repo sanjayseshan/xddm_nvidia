@@ -906,9 +906,15 @@ VOID NvxGspShutdown(PVOID HwDeviceExtension) {
 
         /* The GR backing can be GPU-visible; release it only after the same
            confirmed RM teardown and engine halt as the GSP staging buffer. */
+        if(devExt->GspFaultQueueVirtual) {
+            VideoPortFreeCommonBuffer(HwDeviceExtension,devExt->GspFaultQueueLength,
+                devExt->GspFaultQueueVirtual,devExt->GspFaultQueuePhysical,TRUE);
+            devExt->GspFaultQueueVirtual=NULL;
+            devExt->GspFaultQueueLength=0;
+        }
         if(devExt->GspFaultShadowVirtual) {
             VideoPortFreeCommonBuffer(HwDeviceExtension,devExt->GspFaultShadowLength,
-                devExt->GspFaultShadowVirtual,devExt->GspFaultShadowPhysical,FALSE);
+                devExt->GspFaultShadowVirtual,devExt->GspFaultShadowPhysical,TRUE);
             devExt->GspFaultShadowVirtual=NULL;
             devExt->GspFaultShadowLength=0;
         }

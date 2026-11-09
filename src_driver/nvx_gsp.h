@@ -329,6 +329,9 @@ typedef struct _NVX_DEVICE_EXTENSION {
     PHYSICAL_ADDRESS GspGrContextPhysical;
     ULONG GspGrContextLength;
     ULONG GspFaultBufferHandle;
+    PVOID GspFaultQueueVirtual;
+    PHYSICAL_ADDRESS GspFaultQueuePhysical;
+    ULONG GspFaultQueueLength;
     PVOID GspFaultShadowVirtual;
     PHYSICAL_ADDRESS GspFaultShadowPhysical;
     ULONG GspFaultShadowLength;

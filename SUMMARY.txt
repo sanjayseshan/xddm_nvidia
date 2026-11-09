@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.44: bound fault-register reads to BAR0)
+Updated: November 9, 2026 (v2.0.0.46: separate shadow queue and packet pages)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -290,6 +290,17 @@ Hardware OpenGL roadmap — November 8, 2026:
   only documented physical MMU fault registers using OpenRM's
   `NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET` plus the register offsets.
   Evidence: `test_logs/v2.0.0.44-20261109-135622.log`.
+- v2.0.0.45 read the documented Turing/Ampere physical virtual-function
+  registers directly at `NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET` plus the
+  per-buffer offsets. Non-replay GET=PUT=1 and replay GET=PUT=0, while the
+  client shadow queue remains empty. The GSP MMU notification therefore still
+  does not yield a packet to XP. Evidence:
+  `test_logs/v2.0.0.45-20261109-140130.log`.
+- v2.0.0.46 split the queue structure and packet pages into separate cached
+  common buffers, matching NVIDIA RM's allocation layout. The queue stayed
+  empty and the GR submission still faulted. Teardown now frees both buffers
+  with the same cache setting used at allocation. Evidence:
+  `test_logs/v2.0.0.46-20261109-140625.log`.
 
 ### Linux and macOS Reference Architecture
 

@@ -717,9 +717,10 @@ static BOOLEAN NvxGspSetupFaultBuffer(PNVX_DEVICE_EXTENSION dev,ULONG expectedSi
     NVB069_CTRL_FAULTBUFFER_GET_SIZE_PARAMS getSize={0};
     NV2080_CTRL_INTERNAL_GMMU_REGISTER_CLIENT_SHADOW_FAULT_BUFFER_PARAMS *params;
     const NVB069_CTRL_FAULTBUFFER_GET_SIZE_PARAMS *sizeReply;
-    ULONG handle=0xc1d00030,dataBytes,total,pages,i;
-    ULONG64 phys;
-    if(!dev||!expectedSize||metadata||!classId||dev->GspFaultBufferHandle||dev->GspFaultShadowVirtual) return FALSE;
+    ULONG handle=0xc1d00030,dataBytes,pages,i;
+    ULONG64 queuePhys,bufferPhys;
+    if(!dev||!expectedSize||metadata||!classId||dev->GspFaultBufferHandle||
+       dev->GspFaultQueueVirtual||dev->GspFaultShadowVirtual) return FALSE;
     if(classId!=MMU_FAULT_BUFFER||
        !NvxGspAlloc(dev,dev->GspSubdeviceHandle,handle,classId,NULL,0)) {
         LogStr("NVX [GR-FAULT]: NVIDIA C369 object allocation failed class=");LogHex(classId);LogStr("\n");
@@ -733,24 +734,31 @@ static BOOLEAN NvxGspSetupFaultBuffer(PNVX_DEVICE_EXTENSION dev,ULONG expectedSi
     }
     if(expectedSize>0xffffffffU-(NVX_FAULT_SHADOW_PAGE-1)) return FALSE;
     dataBytes=(expectedSize+NVX_FAULT_SHADOW_PAGE-1)&~(NVX_FAULT_SHADOW_PAGE-1);
-    if(dataBytes>0xffffffffU-2*NVX_FAULT_SHADOW_PAGE) return FALSE;
-    total=NVX_FAULT_SHADOW_PAGE+dataBytes;
     pages=dataBytes/NVX_FAULT_SHADOW_PAGE;
     if(pages>NV2080_CTRL_INTERNAL_GMMU_CLIENT_SHADOW_FAULT_BUFFER_MAX_PAGES) return FALSE;
-    /* Linux RM allocates this queue/data from cached system memory. Match
-       that backing and let VideoPort's DMA adapter provide coherence. */
-    dev->GspFaultShadowVirtual=VideoPortAllocateCommonBuffer(dev,dev->DmaAdapter,total,
-        &dev->GspFaultShadowPhysical,TRUE,NULL);
+    /* Mirror Linux RM's two cached allocations: one Queue structure page and
+       a separate packet-page allocation, then register their respective DMA
+       addresses. */
+    dev->GspFaultQueueLength=NVX_FAULT_SHADOW_PAGE;
+    dev->GspFaultQueueVirtual=VideoPortAllocateCommonBuffer(dev,dev->DmaAdapter,
+        dev->GspFaultQueueLength,&dev->GspFaultQueuePhysical,TRUE,NULL);
+    if(!dev->GspFaultQueueVirtual) return FALSE;
+    dev->GspFaultShadowLength=dataBytes;
+    dev->GspFaultShadowVirtual=VideoPortAllocateCommonBuffer(dev,dev->DmaAdapter,
+        dev->GspFaultShadowLength,&dev->GspFaultShadowPhysical,TRUE,NULL);
     if(!dev->GspFaultShadowVirtual) return FALSE;
-    dev->GspFaultShadowLength=total;
-    phys=(ULONG64)dev->GspFaultShadowPhysical.QuadPart;
-    if((phys&(NVX_FAULT_SHADOW_PAGE-1))||phys+total>0x100000000ULL) {
-        LogStr("NVX [GR-FAULT]: shadow DMA allocation not page-aligned below 4GB.\n");
+    queuePhys=(ULONG64)dev->GspFaultQueuePhysical.QuadPart;
+    bufferPhys=(ULONG64)dev->GspFaultShadowPhysical.QuadPart;
+    if((queuePhys&(NVX_FAULT_SHADOW_PAGE-1))||(bufferPhys&(NVX_FAULT_SHADOW_PAGE-1))||
+       queuePhys+dev->GspFaultQueueLength>0x100000000ULL||
+       bufferPhys+dataBytes>0x100000000ULL) {
+        LogStr("NVX [GR-FAULT]: queue/data DMA allocations not page-aligned below 4GB.\n");
         return FALSE;
     }
-    VideoPortZeroMemory(dev->GspFaultShadowVirtual,total);
+    VideoPortZeroMemory(dev->GspFaultQueueVirtual,dev->GspFaultQueueLength);
+    VideoPortZeroMemory(dev->GspFaultShadowVirtual,dataBytes);
     {
-        volatile ULONG64 *q=(volatile ULONG64 *)dev->GspFaultShadowVirtual;
+        volatile ULONG64 *q=(volatile ULONG64 *)dev->GspFaultQueueVirtual;
         q[NVX_FAULT_QUEUE_CAPACITY_OFFSET/8]=expectedSize/32;
         q[NVX_FAULT_QUEUE_MSGSIZE_OFFSET/8]=32;
         q[NVX_FAULT_QUEUE_GET_OFFSET/8]=0;
@@ -758,10 +766,10 @@ static BOOLEAN NvxGspSetupFaultBuffer(PNVX_DEVICE_EXTENSION dev,ULONG expectedSi
     }
     params=(NV2080_CTRL_INTERNAL_GMMU_REGISTER_CLIENT_SHADOW_FAULT_BUFFER_PARAMS *)dev->RpcRxRecord;
     VideoPortZeroMemory(params,sizeof(*params));
-    params->shadowFaultBufferQueuePhysAddr=phys;
+    params->shadowFaultBufferQueuePhysAddr=queuePhys;
     params->shadowFaultBufferSize=expectedSize;
     params->shadowFaultBufferMetadataSize=metadata;
-    for(i=0;i<pages;i++) params->shadowFaultBufferPteArray[i]=phys+NVX_FAULT_SHADOW_PAGE+(ULONG64)i*NVX_FAULT_SHADOW_PAGE;
+    for(i=0;i<pages;i++) params->shadowFaultBufferPteArray[i]=bufferPhys+(ULONG64)i*NVX_FAULT_SHADOW_PAGE;
     params->shadowFaultBufferType=NV2080_CTRL_FAULT_BUFFER_NON_REPLAYABLE;
     dev->GspFaultShadowRegistered=TRUE;
     if(!NvxGspControl(dev,dev->GspSubdeviceHandle,
@@ -771,7 +779,8 @@ static BOOLEAN NvxGspSetupFaultBuffer(PNVX_DEVICE_EXTENSION dev,ULONG expectedSi
         return FALSE;
     }
     LogStr("NVX [GR-FAULT]: C369 object plus internal shadow queue registered; pages=");
-    LogHex(pages);LogStr(" physical=");LogHex(phys);LogStr(" bytes=");LogHex(total);LogStr("\n");
+    LogHex(pages);LogStr(" queue=");LogHex(queuePhys);LogStr(" packetBuffer=");LogHex(bufferPhys);
+    LogStr(" bytes=");LogHex(dataBytes);LogStr("\n");
     return TRUE;
 }
 
@@ -781,9 +790,9 @@ static VOID NvxGspDumpFaultShadow(PNVX_DEVICE_EXTENSION dev)
     volatile ULONG64 *q;
     ULONG64 get,put,capacity,count,idx;
     ULONG i;
-    if(!dev||!dev->GspFaultShadowVirtual||dev->GspFaultShadowLength<NVX_FAULT_SHADOW_PAGE) return;
+    if(!dev||!dev->GspFaultQueueVirtual||!dev->GspFaultShadowVirtual||!dev->GspFaultQueueLength) return;
     base=(volatile UCHAR *)dev->GspFaultShadowVirtual;
-    q=(volatile ULONG64 *)dev->GspFaultShadowVirtual;
+    q=(volatile ULONG64 *)dev->GspFaultQueueVirtual;
     get=q[NVX_FAULT_QUEUE_GET_OFFSET/8];put=q[NVX_FAULT_QUEUE_PUT_OFFSET/8];
     capacity=q[NVX_FAULT_QUEUE_CAPACITY_OFFSET/8];__sync_synchronize();
     if(!capacity||capacity>0x100000||get>=capacity||put>=capacity) {
@@ -793,7 +802,7 @@ static VOID NvxGspDumpFaultShadow(PNVX_DEVICE_EXTENSION dev)
     LogStr("NVX [GR-FAULT]: queue get=");LogHex(get);LogStr(" put=");LogHex(put);LogStr(" pending=");LogHex(count);LogStr("\n");
     for(idx=0;idx<count&&idx<4;idx++) {
         ULONG64 slot=(get+idx)%capacity;
-        volatile ULONG *packet=(volatile ULONG *)(base+NVX_FAULT_SHADOW_PAGE+slot*32);
+        volatile ULONG *packet=(volatile ULONG *)(base+slot*32);
         LogStr("NVX [GR-FAULT]: packet");LogHex(idx);
         for(i=0;i<8;i++){LogStr(" w");LogHex(i);LogStr("=");LogHex(packet[i]);}
         LogStr("\n");
@@ -813,42 +822,24 @@ BOOLEAN NvxGspUnregisterFaultShadow(PNVX_DEVICE_EXTENSION dev)
     return TRUE;
 }
 
-static VOID NvxGspLogFaultRegisterMappings(PNVX_DEVICE_EXTENSION dev)
+static VOID NvxGspLogFaultRingPointers(PNVX_DEVICE_EXTENSION dev)
 {
-    NVB069_CTRL_CMD_FAULTBUFFER_GET_REGISTER_MAPPINGS_PARAMS params={0};
-    const NVB069_CTRL_CMD_FAULTBUFFER_GET_REGISTER_MAPPINGS_PARAMS *reply;
     ULONG type;
-    if(!dev||!dev->GspFaultBufferHandle) return;
+    if(!dev||!dev->Bar0MmioVirtual||dev->Bar0Length<4) return;
     for(type=NVB069_CTRL_FAULT_BUFFER_NON_REPLAYABLE;
         type<=NVB069_CTRL_FAULT_BUFFER_REPLAYABLE;type++) {
-        VideoPortZeroMemory(&params,sizeof(params));
-        params.faultBufferType=type;
-        if(!NvxGspControl(dev,dev->GspFaultBufferHandle,
-            NVB069_CTRL_CMD_FAULTBUFFER_GET_REGISTER_MAPPINGS,
-            &params,sizeof(params))) {
-            LogStr("NVX [GR-FAULT]: register mappings query failed type=");
-            LogHex(type);LogStr("\n");
-            continue;
+        ULONG getOffset=0x00B80000U+0x00003008U+type*32U;
+        ULONG putOffset=0x00B80000U+0x0000300CU+type*32U;
+        if(getOffset>dev->Bar0Length-4||putOffset>dev->Bar0Length-4) {
+            LogStr("NVX [GR-FAULT]: documented MMU ring registers outside BAR0; offset=");
+            LogHex(getOffset);LogStr(" BAR0 bytes=");LogHex(dev->Bar0Length);LogStr("\n");
+            return;
         }
-        reply=(const NVB069_CTRL_CMD_FAULTBUFFER_GET_REGISTER_MAPPINGS_PARAMS *)(dev->RpcRxRecord+104);
-        LogStr("NVX [GR-FAULT]: register mappings type=");LogHex(type);
-        LogStr(" GET=");LogHex((ULONG64)reply->pFaultBufferGet);
-        LogStr(" PUT=");LogHex((ULONG64)reply->pFaultBufferPut);
-        LogStr(" INFO=");LogHex((ULONG64)reply->pFaultBufferInfo);
-        LogStr(" INTR=");LogHex((ULONG64)reply->pPmcIntr);
-        LogStr(" mask=");LogHex(reply->replayableFaultMask);
-        LogStr(" prefetch=");LogHex((ULONG64)reply->pPrefetchCtrl);LogStr("\n");
-        if(dev->Bar0MmioVirtual&&dev->Bar0Length>=4&&
-           (ULONG64)reply->pFaultBufferGet<=dev->Bar0Length-4&&
-           (ULONG64)reply->pFaultBufferPut<=dev->Bar0Length-4&&
-           !((ULONG64)reply->pFaultBufferGet&3)&&!((ULONG64)reply->pFaultBufferPut&3)) {
-            LogStr("NVX [GR-FAULT]: BAR0 fault pointers type=");LogHex(type);
-            LogStr(" GET=");LogHex(nvx_reg_read32(dev->Bar0MmioVirtual,(ULONG)(ULONG_PTR)reply->pFaultBufferGet));
-            LogStr(" PUT=");LogHex(nvx_reg_read32(dev->Bar0MmioVirtual,(ULONG)(ULONG_PTR)reply->pFaultBufferPut));LogStr("\n");
-        } else {
-            LogStr("NVX [GR-FAULT]: register mapping outside BAR0 or unaligned; BAR0 bytes=");
-            LogHex(dev->Bar0Length);LogStr("\n");
-        }
+        LogStr("NVX [GR-FAULT]: BAR0 ring type=");LogHex(type);
+        LogStr(" GET@");LogHex(getOffset);LogStr("=");
+        LogHex(nvx_reg_read32(dev->Bar0MmioVirtual,getOffset));
+        LogStr(" PUT@");LogHex(putOffset);LogStr("=");
+        LogHex(nvx_reg_read32(dev->Bar0MmioVirtual,putOffset));LogStr("\n");
     }
 }
 
@@ -1358,7 +1349,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         VideoPortStallExecution(100000);
         grStatusAvailable=NvxGspGetName(dev);
         if(dev->GspMmuFaultQueued) {
-            NvxGspLogFaultRegisterMappings(dev);
+            NvxGspLogFaultRingPointers(dev);
         }
         if(dev->GspAssertCount!=assertCountBefore) {
             LogStr("NVX [GR]: firmware assertions observed during submission: before=");
