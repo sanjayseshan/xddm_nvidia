@@ -1,6 +1,45 @@
 NVIDIA GA104 Display Driver — cumulative development summary
 Updated: November 8, 2026 (v2.0.0.3: Windows XP 32-bit SP3 bringup, win32k display DDI architecture, and dual-architecture packaging)
 
+XP x86 graphics audit and performance — November 8, 2026:
+- Compared against the user-identified last x64 log,
+  test_logs/xp_v2_20261108-161607.log, and saved x64 guest test_accel.log.
+  They report Microsoft GDI Generic / OpenGL 1.1, not hardware 3D. The saved
+  guest file also records D3D9 device creation failure 0x8876086A.
+- Corrected test_gpu_accel.c: fixed reversed black/white sample coordinates,
+  enforce fill/copy pixel assertions, exercise a vertically disjoint GPU-copy
+  span, check swaps, count only presented frames, identify software renderers,
+  check D3D rendering results, and propagate real failures to the process exit.
+  Removed the unconditional overall PASS. Gears now checks SwapBuffers too.
+- Confirmed GPU 2D fills/copy submissions and passing pixel checks on primary
+  1080p and secondary 1440p. Normal OpenGL software rendering now completes
+  100 cube frames after disabling incomplete custom pixel-format/swap hooks.
+  D3D9 remains unavailable; no GR/shader/API hardware backend exists yet.
+- Replaced byte-at-a-time x86 CRT substitutes with non-SIMD block operations.
+  First guest comparison: primary screen-copy throughput 28.36 -> 37.42 MPix/s;
+  secondary 44.37 -> 66.83 MPix/s. User confirmed smoother window movement and
+  correct output on both monitors. Fill throughput remained about 25 MPix/s.
+- Added unaligned/canary/comparison-order memory-helper tests, passing as both
+  native i386 freestanding code and a hosted test. Final unchanged-row compare
+  uses 16-byte dword groups (no SIMD register state); host 200x1080p equality
+  microbenchmark 0.243s REP CMPS -> 0.051s grouped loads, not a desktop FPS claim.
+- Final grouped-comparison guest run: primary copy test 139.10 MPix/s,
+  secondary 218.80 MPix/s; fill tests 25.43 / 23.33 MPix/s. Both 2D pixel
+  suites pass. Software OpenGL rendered/presented 100 frames (869.6 FPS in
+  this short test), no GL errors. D3D9 still fails with 0x8876086A. These are
+  single-run GDI/application timings, not pure CE bandwidth or hardware 3D.
+  Evidence: test_logs/xp32-graphics-row-compare.log (vm_serial.log target).
+- One-time test deployment and post-shutdown collection are provided by
+  test/deploy_xp32_graphics_tests.sh and test/collect_xp32_graphics_results.sh.
+  vm_serial.log points to each active audit log; collected file logs include
+  wglgears renderer/FPS and exit codes. Existing driver/VM serial logging is
+  used; no COM1 code was added to gears.
+- Full hardware 3D remains outstanding on x86 AND x64; a successful software
+  OpenGL demo is not proof of GPU 3D acceleration.
+- The D3D9 HRESULT 0x8876086A is D3DERR_NOTAVAILABLE. Since this XDDM driver
+  implements no Direct3D HAL, the verifier now labels this as an expected
+  unavailable feature and distinguishes it from OpenGL/Copy Engine failures.
+
 XP x86 investigation — November 8, 2026:
 - The earlier 32-bit log already completed GSP bootstrap and the guarded GPU
   copy probe. GPU firmware initialization was not the display DLL load blocker.

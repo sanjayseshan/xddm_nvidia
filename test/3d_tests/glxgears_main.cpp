@@ -453,7 +453,12 @@ static void event_loop() {
 
 		angle += 2.0;
 		draw();
-		SwapBuffers(hDC);
+        if (!SwapBuffers(hDC)) {
+            log_out("[WGLGEARS] FAIL: SwapBuffers error=%lu\n", GetLastError());
+            ExitProcess(1);
+        }
+		GdiFlush();
+		Sleep(5);
 
 		/* calc framerate */
 		t = current_time();

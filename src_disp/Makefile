@@ -35,6 +35,8 @@ clean:
 	rm -f $(OBJS) $(OBJS32) nvxdisp.dll nvxdisp32.dll libwin32k.a libntoskrnl.a
 
 check:
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -O2 -fno-builtin -DNVX_RUNTIME_HOSTED tests/runtime_test.c runtime.c -o /tmp/nvx-runtime-host-test
+	/tmp/nvx-runtime-host-test
 	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -I. tests/color_test.c -o /tmp/nvx-color-test
 	/tmp/nvx-color-test
 

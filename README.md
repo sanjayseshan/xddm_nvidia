@@ -46,7 +46,7 @@ Both Windows XP x64 and Windows 98 SE are confirmed driving **dual physical moni
 | **Driver Architecture** | Windows 2000/XP Display Driver Model (XDDM 32-bit & 64-bit) | Hybrid Ring 0 VxD + 16-bit GDI Display Driver |
 | **Kernel Component** | `nvxmp.sys` (32-bit / 64-bit video miniport driver) | `nvx.vxd` (32-bit LE Virtual Device Driver) |
 | **Display Component** | `nvxdisp.dll` (32-bit / 64-bit GDI display driver) | `nvx.drv` (Head 0) & `nvx2.drv` (Head 1) (16-bit NE) |
-| **2D Acceleration Engine** | Host software GDI + Ampere Copy Engine DMA fills | Microsoft DIB Engine (`DIBENG.DLL`) + RAM shadow buffer |
+| **2D Acceleration Engine** | Software GDI + GPU solid fills, eligible copies and DMA uploads | Microsoft DIB Engine (`DIBENG.DLL`) + RAM shadow buffer |
 | **Hardware Bootstrap** | Authentic GSP-RM firmware booted via Falcon/SEC2 | Authentic GSP-RM firmware booted via Falcon/SEC2 |
 | **Multi-Monitor Method** | Windows XP XDDM multi-head scanout surfaces / DualView | Windows 98 Desktop Virtualization (`attach_sec.exe`) |
 | **Tested Resolutions** | 1920×1080 + 2560×1440 @ 32bpp True Color | 1920×1080 + 2560×1440 @ 32bpp True Color |
@@ -83,6 +83,46 @@ For detailed design notes, see [src_win98/README.md](src_win98/README.md).
 - **Scope & Limitations:** 2D desktop acceleration, solid fills, and multi-monitor desktop extension are supported. 3D acceleration (OpenGL, DirectX 8/9/11/12), video decode acceleration (NVDEC), and audio over HDMI/DP are currently unaccelerated/unimplemented.
 
 ---
+
+## Graphics validation (XP x86)
+
+The x86 VM passes solid-fill and screen-copy pixel checks on both monitors.
+The miniport log confirms real Ampere Copy Engine submissions. Other GDI
+operations still use software rasterization with GPU uploads; this is partial
+2D acceleration, not a complete DirectDraw/Direct3D driver.
+
+Hardware 3D is **not implemented on either XP architecture**. The saved x64
+log `test_logs/xp_v2_20261108-161607.log` reports Microsoft `GDI Generic`, a
+software OpenGL renderer. The old test ignored failed swaps/device creation
+and printed an unconditional PASS. The corrected suite checks those failures,
+reports the actual renderer, and returns a failing exit code for unavailable
+Direct3D 9 errors. On this driver, `0x8876086A` is `D3DERR_NOTAVAILABLE`:
+the display driver has no Direct3D HAL, so the test now reports this as an
+expected unavailable feature rather than an OpenGL or Copy Engine failure.
+Experimental OpenGL DDI hooks are disabled by default so the working Windows
+software renderer can handle buffer swaps.
+
+With XP shut down, prepare the same tests for the x86 image:
+
+```sh
+./test/deploy_xp32_graphics_tests.sh
+./test/run_vfio_vm_xp32.sh
+# Shut XP down normally after the one-time tests finish, then collect:
+./test/collect_xp32_graphics_results.sh
+```
+
+The one-time run checks primary 2D/OpenGL/D3D9, secondary 2D, and ten seconds
+of wglgears. Driver and suite output appear in `vm_serial.log`; collection
+appends the guest result files and gears output there after shutdown. It does
+not add a serial-port dependency to the gears benchmark. Both test programs
+are also compiled for x64 from the same corrected sources.
+
+Full hardware 3D needs a GR channel/context and resource/synchronization path,
+a GPU shader compiler and rendering backend, then an OpenGL ICD or equivalent
+API implementation. A Direct3D HAL or translation layer is a separate task.
+The x86 and x64 miniports can share a fixed-width kernel submission ABI, while
+each XP architecture needs its own matching OpenGL ICD binary. Copy Engine
+initialization and pixel-format registration alone do not provide these.
 
 ## Build Instructions
 
