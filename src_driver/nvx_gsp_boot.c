@@ -907,6 +907,7 @@ VOID NvxGspShutdown(PVOID HwDeviceExtension) {
                 devExt->GspGrContextVirtual,devExt->GspGrContextPhysical,FALSE);
             devExt->GspGrContextVirtual=NULL;
             devExt->GspGrContextLength=0;
+            devExt->GspGrContextMappingVerified=FALSE;
         }
         VideoPortFreeCommonBuffer(
             HwDeviceExtension,

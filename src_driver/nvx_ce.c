@@ -272,6 +272,46 @@ BOOLEAN NvxGspSubmitCopy(PVOID extension,ULONG64 dstVa,ULONG64 srcVa,ULONG bytes
     return NvxGspSubmitCopy2D(extension,dstVa,srcVa,bytes,bytes,bytes,1);
 }
 
+#if NVX_ENABLE_GR_CHANNEL_PROBE
+/* Exercise both ends of each new 2MB SPT using the already-verified privileged
+   CE channel. Fence completion and CPU comparisons are required in both
+   directions. This validates the mapping, not GR context initialization. */
+static BOOLEAN NvxGspVerifyGrBacking(PNVX_DEVICE_EXTENSION dev)
+{
+    volatile ULONG *scratch=(volatile ULONG *)((PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET+0xa000);
+    ULONG slice,end,i;
+    if(!dev->GspGrContextVirtual||dev->GspGrContextLength!=GSP_GR_CONTEXT_BYTES||
+       !dev->GspCopyVerified||dev->GspChannelFaulted) return FALSE;
+    for(slice=0;slice<6;slice++) for(end=0;end<2;end++) {
+        ULONG offset=slice*0x200000+(end?0x1fffc0:0);
+        volatile ULONG *backing=(volatile ULONG *)((PUCHAR)dev->GspGrContextVirtual+offset);
+        ULONG64 backingVa=GSP_GR_CONTEXT_GPU_VA+offset;
+        ULONG64 scratchVa=dev->GspScratchGpuVa+0xa000;
+        for(i=0;i<16;i++) {backing[i]=0x41a50000U^(slice<<8)^(end<<7)^i;scratch[i]=0;}
+        __sync_synchronize();
+        if(!NvxGspSubmitCopy(dev,scratchVa,backingVa,64)) {
+            LogStr("NVX [GR-MAP]: GPU read from context backing failed.\n");return FALSE;
+        }
+        for(i=0;i<16;i++) if(scratch[i]!=(0x41a50000U^(slice<<8)^(end<<7)^i)) {
+            LogStr("NVX [GR-MAP]: GPU readback mismatch at offset=");LogHex(offset);LogStr("\n");return FALSE;
+        }
+        for(i=0;i<16;i++) {scratch[i]=0xc31f0000U^(slice<<8)^(end<<7)^i;backing[i]=0;}
+        __sync_synchronize();
+        if(!NvxGspSubmitCopy(dev,backingVa,scratchVa,64)) {
+            LogStr("NVX [GR-MAP]: GPU write to context backing failed.\n");return FALSE;
+        }
+        for(i=0;i<16;i++) if(backing[i]!=(0xc31f0000U^(slice<<8)^(end<<7)^i)) {
+            LogStr("NVX [GR-MAP]: GPU write mismatch at offset=");LogHex(offset);LogStr("\n");return FALSE;
+        }
+        for(i=0;i<16;i++) {backing[i]=0;scratch[i]=0;}
+    }
+    __sync_synchronize();
+    dev->GspGrContextMappingVerified=TRUE;
+    LogStr("NVX [GR-MAP]: GPU read/write verified at both ends of all six context PTE tables.\n");
+    return TRUE;
+}
+#endif
+
 BOOLEAN NvxGspSubmitCopy2D(PVOID extension,ULONG64 dstVa,ULONG64 srcVa,
                            ULONG srcPitch,ULONG dstPitch,ULONG bytesPerLine,ULONG lineCount)
 {

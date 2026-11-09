@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="2.0.0.21"
+NVX_TEST_VERSION="2.0.0.22"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
@@ -80,7 +80,9 @@ finish() {
         else
             echo "2D RESULT: no GPU solid-fill submission was logged; the new GDI fast path was not exercised or did not activate."
         fi
-        if grep -q 'RM INIT_DONE received' "$NVX_RUN_LOG"; then
+        if grep -q 'NVX \[COPY-Q\]: submit timeout' "$NVX_RUN_LOG"; then
+            echo "RESULT: Copy Engine submission timed out after initialization; native display may have fallen back."
+        elif grep -q 'RM INIT_DONE received' "$NVX_RUN_LOG"; then
             if grep -q 'GPU copy completed and verified' "$NVX_RUN_LOG"; then
                 echo "RESULT: GPU copy completion verified."
             else

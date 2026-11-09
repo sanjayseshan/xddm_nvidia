@@ -325,6 +325,7 @@ typedef struct _NVX_DEVICE_EXTENSION {
     PVOID GspGrContextVirtual;
     PHYSICAL_ADDRESS GspGrContextPhysical;
     ULONG GspGrContextLength;
+    BOOLEAN GspGrContextMappingVerified;
     ULONG GspDmaLength;
     ULONG Reserved6;
     PHYSICAL_ADDRESS CmdQueuePhysical;

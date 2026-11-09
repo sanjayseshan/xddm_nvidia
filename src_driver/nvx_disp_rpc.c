@@ -1031,6 +1031,10 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
     LogStr("NVX [RM]: dedicated channel and copy engine allocated; testing GPU execution.\n");
     if(!NvxGspCopySmokeTest(dev)) return FALSE;
 #if NVX_ENABLE_GR_CHANNEL_PROBE
+    if(dev->GspGrContextVirtual&&!NvxGspVerifyGrBacking(dev)) {
+        LogStr("NVX [GR-MAP]: context mapping is unverified; GR promotion remains disabled.\n");
+        if(dev->GspChannelFaulted) return FALSE;
+    }
     LogStr("NVX [GR]: compile-time isolated GR probe enabled.\n");
     /* GR allocation failure is diagnostic only; preserve the known-good
        display/copy path while we validate the new engine independently. */
