@@ -273,6 +273,25 @@ BOOLEAN NvxGspSubmitCopy(PVOID extension,ULONG64 dstVa,ULONG64 srcVa,ULONG bytes
 }
 
 #if NVX_ENABLE_GR_CHANNEL_PROBE
+static VOID NvxGspLogGrMappingFault(PNVX_DEVICE_EXTENSION dev)
+{
+    NV906F_CTRL_GET_MMU_FAULT_INFO_PARAMS fault={0};
+    NVB06F_CTRL_GET_CHANNEL_HW_STATE_PARAMS state={0};
+    if(NvxGspControl(dev,dev->GspChannelHandle,NVA06F_CTRL_CMD_GET_MMU_FAULT_INFO,
+                     &fault,sizeof(fault))) {
+        const NV906F_CTRL_GET_MMU_FAULT_INFO_PARAMS *reply=
+            (const NV906F_CTRL_GET_MMU_FAULT_INFO_PARAMS *)(dev->RpcRxRecord+104);
+        LogStr("NVX [GR-MAP]: CE MMU fault addrHi=");LogHex(reply->addrHi);
+        LogStr(" addrLo=");LogHex(reply->addrLo);
+        LogStr(" type=");LogHex(reply->faultType);LogStr("\n");
+    } else LogStr("NVX [GR-MAP]: CE MMU fault info unavailable.\n");
+    if(NvxGspControl(dev,dev->GspChannelHandle,NVB06F_CTRL_CMD_GET_CHANNEL_HW_STATE,
+                     &state,sizeof(state))) {
+        const NVB06F_CTRL_GET_CHANNEL_HW_STATE_PARAMS *reply=
+            (const NVB06F_CTRL_GET_CHANNEL_HW_STATE_PARAMS *)(dev->RpcRxRecord+104);
+        LogStr("NVX [GR-MAP]: CE channel hardware state=");LogHex(reply->state);LogStr("\n");
+    }
+}
 /* Exercise both ends of each new 2MB SPT using the already-verified privileged
    CE channel. Fence completion and CPU comparisons are required in both
    directions. This validates the mapping, not GR context initialization. */
@@ -290,7 +309,8 @@ static BOOLEAN NvxGspVerifyGrBacking(PNVX_DEVICE_EXTENSION dev)
         for(i=0;i<16;i++) {backing[i]=0x41a50000U^(slice<<8)^(end<<7)^i;scratch[i]=0;}
         __sync_synchronize();
         if(!NvxGspSubmitCopy(dev,scratchVa,backingVa,64)) {
-            LogStr("NVX [GR-MAP]: GPU read from context backing failed.\n");return FALSE;
+            LogStr("NVX [GR-MAP]: GPU read from context backing failed.\n");
+            NvxGspLogGrMappingFault(dev);return FALSE;
         }
         for(i=0;i<16;i++) if(scratch[i]!=(0x41a50000U^(slice<<8)^(end<<7)^i)) {
             LogStr("NVX [GR-MAP]: GPU readback mismatch at offset=");LogHex(offset);LogStr("\n");return FALSE;
@@ -298,7 +318,8 @@ static BOOLEAN NvxGspVerifyGrBacking(PNVX_DEVICE_EXTENSION dev)
         for(i=0;i<16;i++) {scratch[i]=0xc31f0000U^(slice<<8)^(end<<7)^i;backing[i]=0;}
         __sync_synchronize();
         if(!NvxGspSubmitCopy(dev,backingVa,scratchVa,64)) {
-            LogStr("NVX [GR-MAP]: GPU write to context backing failed.\n");return FALSE;
+            LogStr("NVX [GR-MAP]: GPU write to context backing failed.\n");
+            NvxGspLogGrMappingFault(dev);return FALSE;
         }
         for(i=0;i<16;i++) if(backing[i]!=(0xc31f0000U^(slice<<8)^(end<<7)^i)) {
             LogStr("NVX [GR-MAP]: GPU write mismatch at offset=");LogHex(offset);LogStr("\n");return FALSE;
