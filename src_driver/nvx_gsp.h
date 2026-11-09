@@ -142,7 +142,10 @@
 #define GSP_PAGE_TABLES_SIZE           0xF000UL
 #define GSP_GR_CONTEXT_BYTES           0x00C00000UL
 #define GSP_GR_CONTEXT_GPU_VA          0x10200000ULL
+#define GSP_GR_CONTEXT_TEST_GPU_VA     0x10E00000ULL
 #define GSP_DISPLAY_PUSH_OFFSET        0x02E10000ULL
+#define GSP_GR_TEST_PTES_OFFSET        0x02E13000ULL
+#define GSP_GR_TEST_PTES_SIZE          0x6000UL
 #define GSP_UPLOAD_OFFSET              0x02600000ULL
 #define GSP_UPLOAD_SIZE                0x00800000UL
 #define GSP_UPLOAD_GPU_VA              0x24000000ULL
@@ -325,7 +328,8 @@ typedef struct _NVX_DEVICE_EXTENSION {
     PVOID GspGrContextVirtual;
     PHYSICAL_ADDRESS GspGrContextPhysical;
     ULONG GspGrContextLength;
-    BOOLEAN GspGrContextMappingVerified;
+    BOOLEAN GspGrContextAliasMapped;
+    BOOLEAN GspGrContextAliasVerified;
     ULONG GspDmaLength;
     ULONG Reserved6;
     PHYSICAL_ADDRESS CmdQueuePhysical;

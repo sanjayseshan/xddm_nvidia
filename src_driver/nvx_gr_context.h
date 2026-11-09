@@ -12,6 +12,6 @@ typedef struct { uint32_t count; uint64_t bytes; NVX_GR_BUFFER buffers[NVX_GR_MA
 
 /* Build a bounded, page-isolated layout; never map or initialize GPU memory. */
 int NvxGrBuildLayout(const NVX_GR_REQUIREMENT *, uint32_t, int, uint64_t, NVX_GR_LAYOUT *);
-/* Encode 4KB coherent, privileged system-memory leaves into caller-owned PTEs. */
-int NvxGrBuildPtes(uint64_t *, uint32_t, uint64_t, uint64_t);
+/* Encode 4KB coherent system-memory leaves into caller-owned PTEs. */
+int NvxGrBuildPtes(uint64_t *, uint32_t, uint64_t, uint64_t, int);
 #endif

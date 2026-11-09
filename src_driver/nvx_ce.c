@@ -292,19 +292,19 @@ static VOID NvxGspLogGrMappingFault(PNVX_DEVICE_EXTENSION dev)
         LogStr("NVX [GR-MAP]: CE channel hardware state=");LogHex(reply->state);LogStr("\n");
     }
 }
-/* Exercise both ends of each new 2MB SPT using the already-verified privileged
-   CE channel. Fence completion and CPU comparisons are required in both
-   directions. This validates the mapping, not GR context initialization. */
+/* Exercise both ends of the nonprivileged test alias with the CE channel.
+   This validates the alias/backing, not the protected mapping or GR execution. */
 static BOOLEAN NvxGspVerifyGrBacking(PNVX_DEVICE_EXTENSION dev)
 {
     volatile ULONG *scratch=(volatile ULONG *)((PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET+0xa000);
     ULONG slice,end,i;
-    if(!dev->GspGrContextVirtual||dev->GspGrContextLength!=GSP_GR_CONTEXT_BYTES||
+    if(!dev->GspGrContextVirtual||!dev->GspGrContextAliasMapped||
+       dev->GspGrContextLength!=GSP_GR_CONTEXT_BYTES||
        !dev->GspCopyVerified||dev->GspChannelFaulted) return FALSE;
     for(slice=0;slice<6;slice++) for(end=0;end<2;end++) {
         ULONG offset=slice*0x200000+(end?0x1fffc0:0);
         volatile ULONG *backing=(volatile ULONG *)((PUCHAR)dev->GspGrContextVirtual+offset);
-        ULONG64 backingVa=GSP_GR_CONTEXT_GPU_VA+offset;
+        ULONG64 backingVa=GSP_GR_CONTEXT_TEST_GPU_VA+offset;
         ULONG64 scratchVa=dev->GspScratchGpuVa+0xa000;
         for(i=0;i<16;i++) {backing[i]=0x41a50000U^(slice<<8)^(end<<7)^i;scratch[i]=0;}
         __sync_synchronize();
@@ -327,8 +327,8 @@ static BOOLEAN NvxGspVerifyGrBacking(PNVX_DEVICE_EXTENSION dev)
         for(i=0;i<16;i++) {backing[i]=0;scratch[i]=0;}
     }
     __sync_synchronize();
-    dev->GspGrContextMappingVerified=TRUE;
-    LogStr("NVX [GR-MAP]: GPU read/write verified at both ends of all six context PTE tables.\n");
+    dev->GspGrContextAliasVerified=TRUE;
+    LogStr("NVX [GR-MAP]: GPU read/write verified for nonprivileged alias; protected mapping remains unverified.\n");
     return TRUE;
 }
 #endif

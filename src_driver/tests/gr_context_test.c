@@ -29,12 +29,15 @@ int main(void)
     assert(!NvxGrBuildLayout(req,64,1,0x1000000,&plan));
     req[16].size=0x5000; req[19].alignment=3;
     assert(!NvxGrBuildLayout(req,64,1,0x1000000,&plan));
-    assert(NvxGrBuildPtes(ptes,4,0x123000,0x3000));
+    assert(NvxGrBuildPtes(ptes,4,0x123000,0x3000,1));
     assert(ptes[0]==((UINT64_C(0x123000)>>4)|0x2d));
     assert(ptes[2]==((UINT64_C(0x125000)>>4)|0x2d)&&ptes[3]==0);
-    assert(!NvxGrBuildPtes(ptes,2,0x123000,0x3000));
-    assert(!NvxGrBuildPtes(ptes,4,0x123001,0x1000));
-    assert(!NvxGrBuildPtes(ptes,4,UINT64_C(0xfffff000),0x2000));
+    assert(NvxGrBuildPtes(ptes,4,0x123000,0x1000,0));
+    assert(ptes[0]==((UINT64_C(0x123000)>>4)|0x0d));
+    assert(!NvxGrBuildPtes(ptes,4,0x123000,0x1000,2));
+    assert(!NvxGrBuildPtes(ptes,2,0x123000,0x3000,1));
+    assert(!NvxGrBuildPtes(ptes,4,0x123001,0x1000,1));
+    assert(!NvxGrBuildPtes(ptes,4,UINT64_C(0xfffff000),0x2000,1));
     puts("GR context layout tests passed: bounds, alignment, required buffers and subcontext headers.");
     return 0;
 }

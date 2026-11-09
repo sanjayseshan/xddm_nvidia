@@ -174,7 +174,7 @@ static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
                 dev->GspMmuFaultQueued=TRUE;
                 dev->GspChannelFaulted=TRUE;
                 dev->GspGraphicsChannelFaulted=TRUE;
-                dev->GspGrContextMappingVerified=FALSE;
+                dev->GspGrContextAliasVerified=FALSE;
                 LogStr("NVX [RM]: MMU fault queued; UVM fault handling unavailable, accelerated queues disabled.\n");
             } else if(function==0x100f) {
                 /* PERF_BRIDGELESS_INFO_UPDATE: informational, no reply or
@@ -335,25 +335,41 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
     for(ULONG i=0;i<16;i++)
         tables[2048+i]=((dev->GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET+i*4096)>>4)|0xd;
 #if NVX_ENABLE_GR_CHANNEL_PROBE
-    if(dev->GspGrContextVirtual&&dev->GspGrContextLength==GSP_GR_CONTEXT_BYTES) {
+    if(dev->GspGrContextVirtual&&dev->GspGrContextLength==GSP_GR_CONTEXT_BYTES&&
+       dev->GspDmaLength>=GSP_GR_TEST_PTES_OFFSET+GSP_GR_TEST_PTES_SIZE) {
         ULONG slice;
+        ULONG64 aliasPhys=(ULONG64)dev->GspDmaPhysical.QuadPart+GSP_GR_TEST_PTES_OFFSET;
+        PUCHAR aliasTables=(PUCHAR)dev->GspDmaVirtual+GSP_GR_TEST_PTES_OFFSET;
+        _Static_assert(GSP_GR_TEST_PTES_OFFSET>=GSP_DISPLAY_PUSH_OFFSET+0x3000,
+                       "GR alias PTEs must follow display pushbuffers");
+        _Static_assert(GSP_GR_TEST_PTES_OFFSET+GSP_GR_TEST_PTES_SIZE<=GSP_SCRATCH_OFFSET,
+                       "GR alias PTEs must precede scratch");
+        VideoPortZeroMemory(aliasTables,GSP_GR_TEST_PTES_SIZE);
         /* Six 4KB SPTs cover 12MB at 0x10200000; each leaf is privileged.
+           A separate unprivileged alias is solely for the CE mapping test.
            Build before installing the directory so no TLB update is needed. */
         for(slice=0;slice<6;slice++) {
             PULONG64 spt=(PULONG64)((PUCHAR)tables+0x9000+slice*0x1000);
+            PULONG64 aliasSpt=(PULONG64)(aliasTables+slice*0x1000);
             if(!NvxGrBuildPtes((uint64_t *)spt,512,
                                (ULONG64)dev->GspGrContextPhysical.QuadPart+
-                                   (ULONG64)slice*0x200000,0x200000)) {
+                                   (ULONG64)slice*0x200000,0x200000,1)||
+               !NvxGrBuildPtes((uint64_t *)aliasSpt,512,
+                               (ULONG64)dev->GspGrContextPhysical.QuadPart+
+                                   (ULONG64)slice*0x200000,0x200000,0)) {
                 break;
             }
             tables[1536+(129+slice)*2+1]=((physical+0x9000+slice*0x1000)>>4)|0xc;
+            tables[1536+(135+slice)*2+1]=((aliasPhys+slice*0x1000)>>4)|0xc;
         }
         if(slice==6) {
+            dev->GspGrContextAliasMapped=TRUE;
             LogStr("NVX [GR]: context backing mapped at GPU VA=");
-            LogHex(GSP_GR_CONTEXT_GPU_VA);LogStr("; no GR promotion submitted.\n");
+            LogHex(GSP_GR_CONTEXT_GPU_VA);LogStr(" test alias=");
+            LogHex(GSP_GR_CONTEXT_TEST_GPU_VA);LogStr("; no GR promotion submitted.\n");
         } else {
             ULONG i;
-            for(i=0;i<6;i++) tables[1536+(129+i)*2+1]=0;
+            for(i=0;i<12;i++) tables[1536+(129+i)*2+1]=0;
             VideoPortFreeCommonBuffer(dev,dev->GspGrContextLength,dev->GspGrContextVirtual,
                                       dev->GspGrContextPhysical,FALSE);
             dev->GspGrContextVirtual=NULL;dev->GspGrContextLength=0;

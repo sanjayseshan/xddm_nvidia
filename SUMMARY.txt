@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.24: identify GR mapping privilege fault)
+Updated: November 9, 2026 (v2.0.0.25: verify context backing through test alias)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -31,9 +31,10 @@ Hardware OpenGL roadmap — November 8, 2026:
 - Current state: the GA104 RM advertises AMPERE_B. v2.0.0.21 reserves 12MB of
   low-address common DMA memory and installs candidate privileged GPU PTEs
   for a bounded context-buffer layout based on RM's reported requirements.
-  v2.0.0.22's first GPU read from this mapping timed out and faulted the shared
-  CE channel, causing native display fallback. The cause is not yet known.
-  No buffers have been promoted to RM; GR submission remains disabled.
+  v2.0.0.24 identified a privilege fault when CE accessed the protected mapping.
+  v2.0.0.25 verified the same backing through a separate nonprivileged test
+  alias. Protected access and RM promotion remain unverified; GR submission
+  remains disabled.
   v2.0.0.19 observed firmware assertions while the FIFO advanced, which is not
   evidence of GR method completion or working rendering. The per-channel
   context-buffer query still returns NV_ERR_INVALID_OBJECT.
@@ -176,6 +177,13 @@ Hardware OpenGL roadmap — November 8, 2026:
   an RM reply. The runner attempted ACPI shutdown but eventually issued QEMU
   quit because the guest did not exit. Evidence:
   `test_logs/v2.0.0.24-20261109-125517.log`.
+- v2.0.0.25 keeps the protected mapping at 0x10200000 and adds a probe-only,
+  nonprivileged alias at 0x10E00000. The CE completed guarded read/write
+  tests at both ends of each of the six 2MB alias page tables; CPU comparisons
+  matched. This verifies the backing and alias only, not the protected mapping
+  or GR execution. Both display links, CE smoke test, host tests and ACPI
+  shutdown passed. OpenGL remains GDI Generic; D3D9 returns 0x8876086A.
+  Evidence: `test_logs/v2.0.0.25-20261109-125756.log`.
 - Latest confirmed XP log before v2.0.0.11: `test_logs/v2.0.0.9-20261109-114617.log`.
   GSP-RM init, verified CE copy, and active/locked dual heads passed. The
   direct GR channel allocated and fetched SET_OBJECT, then faulted with
