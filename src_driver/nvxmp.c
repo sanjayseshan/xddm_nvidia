@@ -2115,7 +2115,7 @@ ULONG NTAPI DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 2.0.0.60 (open-gpu-kernel-modules unified v2)\n");
+    LogStr(" NVX Video Miniport Driver 2.0.0.61 (open-gpu-kernel-modules unified v2)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

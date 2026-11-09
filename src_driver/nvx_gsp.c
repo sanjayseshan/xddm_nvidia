@@ -1362,20 +1362,28 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     }
     VideoPortZeroMemory((PVOID)(scratch+0x9000),0x1000);
     VideoPortZeroMemory((PVOID)(scratch+0xf000),0x1000);
-    /* Method A alone asserted in v56. The tested VA is below 4GB, so omit A
-       and test B/C/D with the default zero upper address. */
-    push[0]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|NVC56F_SET_OBJECT;
+    /* In NVIDIA Host/PBDMA DMA format, method addresses in the packet header
+       are dword-addressed (method byte offset >> 2), as seen in NVIDIA's
+       __nvPushStart / NVA16F_DMA_METHOD_ADDRESS and nvx_ce.c.
+       Previous probes passed raw byte offsets, which truncated/misaddressed
+       methods (e.g. 0x1b00/0x1b04 masked to 0xb00/0xb04, causing assertion 0x15BD50C).
+       Encode methods properly dword-addressed:
+       - SET_OBJECT (0x0000 >> 2 = 0x000)
+       - WAIT_FOR_IDLE (0x0110 >> 2 = 0x044)
+       - SET_REPORT_SEMAPHORE_A (0x1b00 >> 2 = 0x6c0), 4 words A/B/C/D */
+    push[0]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC56F_SET_OBJECT>>2);
     push[1]=classEngineId;
-    push[2]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|NVC797_WAIT_FOR_IDLE;
+    push[2]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_WAIT_FOR_IDLE>>2);
     push[3]=0;
-    push[4]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(3U<<16)|NVC797_SET_REPORT_SEMAPHORE_B;
-    push[5]=(ULONG)grFenceVa;
-    push[6]=0x47524631;
-    push[7]=DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_OPERATION,_RELEASE)|
+    push[4]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(4U<<16)|(NVC797_SET_REPORT_SEMAPHORE_A>>2);
+    push[5]=(ULONG)(grFenceVa>>32);
+    push[6]=(ULONG)grFenceVa;
+    push[7]=0x47524631;
+    push[8]=DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_OPERATION,_RELEASE)|
             DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_RELEASE,_AFTER_ALL_PRECEEDING_WRITES_COMPLETE)|
             DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_PIPELINE_LOCATION,_ALL)|
             DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_STRUCTURE_SIZE,_ONE_WORD);
-    fifo[0]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|(8ULL<<42);
+    fifo[0]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|(9ULL<<42);
     __sync_synchronize();
     userd[0x8c/4]=1;
     __sync_synchronize();
@@ -1388,7 +1396,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),token);
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x90),2);
     LogStr("NVX [GR]: rang channel doorbell token=");LogHex(token);LogStr(" chid=0x2\n");
-    LogStr("NVX [GR]: submitted SET_OBJECT, WAIT_FOR_IDLE and C797 semaphore methods B/C/D.\n");
+    LogStr("NVX [GR]: submitted SET_OBJECT, WAIT_FOR_IDLE and dword-addressed C797 semaphore A/B/C/D.\n");
     for(wait=0;wait<100000;wait++) {
         if(grFence[0]==0x47524631) {
             break;

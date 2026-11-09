@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.60: test semaphore without method A)
+Updated: November 9, 2026 (v2.0.0.61: correct PBDMA dword-addressed method headers)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -392,6 +392,14 @@ Hardware OpenGL roadmap — November 8, 2026:
   CE copy-completion result passed, and 2D fill submissions were logged; GR
   execution remained unverified. The test completed ACPI powerdown. Evidence:
   `test_logs/v2.0.0.60-20261109-144328.log`.
+- v2.0.0.61 identified the root cause of the firmware assertion in v50-v60:
+  in NVIDIA Host/PBDMA DMA format (`NVC56F_DMA_INCR_ADDRESS` bits 11:0), method
+  addresses are dword-addressed (`method_byte_offset >> 2`), as documented in
+  NVIDIA's `__nvPushStart` and used in `nvx_ce.c`. Previous probes passed raw
+  byte offsets (`0x1b00`/`0x1b04`), which masked to `0xb00`/`0xb04`—unimplemented
+  methods on GA104 class C797—causing firmware assertion `0x015BD50C`. Corrected
+  pushbuffer headers to use `>> 2` for `SET_OBJECT` (0x0), `WAIT_FOR_IDLE` (0x44),
+  and `SET_REPORT_SEMAPHORE_A..D` (0x6c0).
 
 ### Linux and macOS Reference Architecture
 
