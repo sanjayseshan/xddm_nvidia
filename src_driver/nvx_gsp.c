@@ -869,7 +869,9 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
        CE-derived packet selected subchannel 4, which GR rejects with RC 0x20. */
     push[0]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|NVC56F_SET_OBJECT;
     push[1]=classEngineId;
-    fifo[0]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|(2ULL<<42);
+    push[2]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|NVC797_WAIT_FOR_IDLE;
+    push[3]=0; /* WAIT_FOR_IDLE has no side effects; verify GR method dispatch. */
+    fifo[0]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|(4ULL<<42);
     __sync_synchronize();
     userd[0x8c/4]=1;
     __sync_synchronize();
@@ -882,7 +884,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),token);
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x90),2);
     LogStr("NVX [GR]: rang channel doorbell token=");LogHex(token);LogStr(" chid=0x2\n");
-    LogStr("NVX [GR]: submitted guarded SET_OBJECT packet; waiting for GR GPGet.\n");
+    LogStr("NVX [GR]: submitted SET_OBJECT + WAIT_FOR_IDLE; waiting for GR GPGet.\n");
     for(wait=0;wait<100000;wait++) {
         if(userd[0x88/4]==1) {
             break;
@@ -902,7 +904,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
                       &submitToken,sizeof(submitToken));
         if(!dev->GspGraphicsChannelFaulted) {
             dev->GspGraphicsCommandVerified=TRUE;
-            LogStr("NVX [GR]: graphics runlist consumed SET_OBJECT without an RC fault.\n");
+            LogStr("NVX [GR]: graphics runlist consumed SET_OBJECT + WAIT_FOR_IDLE without an RC fault.\n");
         }
     }
     if(!dev->GspGraphicsCommandVerified) {
@@ -950,7 +952,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     dev->GspGraphicsChannelHandle=channelHandle;
     dev->GspGraphicsObjectHandle=grHandle;
     dev->GspGraphicsChannelReady=TRUE;
-    LogStr("NVX [GR]: Ampere graphics object allocated; safe method consumed, no draw submitted.\n");
+    LogStr("NVX [GR]: Ampere graphics object allocated; safe methods consumed, no draw submitted.\n");
     return TRUE;
 }
 #endif

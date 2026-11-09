@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.14: align GR USERD write offset)
+Updated: November 9, 2026 (v2.0.0.15: probe GR idle method)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -28,7 +28,10 @@ Hardware OpenGL roadmap — November 8, 2026:
   Mesa NVK patch MIT. Reuse the architecture and upstream Mesa instead. Mesa's
   current NVK docs state Linux 6.6 minimum; XP support is unproven and must be
   established by the XP shim/build, not inferred from macOS success.
-- Current state: the GA104 RM advertises AMPERE_B. v2.0.0.14 aligns the CPU
+- Current state: the GA104 RM advertises AMPERE_B. v2.0.0.15 submits both
+  SET_OBJECT and the side-effect-free AMPERE_B WAIT_FOR_IDLE method in one
+  pushbuffer; XP advanced GP_GET and consumed both methods with no RC fault.
+- v2.0.0.14 aligned the CPU
   GPPut write with the actual USERD at scratch offset 0xB400. The descriptor
   and RM USERD handle both pointed there, but v2.0.0.13 still wrote to 0xB000.
   With the pointer corrected, GR GP_GET advanced to 1 and the graphics channel
@@ -75,6 +78,11 @@ Hardware OpenGL roadmap — November 8, 2026:
   Both heads and CE copy passed and XP received ACPI powerdown. OpenGL remains
   GDI Generic 1.1 and D3D9 returns 0x8876086A. Evidence:
   `test_logs/v2.0.0.14-20261109-121042.log`.
+- v2.0.0.15 confirmed SET_OBJECT + WAIT_FOR_IDLE were consumed with no RC
+  fault. This still verifies command/object method dispatch, not rendering.
+  Context-info query remains NV_ERR_INVALID_OBJECT; OpenGL is still GDI Generic
+  1.1 and D3D9 remains 0x8876086A. CE copy, both displays and ACPI shutdown
+  passed. Evidence: `test_logs/v2.0.0.15-20261109-121445.log`.
 - Latest confirmed XP log before v2.0.0.11: `test_logs/v2.0.0.9-20261109-114617.log`.
   GSP-RM init, verified CE copy, and active/locked dual heads passed. The
   direct GR channel allocated and fetched SET_OBJECT, then faulted with
