@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.51: test GR semaphore in mapped scratch)
+Updated: November 9, 2026 (v2.0.0.52: test C797 A/B/C/D semaphore)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -334,6 +334,15 @@ Hardware OpenGL roadmap — November 8, 2026:
   family at 0x1B00–0x1B0C, which v52 will test separately. ACPI powerdown
   completed; no display verification was recorded. Evidence:
   `test_logs/v2.0.0.51-20261109-142218.log`.
+- v2.0.0.52 switched to C797's newer A/B/C/D report-semaphore methods and
+  removed the MMU notification, but the GR fence remained zero and two GSP
+  assertions were reported. Mesa NVK's command documentation shows A receives
+  `addr >> 32` and B receives the raw `addr`; v52 incorrectly shifted B by two.
+  v53 corrects that encoding. The VM completed ACPI powerdown, both display
+  links remained active in the log, and the test recorded CE copy completion
+  plus 2D solid-fill submissions. Those results do not establish a successful
+  GR draw or hardware OpenGL. Evidence:
+  `test_logs/v2.0.0.52-20261109-142442.log`.
 
 ### Linux and macOS Reference Architecture
 
