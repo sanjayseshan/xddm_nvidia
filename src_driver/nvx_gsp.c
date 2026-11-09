@@ -30,6 +30,9 @@
 #ifndef NVX_ENABLE_GR_PROMOTE_PROBE
 #define NVX_ENABLE_GR_PROMOTE_PROBE 0
 #endif
+#ifndef NVX_ENABLE_GR_UNPRIVILEGED_CONTEXT_PROBE
+#define NVX_ENABLE_GR_UNPRIVILEGED_CONTEXT_PROBE 0
+#endif
 
 /* ABI checks deliberately target firmware 535, not the current OpenRM ABI. */
 _Static_assert(sizeof(GspFwWprMeta) == 256, "WPR ABI");
@@ -348,7 +351,7 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
         _Static_assert(GSP_GR_TEST_PTES_OFFSET+GSP_GR_TEST_PTES_SIZE<=GSP_SCRATCH_OFFSET,
                        "GR alias PTEs must precede scratch");
         VideoPortZeroMemory(aliasTables,GSP_GR_TEST_PTES_SIZE);
-        /* Six 4KB SPTs cover 12MB at 0x10200000; each leaf is privileged.
+        /* Six 4KB SPTs cover 12MB at 0x10200000; leaves default privileged.
            A separate unprivileged alias is solely for the CE mapping test.
            Build before installing the directory so no TLB update is needed. */
         for(slice=0;slice<6;slice++) {
@@ -356,7 +359,8 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
             PULONG64 aliasSpt=(PULONG64)(aliasTables+slice*0x1000);
             if(!NvxGrBuildPtes((uint64_t *)spt,512,
                                (ULONG64)dev->GspGrContextPhysical.QuadPart+
-                                   (ULONG64)slice*0x200000,0x200000,1)||
+                                   (ULONG64)slice*0x200000,0x200000,
+                                   NVX_ENABLE_GR_UNPRIVILEGED_CONTEXT_PROBE?0:1)||
                !NvxGrBuildPtes((uint64_t *)aliasSpt,512,
                                (ULONG64)dev->GspGrContextPhysical.QuadPart+
                                    (ULONG64)slice*0x200000,0x200000,0)) {
@@ -369,7 +373,9 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
             dev->GspGrContextAliasMapped=TRUE;
             LogStr("NVX [GR]: context backing mapped at GPU VA=");
             LogHex(GSP_GR_CONTEXT_GPU_VA);LogStr(" test alias=");
-            LogHex(GSP_GR_CONTEXT_TEST_GPU_VA);LogStr("; no GR promotion submitted.\n");
+            LogHex(GSP_GR_CONTEXT_TEST_GPU_VA);
+            LogStr(" privileged=");LogHex(NVX_ENABLE_GR_UNPRIVILEGED_CONTEXT_PROBE?0:1);
+            LogStr("; no GR promotion submitted.\n");
         } else {
             ULONG i;
             for(i=0;i<12;i++) tables[1536+(129+i)*2+1]=0;

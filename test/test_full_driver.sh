@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="2.0.0.28"
+NVX_TEST_VERSION="2.0.0.29"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
@@ -28,6 +28,14 @@ if [ "${NVX_GR_CHANNEL_PROBE:-0}" = "1" ]; then
         fi
         NVX_DRIVER_BUILD_ARGS+=("NVX_ENABLE_GR_SUBMISSION_PROBE=1")
         echo "==> Enabling isolated GR semaphore-completion probe"
+    fi
+    if [ "${NVX_GR_UNPRIVILEGED_CONTEXT_PROBE:-0}" = "1" ]; then
+        if [ "${NVX_GR_SUBMISSION_PROBE:-0}" != "1" ]; then
+            echo "Unprivileged context probe requires the GR submission probe." >&2
+            exit 1
+        fi
+        NVX_DRIVER_BUILD_ARGS+=("NVX_ENABLE_GR_UNPRIVILEGED_CONTEXT_PROBE=1")
+        echo "==> Testing unprivileged GR PTEs in this isolated diagnostic build"
     fi
 else
     NVX_DRIVER_BUILD_TARGET=full

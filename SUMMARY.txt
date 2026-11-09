@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.28: probe GR semaphore execution)
+Updated: November 9, 2026 (v2.0.0.29: compare GR PTE privilege)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -211,6 +211,13 @@ Hardware OpenGL roadmap — November 8, 2026:
   ACPI powerdown, then issued QEMU quit when XP did not exit. No 3D draw or
   hardware OpenGL has been demonstrated. Evidence:
   `test_logs/v2.0.0.28-20261109-130721.log`.
+- v2.0.0.29 repeated the isolated submission with unprivileged context PTEs;
+  the seven context descriptors were still reported, but GP_GET advanced and
+  the GR fence stayed zero, followed by the same queued MMU notification and
+  two firmware assertions. Thus removing the PTE privilege bit did not fix
+  this GR failure. This opt-in diagnostic is not a production protection
+  configuration. Host tests passed and the runner attempted ACPI shutdown.
+  Evidence: `test_logs/v2.0.0.29-20261109-131017.log`.
 - Latest confirmed XP log before v2.0.0.11: `test_logs/v2.0.0.9-20261109-114617.log`.
   GSP-RM init, verified CE copy, and active/locked dual heads passed. The
   direct GR channel allocated and fetched SET_OBJECT, then faulted with
