@@ -728,6 +728,9 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     chan.hObjectError=0x00020003;
     chan.hUserdMemory[0]=dev->GspScratchMemoryHandle;
     chan.userdOffset[0]=0xb400;
+    /* CPU-RM normally derives these before its GSP channel-allocation RPC:
+       ADMIN | ERROR_NOTIFIER_TYPE_CTXDMA | ECC_ERROR_NOTIFIER_TYPE_NONE. */
+    chan.internalFlags=0x19;
     /* Unlike NVK's host-RM API path, this direct GSP-RM RPC must carry the
        physical descriptors consumed by _kchannelDescribeMemDescsFromParams. */
     chan.instanceMem.base=instPhys;
