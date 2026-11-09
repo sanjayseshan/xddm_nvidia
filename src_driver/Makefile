@@ -64,6 +64,9 @@ package: all
 full: EXPERIMENTAL_GSP=1
 full: nvxmp.sys
 
+full32: EXPERIMENTAL_GSP=1
+full32: nvxmp32.sys
+
 package-full: EXPERIMENTAL_GSP=1
 package-full: all
 	[ ! -f ../dist/nvxdisp.dll ] || cp ../dist/nvxdisp.dll ../dist_full/nvxdisp.dll

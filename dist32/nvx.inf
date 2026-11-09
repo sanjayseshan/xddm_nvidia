@@ -1,6 +1,6 @@
 ;
 ; NVX Display and Miniport Driver Installation File
-; Target: Windows XP Professional x64 Edition / Windows Server 2003 x64 (NT 5.2)
+; Target: Windows XP Professional (32-bit, NT 5.1) and x64 Edition (NT 5.2)
 ; Architecture: GA104 (GeForce RTX 3070 / RTX 3060 Ti)
 ;
 
@@ -9,7 +9,7 @@ Signature   = "$CHICAGO$"
 Provider    = %NVIDIA%
 ClassGUID   = {4D36E968-E325-11CE-BFC1-08002BE10318}
 Class       = Display
-DriverVer   = 11/08/2026, 2.0.0.1
+DriverVer   = 11/08/2026, 2.0.0.3
 
 [DestinationDirs]
 DefaultDestDir      = 11
@@ -18,6 +18,16 @@ nvx.Display         = 11
 
 [Manufacturer]
 %NVIDIA% = NVIDIA.Mfg, NTamd64
+
+[NVIDIA.Mfg]
+%NV3070%            = nvx_Inst, PCI\VEN_10DE&DEV_2484
+%NV3070_ALT%        = nvx_Inst, PCI\VEN_10DE&DEV_2488
+%NV3070_MOBILE%     = nvx_Inst, PCI\VEN_10DE&DEV_249D
+%NV3070_TI_MOBILE%  = nvx_Inst, PCI\VEN_10DE&DEV_24A0
+%NV3060TI%          = nvx_Inst, PCI\VEN_10DE&DEV_2486
+%NV3060TI_ALT%      = nvx_Inst, PCI\VEN_10DE&DEV_2489
+%NV3060%            = nvx_Inst, PCI\VEN_10DE&DEV_2487
+%NV3060_GA104%      = nvx_Inst, PCI\VEN_10DE&DEV_24C7
 
 [NVIDIA.Mfg.NTamd64]
 %NV3070%            = nvx_Inst, PCI\VEN_10DE&DEV_2484
@@ -41,6 +51,10 @@ StartType      = 1                  ; SERVICE_SYSTEM_START
 ErrorControl   = 0                  ; SERVICE_ERROR_IGNORE
 LoadOrderGroup = Video
 ServiceBinary  = %12%\nvxmp.sys
+AddReg         = nvxmp_Service_AddReg
+
+[nvxmp_Service_AddReg]
+HKR,, MultiFunctionSupported, 0x00010001, 1
 
 [nvxmp_EventLog_Inst]
 AddReg = nvxmp_EventLog_AddReg
@@ -55,6 +69,7 @@ AddReg = nvx_SoftwareSettings_AddReg
 [nvx_SoftwareSettings_AddReg]
 HKR,, InstalledDisplayDrivers,     0x00010000, "nvxdisp"
 HKR,, VgaCompatible,               0x00010001, 0
+HKR,, MultiFunctionSupported,      0x00010001, 1
 HKR,, Device Description,          0x00000000, %NV3070%
 
 [nvx.Miniport]
@@ -81,4 +96,3 @@ NV3060TI            = "NVIDIA GeForce RTX 3060 Ti (GA104 XDDM)"
 NV3060TI_ALT        = "NVIDIA GeForce RTX 3060 Ti (GA104 XDDM)"
 NV3060              = "NVIDIA GeForce RTX 3060 (GA104 XDDM)"
 NV3060_GA104        = "NVIDIA GeForce RTX 3060 GA104 (GA104 XDDM)"
-

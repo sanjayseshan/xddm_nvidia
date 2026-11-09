@@ -124,6 +124,55 @@ The x86 and x64 miniports can share a fixed-width kernel submission ABI, while
 each XP architecture needs its own matching OpenGL ICD binary. Copy Engine
 initialization and pixel-format registration alone do not provide these.
 
+### Hardware OpenGL roadmap
+
+The planned design follows the Mesa-backed layering used by the
+[NullMoth macOS NVIDIA port](https://github.com/nullmoth/nvidia-macos-driver),
+adapted to XP's OpenGL ICD/WGL and VideoPort interfaces. The macOS port routes
+its native graphics API through a translator into Mesa NVK/NAK, then into an
+OS-specific kernel driver. XP needs its own user/kernel shims; the macOS kexts
+and plugin are not XP components.
+
+1. **Pin the Mesa base and prove it builds.** Start from the NVK/NAK revision
+   used by the macOS port as a reference, then test a clean upstream Mesa
+   revision and carry only the compatibility patches needed for this target.
+   Add Mesa as a pinned submodule once the first build is reproducible; do not
+   vendor an unused full Mesa tree.
+2. **Create the XP x64 platform shim.** Implement the Mesa-side OS, memory,
+   synchronization, and device interfaces over an XP OpenGL ICD/WGL front end
+   and a narrow miniport IOCTL ABI. Keep the ABI fixed-width, validate all
+   user buffers, and use 64-bit GPU virtual addresses on both XP architectures.
+3. **Bring up GR independently of display scanout.** Add a GSP/RM-managed
+   graphics channel, context storage, GPU mappings, command submission, fences,
+   and fault reporting. First prove one GPU triangle with completion and
+   framebuffer readback while preserving the current display and Copy Engine
+   paths.
+4. **Connect Mesa rendering.** Use Mesa's OpenGL state tracker through Zink to
+   NVK/NAK if the XP x64 prototype can support the required Vulkan device
+   interface. Keep the ICD/WGL and XP miniport calls behind shims so Mesa's
+   renderer does not depend on Linux DRM. Reassess Gallium Nouveau only if the
+   NVK/Zink port cannot be made practical for XP.
+5. **Validate XP x64.** Require an NVK/GA104 renderer string, logged GR
+   submissions and completed fences, correct rendered-pixel readback, and
+   stable 1080p/1440p desktop output. Then run OpenGL applications directly
+   and through WineD3D; WineD3D will translate Direct3D calls only after this
+   ICD works.
+6. **Expand to XP x86.** Build the matching 32-bit ICD and miniport against
+   the same fixed-width ABI and rendering tests. Confirm resource handles and
+   GPU addresses remain architecture-neutral.
+7. **Evaluate Windows 98 SE last.** Add an OpenGL ICD entry layer and VxD/VMM
+   shim for the same Mesa rendering backend. Reuse only the portable Mesa and
+   GPU logic; XP WGL, XDDM, and VideoPort shims do not carry over directly.
+
+The NullMoth repository's macOS-specific plugin, translator, and kernel
+components are not dependencies for this port. Its README identifies those
+components as PolyForm Noncommercial, while the NVK Mesa patch is MIT; this
+project will use the architectural approach and upstream Mesa rather than
+importing those platform-specific components. Mesa is currently a candidate,
+not an integrated dependency. Its modern NVK documentation lists Linux 6.6 as
+the kernel minimum, so XP compatibility must be developed in the platform shim
+and verified by builds rather than assumed.
+
 ## Build Instructions
 
 ### Prerequisites

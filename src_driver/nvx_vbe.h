@@ -10,8 +10,8 @@ typedef struct {
 typedef struct {
     USHORT Size, Version;
     PVOID Context;
-    VOID (*Reference)(PVOID);
-    VOID (*Dereference)(PVOID);
+    VOID (VPAPI *Reference)(PVOID);
+    VOID (VPAPI *Dereference)(PVOID);
     VP_STATUS (VPAPI *Allocate)(PVOID, PUSHORT, PUSHORT, PULONG);
     VP_STATUS (VPAPI *Free)(PVOID, USHORT, USHORT);
     VP_STATUS (VPAPI *Read)(PVOID, USHORT, USHORT, PVOID, ULONG);

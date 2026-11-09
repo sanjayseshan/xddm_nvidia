@@ -1,6 +1,36 @@
 NVIDIA GA104 Display Driver — cumulative development summary
 Updated: November 8, 2026 (v2.0.0.3: Windows XP 32-bit SP3 bringup, win32k display DDI architecture, and dual-architecture packaging)
 
+Hardware OpenGL roadmap — November 8, 2026:
+- Use the Mesa-backed architecture from the NullMoth macOS project as a model:
+  OS API/front-end shim -> Mesa translation/rendering layer -> NVK/NAK -> a
+  platform-specific kernel interface -> NVIDIA GPU. XP needs its own WGL ICD,
+  VideoPort/miniport interface, and GSP/RM graphics path; macOS components do
+  not plug into XP.
+- Priority order: XP x64 first, XP x86 second, Windows 98 SE third. Keep one
+  fixed-width user/kernel ABI and architecture-neutral 64-bit GPU virtual
+  addresses, with separate user-mode ICD binaries for x64 and x86.
+- Stage 1 is Mesa revision/build evaluation. Use the macOS port's Mesa patch
+  point as a reference, test a clean upstream NVK/NAK base, and add Mesa as a
+  pinned submodule only after the first target build is reproducible.
+- Stage 2 is the XP x64 shim and isolated GR bring-up: graphics channel/context,
+  memory mappings, validated submit, fence/wait, and fault reporting. First
+  gate is one GPU triangle with completed fence and pixel readback, while the
+  current display and Copy Engine paths remain stable.
+- Stage 3 connects the XP WGL ICD/OpenGL front end through Mesa Zink to NVK/NAK
+  if the prototype supports the required interfaces without Linux DRM. Then
+  verify NVK/GA104 renderer identity, actual GPU completion, readback pixels,
+  and stable dual-head output. Exercise WineD3D only after the ICD works.
+- Stage 4 builds/tests the XP x86 ICD against the same ABI. Stage 5 evaluates
+  a Win98 ICD and VxD/VMM shim; XP WGL/XDDM/VideoPort pieces are not portable.
+- Do not import NullMoth's macOS-specific code as a dependency. Its README
+  marks the plugin/translator/kernel components PolyForm Noncommercial and its
+  Mesa NVK patch MIT. Reuse the architecture and upstream Mesa instead. Mesa's
+  current NVK docs state Linux 6.6 minimum; XP support is unproven and must be
+  established by the XP shim/build, not inferred from macOS success.
+- Current state: no hardware OpenGL renderer or GR graphics submission path.
+  `GDI Generic` remains software OpenGL. Copy Engine support is 2D only.
+
 XP x86 graphics audit and performance — November 8, 2026:
 - Compared against the user-identified last x64 log,
   test_logs/xp_v2_20261108-161607.log, and saved x64 guest test_accel.log.

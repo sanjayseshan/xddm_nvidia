@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 2.0.0.1
+ * Driver Version: 2.0.0.3
  */
 
 #include "miniport.h"
@@ -1236,17 +1236,22 @@ BOOLEAN NTAPI HwVidInitialize(PVOID HwDeviceExtension) {
         return TRUE;
     }
 
-#ifdef __VXDKERNEL__
+#if defined(__VXDKERNEL__) || !defined(_WIN64)
+    /*
+     * On 32-bit Windows XP, INT10 real-mode services via HAL/BIOS corrupt
+     * kernel mode or fail on modern UEFI/PCI GPUs. Bypass VBE and use authentic
+     * GA104 native display modes directly.
+     */
     LogStr("NVX [NATIVE]: Native GA104 Direct Modeset Selected (VBE bypassed)\n");
     NvxInitPrimaryDisplayModes(devExt);
 #else
-    /* Read real-mode information through VideoPort's INT10 service. Mapping
-       physical address zero is not a substitute for its BIOS memory context. */
+    /* Read real-mode information through VideoPort's INT10 service. If VBE INT10
+       is unavailable or rejected (e.g. on 32-bit HAL where INT10 write fails),
+       fall back directly to native primary display modes rather than failing init. */
     if (!NvxVbeInitialize(HwDeviceExtension)) {
-        LogStr("NVX: Cannot establish a verified VBE framebuffer; initialization failed.\n");
-        return FALSE;
-    }
-    if (devExt->NumModes <= 4) {
+        LogStr("NVX [VBE]: VBE INT10 unavailable or rejected; falling back directly to native primary display modes.\n");
+        NvxInitPrimaryDisplayModes(devExt);
+    } else if (devExt->NumModes <= 4) {
         LogStr("NVX [NATIVE]: VBE reported degraded mode list (<=4 modes); upgrading to full native/DMT modes\n");
         devExt->NumModes = 0;
         NvxInitPrimaryDisplayModes(devExt);
@@ -1484,9 +1489,11 @@ BOOLEAN NTAPI HwVidStartIO(
         BOOLEAN restoreNativeDual=devExt->NativeDualActive;
         BOOLEAN vbeOk = FALSE;
         /* If mode index is within VBE modes, try VBE first; otherwise switch directly via native scanout */
+#ifdef _WIN64
         if (requested < 4) {
             vbeOk = NvxVbeSetMode(HwDeviceExtension, requested);
         }
+#endif
         if (!vbeOk) {
             LogStr("NVX [NATIVE]: Direct primary native modeset for index ");
             LogHex(requested);
@@ -2023,14 +2030,23 @@ BOOLEAN NTAPI HwVidStartIO(
 }
 
 typedef LONG NTSTATUS;
+#ifdef _WIN64
 typedef NTSTATUS (*PDRIVER_ADD_DEVICE)(PVOID DriverObject, PVOID PhysicalDeviceObject);
 typedef NTSTATUS (*PDRIVER_DISPATCH)(PVOID DeviceObject, PVOID Irp);
+#else
+typedef NTSTATUS (__stdcall *PDRIVER_ADD_DEVICE)(PVOID DriverObject, PVOID PhysicalDeviceObject);
+typedef NTSTATUS (__stdcall *PDRIVER_DISPATCH)(PVOID DeviceObject, PVOID Irp);
+#endif
 
 static PDRIVER_ADD_DEVICE RealAddDevice = NULL;
 static PDRIVER_DISPATCH RealPnpDispatch = NULL;
 static PDRIVER_DISPATCH RealPowerDispatch = NULL;
 
+#ifdef _WIN64
 static NTSTATUS HookedAddDevice(PVOID DriverObject, PVOID PhysicalDeviceObject) {
+#else
+static NTSTATUS __stdcall HookedAddDevice(PVOID DriverObject, PVOID PhysicalDeviceObject) {
+#endif
     LogStr("NVX: HookedAddDevice called! DrvObj=");
     LogHex((unsigned long long)DriverObject);
     LogStr(" PDO=");
@@ -2045,9 +2061,15 @@ static NTSTATUS HookedAddDevice(PVOID DriverObject, PVOID PhysicalDeviceObject) 
     return status;
 }
 
+#ifdef _WIN64
 static NTSTATUS HookedPnpDispatch(PVOID DeviceObject, PVOID Irp) {
     unsigned char *irpBytes = (unsigned char *)Irp;
     unsigned char **stackLocationPtr = (unsigned char **)(irpBytes + 0xb8);
+#else
+static NTSTATUS __stdcall HookedPnpDispatch(PVOID DeviceObject, PVOID Irp) {
+    unsigned char *irpBytes = (unsigned char *)Irp;
+    unsigned char **stackLocationPtr = (unsigned char **)(irpBytes + 0x60);
+#endif
     unsigned char *stack = *stackLocationPtr;
     unsigned char major = stack ? stack[0] : 0xFF;
     unsigned char minor = stack ? stack[1] : 0xFF;
@@ -2073,19 +2095,27 @@ static NTSTATUS HookedPnpDispatch(PVOID DeviceObject, PVOID Irp) {
     return status;
 }
 
+#ifdef _WIN64
 static NTSTATUS HookedPowerDispatch(PVOID DeviceObject, PVOID Irp) {
+#else
+static NTSTATUS __stdcall HookedPowerDispatch(PVOID DeviceObject, PVOID Irp) {
+#endif
     LogStr("NVX: HookedPowerDispatch!\n");
     NTSTATUS status = RealPowerDispatch(DeviceObject, Irp);
     NvxLogFlush();
     return status;
 }
 
+#ifdef _WIN64
 ULONG DriverEntry(PVOID Context1, PVOID Context2) {
+#else
+ULONG NTAPI DriverEntry(PVOID Context1, PVOID Context2) {
+#endif
     VIDEO_HW_INITIALIZATION_DATA hwInitData;
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 2.0.0.1 (open-gpu-kernel-modules unified v2)\n");
+    LogStr(" NVX Video Miniport Driver 2.0.0.3 (open-gpu-kernel-modules unified v2)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));
@@ -2115,22 +2145,33 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
 #else
     if (status == 0) {
         unsigned char *drvObj = (unsigned char *)Context1;
+#ifdef _WIN64
         unsigned char *drvExt = *(unsigned char **)(drvObj + 0x30);
+        ULONG addDeviceOffset = 0x08;
+        ULONG pnpDispatchOffset = 0x148;
+        ULONG powerDispatchOffset = 0x120;
+#else
+        unsigned char *drvExt = *(unsigned char **)(drvObj + 0x18);
+        ULONG addDeviceOffset = 0x04;
+        ULONG pnpDispatchOffset = 0xa4;
+        ULONG powerDispatchOffset = 0x90;
+#endif
         if (drvExt) {
-            RealAddDevice = *(PDRIVER_ADD_DEVICE *)(drvExt + 0x08);
+            RealAddDevice = *(PDRIVER_ADD_DEVICE *)(drvExt + addDeviceOffset);
             LogStr("NVX: Original AddDevice: ");
             LogHex((unsigned long long)RealAddDevice);
             LogStr("\n");
-            *(PDRIVER_ADD_DEVICE *)(drvExt + 0x08) = HookedAddDevice;
+            *(PDRIVER_ADD_DEVICE *)(drvExt + addDeviceOffset) = HookedAddDevice;
 
             /*
-             * videoprt.sys VpIsMultiFunctionSupported (at offset 0x25ad0) checks if the GPU
-             * is a multi-function PCI device (bit 7 of PCI HeaderType 0x0E).
+             * videoprt.sys VpIsMultiFunctionSupported (at offset 0x25ad0 on x64, 0xd368 on x86) checks
+             * if the GPU is a multi-function PCI device (bit 7 of PCI HeaderType 0x0E).
              * For RTX 3070 (display + audio), it queries MultiFunctionSupported from the registry,
              * and if absent or 0, returns FALSE (0), causing IRP_MN_START_DEVICE to fail with
              * STATUS_UNSUCCESSFUL (0xC0000001 / Code 10) before calling HwVidFindAdapter!
              * Patch VpIsMultiFunctionSupported to unconditionally return TRUE (1).
              */
+#ifdef _WIN64
             if (RealAddDevice) {
                 unsigned char *vpBase = (unsigned char *)RealAddDevice - 0x280e0;
                 unsigned char *multiFunc = vpBase + 0x25ad0;
@@ -2153,16 +2194,72 @@ ULONG DriverEntry(PVOID Context1, PVOID Context2) {
                     LogStr("\n");
                 }
             }
+#else
+            if (RealAddDevice) {
+                /*
+                 * On 32-bit Windows XP videoprt.sys:
+                 * RealAddDevice is at offset 0xea26 from videoprt base.
+                 * VpIsMultiFunctionSupported is at offset 0xed8c from videoprt base.
+                 * Exactly RealAddDevice + 0x366 bytes!
+                 * Prologue: 8B FF 55 8B EC 81 EC 0C 01 00 00
+                 */
+                unsigned char *multiFunc = (unsigned char *)RealAddDevice + 0x366;
+                BOOLEAN found = FALSE;
+
+                if (multiFunc[0] == 0x8b && multiFunc[1] == 0xff && multiFunc[2] == 0x55 &&
+                    multiFunc[3] == 0x8b && multiFunc[4] == 0xec && multiFunc[5] == 0x81 &&
+                    multiFunc[6] == 0xec && multiFunc[7] == 0x0c && multiFunc[8] == 0x01) {
+                    found = TRUE;
+                } else {
+                    /* Scan range [-0x1000, +0x1000] around RealAddDevice if layout shifts */
+                    for (int off = -0x1000; off < 0x2000; off++) {
+                        unsigned char *p = (unsigned char *)RealAddDevice + off;
+                        if (p[0] == 0x8b && p[1] == 0xff && p[2] == 0x55 &&
+                            p[3] == 0x8b && p[4] == 0xec && p[5] == 0x81 &&
+                            p[6] == 0xec && p[7] == 0x0c && p[8] == 0x01) {
+                            multiFunc = p;
+                            found = TRUE;
+                            break;
+                        }
+                    }
+                }
+
+                if (found) {
+                    unsigned long cr0;
+                    __asm__ __volatile__("mov %%cr0, %0" : "=r"(cr0));
+                    __asm__ __volatile__("mov %0, %%cr0" : : "r"(cr0 & ~(1UL << 16)));
+
+                    /* mov $1, %eax; ret $4 -> b8 01 00 00 00 c2 04 00 */
+                    multiFunc[0] = 0xb8;
+                    multiFunc[1] = 0x01;
+                    multiFunc[2] = 0x00;
+                    multiFunc[3] = 0x00;
+                    multiFunc[4] = 0x00;
+                    multiFunc[5] = 0xc2;
+                    multiFunc[6] = 0x04;
+                    multiFunc[7] = 0x00;
+
+                    __asm__ __volatile__("mov %0, %%cr0" : : "r"(cr0));
+                    LogStr("NVX: Successfully Patched 32-bit VpIsMultiFunctionSupported at ");
+                    LogHex((unsigned long long)multiFunc);
+                    LogStr("\n");
+                } else {
+                    LogStr("NVX: Warning: 32-bit VpIsMultiFunctionSupported signature not matched at ");
+                    LogHex((unsigned long long)multiFunc);
+                    LogStr("\n");
+                }
+            }
+#endif
         }
 
-        RealPnpDispatch = *(PDRIVER_DISPATCH *)(drvObj + 0x148);
+        RealPnpDispatch = *(PDRIVER_DISPATCH *)(drvObj + pnpDispatchOffset);
         LogStr("NVX: Original PnpDispatch: ");
         LogHex((unsigned long long)RealPnpDispatch);
         LogStr("\n");
-        *(PDRIVER_DISPATCH *)(drvObj + 0x148) = HookedPnpDispatch;
+        *(PDRIVER_DISPATCH *)(drvObj + pnpDispatchOffset) = HookedPnpDispatch;
 
-        RealPowerDispatch = *(PDRIVER_DISPATCH *)(drvObj + 0x120);
-        *(PDRIVER_DISPATCH *)(drvObj + 0x120) = HookedPowerDispatch;
+        RealPowerDispatch = *(PDRIVER_DISPATCH *)(drvObj + powerDispatchOffset);
+        *(PDRIVER_DISPATCH *)(drvObj + powerDispatchOffset) = HookedPowerDispatch;
     }
 #endif
 

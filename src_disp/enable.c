@@ -48,7 +48,20 @@ DrvEnableDriver(
 
     pded->c = sizeof(DrvFunctionTable) / sizeof(DRVFN);
     pded->pdrvfn = DrvFunctionTable;
-    pded->iDriverVersion = DDI_DRIVER_VERSION_NT5;
+#ifdef _WIN64
+    pded->iDriverVersion = DDI_DRIVER_VERSION_NT5_01;
+#else
+    /*
+     * Windows XP 32-bit win32k!ldevInitDrivers specifically checks:
+     *   cmpl $0x30101, pded->iDriverVersion
+     *   ja failure
+     *   cmpl $0x20000, pded->iDriverVersion
+     *   jb failure
+     * Official Microsoft 32-bit display drivers (vga.dll, vga64k.dll, cirrus.dll)
+     * all return DDI_DRIVER_VERSION_NT4 (0x00020000).
+     */
+    pded->iDriverVersion = DDI_DRIVER_VERSION_NT4;
+#endif
 
     NvxDispLogEvent(16,TRUE,pded->c,pded->iDriverVersion);
     return TRUE;

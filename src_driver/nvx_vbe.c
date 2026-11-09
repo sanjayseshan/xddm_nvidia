@@ -115,16 +115,24 @@ static BOOLEAN NvxVbeEnumerate(PVOID extension, BOOLEAN recoverNative)
     status=VideoPortQueryServices(extension,4,&api); /* VideoPortServicesInt10 */
     LogStr("NVX [VBE]: INT10 service status ");LogHex(status);LogStr("\n");
     if(status!=NO_ERROR) return FALSE;
+    LogStr("NVX [VBE]: api fn ptrs Alloc=");LogHex((unsigned long long)api.Allocate);
+    LogStr(" Call=");LogHex((unsigned long long)api.Call);
+    LogStr(" Ctx=");LogHex((unsigned long long)api.Context);LogStr("\n");
     if(!api.Allocate || !api.Free || !api.Read || !api.Write || !api.Call) goto done;
-    if(api.Allocate(api.Context,&seg,&off,&size)!=NO_ERROR) goto done;
+    status=api.Allocate(api.Context,&seg,&off,&size);
+    LogStr("NVX [VBE]: api.Allocate status=");LogHex(status);
+    LogStr(" seg=");LogHex(seg);LogStr(" off=");LogHex(off);LogStr(" size=");LogHex(size);LogStr("\n");
+    if(status!=NO_ERROR) goto done;
     allocated=TRUE;
     if(size<512) goto done;
     VideoPortZeroMemory(&info,sizeof(info));
     info.VbeSignature[0]='V';info.VbeSignature[1]='B';info.VbeSignature[2]='E';info.VbeSignature[3]='2';
-    if(api.Write(api.Context,seg,off,&info,sizeof(info))!=NO_ERROR) goto done;
+    status=api.Write(api.Context,seg,off,&info,sizeof(info));
+    LogStr("NVX [VBE]: api.Write status=");LogHex(status);LogStr("\n");
+    if(status!=NO_ERROR) goto done;
     VideoPortZeroMemory(&a,sizeof(a));a.Eax=0x4f00;a.SegEs=seg;a.Edi=off;
     status=api.Call(api.Context,&a);
-    LogStr("NVX [VBE]: CONTROLLER EAX ");LogHex(a.Eax);LogStr("\n");
+    LogStr("NVX [VBE]: CONTROLLER EAX ");LogHex(a.Eax);LogStr(" status=");LogHex(status);LogStr("\n");
     if(!NvxVbeSuccess(status,a.Eax) || api.Read(api.Context,seg,off,&info,sizeof(info))!=NO_ERROR ||
        info.VbeSignature[0]!='V' || info.VbeSignature[1]!='E' ||
        info.VbeSignature[2]!='S' || info.VbeSignature[3]!='A' || info.VbeVersion<0x200) goto done;
