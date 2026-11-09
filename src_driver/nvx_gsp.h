@@ -408,6 +408,9 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG GspRunlistBase;
     ULONG GspSubmitToken;
     ULONG RpcTxSequence,RpcRxSequence;
+    NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS GrContextInfoParams;
+    UCHAR RpcTxRecord[8192];
+    UCHAR RpcControlPayload[8192];
     UCHAR RpcRxRecord[65536];
 } NVX_DEVICE_EXTENSION, *PNVX_DEVICE_EXTENSION;
 

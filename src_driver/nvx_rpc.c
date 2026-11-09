@@ -16,15 +16,31 @@ static uint32_t checksum(const uint8_t *p,size_t size)
 int NvxEncodeRpc(uint8_t *slot,size_t capacity,uint32_t function,
                  uint32_t sequence,const void *payload,size_t payloadSize)
 {
-    size_t i;
-    if(!slot||capacity<4096||payloadSize>4016||(payloadSize&&!payload)) return 0;
-    for(i=0;i<4096;i++) slot[i]=0;
-    put32(slot+36,sequence);put32(slot+40,1);
-    put32(slot+48,0x03000000);put32(slot+52,0x43505256);
-    put32(slot+56,(uint32_t)(32+payloadSize));put32(slot+60,function);
-    put32(slot+64,0xffffffffU);put32(slot+68,0xffffffffU);put32(slot+72,sequence);
-    for(i=0;i<payloadSize;i++) slot[80+i]=((const uint8_t *)payload)[i];
-    put32(slot+32,checksum(slot,4096));return 1;
+    uint32_t elements=0;
+    if(payloadSize>4016) return 0;
+    return NvxEncodeRpcRecord(slot,capacity,function,sequence,payload,payloadSize,&elements)&&elements==1;
+}
+int NvxEncodeRpcRecord(uint8_t *record,size_t capacity,uint32_t function,
+                       uint32_t sequence,const void *payload,size_t payloadSize,
+                       uint32_t *elements)
+{
+    size_t i,recordBytes;
+    uint32_t count;
+    if(!record||!elements||(payloadSize&&!payload)||payloadSize>NVX_RPC_MAX_ELEMENTS*NVX_RPC_SLOT_SIZE-NVX_RPC_HEADER_SIZE)
+        return 0;
+    count=(uint32_t)((payloadSize+NVX_RPC_HEADER_SIZE+NVX_RPC_SLOT_SIZE-1)/NVX_RPC_SLOT_SIZE);
+    if(!count||count>NVX_RPC_MAX_ELEMENTS) return 0;
+    recordBytes=(size_t)count*NVX_RPC_SLOT_SIZE;
+    if(capacity<recordBytes) return 0;
+    for(i=0;i<recordBytes;i++) record[i]=0;
+    put32(record+36,sequence);put32(record+40,count);
+    put32(record+48,0x03000000);put32(record+52,0x43505256);
+    put32(record+56,(uint32_t)(32+payloadSize));put32(record+60,function);
+    put32(record+64,0xffffffffU);put32(record+68,0xffffffffU);put32(record+72,sequence);
+    for(i=0;i<payloadSize;i++) record[80+i]=((const uint8_t *)payload)[i];
+    put32(record+32,checksum(record,recordBytes));
+    *elements=count;
+    return 1;
 }
 int NvxDecodeRpc(const uint8_t *slot,size_t capacity,uint32_t *function,
                  uint32_t *result,uint32_t *sequence)

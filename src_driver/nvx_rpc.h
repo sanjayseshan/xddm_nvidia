@@ -29,5 +29,7 @@ typedef struct {
     uint8_t vf64[3];
 } NVX_SYSTEM_INFO_535;
 int NvxEncodeRpc(uint8_t *,size_t,uint32_t,uint32_t,const void *,size_t);
+/* Encode a message spanning 1..16 contiguous 4KB queue elements. */
+int NvxEncodeRpcRecord(uint8_t *,size_t,uint32_t,uint32_t,const void *,size_t,uint32_t *);
 int NvxDecodeRpc(const uint8_t *,size_t,uint32_t *,uint32_t *,uint32_t *);
 #endif

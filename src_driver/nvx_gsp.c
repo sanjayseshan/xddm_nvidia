@@ -99,10 +99,25 @@ static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
                          const void *payload,ULONG bytes)
 {
     volatile NVX_MSGQ_HEADER *cmd=dev->CmdQueueVirtual,*stat=dev->StatQueueVirtual;
-    ULONG write=cmd->WritePtr,next=(write+1)%63;
-    if(!dev->GspInitialized||write>=63||stat->ReadPtr>=63||next==stat->ReadPtr) return FALSE;
-    if(!NvxEncodeRpc((PUCHAR)dev->CmdQueueVirtual+4096+write*4096,
-        4096,expected,dev->RpcTxSequence,payload,bytes)) return FALSE;
+    ULONG write=cmd->WritePtr,next,available;
+    uint32_t elements=1;
+    if(!dev->GspInitialized||write>=63||stat->ReadPtr>=63) return FALSE;
+    if(bytes<=4016) {
+        next=(write+1)%63;
+        if(next==stat->ReadPtr||!NvxEncodeRpc((PUCHAR)dev->CmdQueueVirtual+4096+write*4096,
+            4096,expected,dev->RpcTxSequence,payload,bytes)) return FALSE;
+    } else {
+        ULONG index;
+        available=(stat->ReadPtr+63-write-1)%63;
+        if(!NvxEncodeRpcRecord(dev->RpcTxRecord,sizeof(dev->RpcTxRecord),expected,
+            dev->RpcTxSequence,payload,bytes,&elements)) return FALSE;
+        if(elements>available||elements>sizeof(dev->RpcTxRecord)/4096) return FALSE;
+        for(index=0;index<elements;index++) {
+            VideoPortMoveMemory((PUCHAR)dev->CmdQueueVirtual+4096+((write+index)%63)*4096,
+                                dev->RpcTxRecord+index*4096,4096);
+        }
+        next=(write+elements)%63;
+    }
     __sync_synchronize();cmd->WritePtr=next;__sync_synchronize();
     dev->RpcTxSequence++;
     nvx_msgq_notify_remote(FCN_FLAG_NOTIFY_MSG_WRITE, dev);
@@ -183,9 +198,14 @@ static BOOLEAN NvxGspAlloc(PNVX_DEVICE_EXTENSION dev,ULONG parent,ULONG object,
 static BOOLEAN NvxGspControl(PNVX_DEVICE_EXTENSION dev,ULONG object,ULONG cmd,
                             const void *params,ULONG bytes)
 {
-    ULONG payload[522]={0};
+    ULONG stackPayload[522]={0};
+    ULONG *payload=stackPayload;
     const ULONG *words=(const ULONG *)dev->RpcRxRecord;
-    if(bytes>2064) return FALSE;
+    if(bytes>8168) return FALSE;
+    if(bytes>2064) {
+        payload=(ULONG *)dev->RpcControlPayload;
+        VideoPortZeroMemory(payload,24+bytes);
+    }
     payload[0]=dev->GspClientHandle;
     payload[1]=object;
     payload[2]=cmd;
@@ -579,6 +599,8 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
 static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
 {
     NV_CHANNEL_ALLOC_PARAMS chan={0};
+    NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS tsg={0};
+    NV_CTXSHARE_ALLOCATION_PARAMETERS ctxShare={0};
     ULONG bindEngine=NV2080_ENGINE_TYPE_GRAPHICS;
     UCHAR schedEnable[2]={1,0};
     ULONG64 scratchPhys,instPhys,ramfcPhys,userdPhys,methodPhys,fifoGpuVa,scratchEnd;
@@ -587,6 +609,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     NV906F_CTRL_GET_CLASS_ENGINEID_PARAMS classEngineParams={0};
     NVB06F_CTRL_GET_ENGINE_CTX_SIZE_PARAMS grCtxSize={0};
     NVB06F_CTRL_GET_CHANNEL_HW_STATE_PARAMS grHwState={0};
+    NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS *grBufferInfo;
     ULONG classCount,classIndex,grClass=0;
     BOOLEAN ampereAFound=FALSE,ampereBFound=FALSE;
     ULONG runlistQuery[124]={0},token=0,runlistBase=0,submitToken=0;
@@ -596,6 +619,8 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     PULONG push;
     volatile ULONG *userd;
     volatile ULONG64 *fifo;
+    const ULONG tsgHandle=0xa06c0002;
+    const ULONG ctxShareHandle=0x90670002;
     const ULONG channelHandle=0xc56f0002;
     const ULONG grHandle=0xc6970001;
 
@@ -603,9 +628,12 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         LogStr("NVX [GR]: probe preconditions failed; graphics remains disabled.\n");
         return FALSE;
     }
+    grBufferInfo=&dev->GrContextInfoParams;
     scratchPhys=(ULONG64)dev->GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET;
     instPhys=scratchPhys+0xa000;
-    ramfcPhys=scratchPhys+0xb000;
+    /* RAMFC is the leading region of the instance block; OpenRM's channel
+       path and our known-good CE channel both describe it at instPhys. */
+    ramfcPhys=instPhys;
     userdPhys=scratchPhys+0xb400; /* USERD index 2 */
     methodPhys=scratchPhys+0xc000;
     fifoGpuVa=dev->GspScratchGpuVa+0x9000;
@@ -646,14 +674,27 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         return FALSE;
     }
 
-    LogStr("NVX [GR]: creating OpenRM-style device-parented Ampere graphics channel.\n");
-    /* OpenRM kernel_graphics.c allocates its bare GR channel directly under
-       the device with an explicit VASpace. The CE TSG/context-share pattern
-       is intentionally not reused here. */
+    LogStr("NVX [GR]: creating isolated GR-engine TSG/context-share/channel.\n");
+    /* Keep GR's channel group and context share separate from the working CE
+       path. RM uses the TSG engine type to select the engine context. */
+    tsg.hVASpace=dev->GspVaSpaceHandle;
+    tsg.engineType=NV2080_ENGINE_TYPE_GRAPHICS;
+    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,tsgHandle,0xa06c,&tsg,sizeof(tsg))) {
+        LogStr("NVX [GR]: graphics channel group allocation failed.\n");
+        return FALSE;
+    }
+    ctxShare.hVASpace=dev->GspVaSpaceHandle;
+    ctxShare.flags=NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_SYNC;
+    ctxShare.subctxId=0;
+    if(!NvxGspAlloc(dev,tsgHandle,ctxShareHandle,0x9067,&ctxShare,sizeof(ctxShare))) {
+        LogStr("NVX [GR]: graphics context-share allocation failed.\n");
+        return FALSE;
+    }
     chan.gpFifoOffset=fifoGpuVa;
     chan.gpFifoEntries=256;
     chan.flags=0x00200220; /* privileged, fixed USERD page 2, slot 2 */
-    chan.hVASpace=dev->GspVaSpaceHandle;
+    chan.hContextShare=ctxShareHandle;
+    chan.hVASpace=0; /* Context-share owns the channel VASpace. */
     chan.engineType=NV2080_ENGINE_TYPE_GRAPHICS;
     chan.subDeviceId=0;
     chan.instanceMem.base=instPhys;
@@ -674,8 +715,18 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     chan.mthdbufMem.cacheAttrib=0;
     chan.internalFlags=0x15;
 
-    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,channelHandle,AMPERE_CHANNEL_GPFIFO_A,&chan,sizeof(chan))) {
+    if(!NvxGspAlloc(dev,tsgHandle,channelHandle,AMPERE_CHANNEL_GPFIFO_A,&chan,sizeof(chan))) {
         LogStr("NVX [GR]: graphics GPFIFO channel allocation failed.\n");
+        return FALSE;
+    }
+    scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET;
+    LogStr("NVX [GR]: RAMFC_TARGET after channel allocation=");
+    LogHex(*(volatile ULONG *)(scratch+0xa000+NVX_RAMFC_TARGET_OFFSET));LogStr("\n");
+    /* Create the GR object before binding/scheduling the runlist, matching
+       OpenRM's kernel_graphics bring-up order. This lets RM attach its GR
+       engine context before the channel becomes runnable. */
+    if(!NvxGspAlloc(dev,channelHandle,grHandle,grClass,NULL,0)) {
+        LogStr("NVX [GR]: Ampere graphics object allocation failed; class=");LogHex(grClass);LogStr("\n");
         return FALSE;
     }
     if(!NvxGspControl(dev,channelHandle,NVA06F_CTRL_CMD_BIND,&bindEngine,sizeof(bindEngine))) {
@@ -687,6 +738,8 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         LogStr("NVX [GR]: graphics channel scheduling failed.\n");
         return FALSE;
     }
+    LogStr("NVX [GR]: RAMFC_TARGET after GR object/bind/schedule=");
+    LogHex(*(volatile ULONG *)(scratch+0xa000+NVX_RAMFC_TARGET_OFFSET));LogStr("\n");
     /* Query RM's own view of context preparation and channel scheduling before
        attempting any packet. These inherited B06F controls are diagnostic;
        they do not synthesize or overwrite GR context state. */
@@ -699,11 +752,6 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     } else {
         LogStr("NVX [GR]: RM engine context size query unavailable.\n");
     }
-    /* OpenRM kernel_graphics.c creates the GR object with NULL/0 params. */
-    if(!NvxGspAlloc(dev,channelHandle,grHandle,grClass,NULL,0)) {
-        LogStr("NVX [GR]: Ampere graphics object allocation failed; class=");LogHex(grClass);LogStr("\n");
-        return FALSE;
-    }
     if(NvxGspControl(dev,channelHandle,NVB06F_CTRL_CMD_GET_CHANNEL_HW_STATE,
                      &grHwState,sizeof(grHwState))) {
         const NVB06F_CTRL_GET_CHANNEL_HW_STATE_PARAMS *reply=
@@ -711,6 +759,29 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         LogStr("NVX [GR]: RM channel hardware state=");LogHex(reply->state);LogStr("\n");
     } else {
         LogStr("NVX [GR]: RM channel hardware state query unavailable.\n");
+    }
+    /* The size-only control lacks a client handle and is rejected by the
+       firmware resource namespace. Use OpenRM's full info query, which takes
+       both the owning client and channel and returns actual buffer metadata. */
+    VideoPortZeroMemory(grBufferInfo,sizeof(*grBufferInfo));
+    grBufferInfo->hUserClient=dev->GspClientHandle;
+    grBufferInfo->hChannel=channelHandle;
+    if(NvxGspControl(dev,dev->GspSubdeviceHandle,NV2080_CTRL_CMD_GR_GET_CTX_BUFFER_INFO,
+                     grBufferInfo,sizeof(*grBufferInfo))) {
+        const NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS *reply=
+            (const NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS *)(dev->RpcRxRecord+104);
+        ULONG infoIndex,infoCount=reply->bufferCount;
+        if(infoCount>NV2080_CTRL_GR_MAX_CTX_BUFFER_COUNT)
+            infoCount=NV2080_CTRL_GR_MAX_CTX_BUFFER_COUNT;
+        LogStr("NVX [GR]: RM context-buffer count=");LogHex(reply->bufferCount);LogStr("\n");
+        for(infoIndex=0;infoIndex<infoCount&&infoIndex<12;infoIndex++) {
+            LogStr("NVX [GR]: ctxbuf index=");LogHex(infoIndex);
+            LogStr(" type=");LogHex(reply->ctxBufferInfo[infoIndex].bufferType);
+            LogStr(" size=");LogHex((ULONG)reply->ctxBufferInfo[infoIndex].size);
+            LogStr(" aperture=");LogHex(reply->ctxBufferInfo[infoIndex].aperture);LogStr("\n");
+        }
+    } else {
+        LogStr("NVX [GR]: RM context-buffer info query unavailable.\n");
     }
 
     /* SET_OBJECT's payload is the RM-encoded classEngineID, not the object
@@ -760,7 +831,6 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     }
     LogStr("NVX [GR]: RM work-submit token=");LogHex(submitToken);LogStr("\n");
 
-    scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET;
     userd=(volatile ULONG *)(scratch+0xb400);
     fifo=(volatile ULONG64 *)(scratch+0x9000);
     push=(PULONG)(scratch+0xf000);
@@ -835,7 +905,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
             LogHex(instanceLo);LogStr("\n");
         }
         {
-            PULONG ramfc=(PULONG)(scratch+0xb000);
+            PULONG ramfc=(PULONG)(scratch+0xa000);
             LogStr("NVX [GR]: RAMFC userdLo=");LogHex(ramfc[0x8/4]);
             LogStr(" userdHi=");LogHex(ramfc[0xc/4]);
             LogStr(" gpBaseLo=");LogHex(ramfc[0x48/4]);

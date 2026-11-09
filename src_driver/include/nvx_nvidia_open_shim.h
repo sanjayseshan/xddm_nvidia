@@ -56,6 +56,13 @@
 #define NVX_PPBDMA_DATA0(i)            (0x000400c4U + (i) * NVX_PPBDMA_STRIDE)
 #define NVX_PPBDMA_TARGET(i)           (0x000400acU + (i) * NVX_PPBDMA_STRIDE)
 
+/* Published RAMFC_TARGET fields (Turing/GA10x compatible). PBDMA TARGET
+ * mirrors these fields when a channel context is loaded. */
+#define NVX_RAMFC_TARGET_OFFSET         (43U * 4U)
+#define NVX_RAMFC_TARGET_ENGINE_MASK    0x0000001fU
+#define NVX_RAMFC_TARGET_ENG_CTX_VALID  (1U << 16)
+#define NVX_RAMFC_TARGET_CE_CTX_VALID   (1U << 17)
+
 /* Helper macro mapping for Falcon engine apertures */
 #define NVX_GSP_BASE                   0x00110000
 #define NVX_SEC2_BASE                  0x00840000

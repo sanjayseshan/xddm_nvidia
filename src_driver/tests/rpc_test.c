@@ -25,6 +25,18 @@ int main(void)
         assert(!NvxDecodeRpcRecord((uint8_t *)record,sizeof(record),&f,&r,&s,&elements));
     }
     {
+        static uint8_t largePayload[5600],largeRecord[8192];uint32_t elements,decoded;
+        for(unsigned i=0;i<sizeof(largePayload);i++) largePayload[i]=(uint8_t)(i*17U);
+        assert(NvxEncodeRpcRecord(largeRecord,sizeof(largeRecord),0x20801219,12,
+                                  largePayload,sizeof(largePayload),&elements));
+        assert(elements==2&&largeRecord[40]==2&&largeRecord[80]==largePayload[0]);
+        assert(largeRecord[4096]==largePayload[4096-80]);
+        assert(NvxDecodeRpcRecord(largeRecord,sizeof(largeRecord),&f,&r,&s,&decoded));
+        assert(decoded==2&&f==0x20801219&&s==12);
+        assert(!NvxEncodeRpcRecord(largeRecord,4096,0x20801219,12,
+                                   largePayload,sizeof(largePayload),&elements));
+    }
+    {
         static uint32_t ring[4*1024],snapshot[2*1024];uint32_t count;
         ring[3*1024+10]=2;ring[3*1024+1023]=0x1234;ring[0]=0x5678;
         assert(NvxGatherRpc((uint8_t *)ring,sizeof(ring),4,3,0,(uint8_t *)snapshot,sizeof(snapshot),&count)==0);
