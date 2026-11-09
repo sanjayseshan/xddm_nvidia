@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.58: collect OpenRM NOCAT journal)
+Updated: November 9, 2026 (v2.0.0.59: decode NOCAT assertion records)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -377,6 +377,15 @@ Hardware OpenGL roadmap — November 8, 2026:
   log the complete 64-bit error code, load base, and stack words. The tested
   VM reached XP on retry 2 and then completed ACPI powerdown. Evidence:
   `test_logs/v2.0.0.58-20261109-143819.log`.
+- v2.0.0.59 expanded the NOCAT output. The assertion has a 64-bit code
+  `0x00000000015BD50C` (line number zero, load base zero, no captured stack).
+  The journal also reports a GR engine record with code `0xB` and a generic
+  exception record with seven diagnostic dwords. The exact firmware source is
+  not symbolized in the distributed GSP image. Since the tested GPU VA is
+  below 4 GB, v60 will omit semaphore method A and test B/C/D directly. The
+  VM completed ACPI powerdown; both heads remained active and CE/2D fill
+  submissions were logged. Evidence:
+  `test_logs/v2.0.0.59-20261109-144043.log`.
 
 ### Linux and macOS Reference Architecture
 

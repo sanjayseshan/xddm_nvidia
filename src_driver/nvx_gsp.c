@@ -298,13 +298,17 @@ static VOID NvxGspDumpNocatJournal(PNVX_DEVICE_EXTENSION dev)
         engine[NV2080_NOCAT_JOURNAL_MAX_STR_LEN]=0;
         LogStr("NVX [GR]: NOCAT record=");LogHex(i);LogStr(" type=");
         LogHex(entry->recType);LogStr(" subsystem=");LogHex(entry->subsystem);
-        LogStr(" error=");LogHex((ULONG)entry->errorCode);
+        LogStr(" error64=");LogHex(entry->errorCode);
+        LogStr(" loadBase=");LogHex(reply->journalRecords[i].loadAddress);
+        LogStr(" stateMask=");LogHex(reply->journalRecords[i].stateMask);
         LogStr(" engine=");LogStr(engine);
         LogStr(" source=");LogStr(source);LogStr(" diagBytes=");
         LogHex(entry->diagBufferLen);LogStr("\n");
-        for(j=0;j<entry->diagBufferLen&&j<16;j++) {
-            LogStr("NVX [GR]: NOCAT diag[");LogHex(j);LogStr("]=");
-            LogHex(entry->diagBuffer[j]);LogStr("\n");
+        for(j=0;j<entry->diagBufferLen/4&&j<16;j++) {
+            ULONG word=0;
+            VideoPortMoveMemory(&word,(PVOID)(entry->diagBuffer+j*4),sizeof(word));
+            LogStr("NVX [GR]: NOCAT diagDword[");LogHex(j);LogStr("]=");
+            LogHex(word);LogStr("\n");
         }
     }
 }
