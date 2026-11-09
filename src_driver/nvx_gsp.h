@@ -330,6 +330,7 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG GspGrContextLength;
     BOOLEAN GspGrContextAliasMapped;
     BOOLEAN GspGrContextAliasVerified;
+    BOOLEAN GspGrPromotionAccepted;
     ULONG GspDmaLength;
     ULONG Reserved6;
     PHYSICAL_ADDRESS CmdQueuePhysical;

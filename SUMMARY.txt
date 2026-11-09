@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.26: probe MAIN physical initialization)
+Updated: November 9, 2026 (v2.0.0.27: probe physical initialization and VA bindings)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -192,6 +192,14 @@ Hardware OpenGL roadmap — November 8, 2026:
   bounded alias read/write tests, CE smoke test, both display links, and ACPI
   shutdown passed. OpenGL remains GDI Generic and D3D9 returns 0x8876086A.
   Evidence: `test_logs/v2.0.0.26-20261109-130044.log`.
+- v2.0.0.27 extends the opt-in probe to initialize the seven applicable
+  physical buffers and issue a separate VA-only GPU_PROMOTE_CTX request for
+  all eleven layout entries, following the external-VASpace flow in OpenRM.
+  Both requests returned NV_OK; MAIN still contained zero nonzero bytes, so
+  the replies alone do not prove context setup or engine execution. No GR
+  methods were submitted. Alias read/write, CE smoke, both display links,
+  host tests, and ACPI shutdown passed. OpenGL remains GDI Generic; D3D9
+  returns 0x8876086A. Evidence: `test_logs/v2.0.0.27-20261109-130322.log`.
 - Latest confirmed XP log before v2.0.0.11: `test_logs/v2.0.0.9-20261109-114617.log`.
   GSP-RM init, verified CE copy, and active/locked dual heads passed. The
   direct GR channel allocated and fetched SET_OBJECT, then faulted with

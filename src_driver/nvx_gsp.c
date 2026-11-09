@@ -937,14 +937,15 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         }
 #if NVX_ENABLE_GR_PROMOTE_PROBE
         /* External VASpaces require client RM to initialize physical context
-           buffers before UVM binds their VAs. Start with MAIN only. The
-           independent alias test has already verified this backing range. */
+           buffers before UVM binds their VAs. The alias test verified backing
+           access, but does not validate these protected GR addresses. */
         if(dev->GspGrContextAliasVerified&&grLayout.count&&grLayout.buffers[0].id==0&&
            grLayout.buffers[0].offset<=dev->GspGrContextLength&&
            grLayout.buffers[0].size<=dev->GspGrContextLength-grLayout.buffers[0].offset) {
             NV2080_CTRL_GPU_PROMOTE_CTX_PARAMS *promote=
                 (NV2080_CTRL_GPU_PROMOTE_CTX_PARAMS *)grBufferInfo;
-            ULONG changed=0;
+            ULONG changed=0,initCount=0;
+            BOOLEAN valid=TRUE;
             _Static_assert(sizeof(NV2080_CTRL_GPU_PROMOTE_CTX_PARAMS)
                            <=sizeof(dev->GrContextInfoParams), "GR promote storage");
             VideoPortZeroMemory(dev->GspGrContextVirtual,dev->GspGrContextLength);
@@ -952,28 +953,52 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
             promote->engineType=NV2080_ENGINE_TYPE_GRAPHICS;
             promote->hChanClient=dev->GspClientHandle;
             promote->hObject=channelHandle;
-            promote->entryCount=1;
-            promote->promoteEntry[0].bufferId=NV2080_CTRL_GPU_PROMOTE_CTX_BUFFER_ID_MAIN;
-            promote->promoteEntry[0].gpuPhysAddr=(ULONG64)dev->GspGrContextPhysical.QuadPart+
-                                                grLayout.buffers[0].offset;
-            promote->promoteEntry[0].size=grLayout.buffers[0].size;
-            promote->promoteEntry[0].physAttr=
-                DRF_DEF(2080,_CTRL_GPU_INITIALIZE_CTX,_APERTURE,_NCOH_SYS)|
-                DRF_DEF(2080,_CTRL_GPU_INITIALIZE_CTX,_GPU_CACHEABLE,_NO);
-            promote->promoteEntry[0].bInitialize=TRUE;
-            promote->promoteEntry[0].bNonmapped=TRUE;
+            for(i=0;i<grLayout.count;i++) {
+                ULONG id=grLayout.buffers[i].id;
+                NV2080_CTRL_GPU_PROMOTE_CTX_BUFFER_ENTRY *entry;
+                if(grLayout.buffers[i].offset>dev->GspGrContextLength||
+                   grLayout.buffers[i].size>dev->GspGrContextLength-grLayout.buffers[i].offset) {
+                    valid=FALSE;break;
+                }
+                /* Matches kgrctxPrepareInitializeCtxBuffer's initialized IDs. */
+                if(id!=0&&id!=1&&id!=2&&id!=8&&id!=9&&id!=10&&id!=11) continue;
+                entry=&promote->promoteEntry[initCount++];
+                entry->bufferId=(NvU16)id;
+                entry->gpuPhysAddr=(ULONG64)dev->GspGrContextPhysical.QuadPart+grLayout.buffers[i].offset;
+                entry->size=grLayout.buffers[i].size;
+                entry->physAttr=DRF_DEF(2080,_CTRL_GPU_INITIALIZE_CTX,_APERTURE,_NCOH_SYS)|
+                                DRF_DEF(2080,_CTRL_GPU_INITIALIZE_CTX,_GPU_CACHEABLE,_NO);
+                entry->bInitialize=TRUE;entry->bNonmapped=TRUE;
+            }
+            promote->entryCount=initCount;
             __sync_synchronize();
-            LogStr("NVX [GR-PROMOTE]: requesting MAIN physical initialization bytes=");
-            LogHex(grLayout.buffers[0].size);LogStr("\n");
-            if(NvxGspControl(dev,dev->GspSubdeviceHandle,NV2080_CTRL_CMD_GPU_PROMOTE_CTX,
-                             promote,sizeof(*promote))) {
+            LogStr("NVX [GR-PROMOTE]: requesting physical initialization entries=");
+            LogHex(initCount);LogStr("\n");
+            if(valid&&initCount&&NvxGspControl(dev,dev->GspSubdeviceHandle,
+                            NV2080_CTRL_CMD_GPU_PROMOTE_CTX,promote,sizeof(*promote))) {
                 volatile UCHAR *bytes=(volatile UCHAR *)dev->GspGrContextVirtual+
                                        grLayout.buffers[0].offset;
                 __sync_synchronize();
                 for(ULONG64 n=0;n<grLayout.buffers[0].size;n++) if(bytes[n]) changed++;
-                LogStr("NVX [GR-PROMOTE]: MAIN initialization returned NV_OK; nonzero bytes=");
-                LogHex(changed);LogStr("; no GR execution verified.\n");
-            } else LogStr("NVX [GR-PROMOTE]: MAIN initialization rejected or unavailable.\n");
+                LogStr("NVX [GR-PROMOTE]: physical initialization returned NV_OK; MAIN nonzero bytes=");
+                LogHex(changed);LogStr("\n");
+                /* Match nvGpuOpsBindChannelResources: VA-only entries, no
+                   repeated physical initialization, one per context buffer. */
+                VideoPortZeroMemory(promote,sizeof(*promote));
+                promote->engineType=NV2080_ENGINE_TYPE_GRAPHICS;
+                promote->hChanClient=dev->GspClientHandle;
+                promote->hObject=channelHandle;
+                promote->entryCount=grLayout.count;
+                for(i=0;i<grLayout.count;i++) {
+                    promote->promoteEntry[i].bufferId=(NvU16)grLayout.buffers[i].id;
+                    promote->promoteEntry[i].gpuVirtAddr=GSP_GR_CONTEXT_GPU_VA+grLayout.buffers[i].offset;
+                }
+                if(NvxGspControl(dev,dev->GspSubdeviceHandle,NV2080_CTRL_CMD_GPU_PROMOTE_CTX,
+                                 promote,sizeof(*promote))) {
+                    dev->GspGrPromotionAccepted=TRUE;
+                    LogStr("NVX [GR-PROMOTE]: RM accepted VA bindings; no GR execution verified.\n");
+                } else LogStr("NVX [GR-PROMOTE]: VA bindings rejected or unavailable.\n");
+            } else LogStr("NVX [GR-PROMOTE]: physical initialization rejected or unavailable.\n");
         } else LogStr("NVX [GR-PROMOTE]: verified backing unavailable; initialization skipped.\n");
 #endif
     } else LogStr("NVX [GR]: context layout unavailable or exceeds 12MB; no memory promoted.\n");
