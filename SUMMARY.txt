@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.61: correct PBDMA dword-addressed method headers)
+Updated: November 9, 2026 (v2.0.0.62: verified Ampere GR 3D I2M pipeline memory writes)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -400,6 +400,15 @@ Hardware OpenGL roadmap — November 8, 2026:
   methods on GA104 class C797—causing firmware assertion `0x015BD50C`. Corrected
   pushbuffer headers to use `>> 2` for `SET_OBJECT` (0x0), `WAIT_FOR_IDLE` (0x44),
   and `SET_REPORT_SEMAPHORE_A..D` (0x6c0).
+- v2.0.0.62 verified Ampere 3D graphics pipeline memory writes via Inline-to-Memory
+  (I2M) methods through the Class C797 graphics object. Submitted `NVC797_LINE_LENGTH_IN`
+  (64 bytes, 1 line, destination scratch GPU VA, 64-byte pitch), `NVC797_LAUNCH_DMA` with
+  `ONE_INC` opcode (streamed 16 test dwords `0x67723000`..`0x6772300f` into `NVC797_LOAD_INLINE_DATA`),
+  `NVC797_WAIT_FOR_IDLE`, and `NVC797_SET_REPORT_SEMAPHORE_A` release. The GPU GR pipeline
+  executed the pushbuffer, wrote back all 16 dwords into coherent scratch memory with an
+  exact match, and released the completion semaphore with intact memory guards and zero
+  firmware assertions or MMU faults (`GR RESULT: graphics pipeline data write and semaphore completed successfully!`).
+  Evidence: `test_logs/v2.0.0.62-20261109-152545.log`.
 
 ### Linux and macOS Reference Architecture
 

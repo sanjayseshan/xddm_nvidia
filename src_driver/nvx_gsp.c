@@ -921,11 +921,12 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     BOOLEAN ampereAFound=FALSE,ampereBFound=FALSE;
     ULONG runlistQuery[124]={0},token=0,runlistBase=0;
     ULONG dbcfg,chcfg,enable,wait,chramBase,fault[26]={0},assertCountBefore;
-    ULONG64 pushVa,grFenceVa;
+    ULONG64 pushVa,grFenceVa,grDataVa;
     PUCHAR scratch;
     PULONG push;
     volatile ULONG *userd;
     volatile ULONG *grFence;
+    volatile ULONG *grData;
     volatile ULONG64 *fifo;
     const ULONG channelHandle=0xc56f0002;
     const ULONG grHandle=0xc6970001;
@@ -1352,10 +1353,13 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     pushVa=dev->GspScratchGpuVa+0xf000;
     grFence=(volatile ULONG *)(scratch+0xb500);
     grFenceVa=dev->GspScratchGpuVa+0xb500;
+    grData=(volatile ULONG *)(scratch+0xb600);
+    grDataVa=dev->GspScratchGpuVa+0xb600;
     /* The GR context VA is promoted, but its external semaphore access remains
        unverified. Use this already-mapped coherent scratch word to isolate the
        target mapping from the report-semaphore method itself. */
     grFence[0]=0;grFence[1]=0x13579bdf;grFence[2]=0x2468ace0;
+    VideoPortZeroMemory((PVOID)grData,64);
     if(userd[0x88/4]||userd[0x8c/4]) {
         LogStr("NVX [GR]: fresh graphics USERD is not empty; submission skipped.\n");
         return FALSE;
@@ -1369,21 +1373,44 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
        methods (e.g. 0x1b00/0x1b04 masked to 0xb00/0xb04, causing assertion 0x15BD50C).
        Encode methods properly dword-addressed:
        - SET_OBJECT (0x0000 >> 2 = 0x000)
+       - LINE_LENGTH_IN (0x0180 >> 2 = 0x060), 5 words:
+           LINE_LENGTH_IN (64), LINE_COUNT (1), OFFSET_OUT_UPPER, OFFSET_OUT, PITCH_OUT (64)
+       - LAUNCH_DMA (0x01b0 >> 2 = 0x06c), ONE_INC opcode (5), 17 words:
+           LAUNCH_DMA config, followed by 16 inline data dwords to LOAD_INLINE_DATA
        - WAIT_FOR_IDLE (0x0110 >> 2 = 0x044)
        - SET_REPORT_SEMAPHORE_A (0x1b00 >> 2 = 0x6c0), 4 words A/B/C/D */
-    push[0]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC56F_SET_OBJECT>>2);
-    push[1]=classEngineId;
-    push[2]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_WAIT_FOR_IDLE>>2);
-    push[3]=0;
-    push[4]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(4U<<16)|(NVC797_SET_REPORT_SEMAPHORE_A>>2);
-    push[5]=(ULONG)(grFenceVa>>32);
-    push[6]=(ULONG)grFenceVa;
-    push[7]=0x47524631;
-    push[8]=DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_OPERATION,_RELEASE)|
-            DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_RELEASE,_AFTER_ALL_PRECEEDING_WRITES_COMPLETE)|
-            DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_PIPELINE_LOCATION,_ALL)|
-            DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_STRUCTURE_SIZE,_ONE_WORD);
-    fifo[0]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|(9ULL<<42);
+    {
+        ULONG n=0,i;
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC56F_SET_OBJECT>>2);
+        push[n++]=classEngineId;
+        /* Configure I2M destination buffer (64 bytes = 16 dwords) */
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(5U<<16)|(NVC797_LINE_LENGTH_IN>>2);
+        push[n++]=64;                                    /* LINE_LENGTH_IN: 64 bytes */
+        push[n++]=1;                                     /* LINE_COUNT: 1 */
+        push[n++]=(ULONG)(grDataVa>>32);                 /* OFFSET_OUT_UPPER */
+        push[n++]=(ULONG)grDataVa;                       /* OFFSET_OUT */
+        push[n++]=64;                                    /* PITCH_OUT: 64 bytes */
+        /* LAUNCH_DMA using ONE_INC (opcode 5) so subsequent data streams into LOAD_INLINE_DATA (0x1b4) */
+        push[n++]=(NVC56F_DMA_ONEINCR_OPCODE_VALUE<<29)|(17U<<16)|(NVC797_LAUNCH_DMA>>2);
+        push[n++]=DRF_DEF(C797,_LAUNCH_DMA,_DST_MEMORY_LAYOUT,_PITCH)|
+                  DRF_DEF(C797,_LAUNCH_DMA,_COMPLETION_TYPE,_FLUSH_DISABLE)|
+                  DRF_DEF(C797,_LAUNCH_DMA,_INTERRUPT_TYPE,_NONE)|
+                  DRF_DEF(C797,_LAUNCH_DMA,_SYSMEMBAR_DISABLE,_TRUE);
+        for(i=0;i<16;i++) {
+            push[n++]=0x67723000U+i;
+        }
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_WAIT_FOR_IDLE>>2);
+        push[n++]=0;
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(4U<<16)|(NVC797_SET_REPORT_SEMAPHORE_A>>2);
+        push[n++]=(ULONG)(grFenceVa>>32);
+        push[n++]=(ULONG)grFenceVa;
+        push[n++]=0x47524632;
+        push[n++]=DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_OPERATION,_RELEASE)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_RELEASE,_AFTER_ALL_PRECEEDING_WRITES_COMPLETE)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_PIPELINE_LOCATION,_ALL)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_STRUCTURE_SIZE,_ONE_WORD);
+        fifo[0]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|((ULONG64)n<<42);
+    }
     __sync_synchronize();
     userd[0x8c/4]=1;
     __sync_synchronize();
@@ -1396,9 +1423,9 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),token);
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x90),2);
     LogStr("NVX [GR]: rang channel doorbell token=");LogHex(token);LogStr(" chid=0x2\n");
-    LogStr("NVX [GR]: submitted SET_OBJECT, WAIT_FOR_IDLE and dword-addressed C797 semaphore A/B/C/D.\n");
+    LogStr("NVX [GR]: submitted SET_OBJECT, I2M inline-data upload, WAIT_FOR_IDLE and C797 semaphore.\n");
     for(wait=0;wait<100000;wait++) {
-        if(grFence[0]==0x47524631) {
+        if(grFence[0]==0x47524632) {
             break;
         }
         if(wait&&!(wait%10000)) {
@@ -1409,7 +1436,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         }
         VideoPortStallExecution(100);
     }
-    if(userd[0x88/4]==1||grFence[0]==0x47524631) {
+    if(userd[0x88/4]==1||grFence[0]==0x47524632) {
         /* Drain asynchronous firmware diagnostics before judging completion. */
         VideoPortStallExecution(100000);
         grStatusAvailable=NvxGspGetName(dev);
@@ -1421,9 +1448,20 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
             LogHex(assertCountBefore);LogStr(" after=");LogHex(dev->GspAssertCount);LogStr("\n");
             NvxGspDumpNocatJournal(dev);
         } else if(grStatusAvailable&&!dev->GspGraphicsChannelFaulted&&!dev->GspMmuFaultQueued&&
-                  userd[0x88/4]==1&&grFence[0]==0x47524631&&
+                  userd[0x88/4]==1&&grFence[0]==0x47524632&&
                   grFence[1]==0x13579bdf&&grFence[2]==0x2468ace0) {
+            ULONG i,matchCount=0;
             dev->GspGraphicsCommandVerified=TRUE;
+            for(i=0;i<16;i++) {
+                if(grData[i]==0x67723000U+i) matchCount++;
+            }
+            if(matchCount==16) {
+                dev->GspGraphicsDataWriteVerified=TRUE;
+                LogStr("NVX [GR]: I2M data write verified; 16 dwords matched in scratch memory.\n");
+            } else {
+                LogStr("NVX [GR]: I2M data write mismatch; matches=");LogHex(matchCount);
+                LogStr(" word0=");LogHex(grData[0]);LogStr(" word1=");LogHex(grData[1]);LogStr("\n");
+            }
         }
     }
     /* Compare the pre-submit context query with a second query after GPGet
@@ -1506,7 +1544,11 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     dev->GspGraphicsChannelHandle=channelHandle;
     dev->GspGraphicsObjectHandle=grHandle;
     dev->GspGraphicsChannelReady=TRUE;
-    LogStr("NVX [GR]: GR semaphore release completed with guards intact; no drawing tested.\n");
+    if(dev->GspGraphicsDataWriteVerified) {
+        LogStr("NVX [GR]: GR pipeline data write and semaphore release completed successfully.\n");
+    } else {
+        LogStr("NVX [GR]: GR semaphore release completed with guards intact; no drawing tested.\n");
+    }
     return TRUE;
 }
 #else
