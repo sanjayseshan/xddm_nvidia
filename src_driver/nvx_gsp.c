@@ -601,6 +601,8 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
 {
     NV_CHANNEL_ALLOC_PARAMS chan={0};
     NV_CONTEXT_DMA_ALLOCATION_PARAMS errorDma={0};
+    NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS tsg={0};
+    NV_CTXSHARE_ALLOCATION_PARAMETERS ctxShare={0};
     ULONG bindEngine=NV2080_ENGINE_TYPE_GRAPHICS;
     UCHAR schedEnable[2]={1,0};
     ULONG64 scratchPhys,instPhys,userdPhys,methodPhys,fifoGpuVa,scratchEnd;
@@ -621,6 +623,8 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     volatile ULONG64 *fifo;
     const ULONG channelHandle=0xc56f0002;
     const ULONG grHandle=0xc6970001;
+    const ULONG tsgHandle=0xa06c0002;
+    const ULONG ctxShareHandle=0x90670002;
 
     if(!dev||!dev->GspInitialized||!dev->GspDmaVirtual||!dev->GspScratchGpuVa) {
         LogStr("NVX [GR]: probe preconditions failed; graphics remains disabled.\n");
@@ -690,8 +694,26 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     chan.gpFifoOffset=fifoGpuVa;
     chan.gpFifoEntries=256;
     chan.flags=0x00200220; /* privileged, fixed USERD page, index 2 */
-    chan.hContextShare=0;
-    chan.hVASpace=dev->GspVaSpaceHandle;
+    /* Use NVK's explicit graphics TSG + synchronized context-share form.
+       The previous bare-channel form allocated but GSP-RM never associated
+       it with a KernelGraphicsContext (GET_CTX_BUFFER_INFO returned 0x31). */
+    tsg.hVASpace=dev->GspVaSpaceHandle;
+    tsg.engineType=NV2080_ENGINE_TYPE_GRAPHICS;
+    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,tsgHandle,0xa06c,&tsg,sizeof(tsg))) {
+        LogStr("NVX [GR]: graphics TSG allocation failed.\n");
+        return FALSE;
+    }
+    ctxShare.hVASpace=dev->GspVaSpaceHandle;
+    ctxShare.flags=NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_SYNC;
+    ctxShare.subctxId=0;
+    if(!NvxGspAlloc(dev,tsgHandle,ctxShareHandle,0x9067,&ctxShare,sizeof(ctxShare))) {
+        LogStr("NVX [GR]: synchronized graphics context-share allocation failed.\n");
+        return FALSE;
+    }
+    dev->GspGraphicsTsgHandle=tsgHandle;
+    dev->GspGraphicsContextShareHandle=ctxShareHandle;
+    chan.hContextShare=ctxShareHandle;
+    chan.hVASpace=0; /* mutually exclusive with hContextShare */
     chan.engineType=NV2080_ENGINE_TYPE_GRAPHICS;
     chan.subDeviceId=0;
     chan.hObjectError=0x00020003;
@@ -716,7 +738,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     chan.mthdbufMem.addressSpace=1;
     chan.mthdbufMem.cacheAttrib=0;
 
-    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,channelHandle,AMPERE_CHANNEL_GPFIFO_A,&chan,sizeof(chan))) {
+    if(!NvxGspAlloc(dev,tsgHandle,channelHandle,AMPERE_CHANNEL_GPFIFO_A,&chan,sizeof(chan))) {
         LogStr("NVX [GR]: graphics GPFIFO channel allocation failed.\n");
         return FALSE;
     }
@@ -833,7 +855,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     }
     LogStr("NVX [GR]: RM work-submit token=");LogHex(submitToken);LogStr("\n");
 
-    userd=(volatile ULONG *)(scratch+0xb000);
+    userd=(volatile ULONG *)(scratch+0xb400);
     fifo=(volatile ULONG64 *)(scratch+0x9000);
     push=(PULONG)(scratch+0xf000);
     pushVa=dev->GspScratchGpuVa+0xf000;

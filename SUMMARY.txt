@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.12: RM-managed GR channel probe)
+Updated: November 9, 2026 (v2.0.0.14: align GR USERD write offset)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -28,17 +28,27 @@ Hardware OpenGL roadmap — November 8, 2026:
   Mesa NVK patch MIT. Reuse the architecture and upstream Mesa instead. Mesa's
   current NVK docs state Linux 6.6 minimum; XP support is unproven and must be
   established by the XP shim/build, not inferred from macOS success.
-- Current state: the GA104 RM advertises AMPERE_B. v2.0.0.12 successfully
+- Current state: the GA104 RM advertises AMPERE_B. v2.0.0.14 aligns the CPU
+  GPPut write with the actual USERD at scratch offset 0xB400. The descriptor
+  and RM USERD handle both pointed there, but v2.0.0.13 still wrote to 0xB000.
+  With the pointer corrected, GR GP_GET advanced to 1 and the graphics channel
+  consumed SET_OBJECT without an RC fault.
+- The v2.0.0.13 probe kept the
+  context-DMA and channel memory descriptors that allowed RM to allocate the
+  GR channel/object, but uses NVK's explicit graphics TSG plus synchronized
+  context-share form. v2.0.0.12's bare channel still lacked a resolvable
+  KernelGraphicsContext.
+- The current GR state before v2.0.0.13: v2.0.0.12 successfully
   allocates an error context-DMA, graphics channel, and Ampere graphics object;
   bind and schedule controls pass. The raw GSP RPC needs the physical
   instance/RAMFC/USERD/method descriptors, so v2.0.0.12 combines those with
   explicit RM error-DMA and USERD memory handles, following the low-level
   GSP requirements and NVK's host-RM resource recipe.
-- The GR context query still returns NV_ERR_INVALID_OBJECT (0x31), GP_GET stays
-  at zero, and the guarded SET_OBJECT never executes. The sampled RAMFC USERD
-  fields remain zero; no GPU draw or readback has succeeded. OpenGL remains
-  Microsoft GDI Generic/software 1.1; Direct3D 9 returns 0x8876086A. CE copy
-  and both display heads remain verified.
+- GET_CTX_BUFFER_INFO still returns NV_ERR_INVALID_OBJECT (0x31), and no GPU
+  draw or rendering/readback has succeeded. OpenGL remains Microsoft GDI
+  Generic/software 1.1; Direct3D 9 returns 0x8876086A. CE copy and both display
+  heads remain verified. Next probe: consume a harmless GR WAIT_FOR_IDLE
+  method, then begin the minimal rendering setup.
 - v2.0.0.10 built and booted; RM rejected the error context-DMA with
   NV_ERR_INVALID_LIMIT because its inclusive limit is relative to the supplied
   offset. CE copy and both display heads passed, then the script sent ACPI
@@ -53,6 +63,18 @@ Hardware OpenGL roadmap — November 8, 2026:
   context lookup still returned NV_ERR_INVALID_OBJECT and GR GP_GET remained
   zero. Both heads and the CE roundtrip passed, and XP received ACPI powerdown.
   Evidence: `test_logs/v2.0.0.12-20261109-120339.log`.
+- v2.0.0.13 tests whether an explicit graphics TSG/context-share establishes
+  the context that the bare-channel path lacked. TSG, context-share, channel,
+  and graphics object allocations plus bind/schedule succeeded, but
+  GET_CTX_BUFFER_INFO still returned 0x31 and GP_GET remained zero. Inspection
+  then found the USERD write offset mismatch fixed in v2.0.0.14. Evidence:
+  `test_logs/v2.0.0.13-20261109-120717.log`.
+- v2.0.0.14 corrected the USERD pointer. The guarded SET_OBJECT advanced
+  GP_GET and was consumed with no RC fault; context-buffer lookup remains
+  0x31, so this validates command fetch/object binding only, not a draw.
+  Both heads and CE copy passed and XP received ACPI powerdown. OpenGL remains
+  GDI Generic 1.1 and D3D9 returns 0x8876086A. Evidence:
+  `test_logs/v2.0.0.14-20261109-121042.log`.
 - Latest confirmed XP log before v2.0.0.11: `test_logs/v2.0.0.9-20261109-114617.log`.
   GSP-RM init, verified CE copy, and active/locked dual heads passed. The
   direct GR channel allocated and fetched SET_OBJECT, then faulted with
