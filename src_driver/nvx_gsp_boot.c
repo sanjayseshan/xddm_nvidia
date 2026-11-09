@@ -923,6 +923,7 @@ VOID NvxGspShutdown(PVOID HwDeviceExtension) {
         devExt->GspBootVerified = FALSE;
         devExt->GspCopyVerified = FALSE;
         devExt->GspChannelFaulted = FALSE;
+        devExt->GspMmuFaultQueued = FALSE;
         devExt->GspFbLayoutValid = FALSE;
         devExt->GspScanoutMapped = FALSE;
 

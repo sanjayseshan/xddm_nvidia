@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.23: diagnose GR mapping fault)
+Updated: November 9, 2026 (v2.0.0.24: identify GR mapping privilege fault)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -167,6 +167,15 @@ Hardware OpenGL roadmap — November 8, 2026:
   from being read. Thus the fault address/type are not yet known. The CE
   timed out and native scanout fell back; XP received ACPI powerdown. Host
   tests passed. Evidence: `test_logs/v2.0.0.23-20261109-125121.log`.
+- v2.0.0.24 drains the 0x1005 notification, records the unhandled MMU fault,
+  disables accelerated queues, and permits diagnostic/teardown RPCs to proceed.
+  There is still no UVM fault handler. The CE reports fault address 0x10200000
+  and type 0x5 (PRIV_VIOLATION in NVIDIA's Pascal/Turing fault definitions):
+  the CE cannot access the privileged PTEs as currently configured. Its channel
+  state was 0xE and native scanout fell back. Host tests cover an event preceding
+  an RM reply. The runner attempted ACPI shutdown but eventually issued QEMU
+  quit because the guest did not exit. Evidence:
+  `test_logs/v2.0.0.24-20261109-125517.log`.
 - Latest confirmed XP log before v2.0.0.11: `test_logs/v2.0.0.9-20261109-114617.log`.
   GSP-RM init, verified CE copy, and active/locked dual heads passed. The
   direct GR channel allocated and fetched SET_OBJECT, then faulted with

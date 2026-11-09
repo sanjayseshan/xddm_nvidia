@@ -351,6 +351,7 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG PciBusNumber;
     ULONG PciSlot;
     ULONG GspAssertCount;
+    BOOLEAN GspMmuFaultQueued;
     ULONG GspClientHandle;
     ULONG GspDeviceHandle,GspSubdeviceHandle;
     ULONG GspDisplayHandle;

@@ -12,7 +12,7 @@ static UCHAR gpuVram[0x4000000];
 static NVX_DEVICE_EXTENSION dev;
 static int scenario, imemTransfers, dmemTransfers, cpuStarts,freeFailures,displayFreeFailures;
 static BOOLEAN dpLinkTrained;
-static BOOLEAN injectPerfBeforeFree;
+static BOOLEAN injectPerfBeforeFree,injectMmuBeforeFree;
 static ULONG perfNotifications;
 static BOOLEAN emulateModeset;
 static ULONG emulatedHeads[2]={1,0};
@@ -330,6 +330,12 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             for(ULONG i=29;i<36;i++) assert(request[i]==0);
         }
         if(f==10) {
+            if(injectMmuBeforeFree) {
+                injectMmuBeforeFree=FALSE;
+                assert(NvxEncodeRpc((PUCHAR)packet,4096,0x1005,write-1,NULL,0));
+                packet[16]=0;packet[8]^=0xffffffffU;
+                write++;packet=(PULONG)((PUCHAR)q+4096+write*4096);
+            }
             if(injectPerfBeforeFree) {
                 ULONG info=0x185;
                 injectPerfBeforeFree=FALSE;
@@ -713,9 +719,11 @@ int main(void)
                block reuse until a later teardown confirms it is gone. */
             dev.NativeDualActive=TRUE;
             displayFreeFailures=1;
-            injectPerfBeforeFree=TRUE;
+            injectMmuBeforeFree=TRUE;
             assert(!NvxGspReleaseDisplayChannels(&dev));
-            assert(!injectPerfBeforeFree && perfNotifications==1);
+            assert(!injectMmuBeforeFree && dev.GspMmuFaultQueued &&
+                   dev.GspChannelFaulted && dev.GspGraphicsChannelFaulted);
+            dev.GspMmuFaultQueued=dev.GspChannelFaulted=dev.GspGraphicsChannelFaulted=FALSE;
             assert(!dev.NativeDisplayChannelsReady && !dev.NativeDualActive);
             assert(dev.NativeDisplayAttempted && dev.NativeDisplayChannels[2]);
             assert(!NvxGspInitDisplayChannels(&dev));
@@ -723,7 +731,9 @@ int main(void)
             assert(!dev.NativeDisplayAttempted && !dev.NativeDisplayFaulted);
             for(ULONG i=0;i<3;i++) assert(!dev.NativeDisplayChannels[i]);
         }
+        if(scenario==3) injectPerfBeforeFree=TRUE;
         NvxGspShutdown(&dev);
+        if(scenario==3) assert(!injectPerfBeforeFree && perfNotifications==1);
         if(scenario==7) {
             assert(dev.GspDmaVirtual&&dev.GspInitialized); /* teardown failure must retain DMA */
             NvxGspShutdown(&dev);

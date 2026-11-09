@@ -143,7 +143,7 @@ static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
             decoded!=elements||sequence!=dev->RpcRxSequence) return FALSE;
         LogStr("NVX [RM]: reply function=");LogHex(function);
         LogStr(" result=");LogHex(result);LogStr("\n");
-        if(!result && (function==0x101b||function==0x100c||function==0x1004||function==0x1006||function==0x100f)) {
+        if(!result && (function==0x101b||function==0x100c||function==0x1004||function==0x1005||function==0x1006||function==0x100f)) {
             const ULONG *words=(const ULONG *)dev->RpcRxRecord;
             if(function==0x1006) {
                 char message[257];
@@ -165,6 +165,17 @@ static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
                 if(words[22]==ROBUST_CHANNEL_PBDMA_ERROR) NvxGspLogPbdmaFault(dev);
                 if(words[21]==1) dev->GspChannelFaulted=TRUE;
                 if(words[21]==2) dev->GspGraphicsChannelFaulted=TRUE;
+            } else if(function==0x1005) {
+                /* NVIDIA uses this notification to schedule the UVM MMU
+                   fault handler. XP has no such handler: record the fault,
+                   stop both accelerated queues, and drain the notification
+                   so RM teardown and fault queries can still complete. */
+                if(words[14]<32) return FALSE;
+                dev->GspMmuFaultQueued=TRUE;
+                dev->GspChannelFaulted=TRUE;
+                dev->GspGraphicsChannelFaulted=TRUE;
+                dev->GspGrContextMappingVerified=FALSE;
+                LogStr("NVX [RM]: MMU fault queued; UVM fault handling unavailable, accelerated queues disabled.\n");
             } else if(function==0x100f) {
                 /* PERF_BRIDGELESS_INFO_UPDATE: informational, no reply or
                    power-management action required (also ignored by Nouveau).
