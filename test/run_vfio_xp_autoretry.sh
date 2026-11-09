@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$ROOT_DIR"
 
-NVX_RUN_LOG="$ROOT_DIR/test_logs/xp_v2_$(date +%Y%m%d-%H%M%S).log"
+NVX_RUN_LOG="${NVX_SERIAL_LOG:-$ROOT_DIR/test_logs/xp_v2_$(date +%Y%m%d-%H%M%S).log}"
 ln -sfn "$NVX_RUN_LOG" "$ROOT_DIR/vm_serial.log"
 touch "$NVX_RUN_LOG"
 
@@ -60,7 +60,7 @@ while [ "$attempt" -le "$MAX_RETRIES" ]; do
                 echo "sendkey ret" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock 2>/dev/null || true
             fi
 
-            if grep -q "ALL_BENCHMARKS_FINISHED" "$NVX_RUN_LOG" 2>/dev/null; then
+            if grep -Eq "ALL_BENCHMARKS_FINISHED|\\[TEST_COMPLETE\\]" "$NVX_RUN_LOG" 2>/dev/null; then
                 echo "==> All benchmarks completed! Sending soft ACPI powerdown..."
                 echo "system_powerdown" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock 2>/dev/null || true
                 sleep 5

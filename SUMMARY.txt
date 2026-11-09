@@ -28,8 +28,24 @@ Hardware OpenGL roadmap — November 8, 2026:
   Mesa NVK patch MIT. Reuse the architecture and upstream Mesa instead. Mesa's
   current NVK docs state Linux 6.6 minimum; XP support is unproven and must be
   established by the XP shim/build, not inferred from macOS success.
-- Current state: no hardware OpenGL renderer or GR graphics submission path.
-  `GDI Generic` remains software OpenGL. Copy Engine support is 2D only.
+- Current state: the GA104 RM advertises AMPERE_B, and GSP-RM successfully
+  allocates an isolated GR TSG, context share, channel, and graphics object.
+  The probe uses NVIDIA's official `NV_CHANNEL_ALLOC_PARAMS`, GET_CLASS_ENGINEID
+  response, and Ampere GPFIFO method definitions through the compatibility
+  shim. RM reports classEngineID C797 / classID C797 / engineID 1. The guarded
+  SET_OBJECT packet advances GPGet, but the channel reports RC fault type 0x20
+  (engine 1, chid 2); changing the packet from the CE subchannel to GR's RM
+  subchannel did not clear the fault. Valid GR execution remains unverified.
+  No draw, shader, or GPU render/readback has succeeded.
+- OpenGL remains Microsoft GDI Generic/software OpenGL 1.1; Direct3D 9 creation
+  still returns 0x8876086A. The existing copy engine is a separate 2D path.
+  Evidence: test_logs/v2.0.0.1-20261108-213705.log (GR allocation succeeds,
+  SET_OBJECT is fetched then faults; both heads and CE remain active). The
+  previous run, test_logs/v2.0.0.1-20261108-213419.log, verified the published
+  RM class-engine response and the channel's allocation path.
+- `NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 ./test/test_full_driver.sh` now
+  installs/builds the probe and uses the XP x64 VFIO autoretry launcher. The
+  launcher recognizes `[TEST_COMPLETE]` and sends ACPI powerdown.
 
 XP x86 graphics audit and performance — November 8, 2026:
 - Compared against the user-identified last x64 log,

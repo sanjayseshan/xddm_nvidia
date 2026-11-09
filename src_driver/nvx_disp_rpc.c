@@ -1026,6 +1026,12 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
     if(!NvxGspAllocChannel(dev)) return FALSE;
     LogStr("NVX [RM]: dedicated channel and copy engine allocated; testing GPU execution.\n");
     if(!NvxGspCopySmokeTest(dev)) return FALSE;
+#if NVX_ENABLE_GR_CHANNEL_PROBE
+    /* GR allocation failure is diagnostic only; preserve the known-good
+       display/copy path while we validate the new engine independently. */
+    if(!NvxGspCreateGraphicsProbe(dev))
+        LogStr("NVX [GR]: bring-up probe incomplete; display remains enabled.\n");
+#endif
     return TRUE;
 }
 

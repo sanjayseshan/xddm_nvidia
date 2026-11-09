@@ -13,6 +13,10 @@
 #include "class/clc57e.h"
 #include "class/cla06f.h"
 #include "class/clc36f.h"
+#include "class/clc56f.h"
+#include "class/clc697.h"
+#include "class/clc797.h"
+#include "class/cl2080_notification.h"
 
 #include "ctrl/ctrl0073.h"
 #include "ctrl/ctrl0080.h"
@@ -20,6 +24,8 @@
 #include "ctrl/ctrl5070/ctrl5070system.h"
 #include "ctrl/ctrla06f.h"
 #include "ctrl/ctrlc36f.h"
+#include "ctrl/ctrl906f.h"
+#include "alloc/alloc_channel.h"
 
 /* Display & Coprocessor Register definitions from swref */
 #include "swref/published/disp/v03_00/dev_disp.h"

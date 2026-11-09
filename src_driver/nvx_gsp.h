@@ -387,8 +387,15 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG GspChannelHandle;
     ULONG GspCopyEngineHandle;
     ULONG GspCopyEngineType;
+    ULONG GspGraphicsTsgHandle;
+    ULONG GspGraphicsContextShareHandle;
+    ULONG GspGraphicsChannelHandle;
+    ULONG GspGraphicsObjectHandle;
     BOOLEAN GspCopyVerified;
     BOOLEAN GspChannelFaulted;
+    BOOLEAN GspGraphicsChannelReady;
+    BOOLEAN GspGraphicsCommandVerified;
+    BOOLEAN GspGraphicsChannelFaulted;
     BOOLEAN GspFbLayoutValid;
     ULONG GspFbRegionCount;
     ULONG64 GspFbFreeBase,GspFbFreeLimit;

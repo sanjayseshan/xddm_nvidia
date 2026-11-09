@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="2.0.0.1"
+NVX_TEST_VERSION="2.0.0.3"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
@@ -13,11 +13,19 @@ if [ -f "$NVX_ROOT/vm_serial.log" ]; then
 fi
 
 echo "==> Running host tests and building GA104 DualView plus XRGB solid-fill fix v$NVX_TEST_VERSION (no ISO)"
+if [ "${NVX_GR_CHANNEL_PROBE:-0}" = "1" ]; then
+    NVX_DRIVER_BUILD_TARGET=full-gr-probe
+    NVX_DRIVER_BUILD_ARGS=("NVX_ENABLE_GR_CHANNEL_PROBE=1")
+    echo "==> Enabling the isolated Ampere GR allocation probe (no rendering submission)"
+else
+    NVX_DRIVER_BUILD_TARGET=full
+    NVX_DRIVER_BUILD_ARGS=()
+fi
 if [ -n "${SUDO_USER:-}" ] && [ "$SUDO_USER" != root ]; then
-    sudo -u "$SUDO_USER" make -C "$NVX_ROOT/src_driver" check full
+    sudo -u "$SUDO_USER" make -C "$NVX_ROOT/src_driver" check "$NVX_DRIVER_BUILD_TARGET" "${NVX_DRIVER_BUILD_ARGS[@]}"
     sudo -u "$SUDO_USER" cp "$NVX_ROOT/src_driver/nvxmp.sys" "$NVX_ROOT/dist_full/nvxmp.sys"
 else
-    make -C "$NVX_ROOT/src_driver" check full
+    make -C "$NVX_ROOT/src_driver" check "$NVX_DRIVER_BUILD_TARGET" "${NVX_DRIVER_BUILD_ARGS[@]}"
     cp "$NVX_ROOT/src_driver/nvxmp.sys" "$NVX_ROOT/dist_full/nvxmp.sys"
 fi
 make -C "$NVX_ROOT/src_disp"
@@ -50,7 +58,12 @@ finish() {
         else
             echo "DISPLAY RESULT: No display verification recorded; monitor activation is unverified."
         fi
-        grep -E "Miniport Driver|\[SEC2\]|\[GSP\]|\[RM\]|\[COPY\]|\[FB\]|\[FBMAP\]|\[RESET\]" "$NVX_RUN_LOG" | tail -80 || true
+        grep -E "Miniport Driver|\[SEC2\]|\[GSP\]|\[RM\]|\[GR\]|\[COPY\]|\[FB\]|\[FBMAP\]|\[RESET\]" "$NVX_RUN_LOG" | tail -80 || true
+        if grep -q 'NVX \[GR\]: graphics runlist consumed SET_OBJECT without an RC fault' "$NVX_RUN_LOG"; then
+            echo "GR RESULT: GPU consumed a GR-channel method; no draw was submitted yet."
+        elif grep -q 'NVX \[GR\]:' "$NVX_RUN_LOG"; then
+            echo "GR RESULT: graphics engine probe ran but did not complete; inspect the GR diagnostics above."
+        fi
         if grep -q 'NVX \[ACCEL\]: GPU Copy' "$NVX_RUN_LOG"; then
             grep 'NVX \[ACCEL\]: GPU Copy' "$NVX_RUN_LOG" | tail -8 || true
             echo "2D COPY RESULT: GPU screen-copy submissions were logged."
@@ -100,6 +113,13 @@ echo "==> Launching VFIO VM. QEMU will not reboot after a guest crash."
 echo "==> For a booted guest use 'system_powerdown' and wait for XP to exit."
 echo "==> Use 'quit' only for a pre-boot hang or failed graceful shutdown."
 ln -sfn "$NVX_RUN_LOG" "$NVX_ROOT/vm_serial.log"
-NVX_DRIVER_ISO="${NVX_DRIVER_ISO:-$NVX_ROOT/nvx_driver_full.iso}" \
-NVX_SERIAL_LOG="$NVX_RUN_LOG" \
-    "$NVX_ROOT/test/run_vfio_vm.sh"
+if [ "${NVX_AUTO_RETRY:-0}" = "1" ]; then
+    MAX_RETRIES="${MAX_RETRIES:-10}" BOOT_TIMEOUT="${BOOT_TIMEOUT:-35}" \
+        NVX_DRIVER_ISO="${NVX_DRIVER_ISO:-$NVX_ROOT/nvx_driver_full.iso}" \
+        NVX_SERIAL_LOG="$NVX_RUN_LOG" \
+        "$NVX_ROOT/test/run_vfio_xp_autoretry.sh"
+else
+    NVX_DRIVER_ISO="${NVX_DRIVER_ISO:-$NVX_ROOT/nvx_driver_full.iso}" \
+    NVX_SERIAL_LOG="$NVX_RUN_LOG" \
+        "$NVX_ROOT/test/run_vfio_vm.sh"
+fi

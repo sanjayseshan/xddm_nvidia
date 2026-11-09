@@ -17,6 +17,10 @@
 #include "bootloader_blob.h"
 #include "booter_load_blob.h"
 
+#ifndef NVX_ENABLE_GR_CHANNEL_PROBE
+#define NVX_ENABLE_GR_CHANNEL_PROBE 0
+#endif
+
 /* ABI checks deliberately target firmware 535, not the current OpenRM ABI. */
 _Static_assert(sizeof(GspFwWprMeta) == 256, "WPR ABI");
 _Static_assert(offsetof(GspFwWprMeta, verified) == 248, "WPR verified ABI");
@@ -95,6 +99,7 @@ static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
                 LogStr(" chid=");LogHex(words[21]);LogStr(" type=");LogHex(words[22]);
                 LogStr(" scope=");LogHex(words[23]);LogStr("\n");
                 if(words[21]==1) dev->GspChannelFaulted=TRUE;
+                if(words[21]==2) dev->GspGraphicsChannelFaulted=TRUE;
             } else if(function==0x100f) {
                 /* PERF_BRIDGELESS_INFO_UPDATE: informational, no reply or
                    power-management action required (also ignored by Nouveau).
@@ -519,6 +524,290 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
 
     return TRUE;
 }
+
+/*
+ * Opt-in XP x64 graphics-engine bring-up probe. This creates a distinct GR
+ * TSG/channel and advertised Ampere graphics object alongside the known-good CE path. It does
+ * not submit a draw, change scanout, or make OpenGL available yet. Keep the
+ * allocation behind NVX_ENABLE_GR_CHANNEL_PROBE until the guest log confirms
+ * the 535 GSP-RM ABI and resource setup on hardware.
+ */
+#if NVX_ENABLE_GR_CHANNEL_PROBE
+static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
+{
+    ULONG tsg[5]={0};
+    ULONG ctxShare[3]={0};
+    NV_CHANNEL_ALLOC_PARAMS chan={0};
+    ULONG bindEngine=NV2080_ENGINE_TYPE_GRAPHICS;
+    UCHAR schedEnable[2]={1,0};
+    ULONG64 scratchPhys,instPhys,ramfcPhys,userdPhys,methodPhys,fifoGpuVa,scratchEnd;
+    ULONG supportedClasses[161]={0},classEngineId=0;
+    NV906F_CTRL_GET_CLASS_ENGINEID_PARAMS classEngineParams={0};
+    const ULONG *classReply;
+    ULONG classCount,classIndex,grClass=0;
+    BOOLEAN ampereAFound=FALSE,ampereBFound=FALSE;
+    ULONG runlistQuery[124]={0},token=0,runlistBase=0,submitToken=0;
+    ULONG dbcfg,chcfg,enable,wait,chramBase,fault[26]={0};
+    ULONG64 pushVa;
+    PUCHAR scratch;
+    PULONG push;
+    volatile ULONG *userd;
+    volatile ULONG64 *fifo;
+    const ULONG tsgHandle=0xa06c0002;
+    const ULONG channelHandle=0xc56f0002;
+    const ULONG grHandle=0xc6970001;
+
+    if(!dev||!dev->GspInitialized||!dev->GspDmaVirtual||!dev->GspScratchGpuVa) {
+        LogStr("NVX [GR]: probe preconditions failed; graphics remains disabled.\n");
+        return FALSE;
+    }
+    scratchPhys=(ULONG64)dev->GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET;
+    instPhys=scratchPhys+0xa000;
+    ramfcPhys=scratchPhys+0xb000;
+    userdPhys=scratchPhys+0xb400; /* USERD index 2 */
+    methodPhys=scratchPhys+0xc000;
+    fifoGpuVa=dev->GspScratchGpuVa+0x9000;
+    scratchEnd=scratchPhys+GSP_SCRATCH_SIZE;
+    tsg[2]=dev->GspVaSpaceHandle;
+    tsg[3]=NV2080_ENGINE_TYPE_GRAPHICS;
+    ctxShare[0]=dev->GspVaSpaceHandle; /* match the working CE channel allocation */
+    if(scratchEnd>(ULONG64)dev->GspDmaPhysical.QuadPart+(ULONG64)dev->GspDmaLength||
+       (fifoGpuVa&7)||(instPhys&0xfff)||(methodPhys&0xfff)) {
+        LogStr("NVX [GR]: probe preconditions failed; graphics remains disabled.\n");
+        return FALSE;
+    }
+
+    /* Ask RM which object classes this device firmware actually exposes. */
+    if(!NvxGspControl(dev,dev->GspDeviceHandle,0x800292,
+                      supportedClasses,sizeof(supportedClasses))) {
+        LogStr("NVX [GR]: GPU_GET_CLASSLIST_V2 query failed.\n");
+        return FALSE;
+    }
+    classReply=(const ULONG *)(dev->RpcRxRecord+104);
+    classCount=classReply[0];
+    if(classCount>160) {
+        LogStr("NVX [GR]: RM class-list count invalid: ");LogHex(classCount);LogStr("\n");
+        return FALSE;
+    }
+    for(classIndex=0;classIndex<classCount;classIndex++) {
+        if(classReply[classIndex+1]==AMPERE_A) ampereAFound=TRUE;
+        if(classReply[classIndex+1]==AMPERE_B) ampereBFound=TRUE;
+    }
+    LogStr("NVX [GR]: RM advertised class count=");LogHex(classCount);
+    LogStr(" AMPERE_A=");LogHex(ampereAFound?1:0);
+    LogStr(" AMPERE_B=");LogHex(ampereBFound?1:0);LogStr("\n");
+    /* GA104 (RTX 3070) advertises AMPERE_B; GA100 exposes AMPERE_A. */
+    if(ampereBFound) grClass=AMPERE_B;
+    else if(ampereAFound) grClass=AMPERE_A;
+    if(!grClass) {
+        LogStr("NVX [GR]: firmware advertises no Ampere graphics class; skipping channel allocation.\n");
+        return FALSE;
+    }
+
+    LogStr("NVX [GR]: creating isolated Ampere graphics TSG/channel probe.\n");
+    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,tsgHandle,0xa06c,tsg,sizeof(tsg))) {
+        LogStr("NVX [GR]: graphics TSG allocation failed.\n");
+        return FALSE;
+    }
+    if(!NvxGspAlloc(dev,tsgHandle,0x90670002,0x9067,ctxShare,sizeof(ctxShare))) {
+        LogStr("NVX [GR]: graphics context-share allocation failed.\n");
+        return FALSE;
+    }
+    /* Keep the experimental channel's userd, instance, RAMFC and method
+       storage in the unused tail of the mapped 64-KiB scratch page. */
+    chan.gpFifoOffset=fifoGpuVa;
+    chan.gpFifoEntries=256;
+    chan.flags=0x00200220; /* privileged, fixed USERD page 2, slot 2 */
+    /* The explicit-VASpace channel was rejected by 535 GSP-RM. Reuse the
+       same context-share association as our allocated CE channel. */
+    chan.hContextShare=0x90670002;
+    chan.hVASpace=0;
+    chan.engineType=NV2080_ENGINE_TYPE_GRAPHICS;
+    chan.subDeviceId=0;
+    chan.instanceMem.base=instPhys;
+    chan.instanceMem.size=0x1000;
+    chan.instanceMem.addressSpace=1; /* ADDR_SYSMEM */
+    chan.instanceMem.cacheAttrib=0;  /* coherent system memory */
+    chan.userdMem.base=userdPhys;
+    chan.userdMem.size=0x200;
+    chan.userdMem.addressSpace=1;
+    chan.userdMem.cacheAttrib=0;
+    chan.ramfcMem.base=ramfcPhys;
+    chan.ramfcMem.size=0x200;
+    chan.ramfcMem.addressSpace=1;
+    chan.ramfcMem.cacheAttrib=0;
+    chan.mthdbufMem.base=methodPhys;
+    chan.mthdbufMem.size=0x2000;
+    chan.mthdbufMem.addressSpace=1;
+    chan.mthdbufMem.cacheAttrib=0;
+    chan.internalFlags=0x15;
+
+    if(!NvxGspAlloc(dev,tsgHandle,channelHandle,0xc56f,&chan,sizeof(chan))) {
+        LogStr("NVX [GR]: graphics GPFIFO channel allocation failed.\n");
+        return FALSE;
+    }
+    if(!NvxGspControl(dev,channelHandle,NVA06F_CTRL_CMD_BIND,&bindEngine,sizeof(bindEngine))) {
+        LogStr("NVX [GR]: graphics channel bind failed.\n");
+        return FALSE;
+    }
+    if(!NvxGspControl(dev,channelHandle,NVA06F_CTRL_CMD_GPFIFO_SCHEDULE,
+                      schedEnable,sizeof(schedEnable))) {
+        LogStr("NVX [GR]: graphics channel scheduling failed.\n");
+        return FALSE;
+    }
+    /* OpenRM kernel_graphics.c creates the GR object with NULL/0 params. */
+    if(!NvxGspAlloc(dev,channelHandle,grHandle,grClass,NULL,0)) {
+        LogStr("NVX [GR]: Ampere graphics object allocation failed; class=");LogHex(grClass);LogStr("\n");
+        return FALSE;
+    }
+
+    /* SET_OBJECT's payload is the RM-encoded classEngineID, not the object
+       handle or the class ID alone. Ask RM for the exact opaque encoding. */
+    classEngineParams.hObject=grHandle;
+    if(!NvxGspControl(dev,channelHandle,NVA06F_CTRL_GET_CLASS_ENGINEID,
+                      &classEngineParams,sizeof(classEngineParams))) {
+        LogStr("NVX [GR]: GET_CLASS_ENGINEID failed; refusing to guess SET_OBJECT data.\n");
+        return FALSE;
+    }
+    {
+        const NV906F_CTRL_GET_CLASS_ENGINEID_PARAMS *reply=
+            (const NV906F_CTRL_GET_CLASS_ENGINEID_PARAMS *)(dev->RpcRxRecord+104);
+        classEngineId=reply->classEngineID;
+        LogStr("NVX [GR]: object classEngineID=");LogHex(reply->classEngineID);
+        LogStr(" classID=");LogHex(reply->classID);
+        LogStr(" engineID=");LogHex(reply->engineID);LogStr("\n");
+    }
+
+    /* Prove the GR runlist consumes a harmless SET_OBJECT packet. This tests
+       command fetch/dispatch only; it does not draw or touch scanout. */
+    runlistQuery[0]=NV2080_ENGINE_TYPE_GRAPHICS;
+    if(!NvxGspControl(dev,dev->GspSubdeviceHandle,
+                      NV2080_CTRL_CMD_GPU_GET_ENGINE_RUNLIST_PRI_BASE,
+                      runlistQuery,sizeof(runlistQuery))) {
+        LogStr("NVX [GR]: graphics runlist query failed; channel remains isolated.\n");
+        return FALSE;
+    }
+    runlistBase=((const ULONG *)dev->RpcRxRecord)[26+62];
+    if(dev->Bar0Length<0x304||!runlistBase||(runlistBase&0x3ff)||
+       runlistBase>dev->Bar0Length-0x304) {
+        LogStr("NVX [GR]: invalid graphics runlist base=");LogHex(runlistBase);LogStr("\n");
+        return FALSE;
+    }
+    dbcfg=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+8));
+    chcfg=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+4));
+    enable=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x300));
+    LogStr("NVX [GR]: runlist=");LogHex(runlistBase);LogStr(" dbcfg=");LogHex(dbcfg);
+    LogStr(" chcfg=");LogHex(chcfg);LogStr(" enable=");LogHex(enable);LogStr("\n");
+    if(dbcfg==0xffffffffU||(dbcfg&0xffff0000U)==0xbadf0000U) {
+        LogStr("NVX [GR]: runlist doorbell configuration invalid.\n");
+        return FALSE;
+    }
+    if(NvxGspControl(dev,channelHandle,NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN,
+                     &submitToken,sizeof(submitToken))) {
+        submitToken=((const ULONG *)dev->RpcRxRecord)[26];
+    }
+    LogStr("NVX [GR]: RM work-submit token=");LogHex(submitToken);LogStr("\n");
+
+    scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET;
+    userd=(volatile ULONG *)(scratch+0xb400);
+    fifo=(volatile ULONG64 *)(scratch+0x9000);
+    push=(PULONG)(scratch+0xf000);
+    pushVa=dev->GspScratchGpuVa+0xf000;
+    if(userd[0x88/4]||userd[0x8c/4]) {
+        LogStr("NVX [GR]: fresh graphics USERD is not empty; submission skipped.\n");
+        return FALSE;
+    }
+    VideoPortZeroMemory((PVOID)(scratch+0x9000),0x1000);
+    VideoPortZeroMemory((PVOID)(scratch+0xf000),0x1000);
+    /* Use the Ampere GPFIFO method header and RM subchannel (0). The former
+       CE-derived packet selected subchannel 4, which GR rejects with RC 0x20. */
+    push[0]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|NVC56F_SET_OBJECT;
+    push[1]=classEngineId;
+    fifo[0]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|(2ULL<<42);
+    __sync_synchronize();
+    userd[0x8c/4]=1;
+    __sync_synchronize();
+    /* USERD is allocated at fixed index 2 above.  On GA104 the scheduler
+       exposes that graphics channel in CHRAM slot 2; ring that channel's
+       doorbell rather than borrowing channel 1 (the independent CE channel).
+       Keep RM's opaque token authoritative whenever it supplies one. */
+    token=submitToken?submitToken:((dbcfg&0xffff0000U)|2U);
+    if(dev->Bar0Length>=0x30094)
+        VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),token);
+    VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x90),2);
+    LogStr("NVX [GR]: rang channel doorbell token=");LogHex(token);LogStr(" chid=0x2\n");
+    LogStr("NVX [GR]: submitted guarded SET_OBJECT packet; waiting for GR GPGet.\n");
+    for(wait=0;wait<100000;wait++) {
+        if(userd[0x88/4]==1) {
+            break;
+        }
+        if(wait&&!(wait%10000)) {
+            LogStr("NVX [GR]: waiting seconds=");LogHex(wait/10000);
+            LogStr(" GPGet=");LogHex(userd[0x88/4]);
+            LogStr(" GPPut=");LogHex(userd[0x8c/4]);LogStr("\n");
+        }
+        VideoPortStallExecution(100);
+    }
+    if(userd[0x88/4]==1) {
+        /* Let FECS report a rejected object bind, then consume the event via
+           a benign RPC before advertising the GR channel as healthy. */
+        VideoPortStallExecution(100000);
+        NvxGspControl(dev,channelHandle,NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN,
+                      &submitToken,sizeof(submitToken));
+        if(!dev->GspGraphicsChannelFaulted) {
+            dev->GspGraphicsCommandVerified=TRUE;
+            LogStr("NVX [GR]: graphics runlist consumed SET_OBJECT without an RC fault.\n");
+        }
+    }
+    if(!dev->GspGraphicsCommandVerified) {
+        if(userd[0x88/4]==1)
+            LogStr("NVX [GR]: command fetched but rejected or channel faulted; GPGet=");
+        else
+            LogStr("NVX [GR]: command fetch timed out; GPGet=");
+        LogHex(userd[0x88/4]);
+        LogStr(" GPPut=");LogHex(userd[0x8c/4]);LogStr("\n");
+        chramBase=chcfg&0xfffffff0U;
+        if(chramBase&&chramBase<=dev->Bar0Length-16) {
+            LogStr("NVX [GR]: CHRAM slots=");
+            LogHex(VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+chramBase)));
+            LogStr(",");LogHex(VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+chramBase+4)));
+            LogStr(",");LogHex(VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+chramBase+8)));
+            LogStr(",");LogHex(VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+chramBase+12)));LogStr("\n");
+        }
+        for(ULONG engine=0;engine<3;engine++) {
+            ULONG engineStatus=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x200+engine*0x40));
+            ULONG instanceLo=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x208+engine*0x40));
+            ULONG instanceHi=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x20c+engine*0x40));
+            LogStr("NVX [GR]: runlist engine=");LogHex(engine);
+            LogStr(" status=");LogHex(engineStatus);LogStr(" instance=");LogHex(instanceHi);
+            LogHex(instanceLo);LogStr("\n");
+        }
+        {
+            PULONG ramfc=(PULONG)(scratch+0xb000);
+            LogStr("NVX [GR]: RAMFC userdLo=");LogHex(ramfc[0x8/4]);
+            LogStr(" userdHi=");LogHex(ramfc[0xc/4]);
+            LogStr(" gpBaseLo=");LogHex(ramfc[0x48/4]);
+            LogStr(" gpBaseHi=");LogHex(ramfc[0x4c/4]);
+            LogStr(" chid=");LogHex(ramfc[0xe8/4]);LogStr("\n");
+        }
+        if(NvxGspControl(dev,channelHandle,NVA06F_CTRL_CMD_GET_MMU_FAULT_INFO,
+                         fault,sizeof(fault))) {
+            const ULONG *reply=(const ULONG *)dev->RpcRxRecord;
+            LogStr("NVX [GR]: MMU fault addrHi=");LogHex(reply[26]);
+            LogStr(" addrLo=");LogHex(reply[27]);LogStr(" type=");LogHex(reply[28]);LogStr("\n");
+        } else LogStr("NVX [GR]: MMU fault info unavailable.\n");
+        return FALSE;
+    }
+
+    dev->GspGraphicsTsgHandle=tsgHandle;
+    dev->GspGraphicsContextShareHandle=0;
+    dev->GspGraphicsChannelHandle=channelHandle;
+    dev->GspGraphicsObjectHandle=grHandle;
+    dev->GspGraphicsChannelReady=TRUE;
+    LogStr("NVX [GR]: Ampere graphics object allocated; safe method consumed, no draw submitted.\n");
+    return TRUE;
+}
+#endif
 
 /* Modular components matching OpenRM architecture */
 #include "nvx_ce.c"

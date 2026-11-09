@@ -248,6 +248,7 @@ To update an existing Windows 98 disk image offline:
 Automated test scripts in `test/` allow rapid iteration inside QEMU/KVM with the physical RTX 3070 bound to `vfio-pci`:
 - `./test/run_all_tests.sh`: Runs all driver host unit tests and builds both 64-bit and 32-bit driver binaries.
 - `./test/test_full_driver.sh`: Builds drivers, syncs to offline XP guest disk, and launches the VM.
+- `NVX_AUTO_RETRY=1 ./test/test_full_driver.sh`: Same build/install path, then retries transient XP x64 VFIO GPU boot failures (up to `MAX_RETRIES`, default 10; `BOOT_TIMEOUT`, default 35 seconds) and requests ACPI shutdown after the graphics test completes.
 - `./test/run_vfio_xp_autoretry.sh`: Auto-retrying Windows XP x64 VFIO bringup and monitoring.
 - `./test/run_vfio_win98_autoretry.sh`: Auto-retrying Windows 98 SE VFIO bringup and monitoring.
 - `./test/reset_test_gpu.sh`: Cycles GPU PCIe power state and restores host VFIO binding.
