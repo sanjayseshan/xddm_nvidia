@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.59: decode NOCAT assertion records)
+Updated: November 9, 2026 (v2.0.0.60: test semaphore without method A)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -386,6 +386,12 @@ Hardware OpenGL roadmap — November 8, 2026:
   VM completed ACPI powerdown; both heads remained active and CE/2D fill
   submissions were logged. Evidence:
   `test_logs/v2.0.0.59-20261109-144043.log`.
+- v2.0.0.60 omitted method A and issued B/C/D using the default zero upper
+  address. It produced the same assertion address and GR engine error as v56,
+  so method A is not the root cause. Both display heads remained active, the
+  CE copy-completion result passed, and 2D fill submissions were logged; GR
+  execution remained unverified. The test completed ACPI powerdown. Evidence:
+  `test_logs/v2.0.0.60-20261109-144328.log`.
 
 ### Linux and macOS Reference Architecture
 
