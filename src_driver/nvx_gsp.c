@@ -813,27 +813,6 @@ BOOLEAN NvxGspUnregisterFaultShadow(PNVX_DEVICE_EXTENSION dev)
     return TRUE;
 }
 
-static VOID NvxGspLogFaultHardwarePointers(PNVX_DEVICE_EXTENSION dev)
-{
-    NVB069_CTRL_FAULTBUFFER_READ_GET_PARAMS get={0};
-    NVB069_CTRL_FAULTBUFFER_READ_PUT_PARAMS put={0};
-    const NVB069_CTRL_FAULTBUFFER_READ_GET_PARAMS *getReply;
-    const NVB069_CTRL_FAULTBUFFER_READ_PUT_PARAMS *putReply;
-    if(!dev||!dev->GspFaultBufferHandle) return;
-    get.faultBufferType=NVB069_CTRL_FAULT_BUFFER_NON_REPLAYABLE;
-    put.faultBufferType=NVB069_CTRL_FAULT_BUFFER_NON_REPLAYABLE;
-    if(NvxGspControl(dev,dev->GspFaultBufferHandle,
-        NVB069_CTRL_CMD_FAULTBUFFER_READ_GET,&get,sizeof(get))) {
-        getReply=(const NVB069_CTRL_FAULTBUFFER_READ_GET_PARAMS *)(dev->RpcRxRecord+104);
-        LogStr("NVX [GR-FAULT]: HW nonreplay GET=");LogHex(getReply->faultBufferGetOffset);LogStr("\n");
-    } else LogStr("NVX [GR-FAULT]: HW nonreplay GET query failed.\n");
-    if(NvxGspControl(dev,dev->GspFaultBufferHandle,
-        NVB069_CTRL_CMD_FAULTBUFFER_READ_PUT,&put,sizeof(put))) {
-        putReply=(const NVB069_CTRL_FAULTBUFFER_READ_PUT_PARAMS *)(dev->RpcRxRecord+104);
-        LogStr("NVX [GR-FAULT]: HW nonreplay PUT=");LogHex(putReply->faultBufferPutOffset);LogStr("\n");
-    } else LogStr("NVX [GR-FAULT]: HW nonreplay PUT query failed.\n");
-}
-
 static VOID NvxGspLogFaultRegisterMappings(PNVX_DEVICE_EXTENSION dev)
 {
     NVB069_CTRL_CMD_FAULTBUFFER_GET_REGISTER_MAPPINGS_PARAMS params={0};
@@ -859,6 +838,17 @@ static VOID NvxGspLogFaultRegisterMappings(PNVX_DEVICE_EXTENSION dev)
         LogStr(" INTR=");LogHex((ULONG64)reply->pPmcIntr);
         LogStr(" mask=");LogHex(reply->replayableFaultMask);
         LogStr(" prefetch=");LogHex((ULONG64)reply->pPrefetchCtrl);LogStr("\n");
+        if(dev->Bar0MmioVirtual&&dev->Bar0Length>=4&&
+           (ULONG64)reply->pFaultBufferGet<=dev->Bar0Length-4&&
+           (ULONG64)reply->pFaultBufferPut<=dev->Bar0Length-4&&
+           !((ULONG64)reply->pFaultBufferGet&3)&&!((ULONG64)reply->pFaultBufferPut&3)) {
+            LogStr("NVX [GR-FAULT]: BAR0 fault pointers type=");LogHex(type);
+            LogStr(" GET=");LogHex(nvx_reg_read32(dev->Bar0MmioVirtual,(ULONG)(ULONG_PTR)reply->pFaultBufferGet));
+            LogStr(" PUT=");LogHex(nvx_reg_read32(dev->Bar0MmioVirtual,(ULONG)(ULONG_PTR)reply->pFaultBufferPut));LogStr("\n");
+        } else {
+            LogStr("NVX [GR-FAULT]: register mapping outside BAR0 or unaligned; BAR0 bytes=");
+            LogHex(dev->Bar0Length);LogStr("\n");
+        }
     }
 }
 
@@ -1368,7 +1358,6 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         VideoPortStallExecution(100000);
         grStatusAvailable=NvxGspGetName(dev);
         if(dev->GspMmuFaultQueued) {
-            NvxGspLogFaultHardwarePointers(dev);
             NvxGspLogFaultRegisterMappings(dev);
         }
         if(dev->GspAssertCount!=assertCountBefore) {

@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.43: discover GPU fault-register mappings)
+Updated: November 9, 2026 (v2.0.0.44: bound fault-register reads to BAR0)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -282,6 +282,14 @@ Hardware OpenGL roadmap — November 8, 2026:
   causes a firmware/MMU fault, disables accelerated queues, and leaves display
   hardware verification unavailable. The VM completed ACPI powerdown.
   Evidence: `test_logs/v2.0.0.43-20261109-135317.log`.
+- v2.0.0.44 bounds the returned mapping addresses against BAR0 before reading.
+  The GSP returned 0x04183008/0x0418300C, but this device exposes only a 16 MiB
+  BAR0, so those returned pointers cannot be dereferenced as BAR0 offsets. The
+  driver skips these reads safely. The GR probe still faults and the log has no
+  display-hardware verification; the VM completed ACPI shutdown. Next, probe
+  only documented physical MMU fault registers using OpenRM's
+  `NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET` plus the register offsets.
+  Evidence: `test_logs/v2.0.0.44-20261109-135622.log`.
 
 ### Linux and macOS Reference Architecture
 
