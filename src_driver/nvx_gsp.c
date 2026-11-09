@@ -919,6 +919,35 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
             LogStr("NVX [GR]: graphics runlist consumed SET_OBJECT + WAIT_FOR_IDLE without an RC fault.\n");
         }
     }
+    /* GR context buffers are allocated lazily by RM. Compare the pre-submit
+       query above with a second query after RM has observed the channel's
+       first valid GR methods. A 0x31 before submission may simply mean the
+       local context memdesc has not been materialized yet. */
+    if(dev->GspGraphicsCommandVerified) {
+        VideoPortZeroMemory(grBufferInfo,sizeof(*grBufferInfo));
+        grBufferInfo->hUserClient=dev->GspClientHandle;
+        grBufferInfo->hChannel=channelHandle;
+        if(NvxGspControl(dev,dev->GspSubdeviceHandle,
+                         NV2080_CTRL_CMD_GR_GET_CTX_BUFFER_INFO,
+                         grBufferInfo,sizeof(*grBufferInfo))) {
+            const NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS *reply=
+                (const NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS *)(dev->RpcRxRecord+104);
+            ULONG infoIndex,infoCount=reply->bufferCount;
+            if(infoCount>NV2080_CTRL_GR_MAX_CTX_BUFFER_COUNT)
+                infoCount=NV2080_CTRL_GR_MAX_CTX_BUFFER_COUNT;
+            LogStr("NVX [GR]: post-submit context-buffer count=");
+            LogHex(reply->bufferCount);LogStr("\n");
+            for(infoIndex=0;infoIndex<infoCount&&infoIndex<12;infoIndex++) {
+                LogStr("NVX [GR]: post-submit ctxbuf index=");LogHex(infoIndex);
+                LogStr(" type=");LogHex(reply->ctxBufferInfo[infoIndex].bufferType);
+                LogStr(" size=");LogHex((ULONG)reply->ctxBufferInfo[infoIndex].size);
+                LogStr(" aperture=");LogHex(reply->ctxBufferInfo[infoIndex].aperture);
+                LogStr("\n");
+            }
+        } else {
+            LogStr("NVX [GR]: post-submit context-buffer lookup still failed.\n");
+        }
+    }
     if(!dev->GspGraphicsCommandVerified) {
         if(userd[0x88/4]==1)
             LogStr("NVX [GR]: command fetched but rejected or channel faulted; GPGet=");
