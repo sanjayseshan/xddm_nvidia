@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="2.0.0.25"
+NVX_TEST_VERSION="2.0.0.26"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
@@ -17,6 +17,10 @@ if [ "${NVX_GR_CHANNEL_PROBE:-0}" = "1" ]; then
     NVX_DRIVER_BUILD_TARGET=full-gr-probe
     NVX_DRIVER_BUILD_ARGS=("NVX_ENABLE_GR_CHANNEL_PROBE=1")
     echo "==> Enabling the isolated Ampere GR allocation probe (no rendering submission)"
+    if [ "${NVX_GR_PROMOTE_PROBE:-0}" = "1" ]; then
+        NVX_DRIVER_BUILD_ARGS+=("NVX_ENABLE_GR_PROMOTE_PROBE=1")
+        echo "==> Enabling isolated MAIN context physical-initialization probe"
+    fi
 else
     NVX_DRIVER_BUILD_TARGET=full
     NVX_DRIVER_BUILD_ARGS=()

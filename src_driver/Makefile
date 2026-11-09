@@ -3,9 +3,10 @@ CC32 = i686-w64-mingw32-gcc
 EXPERIMENTAL_GSP ?= 0
 UNSAFE_GSP_PROBE ?= 0
 NVX_ENABLE_GR_CHANNEL_PROBE ?= 0
+NVX_ENABLE_GR_PROMOTE_PROBE ?= 0
 OPEN_GPU_DIR = ../open-gpu-kernel-modules
-CFLAGS = -DNVX_ENABLE_EXPERIMENTAL_GSP=$(EXPERIMENTAL_GSP) -DNVX_ENABLE_UNSAFE_GSP_PROBE=$(UNSAFE_GSP_PROBE) -DNVX_ENABLE_GR_CHANNEL_PROBE=$(NVX_ENABLE_GR_CHANNEL_PROBE) -Wall -Wextra -O2 -nostdlib -m64 -fno-builtin -fno-stack-protector -I. -Iinclude -I$(OPEN_GPU_DIR)/src/common/sdk/nvidia/inc -I$(OPEN_GPU_DIR)/src/common/inc -I$(OPEN_GPU_DIR)/src/nvidia/arch/nvalloc/common/inc -I$(OPEN_GPU_DIR)/src/common/shared/msgq/inc
-CFLAGS32 = -DNVX_ENABLE_EXPERIMENTAL_GSP=$(EXPERIMENTAL_GSP) -DNVX_ENABLE_UNSAFE_GSP_PROBE=$(UNSAFE_GSP_PROBE) -DNVX_ENABLE_GR_CHANNEL_PROBE=$(NVX_ENABLE_GR_CHANNEL_PROBE) -Wall -Wextra -O2 -nostdlib -m32 -fno-builtin -fno-stack-protector -I. -Iinclude -I$(OPEN_GPU_DIR)/src/common/sdk/nvidia/inc -I$(OPEN_GPU_DIR)/src/common/inc -I$(OPEN_GPU_DIR)/src/nvidia/arch/nvalloc/common/inc -I$(OPEN_GPU_DIR)/src/common/shared/msgq/inc
+CFLAGS = -DNVX_ENABLE_EXPERIMENTAL_GSP=$(EXPERIMENTAL_GSP) -DNVX_ENABLE_UNSAFE_GSP_PROBE=$(UNSAFE_GSP_PROBE) -DNVX_ENABLE_GR_CHANNEL_PROBE=$(NVX_ENABLE_GR_CHANNEL_PROBE) -DNVX_ENABLE_GR_PROMOTE_PROBE=$(NVX_ENABLE_GR_PROMOTE_PROBE) -Wall -Wextra -O2 -nostdlib -m64 -fno-builtin -fno-stack-protector -I. -Iinclude -I$(OPEN_GPU_DIR)/src/common/sdk/nvidia/inc -I$(OPEN_GPU_DIR)/src/common/inc -I$(OPEN_GPU_DIR)/src/nvidia/arch/nvalloc/common/inc -I$(OPEN_GPU_DIR)/src/common/shared/msgq/inc
+CFLAGS32 = -DNVX_ENABLE_EXPERIMENTAL_GSP=$(EXPERIMENTAL_GSP) -DNVX_ENABLE_UNSAFE_GSP_PROBE=$(UNSAFE_GSP_PROBE) -DNVX_ENABLE_GR_CHANNEL_PROBE=$(NVX_ENABLE_GR_CHANNEL_PROBE) -DNVX_ENABLE_GR_PROMOTE_PROBE=$(NVX_ENABLE_GR_PROMOTE_PROBE) -Wall -Wextra -O2 -nostdlib -m32 -fno-builtin -fno-stack-protector -I. -Iinclude -I$(OPEN_GPU_DIR)/src/common/sdk/nvidia/inc -I$(OPEN_GPU_DIR)/src/common/inc -I$(OPEN_GPU_DIR)/src/nvidia/arch/nvalloc/common/inc -I$(OPEN_GPU_DIR)/src/common/shared/msgq/inc
 LDFLAGS = -shared -Wl,--entry=DriverEntry -Wl,--subsystem,native:5.2 -nostartfiles -Wl,--image-base,0x10000 -Wl,--file-alignment,0x200 -Wl,--section-alignment,0x1000 -L. -lvideoprt -lntoskrnl
 LDFLAGS32 = -shared -Wl,--entry=_DriverEntry@8 -Wl,--subsystem,native:5.1 -nostartfiles -Wl,--image-base,0x10000 -Wl,--file-alignment,0x200 -Wl,--section-alignment,0x1000 -lvideoprt -lntoskrnl -lgcc
 
