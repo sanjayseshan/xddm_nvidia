@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.54: add MME shadow RAM tracking)
+Updated: November 9, 2026 (v2.0.0.55: isolate report-semaphore setup)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -355,6 +355,12 @@ Hardware OpenGL roadmap — November 8, 2026:
   VM shut down through ACPI; CE completion and 2D solid-fill submissions were
   logged. This does not confirm GR rendering. Evidence:
   `test_logs/v2.0.0.54-20261109-142826.log`.
+- v2.0.0.55 kept the Mesa-style MME mode and A/B/C semaphore setup but omitted
+  the side-effecting D release method. Two assertions still occurred and the
+  fence stayed zero, showing that the assertion starts during A/B/C setup, not
+  at the release. No MMU notification was logged; the VM completed ACPI
+  powerdown and retained the existing 2D/copy results. Evidence:
+  `test_logs/v2.0.0.55-20261109-142959.log`.
 
 ### Linux and macOS Reference Architecture
 

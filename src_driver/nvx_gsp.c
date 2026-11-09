@@ -1337,7 +1337,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),token);
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x90),2);
     LogStr("NVX [GR]: rang channel doorbell token=");LogHex(token);LogStr(" chid=0x2\n");
-    LogStr("NVX [GR]: submitted SET_OBJECT, WAIT_FOR_IDLE, MME tracking and C797 A/B/C/D semaphore release.\n");
+    LogStr("NVX [GR]: submitted SET_OBJECT, WAIT_FOR_IDLE, MME tracking and C797 A/B/C semaphore setup (no release).\n");
     for(wait=0;wait<100000;wait++) {
         if(grFence[0]==0x47524631) {
             break;
