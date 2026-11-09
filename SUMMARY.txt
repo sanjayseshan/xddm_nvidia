@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 8, 2026 (v2.0.0.6: GR context metadata probe on XP x64)
+Updated: November 9, 2026 (v2.0.0.7: explicit GR probe build-state logging)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -42,6 +42,13 @@ Hardware OpenGL roadmap — November 8, 2026:
   render/readback has succeeded. OpenGL remains Microsoft GDI Generic/software
   OpenGL 1.1; Direct3D 9 still returns 0x8876086A. The CE copy path is separate
   and continues to pass its guarded VRAM roundtrip.
+- Latest XP log: `test_logs/v2.0.0.6-20261109-002054.log` shows GSP-RM init,
+  verified CE copy, active/locked dual heads, and GPU solid-fill submissions.
+  OpenGL is still Microsoft GDI Generic 1.1; Direct3D 9 creation returns
+  0x8876086A. Critically, there are no `[GR]` lines, so that VM run did not
+  execute the optional GR probe and provides no context-buffer result. v2.0.0.7
+  logs whether the probe was compiled in before attempting it, removing this
+  ambiguity. Its build and VM test are pending.
 - Evidence: `test_logs/v2.0.0.3-20261108-223756.log` verifies both heads and CE
   remained active with the GR TSG path. `test_logs/v2.0.0.4-20261108-224047.log`
   reproduces the GR fault; RM's optional context-buffer-size control returns

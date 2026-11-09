@@ -1027,10 +1027,13 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
     LogStr("NVX [RM]: dedicated channel and copy engine allocated; testing GPU execution.\n");
     if(!NvxGspCopySmokeTest(dev)) return FALSE;
 #if NVX_ENABLE_GR_CHANNEL_PROBE
+    LogStr("NVX [GR]: compile-time isolated GR probe enabled.\n");
     /* GR allocation failure is diagnostic only; preserve the known-good
        display/copy path while we validate the new engine independently. */
     if(!NvxGspCreateGraphicsProbe(dev))
         LogStr("NVX [GR]: bring-up probe incomplete; display remains enabled.\n");
+#else
+    LogStr("NVX [GR]: compile-time isolated GR probe disabled.\n");
 #endif
     return TRUE;
 }
