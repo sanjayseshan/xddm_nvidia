@@ -8,18 +8,22 @@
 
 #include "nvtypes.h"
 #include "nvstatus.h"
+#include "nvos.h"
 
 /* Official SDK Command & Class definitions */
 #include "class/clc57e.h"
 #include "class/cla06f.h"
 #include "class/clc36f.h"
 #include "class/clc56f.h"
+#include "class/cla06c.h"
+#include "class/cl9067.h"
 #include "class/clc697.h"
 #include "class/clc797.h"
 #include "class/cl2080_notification.h"
 
 #include "ctrl/ctrl0073.h"
 #include "ctrl/ctrl0080.h"
+#include "ctrl/ctrl0080/ctrl0080gpu.h"
 #include "ctrl/ctrl2080.h"
 #include "ctrl/ctrl5070/ctrl5070system.h"
 #include "ctrl/ctrla06f.h"

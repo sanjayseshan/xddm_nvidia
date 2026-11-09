@@ -37,9 +37,13 @@ Hardware OpenGL roadmap — November 8, 2026:
   (engine 1, chid 2); changing the packet from the CE subchannel to GR's RM
   subchannel did not clear the fault. Valid GR execution remains unverified.
   No draw, shader, or GPU render/readback has succeeded.
+  OpenRM's published `NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS`,
+  `NV_CTXSHARE_ALLOCATION_PARAMETERS`, class-list response, and allocation
+  class constants now replace raw probe arrays/literals. This type-corrected
+  run reproduced the same GR RC fault, ruling those layouts out as the cause.
 - OpenGL remains Microsoft GDI Generic/software OpenGL 1.1; Direct3D 9 creation
   still returns 0x8876086A. The existing copy engine is a separate 2D path.
-  Evidence: test_logs/v2.0.0.1-20261108-213705.log (GR allocation succeeds,
+  Evidence: test_logs/v2.0.0.3-20261108-215511.log (GR allocation succeeds,
   SET_OBJECT is fetched then faults; both heads and CE remain active). The
   previous run, test_logs/v2.0.0.1-20261108-213419.log, verified the published
   RM class-engine response and the channel's allocation path.

@@ -535,15 +535,15 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
 #if NVX_ENABLE_GR_CHANNEL_PROBE
 static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
 {
-    ULONG tsg[5]={0};
-    ULONG ctxShare[3]={0};
+    NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS tsg={0};
+    NV_CTXSHARE_ALLOCATION_PARAMETERS ctxShare={0};
     NV_CHANNEL_ALLOC_PARAMS chan={0};
     ULONG bindEngine=NV2080_ENGINE_TYPE_GRAPHICS;
     UCHAR schedEnable[2]={1,0};
     ULONG64 scratchPhys,instPhys,ramfcPhys,userdPhys,methodPhys,fifoGpuVa,scratchEnd;
-    ULONG supportedClasses[161]={0},classEngineId=0;
+    NV0080_CTRL_GPU_GET_CLASSLIST_V2_PARAMS supportedClasses={0};
+    ULONG classEngineId=0;
     NV906F_CTRL_GET_CLASS_ENGINEID_PARAMS classEngineParams={0};
-    const ULONG *classReply;
     ULONG classCount,classIndex,grClass=0;
     BOOLEAN ampereAFound=FALSE,ampereBFound=FALSE;
     ULONG runlistQuery[124]={0},token=0,runlistBase=0,submitToken=0;
@@ -568,9 +568,9 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     methodPhys=scratchPhys+0xc000;
     fifoGpuVa=dev->GspScratchGpuVa+0x9000;
     scratchEnd=scratchPhys+GSP_SCRATCH_SIZE;
-    tsg[2]=dev->GspVaSpaceHandle;
-    tsg[3]=NV2080_ENGINE_TYPE_GRAPHICS;
-    ctxShare[0]=dev->GspVaSpaceHandle; /* match the working CE channel allocation */
+    tsg.hVASpace=dev->GspVaSpaceHandle;
+    tsg.engineType=NV2080_ENGINE_TYPE_GRAPHICS;
+    ctxShare.hVASpace=dev->GspVaSpaceHandle; /* match the working CE allocation */
     if(scratchEnd>(ULONG64)dev->GspDmaPhysical.QuadPart+(ULONG64)dev->GspDmaLength||
        (fifoGpuVa&7)||(instPhys&0xfff)||(methodPhys&0xfff)) {
         LogStr("NVX [GR]: probe preconditions failed; graphics remains disabled.\n");
@@ -578,20 +578,23 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     }
 
     /* Ask RM which object classes this device firmware actually exposes. */
-    if(!NvxGspControl(dev,dev->GspDeviceHandle,0x800292,
-                      supportedClasses,sizeof(supportedClasses))) {
+    if(!NvxGspControl(dev,dev->GspDeviceHandle,NV0080_CTRL_CMD_GPU_GET_CLASSLIST_V2,
+                      &supportedClasses,sizeof(supportedClasses))) {
         LogStr("NVX [GR]: GPU_GET_CLASSLIST_V2 query failed.\n");
         return FALSE;
     }
-    classReply=(const ULONG *)(dev->RpcRxRecord+104);
-    classCount=classReply[0];
-    if(classCount>160) {
+    {
+        const NV0080_CTRL_GPU_GET_CLASSLIST_V2_PARAMS *reply=
+            (const NV0080_CTRL_GPU_GET_CLASSLIST_V2_PARAMS *)(dev->RpcRxRecord+104);
+        classCount=reply->numClasses;
+        if(classCount>NV0080_CTRL_GPU_CLASSLIST_MAX_SIZE) {
         LogStr("NVX [GR]: RM class-list count invalid: ");LogHex(classCount);LogStr("\n");
         return FALSE;
-    }
-    for(classIndex=0;classIndex<classCount;classIndex++) {
-        if(classReply[classIndex+1]==AMPERE_A) ampereAFound=TRUE;
-        if(classReply[classIndex+1]==AMPERE_B) ampereBFound=TRUE;
+        }
+        for(classIndex=0;classIndex<classCount;classIndex++) {
+            if(reply->classList[classIndex]==AMPERE_A) ampereAFound=TRUE;
+            if(reply->classList[classIndex]==AMPERE_B) ampereBFound=TRUE;
+        }
     }
     LogStr("NVX [GR]: RM advertised class count=");LogHex(classCount);
     LogStr(" AMPERE_A=");LogHex(ampereAFound?1:0);
@@ -605,11 +608,11 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     }
 
     LogStr("NVX [GR]: creating isolated Ampere graphics TSG/channel probe.\n");
-    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,tsgHandle,0xa06c,tsg,sizeof(tsg))) {
+    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,tsgHandle,KEPLER_CHANNEL_GROUP_A,&tsg,sizeof(tsg))) {
         LogStr("NVX [GR]: graphics TSG allocation failed.\n");
         return FALSE;
     }
-    if(!NvxGspAlloc(dev,tsgHandle,0x90670002,0x9067,ctxShare,sizeof(ctxShare))) {
+    if(!NvxGspAlloc(dev,tsgHandle,0x90670002,FERMI_CONTEXT_SHARE_A,&ctxShare,sizeof(ctxShare))) {
         LogStr("NVX [GR]: graphics context-share allocation failed.\n");
         return FALSE;
     }
@@ -642,7 +645,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     chan.mthdbufMem.cacheAttrib=0;
     chan.internalFlags=0x15;
 
-    if(!NvxGspAlloc(dev,tsgHandle,channelHandle,0xc56f,&chan,sizeof(chan))) {
+    if(!NvxGspAlloc(dev,tsgHandle,channelHandle,AMPERE_CHANNEL_GPFIFO_A,&chan,sizeof(chan))) {
         LogStr("NVX [GR]: graphics GPFIFO channel allocation failed.\n");
         return FALSE;
     }
