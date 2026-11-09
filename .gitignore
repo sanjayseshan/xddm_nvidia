@@ -30,6 +30,8 @@ __pycache__/
 *.exe
 /FRAMEBUF.DL_
 /framebuf.dll
+*.cpl
+system_hive_xp32
 
 # Generated/extracted third-party source trees and historical snapshots
 # /open-gpu-kernel-modules/ (converted to git submodule)

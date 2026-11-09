@@ -1399,6 +1399,118 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         for(i=0;i<16;i++) {
             push[n++]=0x67723000U+i;
         }
+
+        /* Test SET_COLOR_TARGET_FORMAT(0) -> DISABLED */
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_COLOR_TARGET_FORMAT(0)>>2);
+        push[n++]=NVC797_SET_COLOR_TARGET_FORMAT_V_DISABLED;
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_ZT_SELECT>>2);
+        push[n++]=0; /* target count = 0 (no depth/stencil target) */
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(2U<<16)|(NVC797_SET_VERTEX_STREAM_SUBSTITUTE_A>>2);
+        push[n++]=(ULONG)(grDataVa>>32);
+        push[n++]=(ULONG)grDataVa;
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_POINT_CENTER_MODE>>2);
+        push[n++]=NVC797_SET_POINT_CENTER_MODE_V_OGL;
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_SAMPLER_BINDING>>2);
+        push[n++]=NVC797_SET_SAMPLER_BINDING_V_VIA_HEADER_BINDING;
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_VIEWPORT_SCALE_OFFSET>>2);
+        push[n++]=0; /* ENABLE = FALSE */
+
+        /* Viewport clip for 16 viewports (each 2 words: HORIZONTAL, VERTICAL) */
+        for(i=0;i<16;i++) {
+            push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(2U<<16)|(NVC797_SET_VIEWPORT_CLIP_HORIZONTAL(i)>>2);
+            push[n++]=(32768U<<16); /* X0=0, WIDTH=32768 */
+            push[n++]=(32768U<<16); /* Y0=0, HEIGHT=32768 */
+        }
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_PROVOKING_VERTEX>>2);
+        push[n++]=NVC797_SET_PROVOKING_VERTEX_V_LAST;
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_SINGLE_ROP_CONTROL>>2);
+        push[n++]=1; /* enable single ROP control */
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_SINGLE_CT_WRITE_CONTROL>>2);
+        push[n++]=1; /* enable single CT write control */
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_BLEND(0)>>2);
+        push[n++]=1; /* enable blend on target 0 */
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(4U<<16)|(NVC797_SET_BLEND_CONST_RED>>2);
+        push[n++]=0x3f800000U; /* 1.0f red */
+        push[n++]=0x3f800000U; /* 1.0f green */
+        push[n++]=0x3f800000U; /* 1.0f blue */
+        push[n++]=0x3f800000U; /* 1.0f alpha */
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_BLEND_SEPARATE_FOR_ALPHA>>2);
+        push[n++]=0; /* ENABLE = FALSE */
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(3U<<16)|(NVC797_SET_BLEND_COLOR_OP>>2);
+        push[n++]=NVC797_SET_BLEND_COLOR_OP_V_OGL_FUNC_ADD;
+        push[n++]=NVC797_SET_BLEND_COLOR_SOURCE_COEFF_V_OGL_ONE;
+        push[n++]=NVC797_SET_BLEND_COLOR_DEST_COEFF_V_OGL_ZERO;
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_LINE_WIDTH_FLOAT>>2);
+        push[n++]=0x3f800000U; /* 1.0f line width */
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_LINE_MULTISAMPLE_OVERRIDE>>2);
+        push[n++]=0; /* ENABLE = FALSE */
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_WINDOW_ORIGIN>>2);
+        push[n++]=DRF_DEF(C797,_SET_WINDOW_ORIGIN,_MODE,_UPPER_LEFT)|
+                  DRF_DEF(C797,_SET_WINDOW_ORIGIN,_FLIP_Y,_TRUE);
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_ZCULL_BOUNDS>>2);
+        push[n++]=DRF_DEF(C797,_SET_ZCULL_BOUNDS,_Z_MIN_UNBOUNDED_ENABLE,_FALSE)|
+                  DRF_DEF(C797,_SET_ZCULL_BOUNDS,_Z_MAX_UNBOUNDED_ENABLE,_FALSE);
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_SHADER_EXCEPTIONS>>2);
+        push[n++]=0; /* ENABLE = FALSE */
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_GO_IDLE_TIMEOUT>>2);
+        push[n++]=0x800;
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(2U<<16)|(NVC797_SET_SPH_VERSION>>2);
+        push[n++]=(4U)|(4U<<16); /* CURRENT=4, OLDEST=4 */
+        push[n++]=(4U)|(4U<<16); /* CHECK CURRENT=4, OLDEST=4 */
+
+        /* Color target 0 binding: 64x16 ARGB8888 blocklinear (1 GOB = 16 lines) */
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_CT_SELECT>>2);
+        push[n++]=1; /* target count = 1, target 0 = colorTarget 0 */
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(6U<<16)|(NVC797_SET_COLOR_TARGET_A(0)>>2);
+        push[n++]=(ULONG)(grDataVa>>32);                                /* A: upper address */
+        push[n++]=(ULONG)grDataVa;                                      /* B: lower address */
+        push[n++]=64;                                                   /* WIDTH: 64 pixels */
+        push[n++]=16;                                                   /* HEIGHT: 16 lines (1 GOB) */
+        push[n++]=NVC797_SET_COLOR_TARGET_FORMAT_V_A8R8G8B8;            /* FORMAT: 0xCF (ARGB8888) */
+        push[n++]=0;                                                    /* MEMORY: BLOCKLINEAR, 1 GOB height/depth/width */
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(2U<<16)|(NVC797_SET_SURFACE_CLIP_HORIZONTAL>>2);
+        push[n++]=(64U<<16);                                            /* X=0, WIDTH=64 */
+        push[n++]=(16U<<16);                                            /* Y=0, HEIGHT=16 */
+
+        /* Clear color (4 words: RGBA float 0.0f) */
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(4U<<16)|(NVC797_SET_COLOR_CLEAR_VALUE(0)>>2);
+        push[n++]=0;
+        push[n++]=0;
+        push[n++]=0;
+        push[n++]=0;
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(2U<<16)|(NVC797_SET_CLEAR_RECT_HORIZONTAL>>2);
+        push[n++]=(64U<<16);                                            /* XMIN=0, XMAX=64 */
+        push[n++]=(16U<<16);                                            /* YMIN=0, YMAX=16 */
+
+        /* CLEAR_SURFACE: trigger hardware clear of color buffer (RGBA) */
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_CLEAR_SURFACE>>2);
+        push[n++]=DRF_DEF(C797,_CLEAR_SURFACE,_R_ENABLE,_TRUE)|
+                  DRF_DEF(C797,_CLEAR_SURFACE,_G_ENABLE,_TRUE)|
+                  DRF_DEF(C797,_CLEAR_SURFACE,_B_ENABLE,_TRUE)|
+                  DRF_DEF(C797,_CLEAR_SURFACE,_A_ENABLE,_TRUE);
+
         push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_WAIT_FOR_IDLE>>2);
         push[n++]=0;
         push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(4U<<16)|(NVC797_SET_REPORT_SEMAPHORE_A>>2);
@@ -1450,16 +1562,22 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         } else if(grStatusAvailable&&!dev->GspGraphicsChannelFaulted&&!dev->GspMmuFaultQueued&&
                   userd[0x88/4]==1&&grFence[0]==0x47524632&&
                   grFence[1]==0x13579bdf&&grFence[2]==0x2468ace0) {
-            ULONG i,matchCount=0;
+            ULONG i,matchCount=0,clearMatchCount=0;
             dev->GspGraphicsCommandVerified=TRUE;
             for(i=0;i<16;i++) {
                 if(grData[i]==0x67723000U+i) matchCount++;
+                if(grData[i]==0) clearMatchCount++;
             }
             if(matchCount==16) {
                 dev->GspGraphicsDataWriteVerified=TRUE;
                 LogStr("NVX [GR]: I2M data write verified; 16 dwords matched in scratch memory.\n");
+            } else if(clearMatchCount==16) {
+                dev->GspGraphicsDataWriteVerified=TRUE;
+                dev->GspGraphicsPixelClearVerified=TRUE;
+                LogStr("NVX [GR]: 3D CLEAR_SURFACE verified; 16 dwords zeroed in scratch memory.\n");
             } else {
-                LogStr("NVX [GR]: I2M data write mismatch; matches=");LogHex(matchCount);
+                LogStr("NVX [GR]: data mismatch; i2m_matches=");LogHex(matchCount);
+                LogStr(" clear_matches=");LogHex(clearMatchCount);
                 LogStr(" word0=");LogHex(grData[0]);LogStr(" word1=");LogHex(grData[1]);LogStr("\n");
             }
         }
@@ -1544,7 +1662,9 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     dev->GspGraphicsChannelHandle=channelHandle;
     dev->GspGraphicsObjectHandle=grHandle;
     dev->GspGraphicsChannelReady=TRUE;
-    if(dev->GspGraphicsDataWriteVerified) {
+    if(dev->GspGraphicsPixelClearVerified) {
+        LogStr("NVX [GR]: GR pipeline 3D rasterizer clear and semaphore release completed successfully.\n");
+    } else if(dev->GspGraphicsDataWriteVerified) {
         LogStr("NVX [GR]: GR pipeline data write and semaphore release completed successfully.\n");
     } else {
         LogStr("NVX [GR]: GR semaphore release completed with guards intact; no drawing tested.\n");
