@@ -868,7 +868,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     BOOLEAN ampereAFound=FALSE,ampereBFound=FALSE;
     ULONG runlistQuery[124]={0},token=0,runlistBase=0;
     ULONG dbcfg,chcfg,enable,wait,chramBase,fault[26]={0},assertCountBefore;
-    ULONG64 pushVa,grFenceVa;
+    ULONG64 pushVa;
     PUCHAR scratch;
     PULONG push;
     volatile ULONG *userd;
@@ -1298,9 +1298,6 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     push=(PULONG)(scratch+0xf000);
     pushVa=dev->GspScratchGpuVa+0xf000;
     grFence=(volatile ULONG *)((PUCHAR)dev->GspGrContextVirtual+GSP_GR_CONTEXT_BYTES-0xf00);
-    /* The test alias is deliberately unprivileged and only validates CE PTEs.
-       GR context buffers and report semaphores must use the privileged GR VA. */
-    grFenceVa=GSP_GR_CONTEXT_GPU_VA+GSP_GR_CONTEXT_BYTES-0xf00+4;
     grFence[0]=0x13579bdf;grFence[1]=0;grFence[2]=0x2468ace0;
     if(userd[0x88/4]||userd[0x8c/4]) {
         LogStr("NVX [GR]: fresh graphics USERD is not empty; submission skipped.\n");
@@ -1308,19 +1305,11 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     }
     VideoPortZeroMemory((PVOID)(scratch+0x9000),0x1000);
     VideoPortZeroMemory((PVOID)(scratch+0xf000),0x1000);
-    /* A GR report semaphore gives an observable engine-side completion;
-       GPGet alone only proves that the PBDMA fetched the FIFO entry. */
+    /* Isolate object/context activation before adding idle or semaphore
+       methods: v2.0.0.47 faulted after the full three-method pushbuffer. */
     push[0]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|NVC56F_SET_OBJECT;
     push[1]=classEngineId;
-    push[2]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|NVC797_WAIT_FOR_IDLE;
-    push[3]=0;
-    push[4]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(5U<<16)|NVC797_SET_REPORT_SEMAPHORE_PAYLOAD_LOWER;
-    push[5]=0x47524631;push[6]=0;
-    push[7]=(ULONG)grFenceVa;push[8]=(ULONG)(grFenceVa>>32);
-    push[9]=DRF_DEF(C797,_REPORT_SEMAPHORE_EXECUTE,_OPERATION,_RELEASE)|
-            DRF_DEF(C797,_REPORT_SEMAPHORE_EXECUTE,_PIPELINE_LOCATION,_ALL)|
-            DRF_DEF(C797,_REPORT_SEMAPHORE_EXECUTE,_STRUCTURE_SIZE,_SEMAPHORE_ONE_WORD);
-    fifo[0]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|(10ULL<<42);
+    fifo[0]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|(2ULL<<42);
     __sync_synchronize();
     userd[0x8c/4]=1;
     __sync_synchronize();
@@ -1333,8 +1322,9 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),token);
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x90),2);
     LogStr("NVX [GR]: rang channel doorbell token=");LogHex(token);LogStr(" chid=0x2\n");
-    LogStr("NVX [GR]: submitted SET_OBJECT, WAIT_FOR_IDLE and GR semaphore release.\n");
+    LogStr("NVX [GR]: submitted SET_OBJECT only; no GR drawing or semaphore method.\n");
     for(wait=0;wait<100000;wait++) {
+        if(userd[0x88/4]==1) break;
         if(grFence[1]==0x47524631) {
             break;
         }

@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.47: use the GR context VA for its fence)
+Updated: November 9, 2026 (v2.0.0.48: isolate GR object activation)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -307,6 +307,13 @@ Hardware OpenGL roadmap — November 8, 2026:
   the fence did not complete. This rules out that address alias as the sole
   cause. The VM completed ACPI powerdown. Evidence:
   `test_logs/v2.0.0.47-20261109-141020.log`.
+- v2.0.0.48 reduced the pushbuffer to SET_OBJECT alone. PBDMA fetched it,
+  CHRAM slot 2 became 0xC6 (the GR channel was resident), and there was no
+  MMU-queued notification or new GSP assertion. The report fence remained
+  untouched as expected. This isolates the fault to a later GR method in the
+  v47 sequence. The VM completed the test suite and ACPI powerdown; no display
+  hardware verification was recorded. Evidence:
+  `test_logs/v2.0.0.48-20261109-141252.log`.
 
 ### Linux and macOS Reference Architecture
 
