@@ -18,9 +18,7 @@
 #include <class/cl0090.h>
 #include <class/clc369.h>
 #include <class/clb069.h>
-#include <class/clb069sw.h>
 #include <ctrl/ctrlb069.h>
-#include <ctrl/ctrlc369.h>
 #include <ctrl/ctrl2080/ctrl2080internal.h>
 #include <stddef.h>
 #include "bootloader_blob.h"
@@ -708,67 +706,108 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
  * the 535 GSP-RM ABI and resource setup on hardware.
  */
 #if NVX_ENABLE_GR_CHANNEL_PROBE
-static BOOLEAN NvxGspSetupFaultBuffer(PNVX_DEVICE_EXTENSION dev,ULONG expectedSize,ULONG classId)
+#define NVX_FAULT_SHADOW_PAGE 0x1000U
+#define NVX_FAULT_QUEUE_CAPACITY_OFFSET 0U
+#define NVX_FAULT_QUEUE_MSGSIZE_OFFSET 24U
+#define NVX_FAULT_QUEUE_GET_OFFSET 64U
+#define NVX_FAULT_QUEUE_PUT_OFFSET 128U
+
+static BOOLEAN NvxGspSetupFaultBuffer(PNVX_DEVICE_EXTENSION dev,ULONG expectedSize,ULONG metadata,ULONG classId)
 {
-    NVB069_ALLOCATION_PARAMETERS alloc={0};
     NVB069_CTRL_FAULTBUFFER_GET_SIZE_PARAMS getSize={0};
-    NVC369_CTRL_MMU_FAULT_BUFFER_REGISTER_NON_REPLAY_BUF_PARAMS reg={0};
+    NV2080_CTRL_INTERNAL_GMMU_REGISTER_CLIENT_SHADOW_FAULT_BUFFER_PARAMS *params;
     const NVB069_CTRL_FAULTBUFFER_GET_SIZE_PARAMS *sizeReply;
-    const NVC369_CTRL_MMU_FAULT_BUFFER_REGISTER_NON_REPLAY_BUF_PARAMS *regReply;
-    ULONG handle=0xc1d00030;
-    if(!dev||!expectedSize||!classId||dev->GspFaultBufferHandle) return FALSE;
-    if(!NvxGspAlloc(dev,dev->GspSubdeviceHandle,handle,classId,&alloc,sizeof(alloc))) {
-        LogStr("NVX [GR-FAULT]: NVIDIA fault-buffer object allocation failed class=");
-        LogHex(classId);LogStr("\n");
+    ULONG handle=0xc1d00030,dataBytes,total,pages,i;
+    ULONG64 phys;
+    if(!dev||!expectedSize||metadata||!classId||dev->GspFaultBufferHandle||dev->GspFaultShadowVirtual) return FALSE;
+    if(classId!=MMU_FAULT_BUFFER||
+       !NvxGspAlloc(dev,dev->GspSubdeviceHandle,handle,classId,NULL,0)) {
+        LogStr("NVX [GR-FAULT]: NVIDIA C369 object allocation failed class=");LogHex(classId);LogStr("\n");
         return FALSE;
     }
     dev->GspFaultBufferHandle=handle;
-    if(!NvxGspControl(dev,handle,NVB069_CTRL_CMD_FAULTBUFFER_GET_SIZE,&getSize,sizeof(getSize))) {
-        LogStr("NVX [GR-FAULT]: hardware fault-buffer size query failed.\n");
+    if(NvxGspControl(dev,handle,NVB069_CTRL_CMD_FAULTBUFFER_GET_SIZE,&getSize,sizeof(getSize))) {
+        sizeReply=(const NVB069_CTRL_FAULTBUFFER_GET_SIZE_PARAMS *)(dev->RpcRxRecord+104);
+        LogStr("NVX [GR-FAULT]: replayable HW ring bytes=");LogHex(sizeReply->faultBufferSize);
+        LogStr(" nonreplay shadow bytes=");LogHex(expectedSize);LogStr("\n");
+    }
+    if(expectedSize>0xffffffffU-(NVX_FAULT_SHADOW_PAGE-1)) return FALSE;
+    dataBytes=(expectedSize+NVX_FAULT_SHADOW_PAGE-1)&~(NVX_FAULT_SHADOW_PAGE-1);
+    if(dataBytes>0xffffffffU-2*NVX_FAULT_SHADOW_PAGE) return FALSE;
+    total=NVX_FAULT_SHADOW_PAGE+dataBytes;
+    pages=dataBytes/NVX_FAULT_SHADOW_PAGE;
+    if(pages>NV2080_CTRL_INTERNAL_GMMU_CLIENT_SHADOW_FAULT_BUFFER_MAX_PAGES) return FALSE;
+    dev->GspFaultShadowVirtual=VideoPortAllocateCommonBuffer(dev,dev->DmaAdapter,total,
+        &dev->GspFaultShadowPhysical,FALSE,NULL);
+    if(!dev->GspFaultShadowVirtual) return FALSE;
+    dev->GspFaultShadowLength=total;
+    phys=(ULONG64)dev->GspFaultShadowPhysical.QuadPart;
+    if((phys&(NVX_FAULT_SHADOW_PAGE-1))||phys+total>0x100000000ULL) {
+        LogStr("NVX [GR-FAULT]: shadow DMA allocation not page-aligned below 4GB.\n");
         return FALSE;
     }
-    sizeReply=(const NVB069_CTRL_FAULTBUFFER_GET_SIZE_PARAMS *)(dev->RpcRxRecord+104);
-    LogStr("NVX [GR-FAULT]: hardware buffer bytes=");LogHex(sizeReply->faultBufferSize);
-    LogStr(" GSP shadow requirement=");LogHex(expectedSize);LogStr("\n");
-    if(sizeReply->faultBufferSize<expectedSize) return FALSE;
-    if(!NvxGspControl(dev,handle,NVC369_CTRL_CMD_MMU_FAULT_BUFFER_REGISTER_NON_REPLAY_BUF,
-                      &reg,sizeof(reg))) {
-        LogStr("NVX [GR-FAULT]: NVIDIA nonreplayable fault queue registration failed.\n");
-        return FALSE;
+    VideoPortZeroMemory(dev->GspFaultShadowVirtual,total);
+    {
+        volatile ULONG64 *q=(volatile ULONG64 *)dev->GspFaultShadowVirtual;
+        q[NVX_FAULT_QUEUE_CAPACITY_OFFSET/8]=expectedSize/32;
+        q[NVX_FAULT_QUEUE_MSGSIZE_OFFSET/8]=32;
+        q[NVX_FAULT_QUEUE_GET_OFFSET/8]=0;
+        q[NVX_FAULT_QUEUE_PUT_OFFSET/8]=0;
     }
-    regReply=(const NVC369_CTRL_MMU_FAULT_BUFFER_REGISTER_NON_REPLAY_BUF_PARAMS *)(dev->RpcRxRecord+104);
-    dev->GspFaultShadowClientAddress=(ULONG64)(ULONG_PTR)regReply->pShadowBuffer;
+    params=(NV2080_CTRL_INTERNAL_GMMU_REGISTER_CLIENT_SHADOW_FAULT_BUFFER_PARAMS *)dev->RpcRxRecord;
+    VideoPortZeroMemory(params,sizeof(*params));
+    params->shadowFaultBufferQueuePhysAddr=phys;
+    params->shadowFaultBufferSize=expectedSize;
+    params->shadowFaultBufferMetadataSize=metadata;
+    for(i=0;i<pages;i++) params->shadowFaultBufferPteArray[i]=phys+NVX_FAULT_SHADOW_PAGE+(ULONG64)i*NVX_FAULT_SHADOW_PAGE;
+    params->shadowFaultBufferType=NV2080_CTRL_FAULT_BUFFER_NON_REPLAYABLE;
     dev->GspFaultShadowRegistered=TRUE;
-    LogStr("NVX [GR-FAULT]: NVIDIA registered nonreplayable queue buffer=");
-    LogHex((ULONG64)(ULONG_PTR)regReply->pShadowBuffer);LogStr(" context=");LogHex((ULONG64)(ULONG_PTR)regReply->pShadowBufferContext);
-    LogStr(" metadata=");LogHex((ULONG64)(ULONG_PTR)regReply->pShadowBufferMetadata);
-    LogStr(" bytes=");LogHex(regReply->bufferSize);LogStr("\n");
-    return regReply->pShadowBuffer!=0&&regReply->bufferSize==expectedSize;
+    if(!NvxGspControl(dev,dev->GspSubdeviceHandle,
+        NV2080_CTRL_CMD_INTERNAL_GMMU_REGISTER_CLIENT_SHADOW_FAULT_BUFFER,
+        params,sizeof(*params))) {
+        LogStr("NVX [GR-FAULT]: internal shadow queue registration failed/timed out.\n");
+        return FALSE;
+    }
+    LogStr("NVX [GR-FAULT]: C369 object plus internal shadow queue registered; pages=");
+    LogHex(pages);LogStr(" physical=");LogHex(phys);LogStr(" bytes=");LogHex(total);LogStr("\n");
+    return TRUE;
 }
 
 static VOID NvxGspDumpFaultShadow(PNVX_DEVICE_EXTENSION dev)
 {
-    if(!dev||!dev->GspFaultShadowRegistered) {
-        LogStr("NVX [GR-FAULT]: MMU event arrived without registered client queue.\n");
-        return;
+    volatile UCHAR *base;
+    volatile ULONG64 *q;
+    ULONG64 get,put,capacity,count,idx;
+    ULONG i;
+    if(!dev||!dev->GspFaultShadowVirtual||dev->GspFaultShadowLength<NVX_FAULT_SHADOW_PAGE) return;
+    base=(volatile UCHAR *)dev->GspFaultShadowVirtual;
+    q=(volatile ULONG64 *)dev->GspFaultShadowVirtual;
+    get=q[NVX_FAULT_QUEUE_GET_OFFSET/8];put=q[NVX_FAULT_QUEUE_PUT_OFFSET/8];
+    capacity=q[NVX_FAULT_QUEUE_CAPACITY_OFFSET/8];__sync_synchronize();
+    if(!capacity||capacity>0x100000||get>=capacity||put>=capacity) {
+        LogStr("NVX [GR-FAULT]: invalid queue get=");LogHex(get);LogStr(" put=");LogHex(put);LogStr(" capacity=");LogHex(capacity);LogStr("\n");return;
     }
-    /* This is an OS-client pointer in NVIDIA's UVM implementation. Do not
-       dereference it from XP; the event proves notification only. */
-    LogStr("NVX [GR-FAULT]: event for registered queue client pointer=");
-    LogHex(dev->GspFaultShadowClientAddress);LogStr("; packet not mapped by XP.\n");
+    count=(put+capacity-get)%capacity;
+    LogStr("NVX [GR-FAULT]: queue get=");LogHex(get);LogStr(" put=");LogHex(put);LogStr(" pending=");LogHex(count);LogStr("\n");
+    for(idx=0;idx<count&&idx<4;idx++) {
+        ULONG64 slot=(get+idx)%capacity;
+        volatile ULONG *packet=(volatile ULONG *)(base+NVX_FAULT_SHADOW_PAGE+slot*32);
+        LogStr("NVX [GR-FAULT]: packet");LogHex(idx);
+        for(i=0;i<8;i++){LogStr(" w");LogHex(i);LogStr("=");LogHex(packet[i]);}
+        LogStr("\n");
+    }
 }
 
 BOOLEAN NvxGspUnregisterFaultShadow(PNVX_DEVICE_EXTENSION dev)
 {
-    NVC369_CTRL_MMU_FAULT_BUFFER_UNREGISTER_NON_REPLAY_BUF_PARAMS params;
+    NV2080_CTRL_INTERNAL_GMMU_UNREGISTER_CLIENT_SHADOW_FAULT_BUFFER_PARAMS params;
     if(!dev||!dev->GspFaultShadowRegistered) return TRUE;
-    params.pShadowBuffer=(NvP64)(ULONG_PTR)dev->GspFaultShadowClientAddress;
-    if(!NvxGspControl(dev,dev->GspFaultBufferHandle,
-        NVC369_CTRL_CMD_MMU_FAULT_BUFFER_UNREGISTER_NON_REPLAY_BUF,
+    params.shadowFaultBufferType=NV2080_CTRL_FAULT_BUFFER_NON_REPLAYABLE;
+    if(!NvxGspControl(dev,dev->GspSubdeviceHandle,
+        NV2080_CTRL_CMD_INTERNAL_GMMU_UNREGISTER_CLIENT_SHADOW_FAULT_BUFFER,
         &params,sizeof(params))) return FALSE;
     dev->GspFaultShadowRegistered=FALSE;
-    dev->GspFaultShadowClientAddress=0;
-    LogStr("NVX [GR-FAULT]: NVIDIA nonreplayable queue unregistered.\n");
+    LogStr("NVX [GR-FAULT]: internal shadow queue unregistered.\n");
     return TRUE;
 }
 
@@ -971,8 +1010,9 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         LogStr(" replay bytes=");LogHex(reply->replayableFaultBufferSize);
         LogStr(" metadata=");LogHex(reply->replayableShadowFaultBufferMetadataSize);LogStr("\n");
 #if NVX_ENABLE_GR_SUBMISSION_PROBE
-        if(reply->nonReplayableShadowFaultBufferMetadataSize||
-           !NvxGspSetupFaultBuffer(dev,reply->nonReplayableFaultBufferSize,faultBufferClass)) {
+        if(!NvxGspSetupFaultBuffer(dev,reply->nonReplayableFaultBufferSize,
+                                   reply->nonReplayableShadowFaultBufferMetadataSize,
+                                   faultBufferClass)) {
             LogStr("NVX [GR-FAULT]: GR submit probe stopped because fault reporting is unavailable.\n");
             return FALSE;
         }

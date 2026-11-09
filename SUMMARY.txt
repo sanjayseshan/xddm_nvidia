@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.36: probe NVIDIA fault-buffer object)
+Updated: November 9, 2026 (v2.0.0.40: pair C369 object and GSP shadow queue)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -252,6 +252,23 @@ Hardware OpenGL roadmap — November 8, 2026:
   heads active/locked and GPU copy verified, and completed ACPI shutdown; it
   did not verify hardware OpenGL. Evidence:
   `test_logs/v2.0.0.36-20261109-133604.log`.
+- v2.0.0.37-38 isolated C369 allocation parameters and parent: the C369
+  object allocates successfully with a zero-byte parameter block and the GPU
+  subdevice as parent. NVIDIA's `GET_SIZE` reports the replayable hardware
+  ring (0x31000), distinct from the 0x120C20 non-replayable shadow size.
+  Evidence: `test_logs/v2.0.0.38-20261109-133929.log`.
+- v2.0.0.39 sent the Linux NVC369 non-replay registration command as a GSP
+  RPC. It timed out and subsequent GSP controls stopped responding, so this
+  is not a valid direct-GSP path. The test completed ACPI powerdown, but display
+  verification was unavailable. Evidence:
+  `test_logs/v2.0.0.39-20261109-134028.log`.
+- v2.0.0.40 combines the working C369 object with the accepted internal GMMU
+  shadow-buffer registration. Both controls return NV_OK, but the queue is
+  still empty after the GR fault (GET=PUT=0). The fault still disables queues
+  and the display path; the runner attempted ACPI powerdown. This narrows the
+  remaining issue to how Linux's client queue is mapped/attached or to the
+  underlying GR fault source. Evidence:
+  `test_logs/v2.0.0.40-20261109-134249.log`.
 - v2.0.0.31 expands RPC staging to carry the NVIDIA shadow-fault-buffer
   registration request and tests a 24 KB, six-slot message. All host tests
   passed; the XP VM booted, verified CE copy and both display links, and
