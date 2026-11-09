@@ -763,25 +763,36 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     /* The size-only control lacks a client handle and is rejected by the
        firmware resource namespace. Use OpenRM's full info query, which takes
        both the owning client and channel and returns actual buffer metadata. */
-    VideoPortZeroMemory(grBufferInfo,sizeof(*grBufferInfo));
-    grBufferInfo->hUserClient=dev->GspClientHandle;
-    grBufferInfo->hChannel=channelHandle;
-    if(NvxGspControl(dev,dev->GspSubdeviceHandle,NV2080_CTRL_CMD_GR_GET_CTX_BUFFER_INFO,
-                     grBufferInfo,sizeof(*grBufferInfo))) {
-        const NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS *reply=
-            (const NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS *)(dev->RpcRxRecord+104);
-        ULONG infoIndex,infoCount=reply->bufferCount;
-        if(infoCount>NV2080_CTRL_GR_MAX_CTX_BUFFER_COUNT)
-            infoCount=NV2080_CTRL_GR_MAX_CTX_BUFFER_COUNT;
-        LogStr("NVX [GR]: RM context-buffer count=");LogHex(reply->bufferCount);LogStr("\n");
-        for(infoIndex=0;infoIndex<infoCount&&infoIndex<12;infoIndex++) {
-            LogStr("NVX [GR]: ctxbuf index=");LogHex(infoIndex);
-            LogStr(" type=");LogHex(reply->ctxBufferInfo[infoIndex].bufferType);
-            LogStr(" size=");LogHex((ULONG)reply->ctxBufferInfo[infoIndex].size);
-            LogStr(" aperture=");LogHex(reply->ctxBufferInfo[infoIndex].aperture);LogStr("\n");
+    {
+        ULONG ctxTargets[2]={channelHandle,tsgHandle};
+        ULONG targetIndex;
+        BOOLEAN ctxInfoFound=FALSE;
+        for(targetIndex=0;targetIndex<2&&!ctxInfoFound;targetIndex++) {
+            VideoPortZeroMemory(grBufferInfo,sizeof(*grBufferInfo));
+            grBufferInfo->hUserClient=dev->GspClientHandle;
+            grBufferInfo->hChannel=ctxTargets[targetIndex];
+            LogStr("NVX [GR]: querying context buffers for userClient=");
+            LogHex(grBufferInfo->hUserClient);LogStr(" channelOrTsg=");
+            LogHex(grBufferInfo->hChannel);LogStr("\n");
+            if(NvxGspControl(dev,dev->GspSubdeviceHandle,NV2080_CTRL_CMD_GR_GET_CTX_BUFFER_INFO,
+                             grBufferInfo,sizeof(*grBufferInfo))) {
+                const NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS *reply=
+                    (const NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS *)(dev->RpcRxRecord+104);
+                ULONG infoIndex,infoCount=reply->bufferCount;
+                if(infoCount>NV2080_CTRL_GR_MAX_CTX_BUFFER_COUNT)
+                    infoCount=NV2080_CTRL_GR_MAX_CTX_BUFFER_COUNT;
+                LogStr("NVX [GR]: RM context-buffer count=");LogHex(reply->bufferCount);LogStr("\n");
+                for(infoIndex=0;infoIndex<infoCount&&infoIndex<12;infoIndex++) {
+                    LogStr("NVX [GR]: ctxbuf index=");LogHex(infoIndex);
+                    LogStr(" type=");LogHex(reply->ctxBufferInfo[infoIndex].bufferType);
+                    LogStr(" size=");LogHex((ULONG)reply->ctxBufferInfo[infoIndex].size);
+                    LogStr(" aperture=");LogHex(reply->ctxBufferInfo[infoIndex].aperture);LogStr("\n");
+                }
+                ctxInfoFound=TRUE;
+            }
         }
-    } else {
-        LogStr("NVX [GR]: RM context-buffer info query unavailable.\n");
+        if(!ctxInfoFound)
+            LogStr("NVX [GR]: RM context-buffer info query unavailable for channel and TSG.\n");
     }
 
     /* SET_OBJECT's payload is the RM-encoded classEngineID, not the object
