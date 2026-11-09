@@ -8,6 +8,7 @@
 
 #include "nvtypes.h"
 #include "nvstatus.h"
+#include "nverror.h"
 #include "nvos.h"
 
 /* Official SDK Command & Class definitions */
@@ -39,6 +40,18 @@
 #include "swref/published/ampere/ga102/dev_fbif_v4.h"
 #include "swref/published/ampere/ga102/dev_riscv_pri.h"
 #include "swref/published/ampere/ga102/dev_sec_pri.h"
+
+/* PBDMA debug offsets are absent from the SDK's minimal dev_pbdma.h. Keep
+ * these published register definitions in the shim for read-only fault logs. */
+#define NVX_PPBDMA_COUNT              12U
+#define NVX_PPBDMA_STRIDE             0x2000U
+#define NVX_PPBDMA_GP_BASE(i)          (0x00040048U + (i) * NVX_PPBDMA_STRIDE)
+#define NVX_PPBDMA_GP_BASE_HI(i)       (0x0004004cU + (i) * NVX_PPBDMA_STRIDE)
+#define NVX_PPBDMA_GP_GET(i)           (0x00040014U + (i) * NVX_PPBDMA_STRIDE)
+#define NVX_PPBDMA_GP_PUT(i)           (0x0004005cU + (i) * NVX_PPBDMA_STRIDE)
+#define NVX_PPBDMA_INTR_0(i)           (0x00040108U + (i) * NVX_PPBDMA_STRIDE)
+#define NVX_PPBDMA_METHOD0(i)          (0x000400c0U + (i) * NVX_PPBDMA_STRIDE)
+#define NVX_PPBDMA_DATA0(i)            (0x000400c4U + (i) * NVX_PPBDMA_STRIDE)
 
 /* Helper macro mapping for Falcon engine apertures */
 #define NVX_GSP_BASE                   0x00110000

@@ -41,10 +41,17 @@ Hardware OpenGL roadmap — November 8, 2026:
   `NV_CTXSHARE_ALLOCATION_PARAMETERS`, class-list response, and allocation
   class constants now replace raw probe arrays/literals. This type-corrected
   run reproduced the same GR RC fault, ruling those layouts out as the cause.
+  NVIDIA `nverror.h` identifies exception type 0x20 as
+  `ROBUST_CHANNEL_PBDMA_ERROR`. A read-only probe of NVIDIA's published PBDMA
+  register offsets currently hits the BAR0 unmapped-register sentinel
+  (`0xBADF1100`), so the specific PBDMA interrupt/method is not yet visible;
+  next work is resolving the accessible Ampere PBDMA register window before
+  changing the GPFIFO or channel setup again.
 - OpenGL remains Microsoft GDI Generic/software OpenGL 1.1; Direct3D 9 creation
   still returns 0x8876086A. The existing copy engine is a separate 2D path.
-  Evidence: test_logs/v2.0.0.3-20261108-215511.log (GR allocation succeeds,
-  SET_OBJECT is fetched then faults; both heads and CE remain active). The
+  Evidence: test_logs/v2.0.0.3-20261108-220056.log (GR allocation succeeds,
+  SET_OBJECT is fetched then faults; both heads and CE remain active; PBDMA
+  register reads return an unmapped sentinel). The
   previous run, test_logs/v2.0.0.1-20261108-213419.log, verified the published
   RM class-engine response and the channel's allocation path.
 - `NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 ./test/test_full_driver.sh` now

@@ -52,6 +52,43 @@ typedef struct {
 _Static_assert(sizeof(NVX_FB_REGION_535)==48,"535 FB region ABI");
 _Static_assert(offsetof(NVX_FB_REGION_535,protectedMemory)==30,"535 FB region flags");
 
+static VOID NvxGspLogPbdmaFault(PNVX_DEVICE_EXTENSION dev)
+{
+    ULONG i;
+    if(!dev||!dev->Bar0MmioVirtual||dev->Bar0Length<4) return;
+    for(i=0;i<NVX_PPBDMA_COUNT;i++) {
+        ULONG intrOffset=NVX_PPBDMA_INTR_0(i);
+        ULONG methodOffset=NVX_PPBDMA_METHOD0(i);
+        ULONG dataOffset=NVX_PPBDMA_DATA0(i);
+        ULONG gpBaseOffset=NVX_PPBDMA_GP_BASE(i);
+        ULONG gpBaseHiOffset=NVX_PPBDMA_GP_BASE_HI(i);
+        ULONG gpGetOffset=NVX_PPBDMA_GP_GET(i);
+        ULONG gpPutOffset=NVX_PPBDMA_GP_PUT(i);
+        ULONG intr,method,data,gpBase,gpBaseHi,gpGet,gpPut;
+        if(intrOffset>dev->Bar0Length-4||methodOffset>dev->Bar0Length-4||
+           dataOffset>dev->Bar0Length-4||gpBaseOffset>dev->Bar0Length-4||
+           gpBaseHiOffset>dev->Bar0Length-4||gpGetOffset>dev->Bar0Length-4||
+           gpPutOffset>dev->Bar0Length-4) break;
+        intr=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+intrOffset));
+        if((intr&0xffff0000U)==0xbadf0000U) {
+            LogStr("NVX [PBDMA]: BAR0 register window is unreadable at index=");
+            LogHex(i);LogStr(" offset=");LogHex(intrOffset);LogStr(" value=");LogHex(intr);LogStr("\n");
+            break;
+        }
+        if(!intr) continue;
+        method=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+methodOffset));
+        data=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+dataOffset));
+        gpBase=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+gpBaseOffset));
+        gpBaseHi=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+gpBaseHiOffset));
+        gpGet=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+gpGetOffset));
+        gpPut=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+gpPutOffset));
+        LogStr("NVX [PBDMA]: index=");LogHex(i);LogStr(" INTR0=");LogHex(intr);
+        LogStr(" METHOD0=");LogHex(method);LogStr(" DATA0=");LogHex(data);
+        LogStr(" GP_BASE=");LogHex(gpBase);LogStr(" GP_BASE_HI=");LogHex(gpBaseHi);
+        LogStr(" GP_GET=");LogHex(gpGet);LogStr(" GP_PUT=");LogHex(gpPut);LogStr("\n");
+    }
+}
+
 /* One synchronous post-init RPC. Unexpected events remain unconsumed. */
 static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
                          const void *payload,ULONG bytes)
@@ -98,6 +135,7 @@ static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
                 LogStr("NVX [RM]: channel RC fault engine=");LogHex(words[20]);
                 LogStr(" chid=");LogHex(words[21]);LogStr(" type=");LogHex(words[22]);
                 LogStr(" scope=");LogHex(words[23]);LogStr("\n");
+                if(words[22]==ROBUST_CHANNEL_PBDMA_ERROR) NvxGspLogPbdmaFault(dev);
                 if(words[21]==1) dev->GspChannelFaulted=TRUE;
                 if(words[21]==2) dev->GspGraphicsChannelFaulted=TRUE;
             } else if(function==0x100f) {
