@@ -16,8 +16,10 @@ XP x86 investigation — November 8, 2026:
   modes generated without BIOS enumeration.
 - test_logs/xp32-native-commit.log verifies both heads active and link-locked,
   completed display notifiers, primary 1920x1080/pitch7680, secondary
-  2560x1440/pitch10240, and desktop GPU uploads. Physical appearance awaits
-  user confirmation; these register checks alone do not prove correct pixels.
+  2560x1440/pitch10240, and desktop GPU uploads. The user subsequently
+  confirmed "both monitors good": correct appearance on both displays in the
+  XP 32-bit RTX 3070 VFIO VM, clearing the earlier extreme stripes/corruption.
+  Native/bare-metal XP 32-bit is not validated by this VM result.
 - Normal x86 builds do not use COM1. The test DLL used the opt-in
   NVX_DISP_SERIAL_DIAGNOSTIC flag. Build validation now rejects mixed imports;
   local memory helpers keep the x86 display DLL freestanding.

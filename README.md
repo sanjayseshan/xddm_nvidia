@@ -4,8 +4,10 @@ XP x86 bringup (November 8): the display DLL loading failure was fixed by
 removing mixed `NTOSKRNL.EXE`/`WIN32K.SYS` imports. A second fix commits native
 scanout after primary surface mapping, correcting a missing step in the x86
 path. VM logs now verify a 1080p surface, both display links, and GPU desktop
-operations; visual validation of this latest fix is pending. XP x64 remains
-the previously validated baseline. See `SUMMARY.txt` for test evidence.
+operations. The user confirmed both monitors display correctly on XP 32-bit
+(primary 1080p, secondary 1440p), with the earlier striping cleared. This
+confirmation is for the RTX 3070 VFIO VM; XP x64 also has prior bare-metal
+validation. See `SUMMARY.txt` for test evidence.
 
 
 This repository provides open experimental display drivers bringing modern **NVIDIA Turing, Ampere, and Ada Lovelace GPUs** (GeForce RTX 3070, RTX 3060 Ti, and 200+ GPUs in the upstream database) to legacy Windows operating systems:
