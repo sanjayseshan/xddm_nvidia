@@ -30,6 +30,7 @@
 #include "ctrl/ctrla06f.h"
 #include "ctrl/ctrlc36f.h"
 #include "ctrl/ctrl906f.h"
+#include "ctrl/ctrlb06f.h"
 #include "alloc/alloc_channel.h"
 
 /* Display & Coprocessor Register definitions from swref */
@@ -48,10 +49,12 @@
 #define NVX_PPBDMA_GP_BASE(i)          (0x00040048U + (i) * NVX_PPBDMA_STRIDE)
 #define NVX_PPBDMA_GP_BASE_HI(i)       (0x0004004cU + (i) * NVX_PPBDMA_STRIDE)
 #define NVX_PPBDMA_GP_GET(i)           (0x00040014U + (i) * NVX_PPBDMA_STRIDE)
-#define NVX_PPBDMA_GP_PUT(i)           (0x0004005cU + (i) * NVX_PPBDMA_STRIDE)
+#define NVX_PPBDMA_GP_PUT(i)           (0x00040000U + (i) * NVX_PPBDMA_STRIDE)
 #define NVX_PPBDMA_INTR_0(i)           (0x00040108U + (i) * NVX_PPBDMA_STRIDE)
+#define NVX_PPBDMA_INTR_1(i)           (0x00040148U + (i) * NVX_PPBDMA_STRIDE)
 #define NVX_PPBDMA_METHOD0(i)          (0x000400c0U + (i) * NVX_PPBDMA_STRIDE)
 #define NVX_PPBDMA_DATA0(i)            (0x000400c4U + (i) * NVX_PPBDMA_STRIDE)
+#define NVX_PPBDMA_TARGET(i)           (0x000400acU + (i) * NVX_PPBDMA_STRIDE)
 
 /* Helper macro mapping for Falcon engine apertures */
 #define NVX_GSP_BASE                   0x00110000

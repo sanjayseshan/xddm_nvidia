@@ -42,16 +42,21 @@ Hardware OpenGL roadmap — November 8, 2026:
   class constants now replace raw probe arrays/literals. This type-corrected
   run reproduced the same GR RC fault, ruling those layouts out as the cause.
   NVIDIA `nverror.h` identifies exception type 0x20 as
-  `ROBUST_CHANNEL_PBDMA_ERROR`. A read-only probe of NVIDIA's published PBDMA
-  register offsets currently hits the BAR0 unmapped-register sentinel
-  (`0xBADF1100`), so the specific PBDMA interrupt/method is not yet visible;
-  next work is resolving the accessible Ampere PBDMA register window before
-  changing the GPFIFO or channel setup again.
+  `ROBUST_CHANNEL_PBDMA_ERROR`. The accessible PBDMA0 registers show
+  `GP_GET=GP_PUT=1`, `METHOD0=0`, `DATA0=0xC797`, and `TARGET=0x20000`;
+  PBDMA0 fetched the GR object's SET_OBJECT method, then the RC fault followed.
+  PBDMA1/2 are readable but not associated with this FIFO, and PBDMA3's
+  register window returns the BAR0 unmapped sentinel (`0xBADF1100`). NVIDIA RM
+  reports the graphics engine context size as `0xFB000` and channel hardware
+  state `0` before submission. The inherited GET_ENGINE_CTX_STATE control is
+  rejected as invalid argument, so it is not used further. The GR engine
+  context-valid bit remains clear in PBDMA0's TARGET snapshot; why RM has not
+  established it is still unresolved.
 - OpenGL remains Microsoft GDI Generic/software OpenGL 1.1; Direct3D 9 creation
   still returns 0x8876086A. The existing copy engine is a separate 2D path.
-  Evidence: test_logs/v2.0.0.3-20261108-220056.log (GR allocation succeeds,
-  SET_OBJECT is fetched then faults; both heads and CE remain active; PBDMA
-  register reads return an unmapped sentinel). The
+  Evidence: test_logs/v2.0.0.3-20261108-222012.log (GR allocation succeeds,
+  RM context size query and PBDMA diagnostics; SET_OBJECT is fetched then
+  faults; both heads and CE remain active). The
   previous run, test_logs/v2.0.0.1-20261108-213419.log, verified the published
   RM class-engine response and the channel's allocation path.
 - `NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 ./test/test_full_driver.sh` now
