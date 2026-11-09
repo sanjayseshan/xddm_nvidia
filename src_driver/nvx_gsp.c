@@ -12,6 +12,7 @@
 #include "nvx_rpc.h"
 #include "nvx_seq.h"
 #include "nvx_mmu.h"
+#include "nvx_gr_context.h"
 #include "nvx_openrm_shim.h"
 #include <class/cl0002.h>
 #include <class/cl0090.h>
@@ -22,6 +23,9 @@
 
 #ifndef NVX_ENABLE_GR_CHANNEL_PROBE
 #define NVX_ENABLE_GR_CHANNEL_PROBE 0
+#endif
+#ifndef NVX_ENABLE_GR_SUBMISSION_PROBE
+#define NVX_ENABLE_GR_SUBMISSION_PROBE 0
 #endif
 
 /* ABI checks deliberately target firmware 535, not the current OpenRM ABI. */
@@ -614,6 +618,10 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     NVB06F_CTRL_GET_ENGINE_CTX_SIZE_PARAMS grCtxSize={0};
     NVB06F_CTRL_GET_CHANNEL_HW_STATE_PARAMS grHwState={0};
     NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS *grBufferInfo;
+    NVX_GR_REQUIREMENT grRequirements[NVX_GR_REQUIREMENT_COUNT]={0};
+    NVX_GR_LAYOUT grLayout;
+    ULONG grMaxSubcontexts=0,grHeaderSupported=0;
+    BOOLEAN grRequirementsValid=FALSE,grHeaderInfoValid=FALSE;
     ULONG classCount,classIndex,grClass=0;
     BOOLEAN ampereAFound=FALSE,ampereBFound=FALSE;
     ULONG runlistQuery[124]={0},token=0,runlistBase=0,submitToken=0;
@@ -790,14 +798,62 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
                 (dev->RpcRxRecord+104);
         ULONG i;
         for(i=0;i<NV2080_CTRL_INTERNAL_ENGINE_CONTEXT_PROPERTIES_ENGINE_ID_COUNT;i++) {
+            grRequirements[i].size=reply->engineContextBuffersInfo[0].engine[i].size;
+            grRequirements[i].alignment=reply->engineContextBuffersInfo[0].engine[i].alignment;
             LogStr("NVX [GR]: static buffer index=");LogHex(i);
-            LogStr(" size=");LogHex(reply->engineContextBuffersInfo[0].engine[i].size);
-            LogStr(" alignment=");LogHex(reply->engineContextBuffersInfo[0].engine[i].alignment);
+            LogStr(" size=");LogHex(grRequirements[i].size);
+            LogStr(" alignment=");LogHex(grRequirements[i].alignment);
             LogStr("\n");
         }
+        grRequirementsValid=TRUE;
     } else {
         LogStr("NVX [GR]: static GR context-buffer requirements unavailable.\n");
     }
+    /* NVIDIA's main-context allocation adds one 4KB header per reported
+       subcontext when physical RM advertises per-subcontext headers. */
+    VideoPortZeroMemory(grBufferInfo,
+        sizeof(NV2080_CTRL_INTERNAL_STATIC_KGR_GET_PDB_PROPERTIES_PARAMS));
+    if(NvxGspControl(dev,dev->GspSubdeviceHandle,
+                     NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_PDB_PROPERTIES,
+                     grBufferInfo,
+                     sizeof(NV2080_CTRL_INTERNAL_STATIC_KGR_GET_PDB_PROPERTIES_PARAMS))) {
+        const NV2080_CTRL_INTERNAL_STATIC_KGR_GET_PDB_PROPERTIES_PARAMS *reply=
+            (const NV2080_CTRL_INTERNAL_STATIC_KGR_GET_PDB_PROPERTIES_PARAMS *)(dev->RpcRxRecord+104);
+        grHeaderSupported=reply->pdbTable[0].bPerSubCtxheaderSupported;
+        if(grHeaderSupported<=1) grHeaderInfoValid=TRUE;
+    }
+    if(grHeaderInfoValid&&grHeaderSupported) {
+        _Static_assert(sizeof(NV2080_CTRL_INTERNAL_STATIC_KGR_GET_INFO_PARAMS)
+                       <= sizeof(dev->GrContextInfoParams), "GR info storage");
+        VideoPortZeroMemory(grBufferInfo,sizeof(NV2080_CTRL_INTERNAL_STATIC_KGR_GET_INFO_PARAMS));
+        if(NvxGspControl(dev,dev->GspSubdeviceHandle,
+                         NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_INFO,
+                         grBufferInfo,sizeof(NV2080_CTRL_INTERNAL_STATIC_KGR_GET_INFO_PARAMS))) {
+            const NV2080_CTRL_INTERNAL_STATIC_KGR_GET_INFO_PARAMS *reply=
+                (const NV2080_CTRL_INTERNAL_STATIC_KGR_GET_INFO_PARAMS *)(dev->RpcRxRecord+104);
+            grMaxSubcontexts=reply->engineInfo[0].infoList[NV2080_CTRL_GR_INFO_INDEX_MAX_SUBCONTEXT_COUNT].data;
+        } else grHeaderInfoValid=FALSE;
+    }
+    LogStr("NVX [GR]: per-subcontext headers=");LogHex(grHeaderSupported);
+    LogStr(" maxSubcontexts=");LogHex(grMaxSubcontexts);
+    LogStr(" propertiesValid=");LogHex(grHeaderInfoValid?1:0);LogStr("\n");
+    if(grRequirementsValid&&grHeaderInfoValid&&
+       NvxGrBuildLayout(grRequirements,grMaxSubcontexts,(int)grHeaderSupported,
+                        0x1000000ULL,&grLayout)) {
+        ULONG i;
+        LogStr("NVX [GR]: checked context layout bytes=");LogHex(grLayout.bytes);
+        LogStr(" buffers=");LogHex(grLayout.count);LogStr("\n");
+        for(i=0;i<grLayout.count;i++) {
+            LogStr("NVX [GR]: layout id=");LogHex(grLayout.buffers[i].id);
+            LogStr(" offset=");LogHex(grLayout.buffers[i].offset);
+            LogStr(" size=");LogHex(grLayout.buffers[i].size);
+            LogStr(" align=");LogHex(grLayout.buffers[i].alignment);LogStr("\n");
+        }
+    } else LogStr("NVX [GR]: context layout unavailable or exceeds 16MB; no memory promoted.\n");
+#if !NVX_ENABLE_GR_SUBMISSION_PROBE
+    LogStr("NVX [GR]: layout-only probe; GR submission remains disabled.\n");
+    return FALSE;
+#endif
     /* Query RM's own view of context preparation and channel scheduling before
        attempting any packet. These inherited B06F controls are diagnostic;
        they do not synthesize or overwrite GR context state. */
