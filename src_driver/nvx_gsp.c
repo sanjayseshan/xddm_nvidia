@@ -14,6 +14,7 @@
 #include "nvx_mmu.h"
 #include "nvx_openrm_shim.h"
 #include <class/cl0002.h>
+#include <class/cl0090.h>
 #include <stddef.h>
 #include "bootloader_blob.h"
 #include "booter_load_blob.h"
@@ -625,6 +626,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     const ULONG grHandle=0xc6970001;
     const ULONG tsgHandle=0xa06c0002;
     const ULONG ctxShareHandle=0x90670002;
+    const ULONG grContextHandle=0x90000002;
 
     if(!dev||!dev->GspInitialized||!dev->GspDmaVirtual||!dev->GspScratchGpuVa) {
         LogStr("NVX [GR]: probe preconditions failed; graphics remains disabled.\n");
@@ -710,6 +712,13 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         LogStr("NVX [GR]: synchronized graphics context-share allocation failed.\n");
         return FALSE;
     }
+    /* OpenRM normally creates this internal-only resource from the TSG
+       constructor. Probe explicit GSP-RM allocation to distinguish a missing
+       graphics context from a context-info control limitation. */
+    if(NvxGspAlloc(dev,tsgHandle,grContextHandle,KERNEL_GRAPHICS_CONTEXT,NULL,0))
+        LogStr("NVX [GR]: explicit kernel graphics-context allocation succeeded.\n");
+    else
+        LogStr("NVX [GR]: explicit kernel graphics-context allocation was rejected; continuing probe.\n");
     dev->GspGraphicsTsgHandle=tsgHandle;
     dev->GspGraphicsContextShareHandle=ctxShareHandle;
     chan.hContextShare=ctxShareHandle;
