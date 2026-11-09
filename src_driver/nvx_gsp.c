@@ -1297,10 +1297,11 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     fifo=(volatile ULONG64 *)(scratch+0x9000);
     push=(PULONG)(scratch+0xf000);
     pushVa=dev->GspScratchGpuVa+0xf000;
-    grFence=(volatile ULONG *)((PUCHAR)dev->GspGrContextVirtual+GSP_GR_CONTEXT_BYTES-0xf00);
-    grFenceVa=GSP_GR_CONTEXT_GPU_VA+GSP_GR_CONTEXT_BYTES-0xf00;
-    /* v47 used an address four bytes into this aligned context location.
-       v50 targets the naturally aligned first word and guards its neighbors. */
+    grFence=(volatile ULONG *)(scratch+0xb500);
+    grFenceVa=dev->GspScratchGpuVa+0xb500;
+    /* The GR context VA is promoted, but its external semaphore access remains
+       unverified. Use this already-mapped coherent scratch word to isolate the
+       target mapping from the report-semaphore method itself. */
     grFence[0]=0;grFence[1]=0x13579bdf;grFence[2]=0x2468ace0;
     if(userd[0x88/4]||userd[0x8c/4]) {
         LogStr("NVX [GR]: fresh graphics USERD is not empty; submission skipped.\n");
@@ -1309,7 +1310,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     VideoPortZeroMemory((PVOID)(scratch+0x9000),0x1000);
     VideoPortZeroMemory((PVOID)(scratch+0xf000),0x1000);
     /* v49 proved SET_OBJECT + WAIT_FOR_IDLE is fetched without a fault.
-       Test the report semaphore at its natural 4-byte-aligned context address. */
+       Test release to an aligned, already-mapped shared scratch address. */
     push[0]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|NVC56F_SET_OBJECT;
     push[1]=classEngineId;
     push[2]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|NVC797_WAIT_FOR_IDLE;
