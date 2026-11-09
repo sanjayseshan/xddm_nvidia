@@ -328,6 +328,9 @@ typedef struct _NVX_DEVICE_EXTENSION {
     PVOID GspGrContextVirtual;
     PHYSICAL_ADDRESS GspGrContextPhysical;
     ULONG GspGrContextLength;
+    ULONG GspFaultBufferHandle;
+    ULONG64 GspFaultShadowClientAddress;
+    BOOLEAN GspFaultShadowRegistered;
     BOOLEAN GspGrContextAliasMapped;
     BOOLEAN GspGrContextAliasVerified;
     BOOLEAN GspGrPromotionAccepted;
@@ -456,6 +459,7 @@ BOOLEAN NvxGspSubmitFill(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG
 BOOLEAN NvxGspUpload(PVOID HwDeviceExtension,ULONG64 dstVa,const void *src,ULONG bytes);
 
 VOID NvxGspShutdown(PVOID HwDeviceExtension);
+BOOLEAN NvxGspUnregisterFaultShadow(PNVX_DEVICE_EXTENSION dev);
 int NvxGspSequencerCore(void *context,unsigned int opcode);
 
 #endif /* _NVX_GSP_H_ */

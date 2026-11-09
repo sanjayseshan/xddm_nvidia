@@ -16,6 +16,11 @@
 #include "nvx_openrm_shim.h"
 #include <class/cl0002.h>
 #include <class/cl0090.h>
+#include <class/clc369.h>
+#include <class/clb069.h>
+#include <class/clb069sw.h>
+#include <ctrl/ctrlb069.h>
+#include <ctrl/ctrlc369.h>
 #include <ctrl/ctrl2080/ctrl2080internal.h>
 #include <stddef.h>
 #include "bootloader_blob.h"
@@ -38,6 +43,11 @@
 _Static_assert(sizeof(GspFwWprMeta) == 256, "WPR ABI");
 _Static_assert(offsetof(GspFwWprMeta, verified) == 248, "WPR verified ABI");
 _Static_assert(sizeof(GSP_ARGUMENTS_CACHED) == 80, "535 RM args ABI");
+_Static_assert(sizeof(NV2080_CTRL_INTERNAL_GMMU_REGISTER_CLIENT_SHADOW_FAULT_BUFFER_PARAMS)==24032, "fault registration ABI");
+_Static_assert(offsetof(NVX_DEVICE_EXTENSION,RpcRxRecord)%8==0, "RPC scratch alignment");
+#if NVX_ENABLE_GR_CHANNEL_PROBE
+static VOID NvxGspDumpFaultShadow(PNVX_DEVICE_EXTENSION dev);
+#endif
 _Static_assert(sizeof(LIBOS_MEMORY_REGION_INIT_ARGUMENT) == 32, "LibOS ABI");
 _Static_assert(offsetof(RM_RISCV_UCODE_DESC, MonitorCodeOffset) == 48, "BL ABI");
 _Static_assert(sizeof(VP_DEVICE_DESCRIPTION) == 8, "VideoPort DMA ABI");
@@ -177,6 +187,9 @@ static BOOLEAN NvxGspCall(PNVX_DEVICE_EXTENSION dev,ULONG expected,
                    stop both accelerated queues, and drain the notification
                    so RM teardown and fault queries can still complete. */
                 if(words[14]<32) return FALSE;
+#if NVX_ENABLE_GR_CHANNEL_PROBE
+                NvxGspDumpFaultShadow(dev);
+#endif
                 dev->GspMmuFaultQueued=TRUE;
                 dev->GspChannelFaulted=TRUE;
                 dev->GspGraphicsChannelFaulted=TRUE;
@@ -695,6 +708,70 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
  * the 535 GSP-RM ABI and resource setup on hardware.
  */
 #if NVX_ENABLE_GR_CHANNEL_PROBE
+static BOOLEAN NvxGspSetupFaultBuffer(PNVX_DEVICE_EXTENSION dev,ULONG expectedSize,ULONG classId)
+{
+    NVB069_ALLOCATION_PARAMETERS alloc={0};
+    NVB069_CTRL_FAULTBUFFER_GET_SIZE_PARAMS getSize={0};
+    NVC369_CTRL_MMU_FAULT_BUFFER_REGISTER_NON_REPLAY_BUF_PARAMS reg={0};
+    const NVB069_CTRL_FAULTBUFFER_GET_SIZE_PARAMS *sizeReply;
+    const NVC369_CTRL_MMU_FAULT_BUFFER_REGISTER_NON_REPLAY_BUF_PARAMS *regReply;
+    ULONG handle=0xc1d00030;
+    if(!dev||!expectedSize||!classId||dev->GspFaultBufferHandle) return FALSE;
+    if(!NvxGspAlloc(dev,dev->GspSubdeviceHandle,handle,classId,&alloc,sizeof(alloc))) {
+        LogStr("NVX [GR-FAULT]: NVIDIA fault-buffer object allocation failed class=");
+        LogHex(classId);LogStr("\n");
+        return FALSE;
+    }
+    dev->GspFaultBufferHandle=handle;
+    if(!NvxGspControl(dev,handle,NVB069_CTRL_CMD_FAULTBUFFER_GET_SIZE,&getSize,sizeof(getSize))) {
+        LogStr("NVX [GR-FAULT]: hardware fault-buffer size query failed.\n");
+        return FALSE;
+    }
+    sizeReply=(const NVB069_CTRL_FAULTBUFFER_GET_SIZE_PARAMS *)(dev->RpcRxRecord+104);
+    LogStr("NVX [GR-FAULT]: hardware buffer bytes=");LogHex(sizeReply->faultBufferSize);
+    LogStr(" GSP shadow requirement=");LogHex(expectedSize);LogStr("\n");
+    if(sizeReply->faultBufferSize<expectedSize) return FALSE;
+    if(!NvxGspControl(dev,handle,NVC369_CTRL_CMD_MMU_FAULT_BUFFER_REGISTER_NON_REPLAY_BUF,
+                      &reg,sizeof(reg))) {
+        LogStr("NVX [GR-FAULT]: NVIDIA nonreplayable fault queue registration failed.\n");
+        return FALSE;
+    }
+    regReply=(const NVC369_CTRL_MMU_FAULT_BUFFER_REGISTER_NON_REPLAY_BUF_PARAMS *)(dev->RpcRxRecord+104);
+    dev->GspFaultShadowClientAddress=(ULONG64)(ULONG_PTR)regReply->pShadowBuffer;
+    dev->GspFaultShadowRegistered=TRUE;
+    LogStr("NVX [GR-FAULT]: NVIDIA registered nonreplayable queue buffer=");
+    LogHex((ULONG64)(ULONG_PTR)regReply->pShadowBuffer);LogStr(" context=");LogHex((ULONG64)(ULONG_PTR)regReply->pShadowBufferContext);
+    LogStr(" metadata=");LogHex((ULONG64)(ULONG_PTR)regReply->pShadowBufferMetadata);
+    LogStr(" bytes=");LogHex(regReply->bufferSize);LogStr("\n");
+    return regReply->pShadowBuffer!=0&&regReply->bufferSize==expectedSize;
+}
+
+static VOID NvxGspDumpFaultShadow(PNVX_DEVICE_EXTENSION dev)
+{
+    if(!dev||!dev->GspFaultShadowRegistered) {
+        LogStr("NVX [GR-FAULT]: MMU event arrived without registered client queue.\n");
+        return;
+    }
+    /* This is an OS-client pointer in NVIDIA's UVM implementation. Do not
+       dereference it from XP; the event proves notification only. */
+    LogStr("NVX [GR-FAULT]: event for registered queue client pointer=");
+    LogHex(dev->GspFaultShadowClientAddress);LogStr("; packet not mapped by XP.\n");
+}
+
+BOOLEAN NvxGspUnregisterFaultShadow(PNVX_DEVICE_EXTENSION dev)
+{
+    NVC369_CTRL_MMU_FAULT_BUFFER_UNREGISTER_NON_REPLAY_BUF_PARAMS params;
+    if(!dev||!dev->GspFaultShadowRegistered) return TRUE;
+    params.pShadowBuffer=(NvP64)(ULONG_PTR)dev->GspFaultShadowClientAddress;
+    if(!NvxGspControl(dev,dev->GspFaultBufferHandle,
+        NVC369_CTRL_CMD_MMU_FAULT_BUFFER_UNREGISTER_NON_REPLAY_BUF,
+        &params,sizeof(params))) return FALSE;
+    dev->GspFaultShadowRegistered=FALSE;
+    dev->GspFaultShadowClientAddress=0;
+    LogStr("NVX [GR-FAULT]: NVIDIA nonreplayable queue unregistered.\n");
+    return TRUE;
+}
+
 static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
 {
     NV_CHANNEL_ALLOC_PARAMS chan={0};
@@ -705,7 +782,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     UCHAR schedEnable[2]={1,0};
     ULONG64 scratchPhys,instPhys,userdPhys,methodPhys,fifoGpuVa,scratchEnd;
     NV0080_CTRL_GPU_GET_CLASSLIST_V2_PARAMS supportedClasses={0};
-    ULONG classEngineId=0;
+    ULONG classEngineId=0,faultBufferClass=0;
     NV906F_CTRL_GET_CLASS_ENGINEID_PARAMS classEngineParams={0};
     NVB06F_CTRL_GET_ENGINE_CTX_SIZE_PARAMS grCtxSize={0};
     NVB06F_CTRL_GET_CHANNEL_HW_STATE_PARAMS grHwState={0};
@@ -766,11 +843,16 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         for(classIndex=0;classIndex<classCount;classIndex++) {
             if(reply->classList[classIndex]==AMPERE_A) ampereAFound=TRUE;
             if(reply->classList[classIndex]==AMPERE_B) ampereBFound=TRUE;
+            if(reply->classList[classIndex]==MAXWELL_FAULT_BUFFER_A||
+               reply->classList[classIndex]==MMU_FAULT_BUFFER) {
+                if(reply->classList[classIndex]>faultBufferClass) faultBufferClass=reply->classList[classIndex];
+            }
         }
     }
     LogStr("NVX [GR]: RM advertised class count=");LogHex(classCount);
     LogStr(" AMPERE_A=");LogHex(ampereAFound?1:0);
-    LogStr(" AMPERE_B=");LogHex(ampereBFound?1:0);LogStr("\n");
+    LogStr(" AMPERE_B=");LogHex(ampereBFound?1:0);
+    LogStr(" faultBufferClass=");LogHex(faultBufferClass);LogStr("\n");
     /* GA104 (RTX 3070) advertises AMPERE_B; GA100 exposes AMPERE_A. */
     if(ampereBFound) grClass=AMPERE_B;
     else if(ampereAFound) grClass=AMPERE_A;
@@ -888,7 +970,19 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         LogStr(" metadata=");LogHex(reply->nonReplayableShadowFaultBufferMetadataSize);
         LogStr(" replay bytes=");LogHex(reply->replayableFaultBufferSize);
         LogStr(" metadata=");LogHex(reply->replayableShadowFaultBufferMetadataSize);LogStr("\n");
-    } else LogStr("NVX [GR-FAULT]: static fault-buffer requirements unavailable.\n");
+#if NVX_ENABLE_GR_SUBMISSION_PROBE
+        if(reply->nonReplayableShadowFaultBufferMetadataSize||
+           !NvxGspSetupFaultBuffer(dev,reply->nonReplayableFaultBufferSize,faultBufferClass)) {
+            LogStr("NVX [GR-FAULT]: GR submit probe stopped because fault reporting is unavailable.\n");
+            return FALSE;
+        }
+#endif
+    } else {
+        LogStr("NVX [GR-FAULT]: static fault-buffer requirements unavailable.\n");
+#if NVX_ENABLE_GR_SUBMISSION_PROBE
+        return FALSE;
+#endif
+    }
     /* This is the same physical-RM query used by OpenRM to learn the
        required GR buffer sizes before client RM allocates them. Reuse the
        device-extension storage to avoid a large VideoPort kernel stack frame. */
@@ -1273,6 +1367,11 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     dev->GspGraphicsChannelReady=TRUE;
     LogStr("NVX [GR]: GR semaphore release completed with guards intact; no drawing tested.\n");
     return TRUE;
+}
+#else
+BOOLEAN NvxGspUnregisterFaultShadow(PNVX_DEVICE_EXTENSION dev)
+{
+    return !dev||!dev->GspFaultShadowRegistered;
 }
 #endif
 

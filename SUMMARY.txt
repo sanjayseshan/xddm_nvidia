@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.31: expand fault-buffer RPC transport)
+Updated: November 9, 2026 (v2.0.0.36: probe NVIDIA fault-buffer object)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -23,6 +23,22 @@ Hardware OpenGL roadmap — November 8, 2026:
   and stable dual-head output. Exercise WineD3D only after the ICD works.
 - Stage 4 builds/tests the XP x86 ICD against the same ABI. Stage 5 evaluates
   a Win98 ICD and VxD/VMM shim; XP WGL/XDDM/VideoPort pieces are not portable.
+- Architecture comparison (checked against pinned NVIDIA OpenRM 535.113.01
+  and the NullMoth project): Linux acceleration is several cooperating pieces,
+  not just the open kernel module. NVIDIA RM owns GPU resources and fault
+  buffers; UVM handles GPU virtual memory and faults; DRM/KMS exposes display;
+  Mesa NVK/NAK is a separate userspace Vulkan renderer. Our current XP miniport
+  directly speaks GSP-RM RPCs and implements only selected OS/RM services. It
+  does not yet provide Linux's CPU-RM/UVM object lifecycle or a Vulkan/OpenGL
+  userspace driver, which explains why copying class IDs and packets alone
+  cannot supply a full graphics stack.
+- NullMoth's documented macOS path is Metal plugin -> AIR-to-SPIR-V translator
+  -> Mesa NVK/NAK -> NVIDIA open kernel modules adapted to macOS. OpenGL in
+  that project is normally Apple's GL-on-Metal path; its NVK/Zink OpenGL route
+  is a separate experimental fork. It demonstrates that NVK can sit behind a
+  new OS shim, but its Metal translator and macOS kernel interface do not plug
+  into XP. For XP, a real WGL ICD plus a Mesa/NVK backend and a Windows RM/GPUVA
+  shim would still be required.
 - Do not import NullMoth's macOS-specific code as a dependency. Its README
   marks the plugin/translator/kernel components PolyForm Noncommercial and its
   Mesa NVK patch MIT. Reuse the architecture and upstream Mesa instead. Mesa's
@@ -219,6 +235,23 @@ Hardware OpenGL roadmap — November 8, 2026:
   active and locked, and XP completed the test session after ACPI powerdown.
   GR submission remained disabled; hardware OpenGL is not yet available.
   Evidence: `test_logs/v2.0.0.30-20261109-131220.log`.
+- v2.0.0.32 registered a manual non-replayable shadow queue through the
+  NVIDIA internal GMMU control. Registration returned NV_OK, but the queue
+  remained empty (GET=PUT=0) after the GR MMU-fault event. The miniport has no
+  UVM mapping/handler, so the fault still disabled acceleration and scanout
+  verification failed in that run; the runner tried ACPI then quit QEMU.
+  Evidence: `test_logs/v2.0.0.32-20261109-132458.log`.
+- v2.0.0.33-36 followed NVIDIA's Linux `nvGpuOpsInitFaultInfo` sequence:
+  query GPU class list, allocate its advertised fault-buffer resource, then
+  register non-replayable faults. GA104 advertises `0xC369`, but direct GSP-RM
+  allocation returns `NV_ERR_INVALID_PARAMETER` (`0x3B`) for both the Linux
+  four-byte parameters and a zero-byte attempt, including when parented to the
+  subdevice. The NVIDIA Linux API's CPU-RM layer and object lifecycle are absent
+  from the direct XP RPC client. The probe now stops before GR submission when
+  fault reporting cannot be established. The latest test kept both display
+  heads active/locked and GPU copy verified, and completed ACPI shutdown; it
+  did not verify hardware OpenGL. Evidence:
+  `test_logs/v2.0.0.36-20261109-133604.log`.
 - v2.0.0.31 expands RPC staging to carry the NVIDIA shadow-fault-buffer
   registration request and tests a 24 KB, six-slot message. All host tests
   passed; the XP VM booted, verified CE copy and both display links, and

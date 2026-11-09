@@ -880,6 +880,10 @@ VOID NvxGspShutdown(PVOID HwDeviceExtension) {
         /* Resetting GSP/SEC2 alone does NOT stop a scheduled CE/PBDMA.
            Tear down the RM client and its channels before freeing their
            backing pages. If RM cannot confirm teardown, retain the DMA. */
+        if(devExt->GspFaultShadowRegistered&&!NvxGspUnregisterFaultShadow(devExt)) {
+            LogStr("NVX [GSP]: fault shadow unregister unconfirmed; DMA backing retained.\n");
+            return;
+        }
         if(devExt->GspInitialized&&devExt->GspClientHandle) {
             ULONG release[4]={devExt->GspClientHandle,0,devExt->GspClientHandle,0};
             const ULONG *reply=(const ULONG *)devExt->RpcRxRecord;
@@ -902,6 +906,9 @@ VOID NvxGspShutdown(PVOID HwDeviceExtension) {
 
         /* The GR backing can be GPU-visible; release it only after the same
            confirmed RM teardown and engine halt as the GSP staging buffer. */
+        devExt->GspFaultBufferHandle=0;
+        devExt->GspFaultShadowClientAddress=0;
+        devExt->GspFaultShadowRegistered=FALSE;
         if(devExt->GspGrContextVirtual) {
             VideoPortFreeCommonBuffer(HwDeviceExtension,devExt->GspGrContextLength,
                 devExt->GspGrContextVirtual,devExt->GspGrContextPhysical,FALSE);
