@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.40: pair C369 object and GSP shadow queue)
+Updated: November 9, 2026 (v2.0.0.43: discover GPU fault-register mappings)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -269,6 +269,39 @@ Hardware OpenGL roadmap — November 8, 2026:
   remaining issue to how Linux's client queue is mapped/attached or to the
   underlying GR fault source. Evidence:
   `test_logs/v2.0.0.40-20261109-134249.log`.
+- v2.0.0.41 changed the shadow-buffer common allocation to cached memory to
+  match NVIDIA RM. The queue remained empty; this did not resolve the GR fault.
+  v2.0.0.42 queried B069 READ_GET/READ_PUT after a fault; GSP-RM returned
+  NV_ERR_NOT_SUPPORTED (0x56) for both. Evidence:
+  `test_logs/v2.0.0.41-20261109-134429.log` and
+  `test_logs/v2.0.0.42-20261109-134616.log`.
+- v2.0.0.43 queried B069 GET_REGISTER_MAPPINGS. Unlike READ_GET/READ_PUT,
+  GSP-RM accepted the query and returned non-replay GET/PUT register offsets
+  0x4183008/0x418300C, and replayable offsets 0x4183028/0x418302C. This makes
+  a bounded BAR0 read possible for the next probe. The GR submission still
+  causes a firmware/MMU fault, disables accelerated queues, and leaves display
+  hardware verification unavailable. The VM completed ACPI powerdown.
+  Evidence: `test_logs/v2.0.0.43-20261109-135317.log`.
+
+### Linux and macOS Reference Architecture
+
+NVIDIA's Linux RM does not implement fault handling as a single raw GSP RPC.
+`nv_gpu_ops.c` allocates the C369 resource and calls its control method;
+`kern_gmmu.c` creates separate CPU circular-queue and fault-packet allocations,
+then issues an internal GMMU registration through the physical RM API. The XP
+driver currently reproduces only selected resource/RPC steps, so successful
+internal registration alone does not prove the whole Linux client path. The
+v43 GET_REGISTER_MAPPINGS response is the first direct hardware pointer evidence
+we can use to narrow that difference. Source: NVIDIA's
+[open GPU kernel modules](https://github.com/NVIDIA/open-gpu-kernel-modules).
+
+NullMoth's macOS project is a useful architectural reference, not a drop-in XP
+driver. It runs NVIDIA OpenRM/GSP in kernel extensions, ports Mesa NVK/NAK to
+the macOS NVRM interface, and exposes OpenGL through Apple's GL-on-Metal path.
+For XP, the analogous work is an XDDM-compatible kernel resource/memory layer
+plus a user-mode OpenGL ICD that connects a Mesa backend to it. Mesa NVK expects
+the Nouveau DRM interface on Linux, so these layers still need a substantial
+port/adaptation. See NullMoth's [driver overview](https://github.com/nullmoth/nvidia-macos-driver/blob/main/docs/HOW-IT-WORKS.md).
 - v2.0.0.31 expands RPC staging to carry the NVIDIA shadow-fault-buffer
   registration request and tests a 24 KB, six-slot message. All host tests
   passed; the XP VM booted, verified CE copy and both display links, and

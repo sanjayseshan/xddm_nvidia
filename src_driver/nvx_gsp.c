@@ -737,8 +737,10 @@ static BOOLEAN NvxGspSetupFaultBuffer(PNVX_DEVICE_EXTENSION dev,ULONG expectedSi
     total=NVX_FAULT_SHADOW_PAGE+dataBytes;
     pages=dataBytes/NVX_FAULT_SHADOW_PAGE;
     if(pages>NV2080_CTRL_INTERNAL_GMMU_CLIENT_SHADOW_FAULT_BUFFER_MAX_PAGES) return FALSE;
+    /* Linux RM allocates this queue/data from cached system memory. Match
+       that backing and let VideoPort's DMA adapter provide coherence. */
     dev->GspFaultShadowVirtual=VideoPortAllocateCommonBuffer(dev,dev->DmaAdapter,total,
-        &dev->GspFaultShadowPhysical,FALSE,NULL);
+        &dev->GspFaultShadowPhysical,TRUE,NULL);
     if(!dev->GspFaultShadowVirtual) return FALSE;
     dev->GspFaultShadowLength=total;
     phys=(ULONG64)dev->GspFaultShadowPhysical.QuadPart;
@@ -809,6 +811,55 @@ BOOLEAN NvxGspUnregisterFaultShadow(PNVX_DEVICE_EXTENSION dev)
     dev->GspFaultShadowRegistered=FALSE;
     LogStr("NVX [GR-FAULT]: internal shadow queue unregistered.\n");
     return TRUE;
+}
+
+static VOID NvxGspLogFaultHardwarePointers(PNVX_DEVICE_EXTENSION dev)
+{
+    NVB069_CTRL_FAULTBUFFER_READ_GET_PARAMS get={0};
+    NVB069_CTRL_FAULTBUFFER_READ_PUT_PARAMS put={0};
+    const NVB069_CTRL_FAULTBUFFER_READ_GET_PARAMS *getReply;
+    const NVB069_CTRL_FAULTBUFFER_READ_PUT_PARAMS *putReply;
+    if(!dev||!dev->GspFaultBufferHandle) return;
+    get.faultBufferType=NVB069_CTRL_FAULT_BUFFER_NON_REPLAYABLE;
+    put.faultBufferType=NVB069_CTRL_FAULT_BUFFER_NON_REPLAYABLE;
+    if(NvxGspControl(dev,dev->GspFaultBufferHandle,
+        NVB069_CTRL_CMD_FAULTBUFFER_READ_GET,&get,sizeof(get))) {
+        getReply=(const NVB069_CTRL_FAULTBUFFER_READ_GET_PARAMS *)(dev->RpcRxRecord+104);
+        LogStr("NVX [GR-FAULT]: HW nonreplay GET=");LogHex(getReply->faultBufferGetOffset);LogStr("\n");
+    } else LogStr("NVX [GR-FAULT]: HW nonreplay GET query failed.\n");
+    if(NvxGspControl(dev,dev->GspFaultBufferHandle,
+        NVB069_CTRL_CMD_FAULTBUFFER_READ_PUT,&put,sizeof(put))) {
+        putReply=(const NVB069_CTRL_FAULTBUFFER_READ_PUT_PARAMS *)(dev->RpcRxRecord+104);
+        LogStr("NVX [GR-FAULT]: HW nonreplay PUT=");LogHex(putReply->faultBufferPutOffset);LogStr("\n");
+    } else LogStr("NVX [GR-FAULT]: HW nonreplay PUT query failed.\n");
+}
+
+static VOID NvxGspLogFaultRegisterMappings(PNVX_DEVICE_EXTENSION dev)
+{
+    NVB069_CTRL_CMD_FAULTBUFFER_GET_REGISTER_MAPPINGS_PARAMS params={0};
+    const NVB069_CTRL_CMD_FAULTBUFFER_GET_REGISTER_MAPPINGS_PARAMS *reply;
+    ULONG type;
+    if(!dev||!dev->GspFaultBufferHandle) return;
+    for(type=NVB069_CTRL_FAULT_BUFFER_NON_REPLAYABLE;
+        type<=NVB069_CTRL_FAULT_BUFFER_REPLAYABLE;type++) {
+        VideoPortZeroMemory(&params,sizeof(params));
+        params.faultBufferType=type;
+        if(!NvxGspControl(dev,dev->GspFaultBufferHandle,
+            NVB069_CTRL_CMD_FAULTBUFFER_GET_REGISTER_MAPPINGS,
+            &params,sizeof(params))) {
+            LogStr("NVX [GR-FAULT]: register mappings query failed type=");
+            LogHex(type);LogStr("\n");
+            continue;
+        }
+        reply=(const NVB069_CTRL_CMD_FAULTBUFFER_GET_REGISTER_MAPPINGS_PARAMS *)(dev->RpcRxRecord+104);
+        LogStr("NVX [GR-FAULT]: register mappings type=");LogHex(type);
+        LogStr(" GET=");LogHex((ULONG64)reply->pFaultBufferGet);
+        LogStr(" PUT=");LogHex((ULONG64)reply->pFaultBufferPut);
+        LogStr(" INFO=");LogHex((ULONG64)reply->pFaultBufferInfo);
+        LogStr(" INTR=");LogHex((ULONG64)reply->pPmcIntr);
+        LogStr(" mask=");LogHex(reply->replayableFaultMask);
+        LogStr(" prefetch=");LogHex((ULONG64)reply->pPrefetchCtrl);LogStr("\n");
+    }
 }
 
 static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
@@ -1316,6 +1367,10 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         /* Drain asynchronous firmware diagnostics before judging completion. */
         VideoPortStallExecution(100000);
         grStatusAvailable=NvxGspGetName(dev);
+        if(dev->GspMmuFaultQueued) {
+            NvxGspLogFaultHardwarePointers(dev);
+            NvxGspLogFaultRegisterMappings(dev);
+        }
         if(dev->GspAssertCount!=assertCountBefore) {
             LogStr("NVX [GR]: firmware assertions observed during submission: before=");
             LogHex(assertCountBefore);LogStr(" after=");LogHex(dev->GspAssertCount);LogStr("\n");
