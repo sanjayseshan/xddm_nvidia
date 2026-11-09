@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="2.0.0.18"
+NVX_TEST_VERSION="2.0.0.19"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
@@ -59,8 +59,10 @@ finish() {
             echo "DISPLAY RESULT: No display verification recorded; monitor activation is unverified."
         fi
         grep -E "Miniport Driver|\[SEC2\]|\[GSP\]|\[RM\]|\[GR\]|\[COPY\]|\[FB\]|\[FBMAP\]|\[RESET\]" "$NVX_RUN_LOG" | tail -80 || true
-        if grep -q 'NVX \[GR\]: graphics runlist consumed SET_OBJECT without an RC fault' "$NVX_RUN_LOG"; then
-            echo "GR RESULT: GPU consumed a GR-channel method; no draw was submitted yet."
+        if grep -q 'NVX \[GR\]: firmware assertions observed during submission' "$NVX_RUN_LOG"; then
+            echo "GR RESULT: firmware assertions occurred during the probe; graphics execution is unverified."
+        elif grep -q 'NVX \[GR\]: GPGet advanced without a reported RC fault' "$NVX_RUN_LOG"; then
+            echo "GR RESULT: GPGet advanced; graphics-engine completion and drawing remain unverified."
         elif grep -q 'NVX \[GR\]:' "$NVX_RUN_LOG"; then
             echo "GR RESULT: graphics engine probe ran but did not complete; inspect the GR diagnostics above."
         fi

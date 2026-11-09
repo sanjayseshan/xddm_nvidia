@@ -15,6 +15,7 @@
 #include "nvx_openrm_shim.h"
 #include <class/cl0002.h>
 #include <class/cl0090.h>
+#include <ctrl/ctrl2080/ctrl2080internal.h>
 #include <stddef.h>
 #include "bootloader_blob.h"
 #include "booter_load_blob.h"
@@ -616,7 +617,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     ULONG classCount,classIndex,grClass=0;
     BOOLEAN ampereAFound=FALSE,ampereBFound=FALSE;
     ULONG runlistQuery[124]={0},token=0,runlistBase=0,submitToken=0;
-    ULONG dbcfg,chcfg,enable,wait,chramBase,fault[26]={0};
+    ULONG dbcfg,chcfg,enable,wait,chramBase,fault[26]={0},assertCountBefore;
     ULONG64 pushVa;
     PUCHAR scratch;
     PULONG push;
@@ -773,6 +774,30 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         return FALSE;
     }
     LogStr("NVX [GR]: GR object bound and channel scheduled.\n");
+    /* This is the same physical-RM query used by OpenRM to learn the
+       required GR buffer sizes before client RM allocates them. Reuse the
+       device-extension storage to avoid a large VideoPort kernel stack frame. */
+    _Static_assert(sizeof(NV2080_CTRL_INTERNAL_STATIC_KGR_GET_CONTEXT_BUFFERS_INFO_PARAMS)
+                   <= sizeof(dev->GrContextInfoParams), "GR query storage");
+    VideoPortZeroMemory(grBufferInfo,
+        sizeof(NV2080_CTRL_INTERNAL_STATIC_KGR_GET_CONTEXT_BUFFERS_INFO_PARAMS));
+    if(NvxGspControl(dev,dev->GspSubdeviceHandle,
+                     NV2080_CTRL_CMD_INTERNAL_STATIC_KGR_GET_CONTEXT_BUFFERS_INFO,
+                     grBufferInfo,
+                     sizeof(NV2080_CTRL_INTERNAL_STATIC_KGR_GET_CONTEXT_BUFFERS_INFO_PARAMS))) {
+        const NV2080_CTRL_INTERNAL_STATIC_KGR_GET_CONTEXT_BUFFERS_INFO_PARAMS *reply=
+            (const NV2080_CTRL_INTERNAL_STATIC_KGR_GET_CONTEXT_BUFFERS_INFO_PARAMS *)
+                (dev->RpcRxRecord+104);
+        ULONG i;
+        for(i=0;i<NV2080_CTRL_INTERNAL_ENGINE_CONTEXT_PROPERTIES_ENGINE_ID_COUNT;i++) {
+            LogStr("NVX [GR]: static buffer index=");LogHex(i);
+            LogStr(" size=");LogHex(reply->engineContextBuffersInfo[0].engine[i].size);
+            LogStr(" alignment=");LogHex(reply->engineContextBuffersInfo[0].engine[i].alignment);
+            LogStr("\n");
+        }
+    } else {
+        LogStr("NVX [GR]: static GR context-buffer requirements unavailable.\n");
+    }
     /* Query RM's own view of context preparation and channel scheduling before
        attempting any packet. These inherited B06F controls are diagnostic;
        they do not synthesize or overwrite GR context state. */
@@ -866,6 +891,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         submitToken=((const ULONG *)dev->RpcRxRecord)[26];
     }
     LogStr("NVX [GR]: RM work-submit token=");LogHex(submitToken);LogStr("\n");
+    assertCountBefore=dev->GspAssertCount;
 
     userd=(volatile ULONG *)(scratch+0xb400);
     fifo=(volatile ULONG64 *)(scratch+0x9000);
@@ -914,16 +940,17 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         VideoPortStallExecution(100000);
         NvxGspControl(dev,channelHandle,NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN,
                       &submitToken,sizeof(submitToken));
-        if(!dev->GspGraphicsChannelFaulted) {
+        if(dev->GspAssertCount!=assertCountBefore) {
+            LogStr("NVX [GR]: firmware assertions observed during submission: before=");
+            LogHex(assertCountBefore);LogStr(" after=");LogHex(dev->GspAssertCount);LogStr("\n");
+        } else if(!dev->GspGraphicsChannelFaulted) {
             dev->GspGraphicsCommandVerified=TRUE;
-            LogStr("NVX [GR]: graphics runlist consumed SET_OBJECT + WAIT_FOR_IDLE without an RC fault.\n");
+            LogStr("NVX [GR]: GPGet advanced without a reported RC fault or new firmware assertion; engine completion remains unverified.\n");
         }
     }
-    /* GR context buffers are allocated lazily by RM. Compare the pre-submit
-       query above with a second query after RM has observed the channel's
-       first valid GR methods. A 0x31 before submission may simply mean the
-       local context memdesc has not been materialized yet. */
-    if(dev->GspGraphicsCommandVerified) {
+    /* Compare the pre-submit context query with a second query after GPGet
+       advances. Fetching a pushbuffer alone does not prove GR executed it. */
+    if(userd[0x88/4]==1) {
         VideoPortZeroMemory(grBufferInfo,sizeof(*grBufferInfo));
         grBufferInfo->hUserClient=dev->GspClientHandle;
         grBufferInfo->hChannel=channelHandle;
@@ -950,7 +977,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     }
     if(!dev->GspGraphicsCommandVerified) {
         if(userd[0x88/4]==1)
-            LogStr("NVX [GR]: command fetched but rejected or channel faulted; GPGet=");
+            LogStr("NVX [GR]: command fetched but probe is unverified; GPGet=");
         else
             LogStr("NVX [GR]: command fetch timed out; GPGet=");
         LogHex(userd[0x88/4]);
@@ -993,7 +1020,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     dev->GspGraphicsChannelHandle=channelHandle;
     dev->GspGraphicsObjectHandle=grHandle;
     dev->GspGraphicsChannelReady=TRUE;
-    LogStr("NVX [GR]: Ampere graphics object allocated; safe methods consumed, no draw submitted.\n");
+    LogStr("NVX [GR]: Ampere graphics object allocated; GPGet advanced, no engine completion or draw verified.\n");
     return TRUE;
 }
 #endif
