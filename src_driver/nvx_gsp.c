@@ -1298,7 +1298,9 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     push=(PULONG)(scratch+0xf000);
     pushVa=dev->GspScratchGpuVa+0xf000;
     grFence=(volatile ULONG *)((PUCHAR)dev->GspGrContextVirtual+GSP_GR_CONTEXT_BYTES-0xf00);
-    grFenceVa=GSP_GR_CONTEXT_TEST_GPU_VA+GSP_GR_CONTEXT_BYTES-0xf00+4;
+    /* The test alias is deliberately unprivileged and only validates CE PTEs.
+       GR context buffers and report semaphores must use the privileged GR VA. */
+    grFenceVa=GSP_GR_CONTEXT_GPU_VA+GSP_GR_CONTEXT_BYTES-0xf00+4;
     grFence[0]=0x13579bdf;grFence[1]=0;grFence[2]=0x2468ace0;
     if(userd[0x88/4]||userd[0x8c/4]) {
         LogStr("NVX [GR]: fresh graphics USERD is not empty; submission skipped.\n");

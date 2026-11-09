@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.46: separate shadow queue and packet pages)
+Updated: November 9, 2026 (v2.0.0.47: use the GR context VA for its fence)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -301,6 +301,12 @@ Hardware OpenGL roadmap — November 8, 2026:
   empty and the GR submission still faulted. Teardown now frees both buffers
   with the same cache setting used at allocation. Evidence:
   `test_logs/v2.0.0.46-20261109-140625.log`.
+- v2.0.0.47 changed the GR report semaphore from the deliberately
+  unprivileged CE test alias to the privileged GR context VA. The same MMU
+  notification, empty shadow queue, and two new firmware assertions remained;
+  the fence did not complete. This rules out that address alias as the sole
+  cause. The VM completed ACPI powerdown. Evidence:
+  `test_logs/v2.0.0.47-20261109-141020.log`.
 
 ### Linux and macOS Reference Architecture
 
