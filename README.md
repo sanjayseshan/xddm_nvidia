@@ -1,20 +1,33 @@
-# NVIDIA Modern GPU Display Drivers for Windows XP x64 & Windows 98 SE (Version 2.0.0.1)
+# NVIDIA Modern GPU Display Drivers for Windows XP (x86 & x64) & Windows 98 SE (Version 2.0.0.3)
+
+XP x86 bringup (November 8): the display DLL loading failure was fixed by
+removing mixed `NTOSKRNL.EXE`/`WIN32K.SYS` imports. A second fix commits native
+scanout after primary surface mapping, correcting a missing step in the x86
+path. VM logs now verify a 1080p surface, both display links, and GPU desktop
+operations; visual validation of this latest fix is pending. XP x64 remains
+the previously validated baseline. See `SUMMARY.txt` for test evidence.
+
 
 This repository provides open experimental display drivers bringing modern **NVIDIA Turing, Ampere, and Ada Lovelace GPUs** (GeForce RTX 3070, RTX 3060 Ti, and 200+ GPUs in the upstream database) to legacy Windows operating systems:
-1. **Windows XP Professional x64 Edition** (XDDM 64-bit driver model)
-2. **Windows 98 Second Edition (SE)** (Ring 0 VxD + 16-bit DIB Engine driver model)
+1. **Windows XP Professional 32-bit (x86)** (XDDM 32-bit driver model, NT 5.1)
+2. **Windows XP Professional x64 Edition** (XDDM 64-bit driver model, NT 5.2)
+3. **Windows 98 Second Edition (SE)** (Ring 0 VxD + 16-bit DIB Engine driver model)
 
-### Version 2.0.0.1 Upstream Architecture
-Version 2 integrates NVIDIA's official open-source kernel repository as a git submodule (`open-gpu-kernel-modules`, branch `535.113.01`):
+### Version 2.0.0.3 Architecture & Capabilities
+Version 2 unifies modern NVIDIA GPU support across x86, x64, and Win9x platforms, integrating NVIDIA's official open-source kernel repository as a git submodule (`open-gpu-kernel-modules`, branch `535.113.01`):
+- **Windows XP 32-bit (x86) Support:**
+  - 32-bit XDDM video miniport driver (`nvxmp32.sys`) compiled with stdcall calling conventions.
+  - Runtime hotpatch for 32-bit `videoprt.sys` `VpIsMultiFunctionSupported` (offset `0xed8c`), bypassing legacy PCI multifunction restrictions (Code 10 fix).
+  - Authentic GSP-RM & SEC2 Falcon firmware bootstrap in 32-bit kernel mode with direct native GA104 modesetting.
+  - 32-bit GDI display driver (`nvxdisp32.dll`) adhering to Windows XP SP3 `win32k.sys` DDI driver specifications (`DDI_DRIVER_VERSION_NT4` / `0x20000` handshake).
 - **Upstream OpenRM HAL Shim (`nvx_openrm_shim.c` / `nvx_openrm_shim.h`):** Provides a clean Hardware Abstraction Layer mapping VideoPort (NT/2000/XP 32-bit & 64-bit) and VMM (Win98 SE VxD) to OpenRM primitives (`GPU_REG_RD32`/`GPU_REG_WR32`, memory manipulation, microsecond stalls, and GSP doorbell notifications).
 - **Official OpenRM Message Queue (`msgq.c`):** Directly compiles and links upstream `src/common/shared/msgq/msgq.c` into both 64-bit and 32-bit driver binaries for bidirectional host-GSP messaging queues.
 - **Upstream VBIOS BIT & Falcon Parser:** Uses official OpenRM specifications (`NV_VBIOS_BIT_HEADER_ID`, `NV_VBIOS_BIT_TOKEN_*`, `FALCON_UCODE_TABLE_*`, RSA-3K BCRT30 structures) for authentic VBIOS probing and FWSEC/FRTS booter execution.
 - **Upstream Open-GPU Headers & Shims (`nvx_nvidia_open_shim.h`):** Official NVIDIA SDK classes (`clc57e.h`, `cla06f.h`, `clc36f.h`), controls (`ctrl0073.h`, `ctrl2080.h`, `ctrl5070system.h`), and swref registers (`dev_gsp.h`, `dev_falcon_v4.h`, `dev_disp.h`).
 - **Comprehensive Upstream GPU Table (`nvx_gpu_table.h`):** Auto-generated from official `g_nv_name_released.h` database covering 216 modern GPUs for authentic hardware detection and string reporting.
-- **Cross-Target Architecture (XP x64, Win2K/XP 32-bit, Win98 SE):** Unifies core miniport logic across 64-bit and 32-bit platforms, establishing foundations for future Windows 2000 / XP 32-bit XDDM releases and OpenGL context scaffolding.
 - **Dynamic EDID Detailed Timing & Resolution Generation:** Eliminates hardcoded monitor resolution tables on both Windows XP and Windows 98 SE, reading native monitor modes directly from EDID detailed timing descriptors.
 
-Both operating systems are confirmed driving **dual physical monitors simultaneously** with an extended desktop:
+Both Windows XP x64 and Windows 98 SE are confirmed driving **dual physical monitors simultaneously** with an extended desktop:
 - **Head 0 (Primary):** 1920×1080 @ 32bpp (DisplayPort / HDMI)
 - **Head 1 (Secondary):** 2560×1440 @ 32bpp (DisplayPort)
 
@@ -26,14 +39,14 @@ Both operating systems are confirmed driving **dual physical monitors simultaneo
 
 ## Architectural Comparison
 
-| Feature | Windows XP x64 | Windows 98 SE |
+| Feature | Windows XP (x86 & x64) | Windows 98 SE |
 |---|---|---|
-| **Driver Architecture** | Windows 2000/XP Display Driver Model (XDDM) | Hybrid Ring 0 VxD + 16-bit GDI Display Driver |
-| **Kernel Component** | `nvxmp.sys` (64-bit video miniport driver) | `nvx.vxd` (32-bit LE Virtual Device Driver) |
-| **Display Component** | `nvxdisp.dll` (64-bit GDI display driver) | `nvx.drv` (Head 0) & `nvx2.drv` (Head 1) (16-bit NE) |
+| **Driver Architecture** | Windows 2000/XP Display Driver Model (XDDM 32-bit & 64-bit) | Hybrid Ring 0 VxD + 16-bit GDI Display Driver |
+| **Kernel Component** | `nvxmp.sys` (32-bit / 64-bit video miniport driver) | `nvx.vxd` (32-bit LE Virtual Device Driver) |
+| **Display Component** | `nvxdisp.dll` (32-bit / 64-bit GDI display driver) | `nvx.drv` (Head 0) & `nvx2.drv` (Head 1) (16-bit NE) |
 | **2D Acceleration Engine** | Host software GDI + Ampere Copy Engine DMA fills | Microsoft DIB Engine (`DIBENG.DLL`) + RAM shadow buffer |
 | **Hardware Bootstrap** | Authentic GSP-RM firmware booted via Falcon/SEC2 | Authentic GSP-RM firmware booted via Falcon/SEC2 |
-| **Multi-Monitor Method** | Windows XP XDDM multi-head scanout surfaces | Windows 98 Desktop Virtualization (`attach_sec.exe`) |
+| **Multi-Monitor Method** | Windows XP XDDM multi-head scanout surfaces / DualView | Windows 98 Desktop Virtualization (`attach_sec.exe`) |
 | **Tested Resolutions** | 1920×1080 + 2560×1440 @ 32bpp True Color | 1920×1080 + 2560×1440 @ 32bpp True Color |
 
 ---

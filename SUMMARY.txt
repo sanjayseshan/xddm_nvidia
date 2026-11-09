@@ -1,7 +1,40 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 8, 2026 (v2.0.0.1: open-gpu-kernel-modules unified architecture & upstream shims)
+Updated: November 8, 2026 (v2.0.0.3: Windows XP 32-bit SP3 bringup, win32k display DDI architecture, and dual-architecture packaging)
 
-CONFIRMED v2.0.0.1 UPSTREAM INTEGRATION RESULTS:
+XP x86 investigation — November 8, 2026:
+- The earlier 32-bit log already completed GSP bootstrap and the guarded GPU
+  copy probe. GPU firmware initialization was not the display DLL load blocker.
+- nvxdisp32.dll imported both WIN32K.SYS and NTOSKRNL.EXE (Zw file logging
+  plus CRT memory helpers). XP x86 rejected that image before DrvEnableDriver.
+  Removing the NTOSKRNL imports enabled DDI mode enumeration, a 1920x1080
+  surface, GPU fills, and uploads. The x64 logger remains unchanged.
+- The first corrected-DLL boot still showed extreme stripes (user confirmed).
+  The x86 native-only path attempted scanout before FramebufferVirtual existed,
+  then allocated channels after mapping without committing head/window state.
+- The primary MAP_VIDEO_MEMORY path now commits x86 native scanout after
+  mapping, rejects failed commits, and avoids issuing VBE mode ID zero for
+  modes generated without BIOS enumeration.
+- test_logs/xp32-native-commit.log verifies both heads active and link-locked,
+  completed display notifiers, primary 1920x1080/pitch7680, secondary
+  2560x1440/pitch10240, and desktop GPU uploads. Physical appearance awaits
+  user confirmation; these register checks alone do not prove correct pixels.
+- Normal x86 builds do not use COM1. The test DLL used the opt-in
+  NVX_DISP_SERIAL_DIAGNOSTIC flag. Build validation now rejects mixed imports;
+  local memory helpers keep the x86 display DLL freestanding.
+
+v2.0.0.3 XP 32-BIT BRINGUP & UPSTREAM ADVANCEMENTS:
+- Ported and unified XDDM driver architecture to support Windows XP Professional 32-bit (x86 / NT 5.1):
+  * Miniport (`nvxmp32.sys`): Built with `-m32 -march=i686 -D_WIN32_WINNT=0x0501` and runtime stdcall dispatch calling conventions.
+  * Runtime binary hotpatch for `videoprt.sys` 32-bit `VpIsMultiFunctionSupported` (located at `RealAddDevice + 0x366` / offset `0xed8c` in 32-bit SP3 `videoprt.sys`) bypasses multi-function PCI gating, completely resolving Code 10 `STATUS_UNSUCCESSFUL` (0xC0000001) for multi-function GPUs (Audio + Display) on 32-bit Windows XP.
+  * Direct GA104 native modeset path on 32-bit XP bypasses real-mode INT10 BIOS services that cause HAL faults or corruption on modern UEFI/PCI GPUs.
+  * Authentic firmware bootstrap (FWSEC/FRTS, SEC2 Falcon, and GSP RISC-V) executes cleanly on 32-bit XP with authentic NVIDIA GA104 firmware blobs.
+  * Display Driver (`nvxdisp32.dll`): Disassembled and verified against Windows XP 32-bit SP3 `win32k.sys` (`ldevInitDrivers` at `0xbf8ab322`).
+  * Explicitly configured `DrvEnableDriver` version return `pded->iDriverVersion = DDI_DRIVER_VERSION_NT4` (`0x00020000`) on 32-bit builds, eliminating the "Display Driver written for a previous version of Windows" warning dialog.
+  * Exported undecorated stdcall symbols in `nvxdisp32.def` matching standard Windows XP GDI DDI loader expectations (`DrvEnableDriver`, `DrvEnablePDEV`, `DrvCompletePDEV`, `DrvDisablePDEV`, `DrvGetModes`, etc.).
+  * Disentangled startup automated test execution (`run_accel_test.bat` and Run keys) to ensure normal, unhindered boot to interactive desktop prior to benchmark runs.
+  * Maintained driver version `2.0.0.3` across miniport, display driver, and INF.
+
+CONFIRMED v2.0.0.2 UPSTREAM INTEGRATION RESULTS:
 - Integrated NVIDIA's official `open-gpu-kernel-modules` (tracking 535.113.01) as a git submodule.
 - Created `src_driver/include/nvx_nvidia_open_shim.h` utilizing official NVIDIA SDK headers
   (`clc57e.h`, `cla06f.h`, `clc36f.h`, `ctrl0073.h`, `ctrl0080.h`, `ctrl2080.h`, `ctrl5070system.h`)

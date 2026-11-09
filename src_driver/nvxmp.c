@@ -1567,6 +1567,18 @@ BOOLEAN NTAPI HwVidStartIO(
             if (!devExt->IsSecondaryDisplay) {
                 (void)NvxGspDiscoverScanout(HwDeviceExtension,devExt->CurrentModeIndex);
                 (void)NvxGspInitDisplayChannels(HwDeviceExtension);
+#if !defined(_WIN64) && !defined(__VXDKERNEL__)
+                /* x86 has no BIOS modeset: channel allocation alone leaves the
+                 * boot raster active. Commit the native head/window state only
+                 * now, after the primary mapping prerequisite is satisfied. */
+                if (!NvxNativeSetSecondaryScanout(devExt)) {
+                    LogStr("NVX [NATIVE]: x86 scanout commit failed; rejecting surface mapping.\n");
+                    VideoPortUnmapMemory(HwDeviceExtension, mappedVirtual, 0);
+                    devExt->FramebufferVirtual = NULL;
+                    status = ERROR_DEVICE_NOT_READY;
+                    break;
+                }
+#endif
             } else {
                 PNVX_DEVICE_EXTENSION prim = (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension;
                 if (prim) {

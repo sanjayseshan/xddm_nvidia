@@ -1,0 +1,43 @@
+LIBRARY "nvxdisp.dll"
+
+EXPORTS
+    DrvEnableDriver@12
+    DrvEnableDriver = DrvEnableDriver@12
+    DrvDisableDriver@0
+    DrvDisableDriver = DrvDisableDriver@0
+    DrvEnablePDEV@44
+    DrvEnablePDEV = DrvEnablePDEV@44
+    DrvCompletePDEV@8
+    DrvCompletePDEV = DrvCompletePDEV@8
+    DrvDisablePDEV@4
+    DrvDisablePDEV = DrvDisablePDEV@4
+    DrvEnableSurface@4
+    DrvEnableSurface = DrvEnableSurface@4
+    DrvDisableSurface@4
+    DrvDisableSurface = DrvDisableSurface@4
+    DrvAssertMode@8
+    DrvAssertMode = DrvAssertMode@8
+    DrvGetModes@12
+    DrvGetModes = DrvGetModes@12
+    DrvMovePointer@16
+    DrvMovePointer = DrvMovePointer@16
+    DrvSetPointerShape@40
+    DrvSetPointerShape = DrvSetPointerShape@40
+    DrvDitherColor@16
+    DrvDitherColor = DrvDitherColor@16
+    DrvSetPalette@20
+    DrvSetPalette = DrvSetPalette@20
+    DrvCopyBits@24
+    DrvCopyBits = DrvCopyBits@24
+    DrvBitBlt@44
+    DrvBitBlt = DrvBitBlt@44
+    DrvTextOut@40
+    DrvTextOut = DrvTextOut@40
+    DrvSynchronize@8
+    DrvSynchronize = DrvSynchronize@8
+    DrvDescribePixelFormat@16
+    DrvDescribePixelFormat = DrvDescribePixelFormat@16
+    DrvSetPixelFormat@12
+    DrvSetPixelFormat = DrvSetPixelFormat@12
+    DrvSwapBuffers@8
+    DrvSwapBuffers = DrvSwapBuffers@8

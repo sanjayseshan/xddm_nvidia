@@ -1,6 +1,8 @@
 /* Small, independent file logger for display-DDI startup diagnostics. */
 #include "driver.h"
 
+#ifdef _WIN64
+
 typedef struct _NVX_DISP_UNICODE_STRING {
     USHORT Length;
     USHORT MaximumLength;
@@ -153,3 +155,55 @@ VOID NvxDispCloseLog(VOID)
         g_NvxMpLog = NULL;
     }
 }
+
+#else
+/* XP x86 rejects GDI images that mix WIN32K and NTOSKRNL imports.
+ * Runtime state remains available in the miniport log via diagnostic IOCTLs.
+ * Use the graphics engine debugger interface before a PDEV exists. */
+static VOID NvxDispDebugPrint(PCHAR format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    EngDebugPrint("NVXD", format, args);
+    va_end(args);
+}
+VOID NvxDispLogEvent(ULONG stage, ULONG value0, ULONG value1, ULONG value2)
+{
+    NvxDispDebugPrint("stage=%08lx v0=%08lx v1=%08lx v2=%08lx\n",
+        stage, value0, value1, value2);
+#ifdef NVX_DISP_SERIAL_DIAGNOSTIC
+    {
+        CHAR line[48];
+        ULONG values[4] = {stage, value0, value1, value2};
+        ULONG i, j, poll, len = 5;
+        line[0]='N'; line[1]='V'; line[2]='X'; line[3]='D'; line[4]=' ';
+        for (i=0; i<4; ++i) {
+            for (j=0; j<8; ++j) {
+                ULONG digit=(values[i] >> (28-j*4)) & 15;
+                line[len++]=(CHAR)(digit<10?'0'+digit:'A'+digit-10);
+            }
+            line[len++]=' ';
+        }
+        line[len++]='\r'; line[len++]='\n';
+        for(i=0;i<len;++i) {
+            UCHAR ready=0;
+            for(poll=0;poll<10000;++poll) {
+                __asm__ __volatile__("inb %1, %0" : "=a"(ready) : "Nd"((USHORT)0x3fd));
+                if(ready & 0x20) break;
+            }
+            if(poll==10000 || ready==0xff) break;
+            __asm__ __volatile__("outb %0, %1" : : "a"((UCHAR)line[i]), "Nd"((USHORT)0x3f8));
+        }
+    }
+#endif
+}
+VOID NvxDispFlushMiniportLog(HANDLE hDriver)
+{
+    ULONG returned;
+    NVX_DIAGNOSTIC_TRACE trace = {0,0,0,0};
+    /* The miniport flushes its resident log when processing this IOCTL. */
+    (void)EngDeviceIoControl(hDriver, IOCTL_NVX_DIAGNOSTIC_TRACE,
+        &trace, sizeof(trace), NULL, 0, &returned);
+}
+VOID NvxDispCloseLog(VOID) {}
+#endif
