@@ -1311,14 +1311,14 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     VideoPortZeroMemory((PVOID)(scratch+0xf000),0x1000);
     /* v49 proved SET_OBJECT + WAIT_FOR_IDLE is fetched without a fault.
        v52 uses C797's current A/B/C/D report-semaphore methods. The B method
-       encodes the aligned address as a word offset, unlike the legacy method. */
+       takes the raw low address word, as in Mesa NVK command streams. */
     push[0]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|NVC56F_SET_OBJECT;
     push[1]=classEngineId;
     push[2]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|NVC797_WAIT_FOR_IDLE;
     push[3]=0;
     push[4]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(4U<<16)|NVC797_SET_REPORT_SEMAPHORE_A;
     push[5]=(ULONG)(grFenceVa>>32);
-    push[6]=(ULONG)(grFenceVa>>2);
+    push[6]=(ULONG)grFenceVa;
     push[7]=0x47524631;
     push[8]=DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_OPERATION,_RELEASE)|
             DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_RELEASE,_AFTER_ALL_PRECEEDING_WRITES_COMPLETE)|
