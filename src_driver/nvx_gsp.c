@@ -225,7 +225,7 @@ static BOOLEAN NvxGspControl(PNVX_DEVICE_EXTENSION dev,ULONG object,ULONG cmd,
     ULONG stackPayload[522]={0};
     ULONG *payload=stackPayload;
     const ULONG *words=(const ULONG *)dev->RpcRxRecord;
-    if(bytes>8168) return FALSE;
+    if(bytes>sizeof(dev->RpcControlPayload)-24) return FALSE;
     if(bytes>2064) {
         payload=(ULONG *)dev->RpcControlPayload;
         VideoPortZeroMemory(payload,24+bytes);

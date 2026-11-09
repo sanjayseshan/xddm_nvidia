@@ -37,6 +37,21 @@ int main(void)
                                    largePayload,sizeof(largePayload),&elements));
     }
     {
+        /* The pinned NVIDIA shadow-fault registration has a 24 KB page
+           array; exercise the complete request, not just two fragments. */
+        static uint8_t payload24k[24056], record24k[32768];
+        uint32_t elements, decoded;
+        for(unsigned i=0;i<sizeof(payload24k);i++) payload24k[i]=(uint8_t)(i*31U);
+        assert(NvxEncodeRpcRecord(record24k,sizeof(record24k),76,13,
+                                  payload24k,sizeof(payload24k),&elements));
+        assert(elements==6);
+        for(unsigned i=0;i<sizeof(payload24k);i++) assert(record24k[80+i]==payload24k[i]);
+        assert(NvxDecodeRpcRecord(record24k,sizeof(record24k),&f,&r,&s,&decoded));
+        assert(decoded==6&&f==76&&s==13);
+        assert(!NvxEncodeRpcRecord(record24k,5*4096,76,13,
+                                   payload24k,sizeof(payload24k),&elements));
+    }
+    {
         static uint32_t ring[4*1024],snapshot[2*1024];uint32_t count;
         ring[3*1024+10]=2;ring[3*1024+1023]=0x1234;ring[0]=0x5678;
         assert(NvxGatherRpc((uint8_t *)ring,sizeof(ring),4,3,0,(uint8_t *)snapshot,sizeof(snapshot),&count)==0);
