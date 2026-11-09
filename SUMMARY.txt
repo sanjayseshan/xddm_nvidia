@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.8: GR context query results from XP x64)
+Updated: November 9, 2026 (v2.0.0.12: RM-managed GR channel probe)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -28,33 +28,39 @@ Hardware OpenGL roadmap — November 8, 2026:
   Mesa NVK patch MIT. Reuse the architecture and upstream Mesa instead. Mesa's
   current NVK docs state Linux 6.6 minimum; XP support is unproven and must be
   established by the XP shim/build, not inferred from macOS success.
-- Current state: the GA104 RM advertises AMPERE_B. The isolated GR probe now
-  creates a dedicated GR-engine TSG, context share, channel, and graphics
-  object using NVIDIA's published allocation structures. The channel's
-  RAMFC correctly aliases the start of its instance block, matching the
-  OpenRM layout and the known-good CE channel. This corrected layout and the
-  explicit GR TSG did not set RAMFC_TARGET.ENG_CTX_VALID; its value remains
-  0x20000 (CE context valid only). GSP-RM reports a GR context size of 0xFB000
-  and channel HW state 0 before submission.
-- The guarded SET_OBJECT packet advances GP_GET to 1, but the channel reports
-  RC fault 0x20 (ROBUST_CHANNEL_PBDMA_ERROR). PBDMA0 reports TARGET=0x20000,
-  METHOD0=0, DATA0=0xC797, and GP_GET=GP_PUT=1. No draw, shader, or GPU
-  render/readback has succeeded. OpenGL remains Microsoft GDI Generic/software
-  OpenGL 1.1; Direct3D 9 still returns 0x8876086A. The CE copy path is separate
-  and continues to pass its guarded VRAM roundtrip.
-- Latest XP log: `test_logs/v2.0.0.7-20261109-111904.log` shows GSP-RM init,
-  verified CE copy, active/locked dual heads, and GPU solid-fill submissions.
-  OpenGL is still Microsoft GDI Generic 1.1; Direct3D 9 creation returns
-  0x8876086A. The GR probe ran: GSP-RM allocated the graphics channel/object,
-  but left RAMFC_TARGET at 0x20000 (CE context valid only). The guarded
-  SET_OBJECT was fetched and then faulted with ROBUST_CHANNEL_PBDMA_ERROR
-  (0x20). GET_CTX_BUFFER_INFO returns NV_ERR_INVALID_OBJECT (0x31) when given
-  the channel handle; the TSG retry returns NV_ERR_INVALID_CHANNEL (0x21).
-  This confirms the large RPC was transported and RM reached the control, but
-  its GR channel/context lookup does not resolve. The next step is to compare
-  the channel/context-share allocation with OpenRM's GSP channel path and
-  identify why RM does not associate this GR channel with a KernelGraphicsContext.
-  No drawing work was submitted.
+- Current state: the GA104 RM advertises AMPERE_B. v2.0.0.12 successfully
+  allocates an error context-DMA, graphics channel, and Ampere graphics object;
+  bind and schedule controls pass. The raw GSP RPC needs the physical
+  instance/RAMFC/USERD/method descriptors, so v2.0.0.12 combines those with
+  explicit RM error-DMA and USERD memory handles, following the low-level
+  GSP requirements and NVK's host-RM resource recipe.
+- The GR context query still returns NV_ERR_INVALID_OBJECT (0x31), GP_GET stays
+  at zero, and the guarded SET_OBJECT never executes. The sampled RAMFC USERD
+  fields remain zero; no GPU draw or readback has succeeded. OpenGL remains
+  Microsoft GDI Generic/software 1.1; Direct3D 9 returns 0x8876086A. CE copy
+  and both display heads remain verified.
+- v2.0.0.10 built and booted; RM rejected the error context-DMA with
+  NV_ERR_INVALID_LIMIT because its inclusive limit is relative to the supplied
+  offset. CE copy and both display heads passed, then the script sent ACPI
+  powerdown. Evidence: `test_logs/v2.0.0.10-20261109-115721.log`.
+- v2.0.0.11 corrected that relative limit and allocated the context-DMA, but
+  channel allocation returned NV_ERR_INVALID_ARGUMENT. The pinned OpenRM GSP
+  path requires instance/RAMFC/USERD/method-buffer descriptors in the raw RPC,
+  unlike NVK's host-RM API call. v2.0.0.12 restores those descriptors while
+  retaining the error-DMA and USERD handles. Evidence:
+  `test_logs/v2.0.0.11-20261109-120007.log`.
+- v2.0.0.12 allocated the channel and GR object and scheduled the channel, but
+  context lookup still returned NV_ERR_INVALID_OBJECT and GR GP_GET remained
+  zero. Both heads and the CE roundtrip passed, and XP received ACPI powerdown.
+  Evidence: `test_logs/v2.0.0.12-20261109-120339.log`.
+- Latest confirmed XP log before v2.0.0.11: `test_logs/v2.0.0.9-20261109-114617.log`.
+  GSP-RM init, verified CE copy, and active/locked dual heads passed. The
+  direct GR channel allocated and fetched SET_OBJECT, then faulted with
+  ROBUST_CHANNEL_PBDMA_ERROR (0x20); GET_CTX_BUFFER_INFO returned
+  NV_ERR_INVALID_OBJECT (0x31). The v2.0.0.10 probe tests whether RM-managed
+  channel buffers plus explicit USERD/error-DMA handles resolve that failure.
+  v2.0.0.10 exposed and v2.0.0.11 corrects an invalid relative limit. No GR drawing has succeeded; OpenGL
+  remains Microsoft GDI Generic 1.1 and Direct3D 9 returns 0x8876086A.
 - v2.0.0.8 completed the XP test suite and sent ACPI powerdown. Both display
   heads were active and locked, and the CE copy test passed. OpenGL remains
   Microsoft GDI Generic 1.1 and D3D9 returns 0x8876086A. The 2D test reports

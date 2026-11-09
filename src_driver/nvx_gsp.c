@@ -13,6 +13,7 @@
 #include "nvx_seq.h"
 #include "nvx_mmu.h"
 #include "nvx_openrm_shim.h"
+#include <class/cl0002.h>
 #include <stddef.h>
 #include "bootloader_blob.h"
 #include "booter_load_blob.h"
@@ -599,11 +600,10 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
 static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
 {
     NV_CHANNEL_ALLOC_PARAMS chan={0};
-    NV_CHANNEL_GROUP_ALLOCATION_PARAMETERS tsg={0};
-    NV_CTXSHARE_ALLOCATION_PARAMETERS ctxShare={0};
+    NV_CONTEXT_DMA_ALLOCATION_PARAMS errorDma={0};
     ULONG bindEngine=NV2080_ENGINE_TYPE_GRAPHICS;
     UCHAR schedEnable[2]={1,0};
-    ULONG64 scratchPhys,instPhys,ramfcPhys,userdPhys,methodPhys,fifoGpuVa,scratchEnd;
+    ULONG64 scratchPhys,instPhys,userdPhys,methodPhys,fifoGpuVa,scratchEnd;
     NV0080_CTRL_GPU_GET_CLASSLIST_V2_PARAMS supportedClasses={0};
     ULONG classEngineId=0;
     NV906F_CTRL_GET_CLASS_ENGINEID_PARAMS classEngineParams={0};
@@ -619,8 +619,6 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     PULONG push;
     volatile ULONG *userd;
     volatile ULONG64 *fifo;
-    const ULONG tsgHandle=0xa06c0002;
-    const ULONG ctxShareHandle=0x90670002;
     const ULONG channelHandle=0xc56f0002;
     const ULONG grHandle=0xc6970001;
 
@@ -631,10 +629,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     grBufferInfo=&dev->GrContextInfoParams;
     scratchPhys=(ULONG64)dev->GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET;
     instPhys=scratchPhys+0xa000;
-    /* RAMFC is the leading region of the instance block; OpenRM's channel
-       path and our known-good CE channel both describe it at instPhys. */
-    ramfcPhys=instPhys;
-    userdPhys=scratchPhys+0xb400; /* USERD index 2 */
+    userdPhys=scratchPhys+0xb400;
     methodPhys=scratchPhys+0xc000;
     fifoGpuVa=dev->GspScratchGpuVa+0x9000;
     scratchEnd=scratchPhys+GSP_SCRATCH_SIZE;
@@ -674,29 +669,36 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         return FALSE;
     }
 
-    LogStr("NVX [GR]: creating isolated GR-engine TSG/context-share/channel.\n");
-    /* Keep GR's channel group and context share separate from the working CE
-       path. RM uses the TSG engine type to select the engine context. */
-    tsg.hVASpace=dev->GspVaSpaceHandle;
-    tsg.engineType=NV2080_ENGINE_TYPE_GRAPHICS;
-    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,tsgHandle,0xa06c,&tsg,sizeof(tsg))) {
-        LogStr("NVX [GR]: graphics channel group allocation failed.\n");
+    LogStr("NVX [GR]: allocating GR channel with RM-owned context resources.\n");
+    /* Follow NVK's NVRM channel setup: allocate a real context-DMA error
+       notifier, provide USERD by RM memory handle, and let RM allocate/manage
+       instance/RAMFC/method buffers. Supplying physical descriptors here
+       bypasses the normal RM ownership path and left GR without a context. */
+    errorDma.flags=DRF_DEF(OS03,_FLAGS,_MAPPING,_KERNEL) |
+                   DRF_DEF(OS03,_FLAGS,_HASH_TABLE,_DISABLE);
+    errorDma.hMemory=dev->GspScratchMemoryHandle;
+    errorDma.offset=0xe000;
+    /* limit is an inclusive length relative to offset, not an absolute end. */
+    errorDma.limit=0xfff;
+    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,0x00020003,
+                    NV01_CONTEXT_DMA,&errorDma,sizeof(errorDma))) {
+        LogStr("NVX [GR]: error notifier context-DMA allocation failed.\n");
         return FALSE;
     }
-    ctxShare.hVASpace=dev->GspVaSpaceHandle;
-    ctxShare.flags=NV_CTXSHARE_ALLOCATION_FLAGS_SUBCONTEXT_SYNC;
-    ctxShare.subctxId=0;
-    if(!NvxGspAlloc(dev,tsgHandle,ctxShareHandle,0x9067,&ctxShare,sizeof(ctxShare))) {
-        LogStr("NVX [GR]: graphics context-share allocation failed.\n");
-        return FALSE;
-    }
+    LogStr("NVX [GR]: RM error notifier context-DMA allocated.\n");
+
     chan.gpFifoOffset=fifoGpuVa;
     chan.gpFifoEntries=256;
-    chan.flags=0x00200220; /* privileged, fixed USERD page 2, slot 2 */
-    chan.hContextShare=ctxShareHandle;
-    chan.hVASpace=0; /* Context-share owns the channel VASpace. */
+    chan.flags=0x00200220; /* privileged, fixed USERD page, index 2 */
+    chan.hContextShare=0;
+    chan.hVASpace=dev->GspVaSpaceHandle;
     chan.engineType=NV2080_ENGINE_TYPE_GRAPHICS;
     chan.subDeviceId=0;
+    chan.hObjectError=0x00020003;
+    chan.hUserdMemory[0]=dev->GspScratchMemoryHandle;
+    chan.userdOffset[0]=0xb400;
+    /* Unlike NVK's host-RM API path, this direct GSP-RM RPC must carry the
+       physical descriptors consumed by _kchannelDescribeMemDescsFromParams. */
     chan.instanceMem.base=instPhys;
     chan.instanceMem.size=0x1000;
     chan.instanceMem.addressSpace=1; /* ADDR_SYSMEM */
@@ -705,7 +707,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     chan.userdMem.size=0x200;
     chan.userdMem.addressSpace=1;
     chan.userdMem.cacheAttrib=0;
-    chan.ramfcMem.base=ramfcPhys;
+    chan.ramfcMem.base=instPhys;
     chan.ramfcMem.size=0x200;
     chan.ramfcMem.addressSpace=1;
     chan.ramfcMem.cacheAttrib=0;
@@ -713,15 +715,13 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     chan.mthdbufMem.size=0x2000;
     chan.mthdbufMem.addressSpace=1;
     chan.mthdbufMem.cacheAttrib=0;
-    chan.internalFlags=0x15;
 
-    if(!NvxGspAlloc(dev,tsgHandle,channelHandle,AMPERE_CHANNEL_GPFIFO_A,&chan,sizeof(chan))) {
+    if(!NvxGspAlloc(dev,dev->GspDeviceHandle,channelHandle,AMPERE_CHANNEL_GPFIFO_A,&chan,sizeof(chan))) {
         LogStr("NVX [GR]: graphics GPFIFO channel allocation failed.\n");
         return FALSE;
     }
     scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET;
-    LogStr("NVX [GR]: RAMFC_TARGET after channel allocation=");
-    LogHex(*(volatile ULONG *)(scratch+0xa000+NVX_RAMFC_TARGET_OFFSET));LogStr("\n");
+    LogStr("NVX [GR]: channel allocated with RM-owned context memory and USERD handle.\n");
     /* Create the GR object before binding/scheduling the runlist, matching
        OpenRM's kernel_graphics bring-up order. This lets RM attach its GR
        engine context before the channel becomes runnable. */
@@ -738,8 +738,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         LogStr("NVX [GR]: graphics channel scheduling failed.\n");
         return FALSE;
     }
-    LogStr("NVX [GR]: RAMFC_TARGET after GR object/bind/schedule=");
-    LogHex(*(volatile ULONG *)(scratch+0xa000+NVX_RAMFC_TARGET_OFFSET));LogStr("\n");
+    LogStr("NVX [GR]: GR object bound and channel scheduled.\n");
     /* Query RM's own view of context preparation and channel scheduling before
        attempting any packet. These inherited B06F controls are diagnostic;
        they do not synthesize or overwrite GR context state. */
@@ -763,36 +762,28 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     /* The size-only control lacks a client handle and is rejected by the
        firmware resource namespace. Use OpenRM's full info query, which takes
        both the owning client and channel and returns actual buffer metadata. */
-    {
-        ULONG ctxTargets[2]={channelHandle,tsgHandle};
-        ULONG targetIndex;
-        BOOLEAN ctxInfoFound=FALSE;
-        for(targetIndex=0;targetIndex<2&&!ctxInfoFound;targetIndex++) {
-            VideoPortZeroMemory(grBufferInfo,sizeof(*grBufferInfo));
-            grBufferInfo->hUserClient=dev->GspClientHandle;
-            grBufferInfo->hChannel=ctxTargets[targetIndex];
-            LogStr("NVX [GR]: querying context buffers for userClient=");
-            LogHex(grBufferInfo->hUserClient);LogStr(" channelOrTsg=");
-            LogHex(grBufferInfo->hChannel);LogStr("\n");
-            if(NvxGspControl(dev,dev->GspSubdeviceHandle,NV2080_CTRL_CMD_GR_GET_CTX_BUFFER_INFO,
-                             grBufferInfo,sizeof(*grBufferInfo))) {
-                const NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS *reply=
-                    (const NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS *)(dev->RpcRxRecord+104);
-                ULONG infoIndex,infoCount=reply->bufferCount;
-                if(infoCount>NV2080_CTRL_GR_MAX_CTX_BUFFER_COUNT)
-                    infoCount=NV2080_CTRL_GR_MAX_CTX_BUFFER_COUNT;
-                LogStr("NVX [GR]: RM context-buffer count=");LogHex(reply->bufferCount);LogStr("\n");
-                for(infoIndex=0;infoIndex<infoCount&&infoIndex<12;infoIndex++) {
-                    LogStr("NVX [GR]: ctxbuf index=");LogHex(infoIndex);
-                    LogStr(" type=");LogHex(reply->ctxBufferInfo[infoIndex].bufferType);
-                    LogStr(" size=");LogHex((ULONG)reply->ctxBufferInfo[infoIndex].size);
-                    LogStr(" aperture=");LogHex(reply->ctxBufferInfo[infoIndex].aperture);LogStr("\n");
-                }
-                ctxInfoFound=TRUE;
-            }
+    VideoPortZeroMemory(grBufferInfo,sizeof(*grBufferInfo));
+    grBufferInfo->hUserClient=dev->GspClientHandle;
+    grBufferInfo->hChannel=channelHandle;
+    LogStr("NVX [GR]: querying context buffers for userClient=");
+    LogHex(grBufferInfo->hUserClient);LogStr(" channel=");
+    LogHex(grBufferInfo->hChannel);LogStr("\n");
+    if(NvxGspControl(dev,dev->GspSubdeviceHandle,NV2080_CTRL_CMD_GR_GET_CTX_BUFFER_INFO,
+                     grBufferInfo,sizeof(*grBufferInfo))) {
+        const NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS *reply=
+            (const NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS *)(dev->RpcRxRecord+104);
+        ULONG infoIndex,infoCount=reply->bufferCount;
+        if(infoCount>NV2080_CTRL_GR_MAX_CTX_BUFFER_COUNT)
+            infoCount=NV2080_CTRL_GR_MAX_CTX_BUFFER_COUNT;
+        LogStr("NVX [GR]: RM context-buffer count=");LogHex(reply->bufferCount);LogStr("\n");
+        for(infoIndex=0;infoIndex<infoCount&&infoIndex<12;infoIndex++) {
+            LogStr("NVX [GR]: ctxbuf index=");LogHex(infoIndex);
+            LogStr(" type=");LogHex(reply->ctxBufferInfo[infoIndex].bufferType);
+            LogStr(" size=");LogHex((ULONG)reply->ctxBufferInfo[infoIndex].size);
+            LogStr(" aperture=");LogHex(reply->ctxBufferInfo[infoIndex].aperture);LogStr("\n");
         }
-        if(!ctxInfoFound)
-            LogStr("NVX [GR]: RM context-buffer info query unavailable for channel and TSG.\n");
+    } else {
+        LogStr("NVX [GR]: RM context-buffer lookup failed for direct graphics channel.\n");
     }
 
     /* SET_OBJECT's payload is the RM-encoded classEngineID, not the object
@@ -842,7 +833,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     }
     LogStr("NVX [GR]: RM work-submit token=");LogHex(submitToken);LogStr("\n");
 
-    userd=(volatile ULONG *)(scratch+0xb400);
+    userd=(volatile ULONG *)(scratch+0xb000);
     fifo=(volatile ULONG64 *)(scratch+0x9000);
     push=(PULONG)(scratch+0xf000);
     pushVa=dev->GspScratchGpuVa+0xf000;
