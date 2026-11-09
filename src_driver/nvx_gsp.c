@@ -708,14 +708,16 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     NVX_GR_LAYOUT grLayout;
     ULONG grMaxSubcontexts=0,grHeaderSupported=0;
     BOOLEAN grRequirementsValid=FALSE,grHeaderInfoValid=FALSE;
+    BOOLEAN grStatusAvailable=FALSE;
     ULONG classCount,classIndex,grClass=0;
     BOOLEAN ampereAFound=FALSE,ampereBFound=FALSE;
-    ULONG runlistQuery[124]={0},token=0,runlistBase=0,submitToken=0;
+    ULONG runlistQuery[124]={0},token=0,runlistBase=0;
     ULONG dbcfg,chcfg,enable,wait,chramBase,fault[26]={0},assertCountBefore;
-    ULONG64 pushVa;
+    ULONG64 pushVa,grFenceVa;
     PUCHAR scratch;
     PULONG push;
     volatile ULONG *userd;
+    volatile ULONG *grFence;
     volatile ULONG64 *fifo;
     const ULONG channelHandle=0xc56f0002;
     const ULONG grHandle=0xc6970001;
@@ -1005,6 +1007,12 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
 #if !NVX_ENABLE_GR_SUBMISSION_PROBE
     LogStr("NVX [GR]: layout-only probe; GR submission remains disabled.\n");
     return FALSE;
+#else
+    if(!dev->GspGrPromotionAccepted||!dev->GspGrContextAliasVerified||
+       dev->GspMmuFaultQueued) {
+        LogStr("NVX [GR]: context promotion or backing unverified; no GR submission.\n");
+        return FALSE;
+    }
 #endif
     /* Query RM's own view of context preparation and channel scheduling before
        attempting any packet. These inherited B06F controls are diagnostic;
@@ -1094,30 +1102,38 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         LogStr("NVX [GR]: runlist doorbell configuration invalid.\n");
         return FALSE;
     }
-    if(NvxGspControl(dev,channelHandle,NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN,
-                     &submitToken,sizeof(submitToken))) {
-        submitToken=((const ULONG *)dev->RpcRxRecord)[26];
-    }
-    LogStr("NVX [GR]: RM work-submit token=");LogHex(submitToken);LogStr("\n");
+    /* This GSP path rejects GET_WORK_SUBMIT_TOKEN. Use the same isolated
+       internal runlist doorbell as the earlier probe, and drain notifications
+       with a read-only name query instead of the rejected control. */
+    if(!NvxGspGetName(dev)) return FALSE;
     assertCountBefore=dev->GspAssertCount;
 
     userd=(volatile ULONG *)(scratch+0xb400);
     fifo=(volatile ULONG64 *)(scratch+0x9000);
     push=(PULONG)(scratch+0xf000);
     pushVa=dev->GspScratchGpuVa+0xf000;
+    grFence=(volatile ULONG *)((PUCHAR)dev->GspGrContextVirtual+GSP_GR_CONTEXT_BYTES-0xf00);
+    grFenceVa=GSP_GR_CONTEXT_TEST_GPU_VA+GSP_GR_CONTEXT_BYTES-0xf00+4;
+    grFence[0]=0x13579bdf;grFence[1]=0;grFence[2]=0x2468ace0;
     if(userd[0x88/4]||userd[0x8c/4]) {
         LogStr("NVX [GR]: fresh graphics USERD is not empty; submission skipped.\n");
         return FALSE;
     }
     VideoPortZeroMemory((PVOID)(scratch+0x9000),0x1000);
     VideoPortZeroMemory((PVOID)(scratch+0xf000),0x1000);
-    /* Use the Ampere GPFIFO method header and RM subchannel (0). The former
-       CE-derived packet selected subchannel 4, which GR rejects with RC 0x20. */
+    /* A GR report semaphore gives an observable engine-side completion;
+       GPGet alone only proves that the PBDMA fetched the FIFO entry. */
     push[0]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|NVC56F_SET_OBJECT;
     push[1]=classEngineId;
     push[2]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|NVC797_WAIT_FOR_IDLE;
-    push[3]=0; /* WAIT_FOR_IDLE has no side effects; verify GR method dispatch. */
-    fifo[0]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|(4ULL<<42);
+    push[3]=0;
+    push[4]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(5U<<16)|NVC797_SET_REPORT_SEMAPHORE_PAYLOAD_LOWER;
+    push[5]=0x47524631;push[6]=0;
+    push[7]=(ULONG)grFenceVa;push[8]=(ULONG)(grFenceVa>>32);
+    push[9]=DRF_DEF(C797,_REPORT_SEMAPHORE_EXECUTE,_OPERATION,_RELEASE)|
+            DRF_DEF(C797,_REPORT_SEMAPHORE_EXECUTE,_PIPELINE_LOCATION,_ALL)|
+            DRF_DEF(C797,_REPORT_SEMAPHORE_EXECUTE,_STRUCTURE_SIZE,_SEMAPHORE_ONE_WORD);
+    fifo[0]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|(10ULL<<42);
     __sync_synchronize();
     userd[0x8c/4]=1;
     __sync_synchronize();
@@ -1125,35 +1141,35 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
        exposes that graphics channel in CHRAM slot 2; ring that channel's
        doorbell rather than borrowing channel 1 (the independent CE channel).
        Keep RM's opaque token authoritative whenever it supplies one. */
-    token=submitToken?submitToken:((dbcfg&0xffff0000U)|2U);
+    token=(dbcfg&0xffff0000U)|2U;
     if(dev->Bar0Length>=0x30094)
         VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),token);
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x90),2);
     LogStr("NVX [GR]: rang channel doorbell token=");LogHex(token);LogStr(" chid=0x2\n");
-    LogStr("NVX [GR]: submitted SET_OBJECT + WAIT_FOR_IDLE; waiting for GR GPGet.\n");
+    LogStr("NVX [GR]: submitted SET_OBJECT, WAIT_FOR_IDLE and GR semaphore release.\n");
     for(wait=0;wait<100000;wait++) {
-        if(userd[0x88/4]==1) {
+        if(grFence[1]==0x47524631) {
             break;
         }
         if(wait&&!(wait%10000)) {
             LogStr("NVX [GR]: waiting seconds=");LogHex(wait/10000);
             LogStr(" GPGet=");LogHex(userd[0x88/4]);
-            LogStr(" GPPut=");LogHex(userd[0x8c/4]);LogStr("\n");
+            LogStr(" GPPut=");LogHex(userd[0x8c/4]);
+            LogStr(" fence=");LogHex(grFence[1]);LogStr("\n");
         }
         VideoPortStallExecution(100);
     }
-    if(userd[0x88/4]==1) {
-        /* Let FECS report a rejected object bind, then consume the event via
-           a benign RPC before advertising the GR channel as healthy. */
+    if(userd[0x88/4]==1||grFence[1]==0x47524631) {
+        /* Drain asynchronous firmware diagnostics before judging completion. */
         VideoPortStallExecution(100000);
-        NvxGspControl(dev,channelHandle,NVC36F_CTRL_CMD_GPFIFO_GET_WORK_SUBMIT_TOKEN,
-                      &submitToken,sizeof(submitToken));
+        grStatusAvailable=NvxGspGetName(dev);
         if(dev->GspAssertCount!=assertCountBefore) {
             LogStr("NVX [GR]: firmware assertions observed during submission: before=");
             LogHex(assertCountBefore);LogStr(" after=");LogHex(dev->GspAssertCount);LogStr("\n");
-        } else if(!dev->GspGraphicsChannelFaulted) {
+        } else if(grStatusAvailable&&!dev->GspGraphicsChannelFaulted&&!dev->GspMmuFaultQueued&&
+                  userd[0x88/4]==1&&grFence[1]==0x47524631&&
+                  grFence[0]==0x13579bdf&&grFence[2]==0x2468ace0) {
             dev->GspGraphicsCommandVerified=TRUE;
-            LogStr("NVX [GR]: GPGet advanced without a reported RC fault or new firmware assertion; engine completion remains unverified.\n");
         }
     }
     /* Compare the pre-submit context query with a second query after GPGet
@@ -1183,13 +1199,17 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
             LogStr("NVX [GR]: post-submit context-buffer lookup still failed.\n");
         }
     }
+    if(dev->GspGraphicsChannelFaulted||dev->GspMmuFaultQueued||
+       dev->GspAssertCount!=assertCountBefore)
+        dev->GspGraphicsCommandVerified=FALSE;
     if(!dev->GspGraphicsCommandVerified) {
         if(userd[0x88/4]==1)
             LogStr("NVX [GR]: command fetched but probe is unverified; GPGet=");
         else
             LogStr("NVX [GR]: command fetch timed out; GPGet=");
         LogHex(userd[0x88/4]);
-        LogStr(" GPPut=");LogHex(userd[0x8c/4]);LogStr("\n");
+        LogStr(" GPPut=");LogHex(userd[0x8c/4]);
+        LogStr(" fence=");LogHex(grFence[1]);LogStr("\n");
         chramBase=chcfg&0xfffffff0U;
         if(chramBase&&chramBase<=dev->Bar0Length-16) {
             LogStr("NVX [GR]: CHRAM slots=");
@@ -1220,6 +1240,10 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
             LogStr("NVX [GR]: MMU fault addrHi=");LogHex(reply[26]);
             LogStr(" addrLo=");LogHex(reply[27]);LogStr(" type=");LogHex(reply[28]);LogStr("\n");
         } else LogStr("NVX [GR]: MMU fault info unavailable.\n");
+        schedEnable[0]=0;
+        if(!NvxGspControl(dev,channelHandle,NVA06F_CTRL_CMD_GPFIFO_SCHEDULE,
+                          schedEnable,sizeof(schedEnable)))
+            LogStr("NVX [GR]: failed to confirm channel unschedule; backing retained.\n");
         return FALSE;
     }
 
@@ -1228,7 +1252,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     dev->GspGraphicsChannelHandle=channelHandle;
     dev->GspGraphicsObjectHandle=grHandle;
     dev->GspGraphicsChannelReady=TRUE;
-    LogStr("NVX [GR]: Ampere graphics object allocated; GPGet advanced, no engine completion or draw verified.\n");
+    LogStr("NVX [GR]: GR semaphore release completed with guards intact; no drawing tested.\n");
     return TRUE;
 }
 #endif

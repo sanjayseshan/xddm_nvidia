@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="2.0.0.27"
+NVX_TEST_VERSION="2.0.0.28"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 
 mkdir -p "$NVX_ARCHIVE"
@@ -20,6 +20,14 @@ if [ "${NVX_GR_CHANNEL_PROBE:-0}" = "1" ]; then
     if [ "${NVX_GR_PROMOTE_PROBE:-0}" = "1" ]; then
         NVX_DRIVER_BUILD_ARGS+=("NVX_ENABLE_GR_PROMOTE_PROBE=1")
         echo "==> Enabling isolated GR context initialization and VA-binding probe"
+    fi
+    if [ "${NVX_GR_SUBMISSION_PROBE:-0}" = "1" ]; then
+        if [ "${NVX_GR_PROMOTE_PROBE:-0}" != "1" ]; then
+            echo "GR submission probe requires NVX_GR_PROMOTE_PROBE=1." >&2
+            exit 1
+        fi
+        NVX_DRIVER_BUILD_ARGS+=("NVX_ENABLE_GR_SUBMISSION_PROBE=1")
+        echo "==> Enabling isolated GR semaphore-completion probe"
     fi
 else
     NVX_DRIVER_BUILD_TARGET=full
@@ -67,8 +75,8 @@ finish() {
             echo "GR RESULT: context layout queried; no graphics submission or rendering was tested."
         elif grep -q 'NVX \[GR\]: firmware assertions observed during submission' "$NVX_RUN_LOG"; then
             echo "GR RESULT: firmware assertions occurred during the probe; graphics execution is unverified."
-        elif grep -q 'NVX \[GR\]: GPGet advanced without a reported RC fault' "$NVX_RUN_LOG"; then
-            echo "GR RESULT: GPGet advanced; graphics-engine completion and drawing remain unverified."
+        elif grep -q 'NVX \[GR\]: GR semaphore release completed' "$NVX_RUN_LOG"; then
+            echo "GR RESULT: graphics semaphore completed; no draw has been verified."
         elif grep -q 'NVX \[GR\]:' "$NVX_RUN_LOG"; then
             echo "GR RESULT: graphics engine probe ran but did not complete; inspect the GR diagnostics above."
         fi
@@ -84,7 +92,9 @@ finish() {
         else
             echo "2D RESULT: no GPU solid-fill submission was logged; the new GDI fast path was not exercised or did not activate."
         fi
-        if grep -q 'NVX \[COPY-Q\]: submit timeout' "$NVX_RUN_LOG"; then
+        if grep -q 'NVX \[RM\]: MMU fault queued' "$NVX_RUN_LOG"; then
+            echo "RESULT: GPU MMU fault reported; accelerated queues were disabled and native display may have fallen back."
+        elif grep -q 'NVX \[COPY-Q\]: submit timeout' "$NVX_RUN_LOG"; then
             echo "RESULT: Copy Engine submission timed out after initialization; native display may have fallen back."
         elif grep -q 'RM INIT_DONE received' "$NVX_RUN_LOG"; then
             if grep -q 'GPU copy completed and verified' "$NVX_RUN_LOG"; then
