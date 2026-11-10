@@ -108,6 +108,12 @@ finish() {
             echo "GR RESULT: context layout queried; no graphics submission or rendering was tested."
         elif grep -q 'NVX \[GR\]: firmware assertions observed during submission' "$NVX_RUN_LOG"; then
             echo "GR RESULT: firmware assertions occurred during the probe; graphics execution is unverified."
+        elif grep -q 'NVX \[GR\]: green triangle pixel readback verified' "$NVX_RUN_LOG"; then
+            echo "GR RESULT: hardware triangle draw, green pixel readback, and semaphore completed successfully!"
+        elif grep -q 'NVX \[GR\]: black triangle pixel readback verified' "$NVX_RUN_LOG"; then
+            echo "GR RESULT: hardware triangle rasterization, black pixel readback, and semaphore completed; texture output is not verified."
+        elif grep -q 'NVX \[GR\]: triangle probe produced no verified colored pixels' "$NVX_RUN_LOG"; then
+            echo "GR RESULT: clear readback passed, but the triangle produced no verified colored pixels."
         elif grep -qE 'NVX \[GR\]: 3D CLEAR_SURFACE (verified|readback verified)' "$NVX_RUN_LOG"; then
             echo "GR RESULT: 3D rasterizer clear and semaphore completed successfully!"
         elif grep -q 'NVX \[GR\]: I2M data write verified' "$NVX_RUN_LOG"; then

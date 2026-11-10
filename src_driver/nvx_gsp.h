@@ -427,6 +427,7 @@ typedef struct _NVX_DEVICE_EXTENSION {
     BOOLEAN GspGraphicsCommandVerified;
     BOOLEAN GspGraphicsDataWriteVerified;
     BOOLEAN GspGraphicsPixelClearVerified;
+    BOOLEAN GspGraphicsTriangleVerified;
     BOOLEAN GspGraphicsChannelFaulted;
     BOOLEAN GspGraphicsUserAllocReady;
     BOOLEAN GspGraphicsUserSubmitReady;

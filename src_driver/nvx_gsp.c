@@ -17,6 +17,7 @@
 #include <class/cl0002.h>
 #include <class/cl0090.h>
 #include <class/clc369.h>
+#include <class/clc097tex.h>
 #include <class/clb069.h>
 #include <ctrl/ctrlb069.h>
 #include <ctrl/ctrl2080/ctrl2080internal.h>
@@ -36,6 +37,50 @@
 #endif
 #ifndef NVX_ENABLE_GR_UNPRIVILEGED_CONTEXT_PROBE
 #define NVX_ENABLE_GR_UNPRIVILEGED_CONTEXT_PROBE 0
+#endif
+
+#if NVX_ENABLE_GR_SUBMISSION_PROBE
+/* The first two programs are NVIDIA's MIT-licensed Ampere head-surface
+ * vertex and basic fragment shaders (offsets 0x000 and 0x300). */
+__asm__(".section .rdata,\"dr\"\n"
+        ".balign 256\n"
+        ".globl NvxAmpereHeadSurfacePrograms\n"
+        "NvxAmpereHeadSurfacePrograms:\n"
+        ".incbin \"../open-gpu-kernel-modules/src/nvidia-modeset/src/shaders/g_ampere_shaders\", 0, 1408\n"
+        ".text\n");
+extern const UCHAR NvxAmpereHeadSurfacePrograms[1408];
+
+static VOID NvxGspBuildProbeTexture(PULONG sampler, PULONG header, ULONG64 gpuVa)
+{
+    VideoPortZeroMemory(sampler,8*sizeof(ULONG));
+    VideoPortZeroMemory(header,8*sizeof(ULONG));
+    FLD_SET_DRF_DEF_MW(C097,_TEXHEAD_BL,_COMPONENTS,_SIZES_A8B8G8R8,header);
+    FLD_SET_DRF_DEF_MW(C097,_TEXHEAD_BL,_R_DATA_TYPE,_NUM_UNORM,header);
+    FLD_SET_DRF_DEF_MW(C097,_TEXHEAD_BL,_G_DATA_TYPE,_NUM_UNORM,header);
+    FLD_SET_DRF_DEF_MW(C097,_TEXHEAD_BL,_B_DATA_TYPE,_NUM_UNORM,header);
+    FLD_SET_DRF_DEF_MW(C097,_TEXHEAD_BL,_A_DATA_TYPE,_NUM_UNORM,header);
+    FLD_SET_DRF_DEF_MW(C097,_TEXHEAD_BL,_X_SOURCE,_IN_R,header);
+    FLD_SET_DRF_DEF_MW(C097,_TEXHEAD_BL,_Y_SOURCE,_IN_G,header);
+    FLD_SET_DRF_DEF_MW(C097,_TEXHEAD_BL,_Z_SOURCE,_IN_B,header);
+    FLD_SET_DRF_DEF_MW(C097,_TEXHEAD_BL,_W_SOURCE,_IN_A,header);
+    FLD_SET_DRF_NUM_MW(C097,_TEXHEAD_BL,_ADDRESS_BITS31TO9,(ULONG)(gpuVa>>9),header);
+    FLD_SET_DRF_NUM_MW(C097,_TEXHEAD_BL,_ADDRESS_BITS48TO32,(ULONG)(gpuVa>>32),header);
+    FLD_SET_DRF_DEF_MW(C097,_TEXHEAD_BL,_HEADER_VERSION,_SELECT_BLOCKLINEAR,header);
+    FLD_SET_DRF_DEF_MW(C097,_TEXHEAD_BL,_GOBS_PER_BLOCK_WIDTH,_ONE_GOB,header);
+    FLD_SET_DRF_DEF_MW(C097,_TEXHEAD_BL,_GOBS_PER_BLOCK_HEIGHT,_ONE_GOB,header);
+    FLD_SET_DRF_DEF_MW(C097,_TEXHEAD_BL,_GOBS_PER_BLOCK_DEPTH,_ONE_GOB,header);
+    FLD_SET_DRF_NUM_MW(C097,_TEXHEAD_BL,_WIDTH_MINUS_ONE,0,header);
+    FLD_SET_DRF_NUM_MW(C097,_TEXHEAD_BL,_HEIGHT_MINUS_ONE,0,header);
+    FLD_SET_DRF_DEF_MW(C097,_TEXHEAD_BL,_TEXTURE_TYPE,_TWO_D_NO_MIPMAP,header);
+    FLD_SET_DRF_DEF_MW(C097,_TEXHEAD_BL,_BORDER_SIZE,_BORDER_SAMPLER_COLOR,header);
+    FLD_SET_DRF_NUM_MW(C097,_TEXHEAD_BL,_NORMALIZED_COORDS,0,header);
+    sampler[0]=DRF_DEF(C097,_TEXSAMP0,_ADDRESS_U,_CLAMP_TO_EDGE)|
+                DRF_DEF(C097,_TEXSAMP0,_ADDRESS_V,_CLAMP_TO_EDGE)|
+                DRF_DEF(C097,_TEXSAMP0,_ADDRESS_P,_CLAMP_TO_EDGE);
+    sampler[1]=DRF_DEF(C097,_TEXSAMP1,_MAG_FILTER,_MAG_POINT)|
+                DRF_DEF(C097,_TEXSAMP1,_MIN_FILTER,_MIN_POINT)|
+                DRF_DEF(C097,_TEXSAMP1,_MIP_FILTER,_MIP_NONE);
+}
 #endif
 
 /* ABI checks deliberately target firmware 535, not the current OpenRM ABI. */
@@ -923,6 +968,17 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     ULONG runlistQuery[124]={0},token=0,runlistBase=0;
     ULONG dbcfg,chcfg,enable,wait,chramBase,fault[26]={0},assertCountBefore;
     ULONG64 pushVa,grFenceVa,grDataVa;
+#if NVX_ENABLE_GR_SUBMISSION_PROBE
+    ULONG64 grShaderVa,grVertexCbVa,grVertexVa,grTextureVa,grBindlessVa,grTextureDataVa;
+    ULONG grShaderOffset,grPixelCount=0,grZeroCount=0,grWhiteCount=0;
+    PULONG grVertexCb,grVertex,grTexture,grBindless;
+    static const ULONG grTriangleVertices[18]={
+        0x3e000000U,0x3e000000U, 0,0,0,0x3f800000U,
+        0x3f600000U,0x3e000000U, 0x3f800000U,0,0,0x3f800000U,
+        0x3f000000U,0x3f600000U, 0x3f000000U,0x3f800000U,0,0x3f800000U
+    };
+    static const ULONG grVertexUniforms[8]={64,16,1,1,0,0,0,0};
+#endif
     PUCHAR scratch;
     PULONG push;
     volatile ULONG *userd;
@@ -1371,6 +1427,34 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     }
     VideoPortZeroMemory((PVOID)(scratch+0x9000),0x1000);
     VideoPortZeroMemory((PVOID)(scratch+0xf000),0x1000);
+#if NVX_ENABLE_GR_SUBMISSION_PROBE
+    /* Scratch pages 0x7000/0x8000 are mapped by the verified GR scratch VA;
+       keep test resources out of the RM-owned promoted-context buffers. */
+    grShaderOffset=0x8000;
+    if(grShaderOffset>GSP_SCRATCH_SIZE-0x1000) {
+        LogStr("NVX [GR]: mapped scratch has no room for triangle resources.\n");
+        return FALSE;
+    }
+    grShaderVa=dev->GspScratchGpuVa+grShaderOffset;
+    grVertexCbVa=grShaderVa+0x600;
+    grVertexVa=grShaderVa+0x800;
+    grTextureVa=grShaderVa+0x900;
+    grBindlessVa=grShaderVa+0xa00;
+    grTextureDataVa=dev->GspScratchGpuVa+0x7000;
+    grVertexCb=(PULONG)(scratch+grShaderOffset+0x600);
+    grVertex=(PULONG)(scratch+grShaderOffset+0x800);
+    grTexture=(PULONG)(scratch+grShaderOffset+0x900);
+    grBindless=(PULONG)(scratch+grShaderOffset+0xa00);
+    VideoPortZeroMemory(scratch+grShaderOffset,0x1000);
+    VideoPortMoveMemory(scratch+grShaderOffset,
+                        (PVOID)NvxAmpereHeadSurfacePrograms,1408);
+    VideoPortMoveMemory(grVertexCb,(PVOID)grVertexUniforms,sizeof(grVertexUniforms));
+    VideoPortMoveMemory(grVertex,(PVOID)grTriangleVertices,sizeof(grTriangleVertices));
+    grBindless[0]=0; /* Head-surface fragment texture binding 0 -> header 0. */
+    NvxGspBuildProbeTexture(grTexture,grTexture+8,grTextureDataVa);
+    ((PULONG)(scratch+0x7000))[0]=0xff00ff00U;
+    __sync_synchronize();
+#endif
     /* In NVIDIA Host/PBDMA DMA format, method addresses in the packet header
        are dword-addressed (method byte offset >> 2), as seen in NVIDIA's
        __nvPushStart / NVA16F_DMA_METHOD_ADDRESS and nvx_ce.c.
@@ -1498,12 +1582,19 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         push[n++]=(64U<<16);                                            /* X=0, WIDTH=64 */
         push[n++]=(16U<<16);                                            /* Y=0, HEIGHT=16 */
 
-        /* Clear color (4 words: RGBA float 0.0f) */
+        /* Clear to white so a black shader result still proves rasterization. */
         push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(4U<<16)|(NVC797_SET_COLOR_CLEAR_VALUE(0)>>2);
+#if NVX_ENABLE_GR_SUBMISSION_PROBE
+        push[n++]=0x3f800000U;
+        push[n++]=0x3f800000U;
+        push[n++]=0x3f800000U;
+        push[n++]=0x3f800000U;
+#else
         push[n++]=0;
         push[n++]=0;
         push[n++]=0;
         push[n++]=0;
+#endif
 
         push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(2U<<16)|(NVC797_SET_CLEAR_RECT_HORIZONTAL>>2);
         push[n++]=(64U<<16);                                            /* XMIN=0, XMAX=64 */
@@ -1515,6 +1606,82 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
                   DRF_DEF(C797,_CLEAR_SURFACE,_G_ENABLE,_TRUE)|
                   DRF_DEF(C797,_CLEAR_SURFACE,_B_ENABLE,_TRUE)|
                   DRF_DEF(C797,_CLEAR_SURFACE,_A_ENABLE,_TRUE);
+
+#if NVX_ENABLE_GR_SUBMISSION_PROBE
+        /* Render one triangle using NVIDIA's known-good Ampere head-surface
+           vertex and fragment programs. The source is a one-pixel green
+           block-linear texture, so the readback can identify rasterized pixels. */
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(3U<<16)|(NVC797_SET_TEX_SAMPLER_POOL_A>>2);
+        push[n++]=(ULONG)(grTextureVa>>32);
+        push[n++]=(ULONG)grTextureVa;
+        push[n++]=0; /* sampler pool maximum index */
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(3U<<16)|(NVC797_SET_TEX_HEADER_POOL_A>>2);
+        push[n++]=(ULONG)((grTextureVa+32)>>32);
+        push[n++]=(ULONG)(grTextureVa+32);
+        push[n++]=0; /* header pool maximum index */
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_SAMPLER_BINDING>>2);
+        push[n++]=NVC797_SET_SAMPLER_BINDING_V_VIA_HEADER_BINDING;
+
+        /* Bind Ampere vertex-B and pixel programs from the first 0x580 bytes
+           of the upstream shader blob. */
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_PIPELINE_SHADER(1)>>2);
+        push[n++]=DRF_DEF(C797,_SET_PIPELINE_SHADER,_ENABLE,_TRUE)|
+                  DRF_DEF(C797,_SET_PIPELINE_SHADER,_TYPE,_VERTEX);
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(2U<<16)|(NVC797_SET_PIPELINE_REGISTER_COUNT(1)>>2);
+        push[n++]=15; push[n++]=0; /* vertex-B registers, vertex bind group */
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(2U<<16)|(NVC797_SET_PIPELINE_PROGRAM_ADDRESS_A(1)>>2);
+        push[n++]=(ULONG)(grShaderVa>>32); push[n++]=(ULONG)grShaderVa;
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_PIPELINE_SHADER(5)>>2);
+        push[n++]=DRF_DEF(C797,_SET_PIPELINE_SHADER,_ENABLE,_TRUE)|
+                  DRF_DEF(C797,_SET_PIPELINE_SHADER,_TYPE,_PIXEL);
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(2U<<16)|(NVC797_SET_PIPELINE_REGISTER_COUNT(5)>>2);
+        push[n++]=13; push[n++]=4; /* pixel registers, fragment bind group */
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(2U<<16)|(NVC797_SET_PIPELINE_PROGRAM_ADDRESS_A(5)>>2);
+        push[n++]=(ULONG)(grShaderVa>>32); push[n++]=(ULONG)(grShaderVa+0x300);
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_BIND_GROUP_CONSTANT_BUFFER(0)>>2);
+        push[n++]=DRF_DEF(C797,_BIND_GROUP_CONSTANT_BUFFER,_VALID,_FALSE)|
+                  DRF_NUM(C797,_BIND_GROUP_CONSTANT_BUFFER,_SHADER_SLOT,1);
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_BIND_GROUP_CONSTANT_BUFFER(4)>>2);
+        push[n++]=DRF_DEF(C797,_BIND_GROUP_CONSTANT_BUFFER,_VALID,_FALSE)|
+                  DRF_NUM(C797,_BIND_GROUP_CONSTANT_BUFFER,_SHADER_SLOT,1);
+
+        /* Direct, coherent shader constant buffers: VS uniforms at slot 3 and
+           the texture binding table at fragment slot 4. */
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(3U<<16)|(NVC797_SET_CONSTANT_BUFFER_SELECTOR_A>>2);
+        push[n++]=256; push[n++]=(ULONG)(grVertexCbVa>>32); push[n++]=(ULONG)grVertexCbVa;
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_BIND_GROUP_CONSTANT_BUFFER(0)>>2);
+        push[n++]=DRF_DEF(C797,_BIND_GROUP_CONSTANT_BUFFER,_VALID,_TRUE)|
+                  DRF_NUM(C797,_BIND_GROUP_CONSTANT_BUFFER,_SHADER_SLOT,3);
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(3U<<16)|(NVC797_SET_CONSTANT_BUFFER_SELECTOR_A>>2);
+        push[n++]=256; push[n++]=(ULONG)(grBindlessVa>>32); push[n++]=(ULONG)grBindlessVa;
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_BIND_GROUP_CONSTANT_BUFFER(4)>>2);
+        push[n++]=DRF_DEF(C797,_BIND_GROUP_CONSTANT_BUFFER,_VALID,_TRUE)|
+                  DRF_NUM(C797,_BIND_GROUP_CONSTANT_BUFFER,_SHADER_SLOT,4);
+
+        /* POSITION (attribute 0) and TEXCOORD0 (attribute 8) share a dynamic
+           stream containing three XYUVRQ vertices. */
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(2U<<16)|(NVC797_SET_DA_OUTPUT_ATTRIBUTE_SKIP_MASK_A(0)>>2);
+        push[n++]=0xfffffff0U; push[n++]=0xfffffff0U;
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_VERTEX_ATTRIBUTE_A(0)>>2);
+        push[n++]=1U|(4U<<21)|(7U<<27); /* dynamic stream, R32G32 float */
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_SET_VERTEX_ATTRIBUTE_A(8)>>2);
+        push[n++]=1U|(8U<<7)|(1U<<21)|(7U<<27); /* offset 8, R32G32B32A32 float */
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(3U<<16)|(NVC797_SET_VERTEX_STREAM_A_FORMAT(1)>>2);
+        push[n++]=DRF_NUM(C797,_SET_VERTEX_STREAM_A_FORMAT,_STRIDE,24)|
+                  DRF_DEF(C797,_SET_VERTEX_STREAM_A_FORMAT,_ENABLE,_TRUE);
+        push[n++]=(ULONG)(grVertexVa>>32); push[n++]=(ULONG)grVertexVa;
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(2U<<16)|(NVC797_SET_VERTEX_STREAM_SIZE_A(1)>>2);
+        push[n++]=0; push[n++]=72;
+
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_OGL_SET_CULL>>2);
+        push[n++]=NVC797_OGL_SET_CULL_ENABLE_FALSE;
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_BEGIN>>2);
+        push[n++]=NVC797_BEGIN_OP_TRIANGLES;
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(2U<<16)|(NVC797_SET_VERTEX_ARRAY_START>>2);
+        push[n++]=0; push[n++]=3;
+        push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_END>>2);
+        push[n++]=0;
+#endif
 
         push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|(NVC797_WAIT_FOR_IDLE>>2);
         push[n++]=0;
@@ -1570,24 +1737,54 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         } else if(grStatusAvailable&&!dev->GspGraphicsChannelFaulted&&!dev->GspMmuFaultQueued&&
                   userd[0x88/4]==1&&grFence[0]==0x47524632&&
                   grFence[1]==0x13579bdf&&grFence[2]==0x2468ace0) {
-            ULONG i,matchCount=0,clearMatchCount=0,readbackMatchCount=0;
+            ULONG i,matchCount=0,readbackMatchCount=0;
             dev->GspGraphicsCommandVerified=TRUE;
             for(i=0;i<16;i++) {
                 if(grData[i]==0x67723000U+i) matchCount++;
-                if(grData[i]==0) clearMatchCount++;
             }
             if(matchCount==16) {
                 dev->GspGraphicsDataWriteVerified=TRUE;
                 LogStr("NVX [GR]: I2M data write verified; 16 dwords matched in scratch memory.\n");
-            } else if(clearMatchCount==16) {
+            } else {
                 /* Read the entire 4KB block-linear target through the already
-                   verified CE copy path. Black is invariant under detiling,
-                   so every word must be zero regardless of GOB byte order. */
+                   verified CE copy path. */
                 VideoPortZeroMemory((PVOID)grReadback,4096);
                 if(NvxGspSubmitCopy2D(dev,dev->GspScratchGpuVa+0xe000,
                     grDataVa,256,256,256,16)) {
-                    for(i=0;i<1024;i++) if(grReadback[i]==0) readbackMatchCount++;
+                    for(i=0;i<1024;i++) {
+                        if(grReadback[i]==0) readbackMatchCount++;
+#if NVX_ENABLE_GR_SUBMISSION_PROBE
+                        if(grReadback[i]==0xff00ff00U) grPixelCount++;
+                        if(grReadback[i]==0xffffffffU) grWhiteCount++;
+#endif
+                    }
                 }
+#if NVX_ENABLE_GR_SUBMISSION_PROBE
+                grZeroCount=readbackMatchCount;
+                if(grPixelCount>=24&&grWhiteCount>0&&grPixelCount+grWhiteCount==1024) {
+                    dev->GspGraphicsDataWriteVerified=TRUE;
+                    dev->GspGraphicsPixelClearVerified=TRUE;
+                    dev->GspGraphicsTriangleVerified=TRUE;
+                    LogStr("NVX [GR]: green triangle pixel readback verified; green_pixels=");
+                    LogHex(grPixelCount);LogStr(" clear_background=");LogHex(grWhiteCount);LogStr("\n");
+                } else if(grZeroCount>=24&&grWhiteCount>0&&grZeroCount+grWhiteCount==1024) {
+                    dev->GspGraphicsDataWriteVerified=TRUE;
+                    dev->GspGraphicsPixelClearVerified=TRUE;
+                    dev->GspGraphicsTriangleVerified=TRUE;
+                    LogStr("NVX [GR]: black triangle pixel readback verified; black_pixels=");
+                    LogHex(grZeroCount);LogStr(" clear_background=");LogHex(grWhiteCount);LogStr("\n");
+                } else if(grWhiteCount==1024) {
+                    dev->GspGraphicsDataWriteVerified=TRUE;
+                    dev->GspGraphicsPixelClearVerified=TRUE;
+                    LogStr("NVX [GR]: 3D CLEAR_SURFACE readback verified; all 1024 target dwords are white.\n");
+                    LogStr("NVX [GR]: triangle probe produced no verified colored pixels; green_pixels=");
+                    LogHex(grPixelCount);LogStr("\n");
+                } else {
+                    LogStr("NVX [GR]: triangle readback mismatch; green_pixels=");
+                    LogHex(grPixelCount);LogStr(" zero_pixels=");LogHex(grZeroCount);
+                    LogStr(" white_pixels=");LogHex(grWhiteCount);LogStr("\n");
+                }
+#else
                 if(readbackMatchCount==1024) {
                     dev->GspGraphicsDataWriteVerified=TRUE;
                     dev->GspGraphicsPixelClearVerified=TRUE;
@@ -1596,10 +1793,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
                     LogStr("NVX [GR]: CLEAR_SURFACE readback mismatch; zero_words=");
                     LogHex(readbackMatchCount);LogStr(" expected=0x400\n");
                 }
-            } else {
-                LogStr("NVX [GR]: data mismatch; i2m_matches=");LogHex(matchCount);
-                LogStr(" clear_matches=");LogHex(clearMatchCount);
-                LogStr(" word0=");LogHex(grData[0]);LogStr(" word1=");LogHex(grData[1]);LogStr("\n");
+#endif
             }
         }
     }
@@ -1683,7 +1877,9 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     dev->GspGraphicsChannelHandle=channelHandle;
     dev->GspGraphicsObjectHandle=grHandle;
     dev->GspGraphicsChannelReady=TRUE;
-    if(dev->GspGraphicsPixelClearVerified) {
+    if(dev->GspGraphicsTriangleVerified) {
+        LogStr("NVX [GR]: GR pipeline triangle draw, pixel readback and semaphore completed successfully.\n");
+    } else if(dev->GspGraphicsPixelClearVerified) {
         LogStr("NVX [GR]: GR pipeline 3D rasterizer clear and semaphore release completed successfully.\n");
     } else if(dev->GspGraphicsDataWriteVerified) {
         LogStr("NVX [GR]: GR pipeline data write and semaphore release completed successfully.\n");
