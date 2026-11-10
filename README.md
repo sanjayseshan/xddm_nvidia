@@ -141,10 +141,12 @@ OS-specific kernel driver. XP needs its own user/kernel shims; the macOS kexts
 and plugin are not XP components.
 
 1. **Pin the Mesa base and prove it builds.** Mesa is pinned as a submodule at
-   `cc2dcf9abdc6afc093e85d48e4cfa34eed60a01e`. Its Windows x64 `softpipe` WGL
-   DLL builds, while the XP API-guarded build currently fails on newer Win32
-   threading calls. This is software packaging validation; no XP hardware
-   backend is integrated. See `PHASE2C_MESA_EVALUATION.md`.
+   `cc2dcf9abdc6afc093e85d48e4cfa34eed60a01e`. XP-specific changes live in
+   `mesa_patches/` and are applied with `test/apply_mesa_xp_patches.sh`, leaving
+   the submodule at its upstream revision. The Windows x64 `softpipe` WGL DLL
+   now builds with XP-era imports and loads under Wine. This validates software
+   ICD packaging only; no XP hardware backend is integrated. See
+   `PHASE2C_MESA_EVALUATION.md`.
 2. **Create the XP x64 platform shim.** Implement the Mesa-side OS, memory,
    synchronization, and device interfaces over an XP OpenGL ICD/WGL front end
    and a narrow miniport IOCTL ABI. Keep the ABI fixed-width, validate all
@@ -157,7 +159,7 @@ and plugin are not XP components.
    and Nouveau depend on Linux Vulkan/DRM interfaces and do not form a Windows
    Gallium backend. Implement an XP-compatible Gallium driver or a Vulkan
    device shim over the fixed-width miniport interface before connecting the
-   OpenGL state tracker.
+   OpenGL state tracker. The current ICD is `softpipe` and renders on the CPU.
 5. **Validate XP x64.** Require an NVK/GA104 renderer string, logged GR
    submissions and completed fences, correct rendered-pixel readback, and
    stable 1080p/1440p desktop output. Then run OpenGL applications directly

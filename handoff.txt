@@ -120,15 +120,17 @@ Step 2C: Mesa Submodule & Windows XP ICD Shim
    - Implement the bridge between Mesa's command generation and the
      IOCTL_NVX_3D_SUBMIT interface.
 
-Phase 2C feasibility update (November 9, 2026): Mesa's pinned WGL front end
-cross-builds as a Windows x64 software DLL with `softpipe`, and exports the
-standard ICD context/callback methods. The DLL imports APIs and runtime DLLs
-that XP does not provide. An XP-guarded build fails on Vista-era threading
-functions. The NVK/Nouveau backend still depends on Linux Vulkan/DRM and cannot
-submit through this XP miniport. See `PHASE2C_MESA_EVALUATION.md` for build
-results, the backend gap, and implementation gates. Do not advertise hardware
-ICD support until an XP-compatible backend and user-mode draw submission path
-build and run on XP.
+Phase 2C progress (November 9, 2026): Mesa remains pinned to upstream revision
+`cc2dcf9abdc6afc093e85d48e4cfa34eed60a01e`; XP customizations are maintained
+outside the submodule in `mesa_patches/` and applied by
+`test/apply_mesa_xp_patches.sh`. The XP-targeted x64 `softpipe` WGL DLL now
+builds with XP-era system DLL imports and loads under Wine with the required ICD
+exports resolved. This is software ICD packaging only. The NVK/Nouveau backend
+still depends on Linux Vulkan/DRM and cannot submit through this XP miniport;
+the user-mode draw bridge and hardware Gallium backend remain unimplemented.
+See `PHASE2C_MESA_EVALUATION.md` for build evidence and remaining gates. Do not
+advertise hardware ICD support until an XP-compatible backend submits and
+verifies a real GPU draw on XP.
 
 ================================================================================
 4. Key Files and References
