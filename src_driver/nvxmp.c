@@ -2271,10 +2271,23 @@ BOOLEAN NTAPI HwVidStartIO(
                RequestPacket->OutputBufferLength,entry->Bytes)) {
             Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
         }
+        if(entry->Usage&NVX_3D_USAGE_COLOR_TARGET) {
+            if(request.Reserved[0]>=entry->Width||
+               request.Reserved[1]>=entry->Height) {
+                Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
+            }
+        } else if(request.Reserved[0]||request.Reserved[1]) {
+            Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
+        }
         entry->Busy=TRUE;saved=*entry;
         Nvx3dUnlockBuffers();
-        if(NvxGspReadUserSurface(engine,saved.GpuVa,
-                (PULONG)RequestPacket->OutputBuffer,NVX_3D_READBACK_PIXELS)) {
+        if(((saved.Usage&NVX_3D_USAGE_COLOR_TARGET)?
+            NvxGspReadUserColorTargetTile(engine,saved.GpuVa,saved.Width,
+                saved.Height,saved.TileMode,request.Reserved[0],
+                request.Reserved[1],(PULONG)RequestPacket->OutputBuffer,
+                NVX_3D_READBACK_PIXELS):
+            NvxGspReadUserSurface(engine,saved.GpuVa,
+                (PULONG)RequestPacket->OutputBuffer,NVX_3D_READBACK_PIXELS))) {
             status=NO_ERROR;
             statusBlock->Information=NVX_3D_READBACK_BYTES;
         } else {

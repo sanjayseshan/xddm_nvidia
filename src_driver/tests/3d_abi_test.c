@@ -264,6 +264,12 @@ int main(void)
     readback.Reserved[1]=1;
     assert(!Nvx3dValidateReadback(&readback,NVX_3D_READBACK_BYTES,
                                   NVX_3D_TRIANGLE_TARGET_BYTES));
+    readback.Reserved[1]=16;
+    assert(Nvx3dValidateReadback(&readback,NVX_3D_READBACK_BYTES,
+                                  NVX_3D_TRIANGLE_TARGET_BYTES));
+    readback.Reserved[0]=1;
+    assert(!Nvx3dValidateReadback(&readback,NVX_3D_READBACK_BYTES,
+                                  NVX_3D_TRIANGLE_TARGET_BYTES));
 
     puts("3D ABI layout, capabilities, ownership and command checks passed");
     return 0;

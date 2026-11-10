@@ -7,6 +7,9 @@
 
 #define MAX_NVX_MODES 32
 
+/* Shared scratch buffer ownership across the GR and CE submission helpers. */
+extern volatile ULONG NvxGrUserSubmitBusy;
+
 /* GSP Mailbox & Falcon Register Offsets (derived from NVIDIA swref) */
 #ifndef NV_PGSP_FALCON_MAILBOX0
 #define NV_PGSP_FALCON_MAILBOX0        0x110040
@@ -518,6 +521,9 @@ BOOLEAN NvxGspRunZf32Diagnostic(PVOID HwDeviceExtension,ULONG64 dstVa,
                                 ULONG64 fenceValue);
 BOOLEAN NvxGspReadUserSurface(PVOID HwDeviceExtension,ULONG64 srcVa,
                               PULONG output,ULONG outputPixels);
+BOOLEAN NvxGspReadUserColorTargetTile(PVOID HwDeviceExtension,ULONG64 srcVa,
+    ULONG targetWidth,ULONG targetHeight,ULONG tileMode,ULONG tileX,ULONG tileY,
+    PULONG output,ULONG outputPixels);
 BOOLEAN NvxGspWaitUserFence(PVOID HwDeviceExtension,ULONG64 fenceValue,
                             ULONG timeoutMs);
 BOOLEAN NvxGspUpload(PVOID HwDeviceExtension,ULONG64 dstVa,const void *src,ULONG bytes);

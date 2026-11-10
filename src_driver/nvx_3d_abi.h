@@ -214,8 +214,8 @@ typedef struct NVX_3D_WAIT_FENCE {
     uint32_t Status;
 } NVX_3D_WAIT_FENCE;
 
-/* Readback is restricted to the verified 64x16 block-linear C797 target.
- * Output is a row-major array of 32-bit AARRGGBB pixels. */
+/* Readback returns one 64x16 tile as row-major AARRGGBB pixels. For dynamic
+ * color targets Reserved[0:1] specify a tile-aligned x/y origin. */
 typedef struct NVX_3D_READBACK {
     uint32_t Size;
     uint32_t Version;
@@ -235,7 +235,9 @@ Nvx3dValidateReadback(const NVX_3D_READBACK *request, uint32_t outputBytes,
         request->Height==NVX_3D_TRIANGLE_HEIGHT &&
         outputBytes>=NVX_3D_READBACK_BYTES &&
         allocatedBytes>=NVX_3D_TRIANGLE_TARGET_BYTES &&
-        !request->Reserved[0] && !request->Reserved[1];
+        !(request->Reserved[0]&63U) && !(request->Reserved[1]&15U) &&
+        request->Reserved[0]<NVX_3D_MAX_SURFACE_DIMENSION &&
+        request->Reserved[1]<NVX_3D_MAX_SURFACE_DIMENSION;
 }
 
 static inline void

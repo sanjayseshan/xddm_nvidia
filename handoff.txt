@@ -15,7 +15,7 @@ successfully submits bounded diagnostic triangles and reads back verified GPU
 pixels. These probes do not constitute a general Gallium hardware driver.
 
 The latest full RTX 3070 run is
-`test_logs/v3.0.0.1-20261110-153326.log`. It completed with
+`test_logs/v3.0.0.1-20261110-155006.log`. It completed with
 `Failures=0 software3d=1` and `Status: SOFTWARE_3D_ONLY`. The startup assertion
 count stayed at one, with no MMU or GR channel fault; bounded GR, 2D, and
 dual-head checks passed. ABI v6 verified a full-size C797 triangle draw,
@@ -25,16 +25,19 @@ exceeds the 64-tile bridge limit.
 
 ### Latest hardware test: ABI v6 dynamic target draw
 
-- `test_logs/v3.0.0.1-20261110-153326.log` — clean Mesa ICD rebuild, XP
-  import/subsystem audits, boot, hardware checks, and guest shutdown passed.
-  The 632x453 block-linear target clear/sample check passed at fence 134. A
-  six-vertex full-target C797 draw then passed five post-raster pixel samples
-  and fence 136 (`[NVX_3D_SURFACE_DRAW_RESULT] PASS ... pixel_samples=5`).
-  Suite result is `Failures=0 software3d=1`; firmware assertions remain at
-  one and there are no MMU or GR channel faults. Antigravity still reports
-  `[OPENGL_RESULT] SOFTWARE`. Bridge status shows 103 callbacks and only three
-  diagnostic GPU batches; its last status is the expected 64-tile-limit
-  rejection for the ordinary 632x453 app viewport.
+- `test_logs/v3.0.0.1-20261110-153326.log` — ABI v6 full-size draw/fence test.
+  The 632x453 target clear/sample check and six-vertex C797 draw passed five
+  post-draw samples at fences 134 and 136. XP package audits, 2D/display
+  checks, and guest shutdown passed. Antigravity remains software-rendered.
+
+- `test_logs/v3.0.0.1-20261110-155006.log` — latest hardware validation after
+  adding block-linear 64x16 tile readback from dynamic color targets. The
+  bottom-right target tile `(576,448)` passed at valid framebuffer edge pixel
+  `(631,452)`. This uses four CE copies for the 16-pixel GOB strips and the
+  verified Turing GOB layout. GR and CE now serialize access to their shared
+  staging scratch. The full suite reports `Failures=0 software3d=1`, firmware
+  assertion count remains one, no MMU/GR faults, and clean guest shutdown.
+  Antigravity still reports `[OPENGL_RESULT] SOFTWARE`.
 
 - ABI v6 adds dynamic full-size color-target triangle submission and an
   optional five-pixel CE readback verification operation. This proves the
@@ -56,17 +59,6 @@ exceeds the 64-tile bridge limit.
     GR draw, 2D checks, and dual-head status checks pass.
   - `[OPENGL_RESULT] SOFTWARE` remains. This validates a dynamic GPU color
     target clear and sample readback only; Phase 2C is still incomplete.
-
-- `test_logs/v3.0.0.1-20261110-153326.log` — ABI v6 full-target draw run.
-  The 632x453 target clear/sample check passed at fence 134. A six-vertex
-  C797 draw then passed five post-raster pixel samples and fence 136
-  (`[NVX_3D_SURFACE_DRAW_RESULT] PASS ... pixel_samples=5`). XP import and
-  subsystem audits, clean guest shutdown, 2D, and display checks passed. The
-  suite reports `Failures=0 software3d=1`; firmware assertions remain at one
-  with no MMU or GR channel faults. Antigravity still reports
-  `[OPENGL_RESULT] SOFTWARE`. Its bridge status reports 103 callbacks and
-  three diagnostic batches, with the ordinary 632x453 viewport rejected by
-  the 64-tile safety limit.
 
 - `test_logs/v3.0.0.1-20261110-151225.log` — first hardware run of ABI v5
   dynamic color targets. Host tests, ICD/package XP import audits, and clean
@@ -159,8 +151,10 @@ exceeds the 64-tile bridge limit.
   fence. This is still only the C797 clear path, not general rendering.
 - ABI v6 adds dynamic full-size-target triangle draws and optional five-pixel
   CE readback verification. Hardware confirmed the draw writes the expected
-  pixels and completes its fence. The WGL bridge does not yet call this path;
-  it remains a diagnostic ABI, not normal OpenGL acceleration. The hardware
+  pixels, completes its fence, and supports 64x16 tile readback at the
+  bottom-right framebuffer edge. The WGL bridge does not yet call these
+  full-size operations; they remain a diagnostic ABI, not normal OpenGL
+  acceleration. The hardware
   run built with `NVX_ENABLE_GR_SUBMISSION_PROBE=1`; production builds disable
   GR submission by default (`NVX_ENABLE_GR_SUBMISSION_PROBE=0`) and must keep
   that safety gate until a supported channel/context path replaces the probe.

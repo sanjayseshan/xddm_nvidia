@@ -1256,6 +1256,7 @@ static void TestNvx3dSubmission(HDC hdc)
     NVX_3D_SUBMIT surfaceSubmit={0},surfaceSubmitted={0};
     NVX_3D_SUBMIT surfaceDraw={0},surfaceDrawn={0};
     NVX_3D_READBACK readbackRequest={0};
+    uint32_t surfacePixels[NVX_3D_READBACK_PIXELS];
     NVX_3D_WAIT_FENCE wait={0},waited={0};
     NVX_3D_FREE_BUFFER freeRequest={0};
     NVX_3D_FREE_BUFFER surfaceFree={0};
@@ -1690,6 +1691,27 @@ static void TestNvx3dSubmission(HDC hdc)
                                 (unsigned long)layout.Width,
                                 (unsigned long)layout.Height,
                                 (unsigned long long)surfaceDrawn.FenceValue);
+                            memset(&readbackRequest,0,sizeof(readbackRequest));
+                            readbackRequest.Size=sizeof(readbackRequest);
+                            readbackRequest.Version=NVX_3D_ABI_VERSION;
+                            readbackRequest.BufferId=surfaceAllocated.BufferId;
+                            readbackRequest.Width=64;
+                            readbackRequest.Height=16;
+                            readbackRequest.Reserved[0]=576;
+                            readbackRequest.Reserved[1]=448;
+                            if(!ExtEscape(hdc,NVX_ESCAPE_3D_READBACK,
+                                    sizeof(readbackRequest),
+                                    (LPCSTR)&readbackRequest,sizeof(surfacePixels),
+                                    (LPSTR)surfacePixels) ||
+                               (surfacePixels[0]&0x00ffffffU)!=0x0020d040U ||
+                               (surfacePixels[4*64+55]&0x00ffffffU)!=0x0020d040U) {
+                                LogMsg("[NVX_3D_SURFACE_TILE_READBACK] FAIL bottom-right tiled readback first=%08lX last=%08lX\n",
+                                    (unsigned long)surfacePixels[0],
+                                    (unsigned long)surfacePixels[4*64+55]);
+                                ok=0;
+                            } else {
+                                LogMsg("[NVX_3D_SURFACE_TILE_READBACK] PASS tile=576,448 edge_pixels=2 bottom_right=(631,452)\n");
+                            }
                         }
                     }
                     {

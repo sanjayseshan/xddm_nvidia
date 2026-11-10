@@ -347,6 +347,60 @@ BOOLEAN NvxGspSubmitCopy2D(PVOID extension,ULONG64 dstVa,ULONG64 srcVa,
     return result;
 }
 
+/* Read one 64x16 RGBA8 tile from a dynamic Ampere color target. With a
+ * 16-row block height, each 16-pixel-wide GOB strip is contiguous, while
+ * adjacent strips are separated by the block-height interleave. Stage the
+ * four strips separately, then decode the verified Turing GOB ordering. */
+BOOLEAN NvxGspReadUserColorTargetTile(PVOID HwDeviceExtension,ULONG64 srcVa,
+    ULONG targetWidth,ULONG targetHeight,ULONG tileMode,ULONG tileX,ULONG tileY,
+    PULONG output,ULONG outputPixels)
+{
+    PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    NVX_3D_COLOR_SURFACE_LAYOUT layout;
+    PUCHAR scratch;
+    ULONG strip,x,y;
+    ULONG wait;
+    BOOLEAN ok=FALSE;
+    if(!dev||!output||outputPixels!=NVX_3D_READBACK_PIXELS||!srcVa||
+       (srcVa&0xffffULL)||tileX%64U||tileY%16U||tileX>=targetWidth||
+       tileY>=targetHeight||tileMode<0x10U||tileMode>0x70U||
+       !Nvx3dComputeColorSurfaceLayout(targetWidth,targetHeight,&layout)||
+       layout.TileMode!=tileMode||!dev->GspDmaVirtual||
+       !dev->GspScratchGpuVa||!dev->GspCopyVerified||dev->GspChannelFaulted)
+        return FALSE;
+    for(wait=0;wait<20000;wait++) {
+        if(!__sync_lock_test_and_set(&NvxGrUserSubmitBusy,1)) break;
+        VideoPortStallExecution(10);
+    }
+    if(wait==20000) return FALSE;
+    if(!NvxGspLockEngine()) {
+        __sync_lock_release(&NvxGrUserSubmitBusy);
+        return FALSE;
+    }
+    scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET+0xe000;
+    VideoPortZeroMemory(scratch,NVX_3D_READBACK_BYTES);
+    for(strip=0;strip<4;strip++) {
+        ULONG xOrigin=tileX+strip*16U;
+        ULONG offset;
+        if(xOrigin>=targetWidth) continue;
+        offset=Nvx3dTuringColorPixelOffset(xOrigin,tileY,targetWidth,tileMode);
+        if((ULONG64)offset+1024U>layout.Bytes||
+           !NvxGspSubmitCopyUnlocked(dev,dev->GspScratchGpuVa+0xe000+strip*1024U,
+               srcVa+offset,1024U,1024U,1024U,1U))
+            goto done;
+    }
+    __sync_synchronize();
+    for(y=0;y<16;y++) for(x=0;x<64;x++) {
+        ULONG offset=Nvx3dTuringColorPixelOffset(x,y,64U,0x10U);
+        output[y*64U+x]=*(volatile ULONG *)(scratch+offset);
+    }
+    ok=TRUE;
+done:
+    NvxGspUnlockEngine();
+    __sync_lock_release(&NvxGrUserSubmitBusy);
+    return ok;
+}
+
 static BOOLEAN NvxGspSubmitFillUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG bytes)
 {
     PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;

@@ -2004,7 +2004,7 @@ BOOLEAN NvxGspUnregisterFaultShadow(PNVX_DEVICE_EXTENSION dev)
 /* The user ABI deliberately exposes a validated CLEAR_SURFACE operation,
  * not arbitrary methods on this shared privileged channel. The kernel builds
  * the C797 pushbuffer and owns the semaphore address. */
-static volatile ULONG NvxGrUserSubmitBusy=0;
+volatile ULONG NvxGrUserSubmitBusy=0;
 
 #if NVX_ENABLE_GR_SUBMISSION_PROBE
 static VOID NvxGspAppendUserTriangle(PNVX_DEVICE_EXTENSION dev,PUCHAR scratch,
