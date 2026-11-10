@@ -190,9 +190,10 @@ exceeds the 64-tile bridge limit.
 ## Next work to complete Phase 2C
 
 1. Replace per-call diagnostic target use with reusable full-size color/depth
-   resources, buffer updates, batched draws, readback, and presentation. A
-   full-size clear and constant-color triangle draw pass, but are not
-   connected to WGL or reusable resources.
+   resources, buffer updates, batched draws, full-frame transfer, and
+   presentation. Full-size clear and constant-color triangle draw pass, and
+   the miniport can read one aligned 64x16 target tile at a time. These
+   operations are not connected to WGL or reusable resources.
 2. Specify project-owned XP resource, context, mapping, and fence interfaces;
    ABI v6 remains test-oriented and has no general Gallium resource/context
    contract.
@@ -216,7 +217,7 @@ exceeds the 64-tile bridge limit.
 - `mesa_patches/nvx_wgl_bridge.c` — restricted WGL/Gallium diagnostic bridge.
 - `src_driver/nvx_3d_abi.h` — ABI v6 miniport user submission ABI and validation.
 - `src_driver/nvx_ce.c` — CE copy/fill submissions and semaphore waits; useful
-  when debugging the dynamic target sample readback.
+  dynamic-target sample readback, and 64x16 Turing GOB tile readback.
 - `src_driver/nvx_gsp.c` — C797 submissions, clears, shader variant, depth,
   fences, GPU memory mapping, and readback.
 - `src_driver/tests/3d_abi_test.c` — host ABI validation tests.
