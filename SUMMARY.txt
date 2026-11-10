@@ -495,12 +495,16 @@ Hardware OpenGL roadmap — November 8, 2026:
 - Phase 2C feasibility pass: pinned the read-only Mesa evaluation at
   `cc2dcf9abdc6afc093e85d48e4cfa34eed60a01e`. Mesa contains a Windows Gallium
   WGL/ICD front end, but NVK/Nouveau rely on Linux Vulkan/DRM interfaces and
-  cannot yet submit through the miniport ABI. The XP x64 cross-build setup
-  stopped before configuration because `x86_64-w64-mingw32-g++` is missing.
-  `PHASE2C_MESA_EVALUATION.md` records the attempt and gates. The next step is
-  to install `g++-mingw-w64-x86-64`, complete the WGL build evaluation, and
-  design a validated user-mode draw submission path before adding the Mesa
-  source as a submodule or registering an ICD.
+  cannot yet submit through the miniport ABI. Mesa is now a pinned submodule.
+  Windows/OpenGL/softpipe Meson configuration succeeds. The default Windows
+  cross-build completes all 962 targets and emits a WGL ICD DLL exporting the
+  context and callback entry points, but its imports include post-XP API-set
+  functions and MinGW runtime DLLs. With XP API guards, compilation fails on
+  Vista-era InitOnce/condition-variable calls; Mesa also targets Windows 10 by
+  default. This is software WGL packaging only. `PHASE2C_MESA_EVALUATION.md`
+  records the test and gates. Next is an XP-compatible Mesa API/dependency port,
+  a usable Ampere Gallium backend, and a validated user-mode draw submission
+  path before hardware ICD registration.
 
 ### Linux and macOS Reference Architecture
 

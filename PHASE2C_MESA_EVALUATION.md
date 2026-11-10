@@ -1,6 +1,8 @@
 # Phase 2C: Mesa and XP x64 ICD evaluation
 
-Status: feasibility pass; no Mesa source is vendored or linked into the driver.
+Status: Mesa is pinned as a submodule; its software WGL DLL builds for the
+default Windows target. The XP-targeted build is blocked by newer Win32 APIs
+and imports.
 
 ## Mesa revision and Windows path
 
@@ -27,31 +29,60 @@ commands.
 
 ## Cross-build result
 
-A Windows x64 Meson cross configuration was attempted with MinGW GCC and an XP
-target (`_WIN32_WINNT=0x0502`). Meson stopped before dependency/configuration
-checks because `x86_64-w64-mingw32-g++` is absent. The host has the C compiler,
-but not the C++ cross compiler required by Mesa. Installing the missing system
-package requires administrator credentials, so this environment could not
-complete the build. No Mesa source or generated files were added to this repo.
+The successful software WGL build is reproducible with Meson, Ninja, and the
+x64 MinGW toolchain using `test/mesa_win64.ini`:
 
-The attempted configuration selected Windows, OpenGL, and `llvmpipe` only. Even
-if it builds, it would validate Mesa's software WGL/ICD packaging, not RTX 3070
-hardware acceleration. A useful hardware build needs an XP-facing Gallium pipe
-driver or Vulkan implementation that translates Mesa's rendering work to the
-validated miniport operations and is tested on the guest.
+```sh
+meson setup /tmp/mesa-win64-build mesa --cross-file test/mesa_win64.ini \
+  -Dplatforms=windows -Dgallium-drivers=softpipe -Dvulkan-drivers= \
+  -Dllvm=disabled -Dglx=disabled -Degl=disabled -Dgbm=disabled \
+  -Dopengl=true -Dgallium-wgl-dll-name=nvxogl64
+ninja -C /tmp/mesa-win64-build
+```
+
+The XP API-guarded attempt uses `test/mesa_xp64.ini` with the same options and
+fails in Mesa's Win32 threading implementation as described below.
+
+A Windows x64 Meson cross configuration was attempted with MinGW GCC and an XP
+target (`_WIN32_WINNT=0x0502`). The host has the MinGW C++ compiler; no source
+or generated build files are stored in the project tree beyond the pinned Mesa
+submodule.
+
+The successful configuration selected Windows, OpenGL, and `softpipe` only.
+The initial `llvmpipe` configuration correctly failed because that driver
+requires LLVM. The Windows `softpipe` configuration generated 114 targets and
+downloaded its zlib fallback, but compiling stopped in Mesa's
+`src/c11/impl/threads_win32.c`: `InitOnceExecuteOnce`,
+`InitializeConditionVariable`, `WakeConditionVariable`, and
+`SleepConditionVariableCS` are undeclared with XP API guards. Mesa's
+`meson.build` also unconditionally defines `_WIN32_WINNT` and `WINVER` as
+`0x0A00` for Windows builds. Overriding these to XP exposes the unavailable
+APIs, so this is a real compatibility port requirement, not just a missing
+cross-compiler setting.
+
+This build targets Mesa `softpipe`, so it validates only software WGL/ICD
+packaging. A useful hardware build needs an XP-facing Gallium pipe driver or
+Vulkan implementation that translates Mesa's rendering work to the validated
+miniport operations and is tested on the guest.
+
+With Mesa's default Windows API target and MinGW's POSIX C++ toolchain, all 962
+targets build, including `nvxogl64.dll`. Its exports include the WGL ICD
+context and callback methods `DrvCreateContext`, `DrvSetContext`,
+`DrvGetProcAddress`, and `DrvSetCallbackProcs`. This verifies Windows x64 WGL
+DLL packaging only. The DLL imports `api-ms-win-core-synch-l1-2-0.dll` (including
+`WaitOnAddress` and condition-variable APIs), `libwinpthread-1.dll`, and
+`libz-1.dll`, so it is not XP-loadable as built. A Windows subsystem version of
+5.2 does not make those imports available on XP.
 
 ## Next implementation gates
 
-1. Install `g++-mingw-w64-x86-64` and Mesa's Windows build dependencies; repeat
-   the pinned WGL cross-build with XP API guards and record unsupported Windows
-   APIs found by link and runtime checks.
-2. Define an XP ICD-to-miniport bridge with context, surface, allocation,
-   submission, and fence ownership. Keep it fixed-width and validate all
-   user-provided sizes and handles.
-3. Extend the kernel submission path from its current fixed clear operation to
-   a bounded draw interface before connecting Mesa-generated work. The
-   initialization-time triangle probe is diagnostic and is not a user-mode
-   submission API.
+1. Port Mesa's Windows API and runtime dependencies to XP-compatible
+   primitives, then audit the complete import set.
+2. Select and implement an XP-facing Gallium backend. The WGL build currently
+   uses `softpipe`; NVK/Nouveau require Linux Vulkan/DRM and do not plug in.
+3. Define a fixed-width XP ICD-to-miniport bridge for contexts, surfaces,
+   allocations, draw submission, and fences. Extend kernel submission beyond
+   the fixed clear operation before connecting Mesa-generated draws.
 4. Add an ICD only after it can create a context and submit at least one actual
    OpenGL draw through that interface. Do not register a software-only DLL as
    hardware accelerated.

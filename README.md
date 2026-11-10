@@ -140,25 +140,24 @@ its native graphics API through a translator into Mesa NVK/NAK, then into an
 OS-specific kernel driver. XP needs its own user/kernel shims; the macOS kexts
 and plugin are not XP components.
 
-1. **Pin the Mesa base and prove it builds.** Start from the NVK/NAK revision
-   used by the macOS port as a reference, then test a clean upstream Mesa
-   revision and carry only the compatibility patches needed for this target.
-   Add Mesa as a pinned submodule once the first build is reproducible; do not
-   vendor an unused full Mesa tree.
+1. **Pin the Mesa base and prove it builds.** Mesa is pinned as a submodule at
+   `cc2dcf9abdc6afc093e85d48e4cfa34eed60a01e`. Its Windows x64 `softpipe` WGL
+   DLL builds, while the XP API-guarded build currently fails on newer Win32
+   threading calls. This is software packaging validation; no XP hardware
+   backend is integrated. See `PHASE2C_MESA_EVALUATION.md`.
 2. **Create the XP x64 platform shim.** Implement the Mesa-side OS, memory,
    synchronization, and device interfaces over an XP OpenGL ICD/WGL front end
    and a narrow miniport IOCTL ABI. Keep the ABI fixed-width, validate all
    user buffers, and use 64-bit GPU virtual addresses on both XP architectures.
-3. **Bring up GR independently of display scanout.** Add a GSP/RM-managed
-   graphics channel, context storage, GPU mappings, command submission, fences,
-   and fault reporting. First prove one GPU triangle with completion and
-   framebuffer readback while preserving the current display and Copy Engine
-   paths.
-4. **Connect Mesa rendering.** Use Mesa's OpenGL state tracker through Zink to
-   NVK/NAK if the XP x64 prototype can support the required Vulkan device
-   interface. Keep the ICD/WGL and XP miniport calls behind shims so Mesa's
-   renderer does not depend on Linux DRM. Reassess Gallium Nouveau only if the
-   NVK/Zink port cannot be made practical for XP.
+3. **Bring up GR independently of display scanout.** The in-kernel probe has
+   verified an Ampere triangle, a completion semaphore, and rendered-pixel
+   readback while preserving display and Copy Engine paths. The probe remains
+   diagnostic; user-mode command submission is not implemented.
+4. **Connect Mesa rendering.** Mesa's Windows WGL frontend builds, but NVK/NAK
+   and Nouveau depend on Linux Vulkan/DRM interfaces and do not form a Windows
+   Gallium backend. Implement an XP-compatible Gallium driver or a Vulkan
+   device shim over the fixed-width miniport interface before connecting the
+   OpenGL state tracker.
 5. **Validate XP x64.** Require an NVK/GA104 renderer string, logged GR
    submissions and completed fences, correct rendered-pixel readback, and
    stable 1080p/1440p desktop output. Then run OpenGL applications directly
@@ -175,10 +174,11 @@ The NullMoth repository's macOS-specific plugin, translator, and kernel
 components are not dependencies for this port. Its README identifies those
 components as PolyForm Noncommercial, while the NVK Mesa patch is MIT; this
 project will use the architectural approach and upstream Mesa rather than
-importing those platform-specific components. Mesa is currently a candidate,
-not an integrated dependency. Its modern NVK documentation lists Linux 6.6 as
-the kernel minimum, so XP compatibility must be developed in the platform shim
-and verified by builds rather than assumed.
+importing those platform-specific components. Mesa source is pinned for
+evaluation, but no Mesa component is integrated into the driver yet. Its modern
+NVK documentation lists Linux 6.6 as the kernel minimum, so XP compatibility
+must be developed in the platform shim and verified by builds rather than
+assumed.
 
 ## Build Instructions
 
