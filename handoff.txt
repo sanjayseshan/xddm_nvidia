@@ -160,7 +160,10 @@ exceeds the 64-tile bridge limit.
 - ABI v6 adds dynamic full-size-target triangle draws and optional five-pixel
   CE readback verification. Hardware confirmed the draw writes the expected
   pixels and completes its fence. The WGL bridge does not yet call this path;
-  it remains a diagnostic ABI, not normal OpenGL acceleration.
+  it remains a diagnostic ABI, not normal OpenGL acceleration. The hardware
+  run built with `NVX_ENABLE_GR_SUBMISSION_PROBE=1`; production builds disable
+  GR submission by default (`NVX_ENABLE_GR_SUBMISSION_PROBE=0`) and must keep
+  that safety gate until a supported channel/context path replaces the probe.
 - Miniport arbitrary-color `CLEAR_SURFACE` accepts packed AARRGGBB, converts
   normalized channels to float bits, and compares readback against the exact
   requested color. Hardware confirmed `0xFF1A1A33` across all pixels.
