@@ -1258,3 +1258,11 @@ lost all color coverage and were reverted. Next determine why clip-Z reaches
 the zeta target as zero, correct depth readback, then resume general Mesa
 shader/state translation and GPU presentation. Phase 2C remains incomplete;
 `mesa/` remains clean at its pinned revision.
+
+
+Cube evidence clarification: the bounded 64x16 depth-disabled cube probe in
+`test_logs/v3.0.0.1-20261110-103146.log` reports 46 colored pixels and one
+new GPU batch. Successful bridge batches are fenced and copied back into the
+softpipe tile, so at least part of this restricted cube workload reaches C797.
+This is not evidence that the full-size depth-tested animated cube uses the
+GPU; the overall OpenGL/depth result remains FAIL.

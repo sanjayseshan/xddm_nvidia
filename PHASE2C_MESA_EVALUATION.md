@@ -391,3 +391,12 @@ firmware assertions or MMU faults. Viewport-enabled identity and NDC
 experiments lose color coverage and have been reverted. Phase 2C remains
 incomplete: clip-Z output, depth storage/readback, general shader/state
 translation, and GPU presentation still need hardware proof.
+
+
+Cube evidence clarification: the bounded 64x16 cube probe with depth testing
+disabled reports `MESA_GPU_CUBE_RESULT PASS`, 46 colored pixels, and one new
+GPU batch in `test_logs/v3.0.0.1-20261110-103146.log`. A successful bridge
+batch is fenced and copied back into softpipe, proving that at least part of
+this restricted cube workload reaches C797. The full-size depth-tested cube
+and general OpenGL workload remain unproven; the suite still fails its depth
+check.

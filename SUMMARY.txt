@@ -1245,3 +1245,12 @@ remain at one and no MMU fault is logged. Viewport-enabled identity and NDC
 experiments lose all color coverage and are reverted. Continue validating
 clip-Z output and ZF32 readback; general shaders/state, depth-tested OpenGL,
 and GPU presentation remain incomplete.
+
+
+Cube evidence clarification: `test_logs/v3.0.0.1-20261110-103146.log` reports
+`MESA_GPU_CUBE_RESULT PASS colored_pixels=46 new_gpu_batches=1` for the
+bounded 64x16 cube probe with depth testing disabled. The bridge's successful
+batch path waits for GPU fences and copies the GPU readback into softpipe's
+tile, so this proves at least one supported cube batch reached C797. It does
+not prove the full-size, depth-tested 100-frame cube is accelerated;
+`[OPENGL_RESULT]` remains FAIL because overlapping depth triangles still fail.
