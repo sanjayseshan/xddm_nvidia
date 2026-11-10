@@ -139,7 +139,7 @@
 #define GSP_SCRATCH_OFFSET             0x02F00000ULL
 #define GSP_SCRATCH_SIZE               0x10000UL
 #define GSP_PAGE_TABLES_OFFSET         0x02E00000ULL
-#define GSP_PAGE_TABLES_SIZE           0xF000UL
+#define GSP_PAGE_TABLES_SIZE           0x9000UL
 #define GSP_GR_CONTEXT_BYTES           0x00C00000UL
 #define GSP_GR_CONTEXT_GPU_VA          0x10200000ULL
 #define GSP_GR_CONTEXT_TEST_GPU_VA     0x10E00000ULL
@@ -301,6 +301,7 @@ typedef struct _VIDEO_MODE_DEF {
 typedef struct _NVX_3D_USER_BUFFER_ENTRY {
     ULONG64 Id;
     ULONG64 GpuVa;
+    ULONG64 DepthGpuVa;
     ULONG Bytes;
     ULONG Usage;
     ULONG Busy;
@@ -428,6 +429,7 @@ typedef struct _NVX_DEVICE_EXTENSION {
     BOOLEAN GspGraphicsDataWriteVerified;
     BOOLEAN GspGraphicsPixelClearVerified;
     BOOLEAN GspGraphicsTriangleVerified;
+    BOOLEAN GspGraphicsClientTriangleVerified;
     BOOLEAN GspGraphicsChannelFaulted;
     BOOLEAN GspGraphicsUserAllocReady;
     BOOLEAN GspGraphicsUserSubmitReady;
@@ -482,9 +484,29 @@ BOOLEAN NvxGspDiscoverScanout(PVOID HwDeviceExtension,ULONG modeIndex);
 BOOLEAN NvxGspSubmitCopy(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,ULONG bytes);
 BOOLEAN NvxGspSubmitCopy2D(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,
                            ULONG srcPitch,ULONG dstPitch,ULONG bytesPerLine,ULONG lineCount);
+BOOLEAN NvxGspSetDepthPageKind(PVOID HwDeviceExtension,ULONG64 gpuVa,
+                               ULONG kind,BOOLEAN map);
 BOOLEAN NvxGspSubmitFill(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG bytes);
 BOOLEAN NvxGspSubmitUserClear(PVOID HwDeviceExtension,ULONG64 dstVa,
-                              ULONG color,ULONG64 fenceValue);
+                              ULONG color,ULONG64 fenceValue,
+                              ULONG *matchingPixels);
+BOOLEAN NvxGspSubmitUserTriangle(PVOID HwDeviceExtension,ULONG64 dstVa,
+                                 ULONG64 fenceValue,ULONG *greenPixels,
+                                 ULONG *whitePixels);
+BOOLEAN NvxGspSubmitUserTriangleBuffer(PVOID HwDeviceExtension,ULONG64 dstVa,
+                                 ULONG64 depthVa,ULONG64 vertexVa,ULONG color,
+                                 BOOLEAN preserveTarget,
+                                 BOOLEAN depthTest,
+                                 ULONG depthFormat,
+                                 ULONG64 fenceValue,ULONG *drawPixels,
+                                 ULONG *whitePixels);
+BOOLEAN NvxGspSubmitUserDepthClear(PVOID HwDeviceExtension,ULONG64 depthVa,
+                                   BOOLEAN zf32,ULONG64 fenceValue);
+BOOLEAN NvxGspRunZf32Diagnostic(PVOID HwDeviceExtension,ULONG64 dstVa,
+                                ULONG64 depthVa,ULONG64 vertexVa,
+                                ULONG64 fenceValue);
+BOOLEAN NvxGspReadUserSurface(PVOID HwDeviceExtension,ULONG64 srcVa,
+                              PULONG output,ULONG outputPixels);
 BOOLEAN NvxGspWaitUserFence(PVOID HwDeviceExtension,ULONG64 fenceValue,
                             ULONG timeoutMs);
 BOOLEAN NvxGspUpload(PVOID HwDeviceExtension,ULONG64 dstVa,const void *src,ULONG bytes);

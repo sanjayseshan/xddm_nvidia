@@ -7,8 +7,18 @@ NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
 NVX_TEST_VERSION="3.0.0.1"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 NVX_TEST_FLAGS=()
+NVX_MESA_TEST_FLAGS=()
+if [ "${NVX_TRACE_ICD_CALLBACKS:-0}" = "1" ]; then
+    NVX_TEST_FLAGS+=("-DNVX_TRACE_ICD_CALLBACKS=1")
+fi
+if [ "${NVX_MESA_APPLOCAL:-0}" = "1" ]; then
+    NVX_TEST_FLAGS+=("-DNVX_MESA_APPLOCAL_FRONTEND=1")
+fi
 if [ "${NVX_GR_SUBMISSION_PROBE:-0}" = "1" ]; then
     NVX_TEST_FLAGS+=("-DNVX_REQUIRE_3D_ABI=1")
+fi
+if [ "${NVX_MESA_GALLIUM_BRIDGE:-0}" = "1" ]; then
+    NVX_MESA_TEST_FLAGS+=("-DNVX_MESA_GALLIUM_BRIDGE_PROBE=1" "-DNVX_MESA_ZF32_DIAGNOSTIC=1")
 fi
 
 mkdir -p "$NVX_ARCHIVE"
@@ -17,9 +27,15 @@ if [ -f "$NVX_ROOT/vm_serial.log" ]; then
 fi
 
 echo "==> Running host tests and building the RM-managed GR-channel probe v$NVX_TEST_VERSION (no ISO)"
-x86_64-w64-mingw32-gcc -O2 -Wall -Wextra -static-libgcc "${NVX_TEST_FLAGS[@]}" \
+python3 "$NVX_ROOT/test/audit_ampere_vertex_shader.py"
+x86_64-w64-mingw32-gcc -O2 -Wall -Wextra -static-libgcc "${NVX_TEST_FLAGS[@]}" "${NVX_MESA_TEST_FLAGS[@]}" \
     "$NVX_ROOT/test/test_gpu_accel.c" -lopengl32 -lgdi32 -luser32 \
     -o "$NVX_ROOT/test/test_gpu_accel.exe"
+i686-w64-mingw32-gcc -O2 -Wall -Wextra -static-libgcc \
+    -D_WIN32_WINNT=0x0502 -DWINVER=0x0502 \
+    "$NVX_ROOT/test/test_gpu_accel.c" -lopengl32 -lgdi32 -luser32 \
+    -Wl,--major-subsystem-version,5 -Wl,--minor-subsystem-version,2 \
+    -o "$NVX_ROOT/test/test_gpu_accel32.exe"
 cp "$NVX_ROOT/test/test_gpu_accel.exe" "$NVX_ROOT/dist_full/test_gpu_accel.exe"
 if [ "${NVX_GR_CHANNEL_PROBE:-0}" = "1" ]; then
     NVX_DRIVER_BUILD_TARGET=full-gr-probe
@@ -56,9 +72,22 @@ else
     make -C "$NVX_ROOT/src_driver" check "$NVX_DRIVER_BUILD_TARGET" "${NVX_DRIVER_BUILD_ARGS[@]}"
     cp "$NVX_ROOT/src_driver/nvxmp.sys" "$NVX_ROOT/dist_full/nvxmp.sys"
 fi
-make -C "$NVX_ROOT/src_disp"
+if [ "${NVX_BUILD_MESA_ICD:-0}" = "1" ]; then
+    make -C "$NVX_ROOT/src_disp" clean
+    # The display DDI must advertise non-generic OpenGL pixel formats to GDI;
+    # otherwise XP selects PFD_GENERIC_FORMAT and stays on GDI Generic before
+    # it can dispatch context creation to the ICD.
+    make -C "$NVX_ROOT/src_disp" NVX_ENABLE_EXPERIMENTAL_OPENGL_DDI=1
+else
+    make -C "$NVX_ROOT/src_disp"
+fi
 make -C "$NVX_ROOT/src_disp" check
 cp "$NVX_ROOT/src_disp/nvxdisp.dll" "$NVX_ROOT/dist_full/nvxdisp.dll"
+
+if [ "${NVX_BUILD_MESA_ICD:-0}" = "1" ]; then
+    echo "==> Building the XP x64 Mesa WGL ICD (softpipe reference backend)"
+    "$NVX_ROOT/test/build_mesa_xp64.sh"
+fi
 
 if [ ! -f "$NVX_ROOT/dist_full/nvxdisp.dll" ]; then
     echo "Refusing test: dist_full/nvxdisp.dll is missing." >&2
@@ -66,6 +95,10 @@ if [ ! -f "$NVX_ROOT/dist_full/nvxdisp.dll" ]; then
 fi
 echo "==> Verified miniport/display package pairing"
 sha256sum "$NVX_ROOT/dist_full/nvxmp.sys" "$NVX_ROOT/dist_full/nvxdisp.dll"
+if [ -f "$NVX_ROOT/dist_full/nvxogl64.dll" ]; then
+    echo "==> XP x64 OpenGL ICD package"
+    sha256sum "$NVX_ROOT/dist_full/nvxogl64.dll"
+fi
 
 echo "==> Updating the offline XP guest with dist_full"
 "$NVX_ROOT/test/update_disk_driver_user.sh" full

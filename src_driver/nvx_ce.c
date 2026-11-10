@@ -237,7 +237,10 @@ static BOOLEAN NvxGspSubmitCopyUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,UL
     push[n++]=(ULONG)(dstVa>>32);push[n++]=(ULONG)dstVa;
     push[n++]=0x20048104; /* PITCH_IN/OUT, LINE_LENGTH, LINE_COUNT */
     push[n++]=srcPitch;push[n++]=dstPitch;push[n++]=bytesPerLine;push[n++]=lineCount;
-    push[n++]=0x200180c0;push[n++]=0x04000186; /* LAUNCH_DMA */
+    /* Enable MULTI_LINE_ENABLE: LINE_COUNT and the configured pitches are
+       ignored by the CE when this bit is clear, silently copying only the
+       first 256-byte row. */
+    push[n++]=0x200180c0;push[n++]=0x04000386; /* pitch->pitch, multi-line */
     push[n++]=0x20038090; /* SET_SEMAPHORE_A/B/PAYLOAD */
     push[n++]=(ULONG)((va+0xc000)>>32);push[n++]=(ULONG)(va+0xc000);push[n++]=fenceVal;
     push[n++]=0x200180c0;push[n++]=0x0400000c; /* flushed release */

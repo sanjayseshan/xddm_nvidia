@@ -80,7 +80,7 @@ For detailed design notes, see [src_win98/README.md](src_win98/README.md).
 - **Compatible GPUs:** GA104-based cards (GeForce RTX 3070, RTX 3060 Ti, GA104 RTX 3060).
 - **Tested Host Platform:** AMD Ryzen 7000 series on AM5 motherboard (bare metal) and QEMU/KVM with VFIO GPU passthrough.
 - **Monitors Tested:** Dual DisplayPort setup running 1920×1080 (Primary) and 2560×1440 (Secondary) at 60 Hz.
-- **Scope & Limitations:** 2D desktop acceleration, solid fills, and multi-monitor desktop extension are supported. An experimental XP x64 GR diagnostic verifies Ampere triangle rasterization and rendered-pixel readback on hardware. This diagnostic is not a user-mode rendering interface; an OpenGL ICD, general OpenGL draw submission, and Direct3D acceleration remain unimplemented. Video decode acceleration (NVDEC) and audio over HDMI/DP are also unimplemented.
+- **Scope & Limitations:** 2D desktop acceleration, solid fills, and multi-monitor desktop extension are supported. The XP x64 system WGL ICD works, and an opt-in Mesa bridge submits bounded flat-color GL triangle/quad batches through a kernel-owned C797 path with GPU fences and pixel readback. It tiles aligned viewports in 64x16 targets; a 576x16 hardware probe spans nine tiles. Mesa still reports `softpipe`; the normal cube, depth-tested draws, general shader/state support, full-size GPU render surfaces, and Direct3D acceleration are not implemented. Video decode acceleration (NVDEC) and audio over HDMI/DP are also unimplemented.
 
 ---
 
@@ -91,13 +91,14 @@ The miniport log confirms real Ampere Copy Engine submissions. Other GDI
 operations still use software rasterization with GPU uploads; this is partial
 2D acceleration, not a complete DirectDraw/Direct3D driver.
 
-Hardware OpenGL is **not implemented on either XP architecture**. The XP x64
-miniport has an experimental bounded 3D escape ABI for capability query,
-framebuffer allocation/release, a kernel-constructed C797 surface-clear
-submission, and completion-fence wait. A separate initialization-time GR probe
-submits an Ampere triangle and reads back its rasterized pixels, but this is
-not a user-mode OpenGL draw path. The guest still reports Microsoft `GDI
-Generic`, a software OpenGL renderer. The old test ignored failed swaps/device
+General hardware OpenGL remains incomplete on both XP architectures. XP x64
+system WGL dispatch loads the Mesa ICD. Its opt-in bridge can send a bounded
+flat-color GL_TRIANGLES/GL_QUADS batch through validated miniport escapes; the
+kernel builds C797 methods and shader state, waits for fences, and reads the
+GPU target back into the softpipe framebuffer. The hardware probe verifies
+green/red pixels across nine GA104 tiles, but the overall renderer remains Mesa `softpipe` and
+the normal cube, depth-tested draws, and general OpenGL workloads remain on the
+CPU. XP x86 has no Mesa ICD. The old test ignored failed swaps/device
 creation and printed an unconditional PASS. The corrected suite checks those
 failures, reports the actual renderer, and returns a failing exit code for
 unavailable Direct3D 9 errors. On this driver, `0x8876086A` is
@@ -122,11 +123,11 @@ appends the guest result files and gears output there after shutdown. It does
 not add a serial-port dependency to the gears benchmark. Both test programs
 are also compiled for x64 from the same corrected sources.
 
-Full hardware OpenGL needs a GR channel/context and resource/synchronization
-path exposed through a bounded user/kernel interface, then a GPU shader
-compiler and rendering backend, and an XP x64 OpenGL ICD. The current ABI only
-accepts a fixed safe clear operation; it does not accept arbitrary user command
-streams. A Direct3D HAL or translation layer is a separate task.
+Full hardware OpenGL still needs a Mesa hardware backend, broader kernel-built
+draw/state support, GPU render targets sized for ordinary windows, and
+presentation. The ABI accepts bounded uploads, clear, and flat-color triangle
+operations; it does not accept arbitrary user command streams or shader code.
+A Direct3D HAL or translation layer is a separate task.
 The x86 and x64 miniports can share a fixed-width kernel submission ABI, while
 each XP architecture needs its own matching OpenGL ICD binary. Copy Engine
 initialization and pixel-format registration alone do not provide these.
@@ -145,7 +146,8 @@ and plugin are not XP components.
    `mesa_patches/` and are applied with `test/apply_mesa_xp_patches.sh`, leaving
    the submodule at its upstream revision. The Windows x64 `softpipe` WGL DLL
    now builds with XP-era imports and loads under Wine. This validates software
-   ICD packaging only; no XP hardware backend is integrated. See
+   ICD packaging and a narrow external Mesa-to-miniport bridge are integrated;
+   general Mesa hardware rendering is not. See
    `PHASE2C_MESA_EVALUATION.md`.
 2. **Create the XP x64 platform shim.** Implement the Mesa-side OS, memory,
    synchronization, and device interfaces over an XP OpenGL ICD/WGL front end
@@ -153,13 +155,15 @@ and plugin are not XP components.
    user buffers, and use 64-bit GPU virtual addresses on both XP architectures.
 3. **Bring up GR independently of display scanout.** The in-kernel probe has
    verified an Ampere triangle, a completion semaphore, and rendered-pixel
-   readback while preserving display and Copy Engine paths. The probe remains
-   diagnostic; user-mode command submission is not implemented.
+   readback while preserving display and Copy Engine paths. The Mesa bridge
+   now submits a bounded flat-color multi-triangle draw through the validated
+   user/kernel ABI; it remains a restricted bring-up path.
 4. **Connect Mesa rendering.** Mesa's Windows WGL frontend builds, but NVK/NAK
    and Nouveau depend on Linux Vulkan/DRM interfaces and do not form a Windows
    Gallium backend. Implement an XP-compatible Gallium driver or a Vulkan
    device shim over the fixed-width miniport interface before connecting the
-   OpenGL state tracker. The current ICD is `softpipe` and renders on the CPU.
+   OpenGL state tracker. The current ICD is `softpipe`; unsupported rendering
+   and the normal cube still use the CPU.
 5. **Validate XP x64.** Require an NVK/GA104 renderer string, logged GR
    submissions and completed fences, correct rendered-pixel readback, and
    stable 1080p/1440p desktop output. Then run OpenGL applications directly

@@ -25,8 +25,8 @@ static DRVFN DrvFunctionTable[] =
     {INDEX_DrvSynchronize,      (PFN)DrvSynchronize},
     {INDEX_DrvEscape,           (PFN)DrvEscape},
 #if defined(NVX_ENABLE_EXPERIMENTAL_OPENGL_DDI) && NVX_ENABLE_EXPERIMENTAL_OPENGL_DDI
-    /* Scaffolding only: leave Windows' generic renderer in charge until an
-       ICD/MCD and a real buffer-swap implementation exist. */
+    /* Advertise native pixel formats for the registered OpenGL ICD. The
+       feature remains opt-in while XP system WGL dispatch is being validated. */
     {INDEX_DrvDescribePixelFormat, (PFN)DrvDescribePixelFormat},
     {INDEX_DrvSetPixelFormat,   (PFN)DrvSetPixelFormat},
     {INDEX_DrvSwapBuffers,      (PFN)DrvSwapBuffers},

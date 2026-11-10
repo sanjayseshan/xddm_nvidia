@@ -4,12 +4,22 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVX_QCOW="$NVX_ROOT/winxp_x64.qcow2"
 NVX_PACKAGE="$NVX_ROOT/dist"
+NVX_OPENGL_ICD_DLL="${NVX_OPENGL_ICD_DLL:-nvxogl64.dll}"
+NVX_MESA_APPLOCAL="${NVX_MESA_APPLOCAL:-0}"
 if [ "${1:-}" = full ]; then
     NVX_PACKAGE="$NVX_ROOT/dist_full"
 elif [ "$#" -ne 0 ]; then
     echo "Usage: $0 [full]" >&2
     exit 1
 fi
+case "$NVX_OPENGL_ICD_DLL" in
+    nvxogl64.dll|nvxmesa.dll) ;;
+    *) echo "Unsupported NVX_OPENGL_ICD_DLL: $NVX_OPENGL_ICD_DLL" >&2; exit 1 ;;
+esac
+case "$NVX_MESA_APPLOCAL" in
+    0|1) ;;
+    *) echo "NVX_MESA_APPLOCAL must be 0 or 1" >&2; exit 1 ;;
+esac
 
 for tool in guestmount guestunmount mountpoint qemu-img; do
     command -v "$tool" >/dev/null || { echo "Missing $tool; see ROOTLESS_TESTING.md." >&2; exit 1; }
@@ -66,9 +76,48 @@ if [ -z "$NVX_SYSTEM32" ] || [ -z "$NVX_DRIVERS" ]; then
     echo "Could not locate the Windows system directories." >&2
     exit 1
 fi
+echo "==> Auditing every package import against this XP installation"
+NVX_AUDIT_ARGS=(--package "$NVX_PACKAGE" "$NVX_SYSTEM32" "$NVX_DRIVERS")
+if [ -f "$NVX_ROOT/test/test_gpu_accel32.exe" ] || \
+   [ -f "$NVX_ROOT/test/3d_tests/wglgears32.exe" ]; then
+    NVX_AUDIT_ARGS+=(--x86-system-dir "$NVX_MOUNT/WINDOWS/SysWOW64")
+fi
+if [ -f "$NVX_ROOT/test/test_gpu_accel32.exe" ]; then
+    NVX_AUDIT_ARGS+=(--package "$NVX_ROOT/test/test_gpu_accel32.exe")
+fi
+if [ -f "$NVX_ROOT/test/3d_tests/wglgears32.exe" ]; then
+    NVX_AUDIT_ARGS+=(--package "$NVX_ROOT/test/3d_tests/wglgears32.exe")
+fi
+python3 "$NVX_ROOT/test/audit_xp_imports.py" "${NVX_AUDIT_ARGS[@]}"
 
 cp -v "$NVX_PACKAGE/nvxmp.sys" "$NVX_DRIVERS/nvxmp.sys"
 cp -v "$NVX_PACKAGE/nvxdisp.dll" "$NVX_SYSTEM32/nvxdisp.dll"
+if [ -f "$NVX_PACKAGE/nvxogl64.dll" ]; then
+    cp -v "$NVX_PACKAGE/nvxogl64.dll" "$NVX_SYSTEM32/nvxogl64.dll"
+    NVX_SOFTWARE_HIVE="$(find "$NVX_MOUNT" -maxdepth 4 -type f -ipath '*/windows/system32/config/software' -print -quit)"
+    if [ -z "$NVX_SOFTWARE_HIVE" ]; then
+        echo "Could not locate the offline SOFTWARE registry hive for the Mesa ICD." >&2
+        exit 1
+    fi
+hivexregedit --merge --prefix 'HKEY_LOCAL_MACHINE\SOFTWARE' "$NVX_SOFTWARE_HIVE" <<REGFILE
+Windows Registry Editor Version 5.00
+
+[HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\OpenGLDrivers\nvxdisp]
+"Dll"="$NVX_OPENGL_ICD_DLL"
+"Version"=dword:00000002
+"DriverVersion"=dword:00010000
+"Flags"=dword:00000001
+REGFILE
+fi
+if [ -f "$NVX_PACKAGE/nvxmesa.dll" ]; then
+    mkdir -p "$NVX_MOUNT/test_accel"
+    cp -v "$NVX_PACKAGE/nvxmesa.dll" "$NVX_MOUNT/test_accel/nvxmesa.dll"
+    if [ "$NVX_MESA_APPLOCAL" = "1" ]; then
+        cp -v "$NVX_PACKAGE/nvxmesa.dll" "$NVX_MOUNT/test_accel/opengl32.dll"
+    else
+        rm -f "$NVX_MOUNT/test_accel/opengl32.dll"
+    fi
+fi
 if [ -f "$NVX_PACKAGE/test_gpu_accel.exe" ]; then
     mkdir -p "$NVX_MOUNT/test_accel"
     cp -v "$NVX_PACKAGE/test_gpu_accel.exe" "$NVX_MOUNT/test_accel/test_gpu_accel.exe"

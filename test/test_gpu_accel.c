@@ -13,11 +13,465 @@
 #include <share.h>
 #include "../src_driver/nvx_3d_abi.h"
 
+#define NVX_OPENGL_GETINFO_ESCAPE 4353
+#define NVX_OPENGL_GETINFO_DRVNAME 0
+
+typedef struct NVX_OPENGL_INFO {
+    DWORD version;
+    DWORD driverVersion;
+    WCHAR driverName[MAX_PATH + 1];
+} NVX_OPENGL_INFO;
+
 static HANDLE hCom1 = INVALID_HANDLE_VALUE;
 static FILE *fLog = NULL;
 static int failures = 0;
 static int software3d = 0;
 static int d3dUnavailable = 0;
+static int mesaGpuFramebufferVerified = 0;
+static unsigned mesaGpuBridgeBatchCount = 0;
+#if defined(NVX_MESA_GALLIUM_BRIDGE_PROBE) && NVX_MESA_GALLIUM_BRIDGE_PROBE
+static int mesaGpuBridgeProbe = 1;
+#else
+static int mesaGpuBridgeProbe = 0;
+#endif
+static unsigned openGlTraceCount;
+static void LogMsg(const char *fmt, ...);
+
+static void DumpMesaBridgeTrace(void)
+{
+    typedef struct MESA_BRIDGE_STATUS {
+        DWORD size;
+        DWORD version;
+        LONG screenCount;
+        LONG callbackCount;
+        LONG gpuBatchCount;
+        char lastMessage[96];
+        LONG depthStageCount;
+        char depthStages[3][96];
+    } MESA_BRIDGE_STATUS;
+    typedef BOOL (WINAPI *PFN_QUERY_BRIDGE_STATUS)(MESA_BRIDGE_STATUS *, DWORD);
+    HMODULE icd = GetModuleHandleA("nvxogl64.dll");
+    PFN_QUERY_BRIDGE_STATUS query = icd ?
+        (PFN_QUERY_BRIDGE_STATUS)GetProcAddress(icd, "NvxQueryBridgeStatus") : NULL;
+    MESA_BRIDGE_STATUS status;
+    memset(&status, 0, sizeof(status));
+    status.size = sizeof(status);
+    if (!query || !query(&status, sizeof(status))) {
+        LogMsg("[MESA_BRIDGE_TRACE] ICD status export unavailable (icd=%s)\n",
+               icd ? "loaded" : "not loaded");
+        return;
+    }
+    mesaGpuBridgeBatchCount = (unsigned)status.gpuBatchCount;
+    mesaGpuFramebufferVerified = mesaGpuBridgeBatchCount != 0;
+    LogMsg("[MESA_BRIDGE_STATUS] screens=%ld callbacks=%ld gpu_batches=%ld version=%lu last=%s\n",
+           status.screenCount, status.callbackCount, status.gpuBatchCount,
+           (unsigned long)status.version, status.lastMessage);
+    for (LONG i = 0; i < status.depthStageCount && i < 3; i++)
+        LogMsg("[MESA_BRIDGE_DEPTH_STAGE] %s\n", status.depthStages[i]);
+}
+
+#if defined(_WIN64)
+enum OPENGL_TRACE_KIND {
+    OPENGL_TRACE_LOAD = 1,
+    OPENGL_TRACE_REG_OPEN,
+    OPENGL_TRACE_REG_QUERY,
+    OPENGL_TRACE_ESCAPE,
+    OPENGL_TRACE_PROC
+};
+
+typedef struct OPENGL_TRACE_EVENT {
+    enum OPENGL_TRACE_KIND kind;
+    LONG result;
+    char detail[96];
+} OPENGL_TRACE_EVENT;
+
+static OPENGL_TRACE_EVENT openGlTrace[1024];
+
+static void TraceOpenGlCall(enum OPENGL_TRACE_KIND kind, LONG result,
+                            const char *detail)
+{
+    OPENGL_TRACE_EVENT *event;
+    if (openGlTraceCount >= sizeof(openGlTrace) / sizeof(openGlTrace[0]))
+        return;
+    event = &openGlTrace[openGlTraceCount++];
+    event->kind = kind;
+    event->result = result;
+    size_t length = detail ? strlen(detail) : 0;
+    if (length >= sizeof(event->detail)) length = sizeof(event->detail) - 1;
+    if (length) memcpy(event->detail, detail, length);
+    event->detail[length] = '\0';
+}
+
+static void WideToAscii(char *dst, size_t dstBytes, LPCWSTR src)
+{
+    size_t i = 0;
+    if (!dstBytes) return;
+    while (src && src[i] && i + 1 < dstBytes) {
+        dst[i] = src[i] < 0x80 ? (char)src[i] : '?';
+        ++i;
+    }
+    dst[i] = '\0';
+}
+
+typedef HMODULE (WINAPI *PFN_LOAD_LIBRARY_W)(LPCWSTR);
+typedef LONG (WINAPI *PFN_REG_OPEN_KEY_EX_W)(HKEY, LPCWSTR, DWORD, REGSAM, PHKEY);
+typedef LONG (WINAPI *PFN_REG_QUERY_VALUE_EX_W)(HKEY, LPCWSTR, LPDWORD, LPDWORD,
+                                                LPBYTE, LPDWORD);
+typedef int (WINAPI *PFN_EXT_ESCAPE)(HDC, int, int, LPCSTR, int, LPSTR);
+typedef FARPROC (WINAPI *PFN_GET_PROC_ADDRESS)(HMODULE, LPCSTR);
+typedef BOOL (APIENTRY *PFN_DRV_VALIDATE_VERSION)(ULONG);
+typedef VOID (APIENTRY *PFN_DRV_SET_CALLBACK_PROCS)(INT, PROC *);
+typedef LONG (APIENTRY *PFN_DRV_DESCRIBE_PIXEL_FORMAT)(HDC, INT, ULONG,
+                                                       PIXELFORMATDESCRIPTOR *);
+typedef BOOL (APIENTRY *PFN_DRV_SET_PIXEL_FORMAT)(HDC, LONG);
+typedef ULONG_PTR (APIENTRY *PFN_DRV_CREATE_CONTEXT)(HDC);
+typedef ULONG_PTR (APIENTRY *PFN_DRV_CREATE_LAYER_CONTEXT)(HDC, INT);
+typedef PVOID (APIENTRY *PFN_DRV_SET_CONTEXT)(HDC, ULONG_PTR, PVOID);
+typedef BOOL (APIENTRY *PFN_DRV_RELEASE_CONTEXT)(ULONG_PTR);
+typedef BOOL (APIENTRY *PFN_DRV_DELETE_CONTEXT)(ULONG_PTR);
+typedef BOOL (APIENTRY *PFN_DRV_SWAP_BUFFERS)(HDC);
+typedef PROC (APIENTRY *PFN_DRV_GET_PROC_ADDRESS)(LPCSTR);
+
+static PFN_LOAD_LIBRARY_W realLoadLibraryW;
+static PFN_REG_OPEN_KEY_EX_W realRegOpenKeyExW;
+static PFN_REG_QUERY_VALUE_EX_W realRegQueryValueExW;
+static PFN_EXT_ESCAPE realExtEscape;
+static PFN_GET_PROC_ADDRESS realGetProcAddress;
+static PFN_DRV_VALIDATE_VERSION realDrvValidateVersion;
+static PFN_DRV_SET_CALLBACK_PROCS realDrvSetCallbackProcs;
+static PFN_DRV_DESCRIBE_PIXEL_FORMAT realDrvDescribePixelFormat;
+static PFN_DRV_SET_PIXEL_FORMAT realDrvSetPixelFormat;
+static PFN_DRV_CREATE_CONTEXT realDrvCreateContext;
+static PFN_DRV_CREATE_LAYER_CONTEXT realDrvCreateLayerContext;
+static PFN_DRV_SET_CONTEXT realDrvSetContext;
+static PFN_DRV_RELEASE_CONTEXT realDrvReleaseContext;
+static PFN_DRV_DELETE_CONTEXT realDrvDeleteContext;
+static PFN_DRV_SWAP_BUFFERS realDrvSwapBuffers;
+static PFN_DRV_GET_PROC_ADDRESS realDrvGetProcAddress;
+static BOOL traceWrapIcdCallbacks;
+
+static PROC APIENTRY TraceDrvGetProcAddress(LPCSTR name)
+{
+    PROC result = realDrvGetProcAddress(name);
+    char text[96];
+    _snprintf(text, sizeof(text), "CALL DrvGetProcAddress name=%s result=%p",
+              name ? name : "(null)", result);
+    text[sizeof(text) - 1] = '\0';
+    TraceOpenGlCall(OPENGL_TRACE_PROC, result != NULL, text);
+    return result;
+}
+
+static BOOL APIENTRY TraceDrvValidateVersion(ULONG version)
+{
+    BOOL result = realDrvValidateVersion(version);
+    char text[96];
+    _snprintf(text, sizeof(text), "CALL DrvValidateVersion version=%lu result=%u",
+              (unsigned long)version, (unsigned)result);
+    text[sizeof(text) - 1] = '\0';
+    TraceOpenGlCall(OPENGL_TRACE_PROC, result, text);
+    LogMsg("-> %s\n", text);
+    return result;
+}
+
+static VOID APIENTRY TraceDrvSetCallbackProcs(INT count, PROC *callbacks)
+{
+    LogMsg("-> CALL DrvSetCallbackProcs count=%d callbacks=%p\n", count, callbacks);
+    TraceOpenGlCall(OPENGL_TRACE_PROC, count, "CALL DrvSetCallbackProcs");
+    realDrvSetCallbackProcs(count, callbacks);
+}
+
+static LONG APIENTRY TraceDrvDescribePixelFormat(HDC hdc, INT format, ULONG bytes,
+                                                 PIXELFORMATDESCRIPTOR *pfd)
+{
+    LONG result = realDrvDescribePixelFormat(hdc, format, bytes, pfd);
+    char text[96];
+    _snprintf(text, sizeof(text), "CALL DrvDescribePixelFormat i=%d bytes=%lu result=%ld",
+              format, (unsigned long)bytes, result);
+    text[sizeof(text) - 1] = '\0';
+    TraceOpenGlCall(OPENGL_TRACE_PROC, result, text);
+    LogMsg("-> %s\n", text);
+    return result;
+}
+
+static BOOL APIENTRY TraceDrvSetPixelFormat(HDC hdc, LONG format)
+{
+    BOOL result = realDrvSetPixelFormat(hdc, format);
+    char text[96];
+    _snprintf(text, sizeof(text), "CALL DrvSetPixelFormat i=%ld result=%u",
+              format, (unsigned)result);
+    text[sizeof(text) - 1] = '\0';
+    TraceOpenGlCall(OPENGL_TRACE_PROC, result, text);
+    LogMsg("-> %s\n", text);
+    return result;
+}
+
+static ULONG_PTR APIENTRY TraceDrvCreateContext(HDC hdc)
+{
+    ULONG_PTR result = realDrvCreateContext(hdc);
+    char text[96];
+    _snprintf(text, sizeof(text), "CALL DrvCreateContext hdc=%p result=%p",
+              hdc, (void *)(UINT_PTR)result);
+    text[sizeof(text) - 1] = '\0';
+    TraceOpenGlCall(OPENGL_TRACE_PROC, result != 0, text);
+    LogMsg("-> %s\n", text);
+    return result;
+}
+
+static ULONG_PTR APIENTRY TraceDrvCreateLayerContext(HDC hdc, INT layer)
+{
+    ULONG_PTR result = realDrvCreateLayerContext(hdc, layer);
+    char text[96];
+    _snprintf(text, sizeof(text), "CALL DrvCreateLayerContext layer=%d result=%p",
+              layer, (void *)(UINT_PTR)result);
+    text[sizeof(text) - 1] = '\0';
+    TraceOpenGlCall(OPENGL_TRACE_PROC, result != 0, text);
+    return result;
+}
+
+static PVOID APIENTRY TraceDrvSetContext(HDC hdc, ULONG_PTR context, PVOID table)
+{
+    PVOID result = realDrvSetContext(hdc, context, table);
+    char text[96];
+    _snprintf(text, sizeof(text), "CALL DrvSetContext ctx=%p result=%p",
+              (void *)(UINT_PTR)context, result);
+    text[sizeof(text) - 1] = '\0';
+    TraceOpenGlCall(OPENGL_TRACE_PROC, result != NULL, text);
+    LogMsg("-> %s\n", text);
+    return result;
+}
+
+static BOOL APIENTRY TraceDrvReleaseContext(ULONG_PTR context)
+{
+    BOOL result = realDrvReleaseContext(context);
+    TraceOpenGlCall(OPENGL_TRACE_PROC, result, "CALL DrvReleaseContext");
+    return result;
+}
+
+static BOOL APIENTRY TraceDrvDeleteContext(ULONG_PTR context)
+{
+    BOOL result = realDrvDeleteContext(context);
+    TraceOpenGlCall(OPENGL_TRACE_PROC, result, "CALL DrvDeleteContext");
+    return result;
+}
+
+static BOOL APIENTRY TraceDrvSwapBuffers(HDC hdc)
+{
+    BOOL result = realDrvSwapBuffers(hdc);
+    TraceOpenGlCall(OPENGL_TRACE_PROC, result, "CALL DrvSwapBuffers");
+    return result;
+}
+
+static HMODULE WINAPI TraceLoadLibraryW(LPCWSTR name)
+{
+    HMODULE result = realLoadLibraryW(name);
+    char text[96];
+    WideToAscii(text, sizeof(text), name);
+    TraceOpenGlCall(OPENGL_TRACE_LOAD, result ? 1 : (LONG)GetLastError(), text);
+    return result;
+}
+
+static LONG WINAPI TraceRegOpenKeyExW(HKEY root, LPCWSTR subkey, DWORD options,
+                                     REGSAM access, PHKEY resultKey)
+{
+    LONG result = realRegOpenKeyExW(root, subkey, options, access, resultKey);
+    char text[96];
+    WideToAscii(text, sizeof(text), subkey);
+    TraceOpenGlCall(OPENGL_TRACE_REG_OPEN, result, text);
+    return result;
+}
+
+static LONG WINAPI TraceRegQueryValueExW(HKEY key, LPCWSTR value, LPDWORD reserved,
+                                        LPDWORD type, LPBYTE data, LPDWORD bytes)
+{
+    LONG result = realRegQueryValueExW(key, value, reserved, type, data, bytes);
+    char text[96];
+    WideToAscii(text, sizeof(text), value);
+    TraceOpenGlCall(OPENGL_TRACE_REG_QUERY, result, text);
+    return result;
+}
+
+static int WINAPI TraceExtEscape(HDC hdc, int escape, int inputBytes,
+                                LPCSTR input, int outputBytes, LPSTR output)
+{
+    int result = realExtEscape(hdc, escape, inputBytes, input, outputBytes, output);
+    char text[96];
+    DWORD subEscape = 0;
+    if (input && inputBytes >= (int)sizeof(subEscape))
+        memcpy(&subEscape, input, sizeof(subEscape));
+    _snprintf(text, sizeof(text), "escape=%d sub=%lu bytes=%d", escape,
+              (unsigned long)subEscape, result);
+    text[sizeof(text) - 1] = '\0';
+    TraceOpenGlCall(OPENGL_TRACE_ESCAPE, result, text);
+    return result;
+}
+
+static FARPROC WINAPI TraceGetProcAddress(HMODULE module, LPCSTR name)
+{
+    FARPROC result = realGetProcAddress(module, name);
+    char modulePath[MAX_PATH];
+    char *base = modulePath;
+    BOOL isNvxIcd = FALSE;
+    if (module && GetModuleFileNameA(module, modulePath, sizeof(modulePath))) {
+        char *p;
+        for (p = modulePath; *p; ++p)
+            if (*p == '\\' || *p == '/') base = p + 1;
+        isNvxIcd = _stricmp(base, "nvxogl64.dll") == 0;
+    }
+    if (name && strncmp(name, "Drv", 3) == 0) {
+        char detail[96];
+        _snprintf(detail, sizeof(detail), "%s module=%s icd=%u", name,
+                  isNvxIcd ? base : "other", (unsigned)isNvxIcd);
+        detail[sizeof(detail) - 1] = '\0';
+        TraceOpenGlCall(OPENGL_TRACE_PROC, result ? 1 : 0, detail);
+        if (isNvxIcd && result) {
+            if (strcmp(name, "DrvValidateVersion") == 0) {
+                realDrvValidateVersion = (PFN_DRV_VALIDATE_VERSION)result;
+                if (traceWrapIcdCallbacks)
+                    return (FARPROC)TraceDrvValidateVersion;
+            }
+            if (strcmp(name, "DrvSetCallbackProcs") == 0) {
+                realDrvSetCallbackProcs = (PFN_DRV_SET_CALLBACK_PROCS)result;
+                if (traceWrapIcdCallbacks)
+                    return (FARPROC)TraceDrvSetCallbackProcs;
+            }
+            if (strcmp(name, "DrvDescribePixelFormat") == 0) {
+                realDrvDescribePixelFormat = (PFN_DRV_DESCRIBE_PIXEL_FORMAT)result;
+                if (traceWrapIcdCallbacks)
+                    return (FARPROC)TraceDrvDescribePixelFormat;
+            }
+            if (strcmp(name, "DrvSetPixelFormat") == 0) {
+                realDrvSetPixelFormat = (PFN_DRV_SET_PIXEL_FORMAT)result;
+                if (traceWrapIcdCallbacks)
+                    return (FARPROC)TraceDrvSetPixelFormat;
+            }
+            if (strcmp(name, "DrvCreateContext") == 0) {
+                realDrvCreateContext = (PFN_DRV_CREATE_CONTEXT)result;
+                if (traceWrapIcdCallbacks)
+                    return (FARPROC)TraceDrvCreateContext;
+            }
+            if (strcmp(name, "DrvCreateLayerContext") == 0) {
+                realDrvCreateLayerContext = (PFN_DRV_CREATE_LAYER_CONTEXT)result;
+                if (traceWrapIcdCallbacks)
+                    return (FARPROC)TraceDrvCreateLayerContext;
+            }
+            if (strcmp(name, "DrvSetContext") == 0) {
+                realDrvSetContext = (PFN_DRV_SET_CONTEXT)result;
+                if (traceWrapIcdCallbacks)
+                    return (FARPROC)TraceDrvSetContext;
+            }
+            if (strcmp(name, "DrvReleaseContext") == 0) {
+                realDrvReleaseContext = (PFN_DRV_RELEASE_CONTEXT)result;
+                if (traceWrapIcdCallbacks)
+                    return (FARPROC)TraceDrvReleaseContext;
+            }
+            if (strcmp(name, "DrvDeleteContext") == 0) {
+                realDrvDeleteContext = (PFN_DRV_DELETE_CONTEXT)result;
+                if (traceWrapIcdCallbacks)
+                    return (FARPROC)TraceDrvDeleteContext;
+            }
+            if (strcmp(name, "DrvSwapBuffers") == 0) {
+                realDrvSwapBuffers = (PFN_DRV_SWAP_BUFFERS)result;
+                if (traceWrapIcdCallbacks)
+                    return (FARPROC)TraceDrvSwapBuffers;
+            }
+            if (strcmp(name, "DrvGetProcAddress") == 0) {
+                realDrvGetProcAddress = (PFN_DRV_GET_PROC_ADDRESS)result;
+                if (traceWrapIcdCallbacks)
+                    return (FARPROC)TraceDrvGetProcAddress;
+            }
+        }
+    }
+    return result;
+}
+
+static BOOL HookOpenGl32Import(const char *dllName, const char *functionName,
+                               FARPROC hook, FARPROC *original)
+{
+    HMODULE module = GetModuleHandleA("opengl32.dll");
+    PIMAGE_DOS_HEADER dos;
+    PIMAGE_NT_HEADERS nt;
+    PIMAGE_IMPORT_DESCRIPTOR imports;
+    DWORD importRva;
+    if (!module) return FALSE;
+    dos = (PIMAGE_DOS_HEADER)module;
+    nt = (PIMAGE_NT_HEADERS)((BYTE *)module + dos->e_lfanew);
+    importRva = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT].VirtualAddress;
+    if (!importRva) return FALSE;
+    imports = (PIMAGE_IMPORT_DESCRIPTOR)((BYTE *)module + importRva);
+    for (; imports->Name; ++imports) {
+        const char *importDll = (const char *)module + imports->Name;
+        PIMAGE_THUNK_DATA64 names;
+        PIMAGE_THUNK_DATA64 addresses;
+        if (_stricmp(importDll, dllName) != 0 || !imports->OriginalFirstThunk)
+            continue;
+        names = (PIMAGE_THUNK_DATA64)((BYTE *)module + imports->OriginalFirstThunk);
+        addresses = (PIMAGE_THUNK_DATA64)((BYTE *)module + imports->FirstThunk);
+        for (; names->u1.AddressOfData; ++names, ++addresses) {
+            PIMAGE_IMPORT_BY_NAME entry;
+            DWORD oldProtect;
+            if (IMAGE_SNAP_BY_ORDINAL64(names->u1.Ordinal)) continue;
+            entry = (PIMAGE_IMPORT_BY_NAME)((BYTE *)module + names->u1.AddressOfData);
+            if (strcmp((const char *)entry->Name, functionName) != 0) continue;
+            *original = (FARPROC)(UINT_PTR)addresses->u1.Function;
+            if (!VirtualProtect(&addresses->u1.Function, sizeof(addresses->u1.Function),
+                                PAGE_EXECUTE_READWRITE, &oldProtect))
+                return FALSE;
+            addresses->u1.Function = (ULONGLONG)(UINT_PTR)hook;
+            VirtualProtect(&addresses->u1.Function, sizeof(addresses->u1.Function),
+                           oldProtect, &oldProtect);
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static void InstallOpenGl32TraceHooks(void)
+{
+    BOOL ok = TRUE;
+    char wrapValue[2];
+    char getProcTraceValue[2];
+    traceWrapIcdCallbacks = GetEnvironmentVariableA(
+        "NVX_TRACE_WRAP_ICD_CALLBACKS", wrapValue, sizeof(wrapValue)) > 0;
+    if (GetEnvironmentVariableA("NVX_TRACE_GETPROCADDRESS",
+                                getProcTraceValue,
+                                sizeof(getProcTraceValue)) > 0
+#if defined(NVX_TRACE_ICD_CALLBACKS)
+        || TRUE
+#endif
+        ) {
+#if defined(NVX_TRACE_ICD_CALLBACKS)
+        traceWrapIcdCallbacks = TRUE;
+#endif
+        ok &= HookOpenGl32Import("KERNEL32.dll", "GetProcAddress",
+                                 (FARPROC)TraceGetProcAddress,
+                                 (FARPROC *)&realGetProcAddress);
+    }
+    ok &= HookOpenGl32Import("KERNEL32.dll", "LoadLibraryW",
+                             (FARPROC)TraceLoadLibraryW, (FARPROC *)&realLoadLibraryW);
+    ok &= HookOpenGl32Import("ADVAPI32.dll", "RegOpenKeyExW",
+                             (FARPROC)TraceRegOpenKeyExW, (FARPROC *)&realRegOpenKeyExW);
+    ok &= HookOpenGl32Import("ADVAPI32.dll", "RegQueryValueExW",
+                             (FARPROC)TraceRegQueryValueExW, (FARPROC *)&realRegQueryValueExW);
+    ok &= HookOpenGl32Import("GDI32.dll", "ExtEscape",
+                             (FARPROC)TraceExtEscape, (FARPROC *)&realExtEscape);
+    LogMsg("-> WGL dispatcher import tracing: %s\n", ok ? "installed" : "partial");
+}
+
+static void DumpOpenGlTrace(unsigned start)
+{
+    static const char *kindNames[] = { "?", "LoadLibraryW", "RegOpenKeyExW",
+        "RegQueryValueExW", "ExtEscape", "GetProcAddress" };
+    unsigned i;
+    for (i = start; i < openGlTraceCount; ++i) {
+        OPENGL_TRACE_EVENT *event = &openGlTrace[i];
+        LogMsg("-> WGL trace %s result=%ld detail=%s\n",
+               kindNames[event->kind], event->result, event->detail);
+    }
+}
+#else
+static void InstallOpenGl32TraceHooks(void) {}
+static void DumpOpenGlTrace(unsigned start) { (void)start; }
+#endif
 
 static void LogMsg(const char *fmt, ...)
 {
@@ -43,6 +497,35 @@ static void LogMsg(const char *fmt, ...)
             WriteFile(hCom1, buf, (DWORD)strlen(buf), &written, NULL);
         }
     }
+}
+
+static void ClearMesaIcdTrace(void)
+{
+    DWORD deleteError;
+    SetEnvironmentVariableA("NVX_MESA_ICD_TRACE", "1");
+    if (!DeleteFileA("C:\\test_accel\\nvxogl_trace.txt"))
+        deleteError = GetLastError();
+    else
+        deleteError = ERROR_SUCCESS;
+    LogMsg("[MESA_ICD_TRACE_RESET] delete_error=%lu\n", deleteError);
+}
+
+static void DumpMesaIcdTrace(void)
+{
+    char buffer[4096];
+    DWORD bytesRead = 0;
+    HANDLE file = CreateFileA("C:\\test_accel\\nvxogl_trace.txt",
+                              GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                              NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        LogMsg("-> Mesa ICD callback trace: no callbacks recorded (file unavailable)\n");
+        return;
+    }
+    if (ReadFile(file, buffer, sizeof(buffer) - 1, &bytesRead, NULL)) {
+        buffer[bytesRead] = '\0';
+        LogMsg("-> Mesa ICD callback trace:\n%s\n", buffer);
+    }
+    CloseHandle(file);
 }
 
 static void InitLogging(void)
@@ -211,9 +694,41 @@ static void DrawCube(float angle)
 
 static void TestOpenGL(HWND hwnd, HDC hdc)
 {
+    /* The bridge appends per-process results. Remove any prior guest run so
+       batch-count deltas cannot be satisfied by stale hardware submissions. */
+    BOOL bridgeTraceDeleted = DeleteFileA("C:\\test_accel\\mesa_bridge.log");
+    DWORD bridgeTraceDeleteError = bridgeTraceDeleted ? ERROR_SUCCESS : GetLastError();
+    LogMsg("[MESA_BRIDGE_TRACE_RESET] delete_error=%lu\n", bridgeTraceDeleteError);
+    ClearMesaIcdTrace();
+    InstallOpenGl32TraceHooks();
+    unsigned wglTraceStart = openGlTraceCount;
     LogMsg("\n==================================================\n");
     LogMsg(" [TEST 2/3] OpenGL Renderer and Presentation Audit\n");
     LogMsg("==================================================\n");
+
+    DWORD escapeCode = NVX_OPENGL_GETINFO_ESCAPE;
+    LONG escapeSupported = ExtEscape(hdc, QUERYESCSUPPORT, sizeof(escapeCode),
+                                     (LPCSTR)&escapeCode, 0, NULL);
+    LogMsg("-> OPENGL_GETINFO escape support: %ld\n", escapeSupported);
+    if (escapeSupported > 0) {
+        DWORD subEscape = NVX_OPENGL_GETINFO_DRVNAME;
+        NVX_OPENGL_INFO driverInfo;
+        memset(&driverInfo, 0, sizeof(driverInfo));
+        LONG infoBytes = ExtEscape(hdc, NVX_OPENGL_GETINFO_ESCAPE,
+                                   sizeof(subEscape), (LPCSTR)&subEscape,
+                                   sizeof(driverInfo), (LPSTR)&driverInfo);
+        LogMsg("-> OPENGL_GETINFO name query bytes=%ld version=%lu driverVersion=%lu name=%ls\n",
+               infoBytes, (unsigned long)driverInfo.version,
+               (unsigned long)driverInfo.driverVersion, driverInfo.driverName);
+        LONG legacyInfoBytes = ExtEscape(hdc, NVX_OPENGL_GETINFO_ESCAPE,
+                                         sizeof(subEscape), (LPCSTR)&subEscape,
+                                         sizeof(DWORD) * 2 + 256 * sizeof(WCHAR),
+                                         (LPSTR)&driverInfo);
+        LogMsg("-> Legacy 520-byte OPENGL_GETINFO query bytes=%ld name=%ls\n",
+               legacyInfoBytes, driverInfo.driverName);
+    }
+    DumpOpenGlTrace(wglTraceStart);
+    wglTraceStart = openGlTraceCount;
 
     PIXELFORMATDESCRIPTOR pfd;
     memset(&pfd, 0, sizeof(pfd));
@@ -227,21 +742,99 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
 
     int format = ChoosePixelFormat(hdc, &pfd);
     LogMsg("-> ChoosePixelFormat returned: %d\n", format);
+    DumpOpenGlTrace(wglTraceStart);
+    wglTraceStart = openGlTraceCount;
     if (!format) {
         LogMsg("-> [FAIL] ChoosePixelFormat failed (err=%lu)\n", GetLastError()); failures++;
         return;
     }
 
-    if (!SetPixelFormat(hdc, format, &pfd)) {
+    PIXELFORMATDESCRIPTOR actualPfd;
+    memset(&actualPfd, 0, sizeof(actualPfd));
+    int described = DescribePixelFormat(hdc, format, sizeof(actualPfd), &actualPfd);
+    LogMsg("-> Selected format descriptor before SetPixelFormat: count=%d flags=0x%08lx\n",
+           described, (unsigned long)actualPfd.dwFlags);
+    if (described <= 0) {
+        LogMsg("-> [FAIL] DescribePixelFormat failed before SetPixelFormat (err=%lu)\n",
+               GetLastError()); failures++;
+        return;
+    }
+    if (!SetPixelFormat(hdc, format, &actualPfd)) {
         LogMsg("-> [FAIL] SetPixelFormat failed (err=%lu)\n", GetLastError()); failures++;
         return;
     }
-    LogMsg("-> Pixel format %d configured successfully\n", format);
+    DumpOpenGlTrace(wglTraceStart);
+    wglTraceStart = openGlTraceCount;
+    memset(&actualPfd, 0, sizeof(actualPfd));
+    described = DescribePixelFormat(hdc, format, sizeof(actualPfd), &actualPfd);
+    LogMsg("-> Pixel format requested=%d current=%d describe=%d flags=0x%08lx type=%u color=%u depth=%u\n",
+           format, GetPixelFormat(hdc), described, (unsigned long)actualPfd.dwFlags,
+           (unsigned)actualPfd.iPixelType, (unsigned)actualPfd.cColorBits,
+           (unsigned)actualPfd.cDepthBits);
 
     HGLRC hglrc = wglCreateContext(hdc);
+    DumpOpenGlTrace(wglTraceStart);
+    DumpMesaIcdTrace();
     if (!hglrc) {
-        LogMsg("-> [FAIL] wglCreateContext failed (err=%lu)\n", GetLastError()); failures++;
-        return;
+        LogMsg("-> wglCreateContext failed (err=%lu)\n", GetLastError());
+        LogMsg("-> ICD already loaded by WGL: %s\n",
+               GetModuleHandleA("nvxogl64.dll") ? "yes" : "no");
+        HMODULE icd = LoadLibraryA("nvxogl64.dll");
+        LogMsg("-> Direct ICD LoadLibrary: %s (err=%lu)\n",
+               icd ? "success" : "failed", GetLastError());
+        if (icd) {
+            const char *required[] = {
+                "DrvCopyContext", "DrvCreateContext", "DrvCreateLayerContext",
+                "DrvDeleteContext", "DrvDescribeLayerPlane", "DrvDescribePixelFormat",
+                "DrvGetLayerPaletteEntries", "DrvGetProcAddress", "DrvRealizeLayerPalette",
+                "DrvReleaseContext", "DrvSetContext", "DrvSetLayerPaletteEntries",
+                "DrvSetPixelFormat", "DrvShareLists", "DrvSwapBuffers",
+                "DrvSwapLayerBuffers", "DrvValidateVersion"
+            };
+            size_t i;
+            for (i = 0; i < sizeof(required) / sizeof(required[0]); ++i)
+                LogMsg("-> ICD export %s: %s\n", required[i],
+                       GetProcAddress(icd, required[i]) ? "present" : "missing");
+            typedef ULONG_PTR (APIENTRY *PFN_DRV_CREATE_CONTEXT)(HDC);
+            typedef BOOL (APIENTRY *PFN_DRV_DELETE_CONTEXT)(ULONG_PTR);
+            PFN_DRV_CREATE_CONTEXT createContext =
+                (PFN_DRV_CREATE_CONTEXT)GetProcAddress(icd, "DrvCreateContext");
+            PFN_DRV_DELETE_CONTEXT deleteContext =
+                (PFN_DRV_DELETE_CONTEXT)GetProcAddress(icd, "DrvDeleteContext");
+            LogMsg("-> Direct context probe relies on DrvCreateContext to initialize the Mesa screen\n");
+            if (createContext) {
+                ULONG_PTR directContext;
+#if defined(_WIN64)
+                if (realDrvCreateContext) {
+                    LogMsg("-> Calling the DrvCreateContext pointer resolved by XP WGL\n");
+                    unsigned directTraceStart = openGlTraceCount;
+                    directContext = TraceDrvCreateContext(hdc);
+                    DumpOpenGlTrace(directTraceStart);
+                } else {
+                    directContext = createContext(hdc);
+                }
+#else
+                directContext = createContext(hdc);
+#endif
+                LogMsg("-> Direct DrvCreateContext: %s (handle=%p)\n",
+                       directContext ? "success" : "failed", (void *)(UINT_PTR)directContext);
+                if (directContext && deleteContext)
+                    deleteContext(directContext);
+            }
+            LogMsg("-> Mesa ICD callback trace after direct ICD probes:\n");
+            DumpMesaIcdTrace();
+            wglTraceStart = openGlTraceCount;
+            hglrc = wglCreateContext(hdc);
+            DumpOpenGlTrace(wglTraceStart);
+            LogMsg("-> WGL retry after explicit ICD initialization: %s (err=%lu)\n",
+                   hglrc ? "success" : "failed", GetLastError());
+            FreeLibrary(icd);
+        }
+        if (!hglrc) {
+            LogMsg("-> [FAIL] XP WGL could not create an ICD context\n");
+            failures++;
+            return;
+        }
     }
 
     if (!wglMakeCurrent(hdc, hglrc)) {
@@ -249,6 +842,9 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
         wglDeleteContext(hglrc);
         return;
     }
+
+    LogMsg("-> nvxogl64.dll loaded in process: %s\n",
+           GetModuleHandleA("nvxogl64.dll") ? "yes" : "no");
 
     const char *vendor = (const char *)glGetString(GL_VENDOR);
     const char *renderer = (const char *)glGetString(GL_RENDERER);
@@ -272,6 +868,81 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
     int h = client.bottom - client.top;
 
     glViewport(0, 0, w, h);
+    if (mesaGpuBridgeProbe) {
+        glViewport(0, 0, 576, 16);
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+        glDisable(GL_DEPTH_TEST);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glBegin(GL_QUADS);
+        glColor4f(0.0f, 1.0f, 0.0f, 1.0f);
+        glVertex3f(-1.00f, -0.75f, 0.0f);
+        glVertex3f( 1.00f, -0.75f, 0.0f);
+        glVertex3f( 1.00f,  0.75f, 0.0f);
+        glVertex3f(-1.00f,  0.75f, 0.0f);
+        glColor4f(1.0f, 0.0f, 0.0f, 1.0f);
+        glVertex3f( 0.80f, -0.75f, 0.0f);
+        glVertex3f( 0.95f, -0.75f, 0.0f);
+        glVertex3f( 0.95f,  0.75f, 0.0f);
+        glVertex3f( 0.80f,  0.75f, 0.0f);
+        glEnd();
+        glFinish();
+        GLenum bridgeError = glGetError();
+        LogMsg("-> Submitted two flat-color GL_QUADS to Mesa bridge; GL error=0x%X\n",
+               bridgeError);
+        if (bridgeError != GL_NO_ERROR) failures++;
+        if (!SwapBuffers(hdc)) {
+            LogMsg("[MESA_GPU_PIXEL_RESULT] FAIL (SwapBuffers error=%lu)\n",
+                   GetLastError());
+            failures++;
+        } else {
+            BYTE framePixels[576 * 16 * 4];
+            unsigned greenPixels = 0, redPixels = 0, backgroundPixels = 0;
+            unsigned greenByTile[9] = { 0 };
+            unsigned rightRedPixels = 0;
+            unsigned p;
+            glReadBuffer(GL_FRONT);
+            glReadPixels(0, 0, 576, 16, GL_RGBA, GL_UNSIGNED_BYTE, framePixels);
+            GLenum readError = glGetError();
+            for (p = 0; p < 576 * 16; p++) {
+                BYTE r = framePixels[p * 4 + 0];
+                BYTE g = framePixels[p * 4 + 1];
+                BYTE b = framePixels[p * 4 + 2];
+                if (g > 200 && r < 32 && b < 32) {
+                    greenPixels++;
+                    greenByTile[(p % 576) / 64]++;
+                }
+                else if (r > 200 && g < 32 && b < 32) {
+                    redPixels++;
+                    if ((p % 576) >= 8 * 64) rightRedPixels++;
+                }
+                else if (r < 16 && g < 16 && b < 16) backgroundPixels++;
+            }
+            int gpuPixelPass = readError == GL_NO_ERROR && greenPixels >= 8 &&
+                redPixels >= 8 && backgroundPixels >= 8 &&
+                rightRedPixels >= 8;
+            for (p = 0; p < 9; p++)
+                if (greenByTile[p] < 8) gpuPixelPass = 0;
+            DumpMesaBridgeTrace();
+            if (!mesaGpuFramebufferVerified || mesaGpuBridgeBatchCount == 0)
+                gpuPixelPass = 0;
+            LogMsg("[MESA_GPU_PIXEL_RESULT] %s green_pixels=%u red_pixels=%u background_pixels=%u error=0x%X\n",
+                   gpuPixelPass ? "PASS" : "FAIL", greenPixels, redPixels,
+                   backgroundPixels, readError);
+            if (!gpuPixelPass) failures++;
+            LogMsg("[MESA_GPU_TILE_RESULT] %s tiles=%u green=%u,%u,%u,%u,%u,%u,%u,%u,%u right_red=%u\n",
+                   gpuPixelPass ? "PASS" : "FAIL", 9,
+                   greenByTile[0], greenByTile[1], greenByTile[2],
+                   greenByTile[3], greenByTile[4], greenByTile[5],
+                   greenByTile[6], greenByTile[7], greenByTile[8],
+                   rightRedPixels);
+        }
+        DumpMesaBridgeTrace();
+        glViewport(0, 0, w, h);
+    }
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
     /* Simple frustum setup */
@@ -281,6 +952,105 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
     glTranslatef(0.0f, 0.0f, -5.0f);
+
+    if (mesaGpuBridgeProbe) {
+        BYTE depthPixel[4] = { 0, 0, 0, 0 };
+        GLenum depthError;
+        unsigned depthBatchesBefore = mesaGpuBridgeBatchCount;
+        glViewport(0, 0, 64, 16);
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+        glDisable(GL_CULL_FACE);
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        glDepthMask(GL_TRUE);
+        glClearDepth(1.0);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glBegin(GL_TRIANGLES);
+        glColor4f(1.0f, 0.0f, 0.0f, 1.0f);
+        glVertex3f(-0.9f, -0.9f, 0.5f);
+        glVertex3f( 0.9f, -0.9f, 0.5f);
+        glVertex3f( 0.0f,  0.9f, 0.5f);
+        glColor4f(0.0f, 1.0f, 0.0f, 1.0f);
+        glVertex3f(-0.9f, -0.9f, -0.5f);
+        glVertex3f( 0.9f, -0.9f, -0.5f);
+        glVertex3f( 0.0f,  0.9f, -0.5f);
+        glColor4f(0.0f, 0.0f, 1.0f, 1.0f);
+        glVertex3f(-0.9f, -0.9f, 0.75f);
+        glVertex3f( 0.9f, -0.9f, 0.75f);
+        glVertex3f( 0.0f,  0.9f, 0.75f);
+        glEnd();
+        glFinish();
+        depthError = glGetError();
+        if (depthError == GL_NO_ERROR && SwapBuffers(hdc)) {
+            glReadBuffer(GL_FRONT);
+            glReadPixels(32, 8, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, depthPixel);
+            depthError = glGetError();
+        } else if (depthError == GL_NO_ERROR) {
+            depthError = (GLenum)GetLastError();
+        }
+        DumpMesaBridgeTrace();
+        if (depthError == GL_NO_ERROR && mesaGpuBridgeBatchCount > depthBatchesBefore &&
+            depthPixel[1] > 200 &&
+            depthPixel[0] < 32 && depthPixel[2] < 32) {
+            LogMsg("[MESA_GPU_DEPTH_RESULT] PASS gpu_batches=%u front_green=%u,%u,%u error=0x%X\n",
+                   mesaGpuBridgeBatchCount, depthPixel[0], depthPixel[1],
+                   depthPixel[2], depthError);
+        } else {
+            LogMsg("[MESA_GPU_DEPTH_RESULT] FAIL gpu_batches=%u front_pixel=%u,%u,%u error=0x%X\n",
+                   mesaGpuBridgeBatchCount, depthPixel[0], depthPixel[1],
+                   depthPixel[2], depthError);
+            failures++;
+        }
+        glDisable(GL_DEPTH_TEST);
+        glMatrixMode(GL_PROJECTION);
+        glLoadIdentity();
+        glFrustum(-aspect, aspect, -1.0f, 1.0f, 1.0f, 100.0f);
+        glMatrixMode(GL_MODELVIEW);
+        glLoadIdentity();
+        glTranslatef(0.0f, 0.0f, -5.0f);
+
+        /* Keep the cube's GPU evidence independent of the depth probe above. */
+        DeleteFileA("C:\\test_accel\\mesa_bridge.log");
+        BYTE cubePixels[64 * 16 * 4];
+        unsigned coloredPixels = 0, p;
+        GLenum error;
+        unsigned batchesBefore = mesaGpuBridgeBatchCount;
+        glViewport(0, 0, 64, 16);
+        glDisable(GL_DEPTH_TEST);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        DrawCube(17.0f);
+        glFinish();
+        if (!SwapBuffers(hdc)) {
+            LogMsg("[MESA_GPU_CUBE_RESULT] FAIL (SwapBuffers error=%lu)\n",
+                   GetLastError());
+            failures++;
+        } else {
+            glReadBuffer(GL_FRONT);
+            glReadPixels(0, 0, 64, 16, GL_RGBA, GL_UNSIGNED_BYTE, cubePixels);
+            error = glGetError();
+            for (p = 0; p < 64 * 16; p++)
+                if (cubePixels[p * 4 + 0] > 16 || cubePixels[p * 4 + 1] > 16 ||
+                    cubePixels[p * 4 + 2] > 16)
+                    coloredPixels++;
+            DumpMesaBridgeTrace();
+            if (error == GL_NO_ERROR && coloredPixels >= 8 &&
+                mesaGpuBridgeBatchCount > batchesBefore) {
+                LogMsg("[MESA_GPU_CUBE_RESULT] PASS colored_pixels=%u new_gpu_batches=%u\n",
+                       coloredPixels, mesaGpuBridgeBatchCount - batchesBefore);
+            } else {
+                LogMsg("[MESA_GPU_CUBE_RESULT] FAIL colored_pixels=%u gpu_batches=%u error=0x%X\n",
+                       coloredPixels, mesaGpuBridgeBatchCount - batchesBefore,
+                       error);
+                failures++;
+            }
+        }
+        glViewport(0, 0, w, h);
+    }
 
     glEnable(GL_DEPTH_TEST);
 
@@ -320,17 +1090,154 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
     }
     wglMakeCurrent(NULL, NULL);
     wglDeleteContext(hglrc);
+    if (mesaGpuBridgeProbe) {
+        typedef ULONG_PTR (APIENTRY *PFN_ICD_CREATE_CONTEXT)(HDC);
+        typedef BOOL (APIENTRY *PFN_ICD_DELETE_CONTEXT)(ULONG_PTR);
+        HMODULE icd = LoadLibraryA("nvxogl64.dll");
+        PFN_ICD_CREATE_CONTEXT create = icd ?
+            (PFN_ICD_CREATE_CONTEXT)GetProcAddress(icd, "DrvCreateContext") : NULL;
+        PFN_ICD_DELETE_CONTEXT destroy = icd ?
+            (PFN_ICD_DELETE_CONTEXT)GetProcAddress(icd, "DrvDeleteContext") : NULL;
+        ULONG_PTR direct = create ? create(hdc) : 0;
+        LogMsg("[MESA_ICD_DIRECT_PROBE] module=%s DrvCreateContext=%p result=%p\n",
+               icd ? "loaded" : "missing", (void *)create,
+               (void *)(UINT_PTR)direct);
+        DumpMesaIcdTrace();
+        if (direct && destroy)
+            LogMsg("[MESA_ICD_DIRECT_PROBE] DrvDeleteContext=%u\n",
+                   (unsigned)destroy(direct));
+        if (icd)
+            FreeLibrary(icd);
+    }
     LogMsg("-> OpenGL rendering test completed; renderer classification reported above.\n");
+}
+
+/* Exercise Mesa's libgl-gdi frontend without replacing XP's System32
+ * opengl32.dll. This is a diagnostic for the ICD DDI route, not a hardware
+ * acceleration result: the configured Mesa backend is softpipe. */
+static void TestMesaWglFrontend(HINSTANCE instance)
+{
+    typedef int (WINAPI *PFN_CHOOSE_PIXEL_FORMAT)(HDC, const PIXELFORMATDESCRIPTOR *);
+    typedef int (WINAPI *PFN_DESCRIBE_PIXEL_FORMAT)(HDC, int, UINT, PIXELFORMATDESCRIPTOR *);
+    typedef BOOL (WINAPI *PFN_SET_PIXEL_FORMAT)(HDC, int, const PIXELFORMATDESCRIPTOR *);
+    typedef HGLRC (WINAPI *PFN_CREATE_CONTEXT)(HDC);
+    typedef BOOL (WINAPI *PFN_MAKE_CURRENT)(HDC, HGLRC);
+    typedef BOOL (WINAPI *PFN_DELETE_CONTEXT)(HGLRC);
+    typedef BOOL (WINAPI *PFN_SWAP_BUFFERS)(HDC);
+    typedef void (APIENTRY *PFN_CLEAR_COLOR)(GLfloat, GLfloat, GLfloat, GLfloat);
+    typedef void (APIENTRY *PFN_CLEAR)(GLbitfield);
+    typedef void (APIENTRY *PFN_FINISH)(void);
+    typedef void (APIENTRY *PFN_READ_PIXELS)(GLint, GLint, GLsizei, GLsizei, GLenum, GLenum, GLvoid *);
+    typedef const GLubyte *(APIENTRY *PFN_GET_STRING)(GLenum);
+    HWND window = NULL;
+    HDC dc = NULL;
+    HMODULE mesa = NULL;
+    HGLRC context = NULL;
+    int passed = 0;
+    PIXELFORMATDESCRIPTOR pfd;
+    BYTE pixel[4] = {0, 0, 0, 0};
+    PFN_CHOOSE_PIXEL_FORMAT choose;
+    PFN_DESCRIBE_PIXEL_FORMAT describe;
+    PFN_SET_PIXEL_FORMAT set;
+    PFN_CREATE_CONTEXT create;
+    PFN_MAKE_CURRENT makeCurrent;
+    PFN_DELETE_CONTEXT deleteContext;
+    PFN_SWAP_BUFFERS swap;
+    PFN_CLEAR_COLOR clearColor;
+    PFN_CLEAR clear;
+    PFN_FINISH finish;
+    PFN_READ_PIXELS readPixels;
+    PFN_GET_STRING getString;
+
+    LogMsg("\n[MESA_WGL_SHIM] Starting direct Mesa WGL frontend diagnostic\n");
+    mesa = LoadLibraryA("C:\\test_accel\\nvxmesa.dll");
+    if (!mesa) {
+        LogMsg("[MESA_WGL_SHIM] DLL load failed err=%lu\n", GetLastError());
+        return;
+    }
+#define MESA_PROC(var, type, symbol) var = (type)GetProcAddress(mesa, symbol)
+    MESA_PROC(choose, PFN_CHOOSE_PIXEL_FORMAT, "wglChoosePixelFormat");
+    MESA_PROC(describe, PFN_DESCRIBE_PIXEL_FORMAT, "wglDescribePixelFormat");
+    MESA_PROC(set, PFN_SET_PIXEL_FORMAT, "wglSetPixelFormat");
+    MESA_PROC(create, PFN_CREATE_CONTEXT, "wglCreateContext");
+    MESA_PROC(makeCurrent, PFN_MAKE_CURRENT, "wglMakeCurrent");
+    MESA_PROC(deleteContext, PFN_DELETE_CONTEXT, "wglDeleteContext");
+    MESA_PROC(swap, PFN_SWAP_BUFFERS, "wglSwapBuffers");
+    MESA_PROC(clearColor, PFN_CLEAR_COLOR, "glClearColor");
+    MESA_PROC(clear, PFN_CLEAR, "glClear");
+    MESA_PROC(finish, PFN_FINISH, "glFinish");
+    MESA_PROC(readPixels, PFN_READ_PIXELS, "glReadPixels");
+    MESA_PROC(getString, PFN_GET_STRING, "glGetString");
+#undef MESA_PROC
+    if (!choose || !describe || !set || !create || !makeCurrent ||
+        !deleteContext || !swap || !clearColor || !clear || !finish ||
+        !readPixels || !getString) {
+        LogMsg("[MESA_WGL_SHIM] required WGL/GL export missing\n");
+        goto done;
+    }
+    window = CreateWindowA("STATIC", "Mesa WGL diagnostic", WS_POPUP,
+                           0, 0, 64, 64, NULL, NULL, instance, NULL);
+    if (!window) {
+        LogMsg("[MESA_WGL_SHIM] window creation failed err=%lu\n", GetLastError());
+        goto done;
+    }
+    dc = GetDC(window);
+    memset(&pfd, 0, sizeof(pfd));
+    pfd.nSize = sizeof(pfd);
+    pfd.nVersion = 1;
+    pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+    pfd.iPixelType = PFD_TYPE_RGBA;
+    pfd.cColorBits = 32;
+    pfd.cDepthBits = 24;
+    pfd.iLayerType = PFD_MAIN_PLANE;
+    int format = choose(dc, &pfd);
+    LogMsg("[MESA_WGL_SHIM] pixel format count=%d chosen=%d\n",
+           describe(dc, 0, 0, NULL), format);
+    if (!dc || format <= 0 || !set(dc, format, &pfd)) {
+        LogMsg("[MESA_WGL_SHIM] pixel format setup failed err=%lu\n", GetLastError());
+        goto done;
+    }
+    context = create(dc);
+    LogMsg("[MESA_WGL_SHIM] create context=%p err=%lu\n",
+           (void *)context, GetLastError());
+    if (!context || !makeCurrent(dc, context)) {
+        LogMsg("[MESA_WGL_SHIM] make current failed err=%lu\n", GetLastError());
+        goto done;
+    }
+    LogMsg("[MESA_WGL_SHIM] vendor=%s renderer=%s version=%s\n",
+           getString(GL_VENDOR), getString(GL_RENDERER), getString(GL_VERSION));
+    clearColor(0.125f, 0.25f, 0.75f, 1.0f);
+    clear(GL_COLOR_BUFFER_BIT);
+    finish();
+    readPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, pixel);
+    BOOL swapped = swap(dc);
+    LogMsg("[MESA_WGL_SHIM] pixel=%u,%u,%u,%u swap=%u\n",
+           pixel[0], pixel[1], pixel[2], pixel[3], (unsigned)swapped);
+    passed = pixel[0] > 16 && pixel[1] > 40 && pixel[2] > 150 && swapped;
+    LogMsg("[MESA_WGL_SHIM] %s (software backend diagnostic only)\n",
+           passed ? "PASS" : "FAIL");
+done:
+    if (context) {
+        makeCurrent(NULL, NULL);
+        deleteContext(context);
+    }
+    if (dc && window) ReleaseDC(window, dc);
+    if (window) DestroyWindow(window);
+    if (mesa) FreeLibrary(mesa);
 }
 
 static void TestNvx3dSubmission(HDC hdc)
 {
     NVX_3D_QUERY_CAPS caps={0};
+    NVX_3D_QUERY_CAPS verifiedCaps={0};
     NVX_3D_ALLOC_BUFFER alloc={0},allocated={0};
+    NVX_3D_ALLOC_BUFFER vertexAlloc={0},vertexAllocated={0};
+    struct { NVX_3D_UPLOAD_BUFFER header; UCHAR data[256]; } upload;
+    struct { NVX_3D_UPLOAD_BUFFER header; float data[18]; } vertexUpload;
     NVX_3D_SUBMIT submit={0},submitted={0};
     NVX_3D_WAIT_FENCE wait={0},waited={0};
     NVX_3D_FREE_BUFFER freeRequest={0};
-    int ok=1;
+    int ok=1,clearSubmitted=0,vertexReady=0;
     LogMsg("\n==================================================\n");
     LogMsg(" [TEST 3D] NVX bounded GR allocation/submit/fence ABI\n");
     LogMsg("==================================================\n");
@@ -347,8 +1254,21 @@ static void TestNvx3dSubmission(HDC hdc)
     LogMsg("-> NVX 3D features=0x%08lX class=0x%08lX ABI=%lu\n",
         (unsigned long)caps.Features,(unsigned long)caps.GraphicsClass,
         (unsigned long)caps.Version);
-    if((caps.Features&(NVX_3D_FEATURE_USER_ALLOC|NVX_3D_FEATURE_SUBMIT))!=
-       (NVX_3D_FEATURE_USER_ALLOC|NVX_3D_FEATURE_SUBMIT)||
+    if (mesaGpuBridgeProbe) {
+        int bridged = (caps.Features & NVX_3D_FEATURE_CLIENT_TRIANGLE) != 0 &&
+                      mesaGpuFramebufferVerified;
+        LogMsg("[MESA_TO_GPU_RESULT] %s (Mesa pixels %s copied from the fenced GPU target)\n",
+               bridged ? "PASS" : "FAIL",
+               bridged ? "were" : "were not");
+        if (!bridged) failures++;
+    }
+#if defined(NVX_REQUIRE_3D_ABI) && NVX_REQUIRE_3D_ABI
+    if(!(caps.Features&NVX_3D_FEATURE_TEST_TRIANGLE)) {
+        LogMsg("-> [INFO] triangle capability is not advertised; running fixed diagnostic operation without promotion\n");
+    }
+#endif
+    if(!(caps.Features&NVX_3D_FEATURE_USER_ALLOC)||
+       !(caps.Features&NVX_3D_FEATURE_UPLOAD)||
        caps.Version!=NVX_3D_ABI_VERSION) {
         LogMsg("-> [INFO] safe 3D allocation/submit capabilities unavailable\n");
 #if defined(NVX_REQUIRE_3D_ABI) && NVX_REQUIRE_3D_ABI
@@ -359,7 +1279,7 @@ static void TestNvx3dSubmission(HDC hdc)
         return;
     }
     alloc.Size=sizeof(alloc);alloc.Version=NVX_3D_ABI_VERSION;
-    alloc.Usage=3;alloc.Bytes=65536;
+    alloc.Usage=1;alloc.Bytes=65536;
     if(!ExtEscape(hdc,NVX_ESCAPE_3D_ALLOC,sizeof(alloc),(LPCSTR)&alloc,
                   sizeof(allocated),(LPSTR)&allocated)) {
         LogMsg("-> [FAIL] 3D buffer allocation escape failed\n");
@@ -368,27 +1288,213 @@ static void TestNvx3dSubmission(HDC hdc)
     LogMsg("-> Allocated buffer id=%llu gpuVa=0x%llX bytes=%lu\n",
         (unsigned long long)allocated.BufferId,
         (unsigned long long)allocated.GpuVa,(unsigned long)allocated.Bytes);
+    memset(&upload,0,sizeof(upload));
+    upload.header.Size=sizeof(upload.header);
+    upload.header.Version=NVX_3D_ABI_VERSION;
+    upload.header.BufferId=allocated.BufferId;
+    upload.header.Offset=0x1000;
+    upload.header.Bytes=sizeof(upload.data);
+    for(unsigned i=0;i<sizeof(upload.data);i++)
+        upload.data[i]=(UCHAR)(i*37U+11U);
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_UPLOAD,sizeof(upload),(LPCSTR)&upload,0,NULL)) {
+        LogMsg("-> [FAIL] 3D client-to-VRAM upload failed\n");
+        ok=0;
+    } else {
+        LogMsg("-> Uploaded %u bytes to allocation offset 0x%X; CE readback verification is logged by the miniport\n",
+            (unsigned)sizeof(upload.data),(unsigned)upload.header.Offset);
+    }
+    vertexAlloc.Size=sizeof(vertexAlloc);vertexAlloc.Version=NVX_3D_ABI_VERSION;
+    vertexAlloc.Usage=1;vertexAlloc.Bytes=4096;
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_ALLOC,sizeof(vertexAlloc),
+                  (LPCSTR)&vertexAlloc,sizeof(vertexAllocated),
+                  (LPSTR)&vertexAllocated)) {
+        LogMsg("-> [FAIL] vertex-buffer allocation failed\n");ok=0;
+    } else {
+        memset(&vertexUpload,0,sizeof(vertexUpload));
+        vertexUpload.header.Size=sizeof(vertexUpload.header);
+        vertexUpload.header.Version=NVX_3D_ABI_VERSION;
+        vertexUpload.header.BufferId=vertexAllocated.BufferId;
+        vertexUpload.header.Bytes=sizeof(vertexUpload.data);
+        {
+            static const float triangle[18]={
+                0.125f,0.125f,0.0f,0.0f,0.0f,1.0f,
+                0.125f,0.875f,0.0f,1.0f,0.0f,1.0f,
+                0.875f,0.125f,1.0f,0.0f,0.0f,1.0f
+            };
+            memcpy(vertexUpload.data,triangle,sizeof(triangle));
+        }
+        vertexReady=ExtEscape(hdc,NVX_ESCAPE_3D_UPLOAD,sizeof(vertexUpload),
+                              (LPCSTR)&vertexUpload,0,NULL)!=0;
+        if(vertexReady)
+            LogMsg("-> Uploaded 3 client vertices (%u bytes) to GPU memory\n",
+                   (unsigned)sizeof(vertexUpload.data));
+        else {LogMsg("-> [FAIL] client vertex upload failed\n");ok=0;}
+    }
     submit.Size=sizeof(submit);submit.Version=NVX_3D_ABI_VERSION;
     submit.Operation=NVX_3D_SUBMIT_CLEAR_SURFACE;
     submit.Width=64;submit.Height=16;submit.BufferId=allocated.BufferId;
+    submit.Color=0xffffffffU;
     if(!ExtEscape(hdc,NVX_ESCAPE_3D_SUBMIT,sizeof(submit),(LPCSTR)&submit,
                   sizeof(submitted),(LPSTR)&submitted)) {
         LogMsg("-> [FAIL] bounded C797 clear submission failed\n");ok=0;
     } else {
-        LogMsg("-> Submitted clear; fence=%llu\n",
+        LogMsg("-> Submitted white clear; fence=%llu matching_pixels=%lu\n",
+            (unsigned long long)submitted.FenceValue,
+            (unsigned long)submitted.Reserved[0]);
+        if(submitted.Reserved[0]!=1024) {
+            LogMsg("-> [FAIL] white clear readback count was not 1024\n");ok=0;
+        }
+        LogMsg("-> White clear fence=%llu\n",
             (unsigned long long)submitted.FenceValue);
         wait.Size=sizeof(wait);wait.Version=NVX_3D_ABI_VERSION;
         wait.FenceValue=submitted.FenceValue;wait.TimeoutMs=10000;
         if(!ExtEscape(hdc,NVX_ESCAPE_3D_WAIT,sizeof(wait),(LPCSTR)&wait,
                       sizeof(waited),(LPSTR)&waited)) {
             LogMsg("-> [FAIL] 3D completion fence wait failed\n");ok=0;
-        } else LogMsg("-> 3D completion fence signaled\n");
+        } else {LogMsg("-> 3D completion fence signaled\n");clearSubmitted=1;}
+    }
+    if(clearSubmitted) {
+        memset(&submit,0,sizeof(submit));
+        memset(&submitted,0,sizeof(submitted));
+        submit.Size=sizeof(submit);submit.Version=NVX_3D_ABI_VERSION;
+        submit.Operation=NVX_3D_SUBMIT_TEST_TRIANGLE;
+        submit.Width=64;submit.Height=16;submit.BufferId=allocated.BufferId;
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_SUBMIT,sizeof(submit),(LPCSTR)&submit,
+                      sizeof(submitted),(LPSTR)&submitted)) {
+            LogMsg("-> [FAIL] bounded C797 triangle submission/readback failed (winerr=%lu)\n",
+                (unsigned long)GetLastError());
+            ok=0;
+        } else {
+            LogMsg("-> Submitted fixed triangle; fence=%llu green_pixels=%lu white_pixels=%lu\n",
+                (unsigned long long)submitted.FenceValue,
+                (unsigned long)submitted.Reserved[0],
+                (unsigned long)submitted.Reserved[1]);
+            if(submitted.Reserved[0]<24||submitted.Reserved[1]==0||
+               submitted.Reserved[0]+submitted.Reserved[1]!=1024) {
+                LogMsg("-> [FAIL] hardware triangle readback counts invalid\n");
+                ok=0;
+            }
+            memset(&wait,0,sizeof(wait));memset(&waited,0,sizeof(waited));
+            wait.Size=sizeof(wait);wait.Version=NVX_3D_ABI_VERSION;
+            wait.FenceValue=submitted.FenceValue;wait.TimeoutMs=10000;
+            if(!ExtEscape(hdc,NVX_ESCAPE_3D_WAIT,sizeof(wait),(LPCSTR)&wait,
+                          sizeof(waited),(LPSTR)&waited)) {
+                LogMsg("-> [FAIL] triangle fence wait failed\n");ok=0;
+            } else LogMsg("-> triangle completion fence signaled\n");
+        }
+    }
+    if(vertexReady && (caps.Features&NVX_3D_FEATURE_CLIENT_TRIANGLE)) {
+        NVX_3D_ALLOC_BUFFER depthAlloc={0},depthAllocated={0};
+        NVX_3D_SUBMIT depthSubmit={0},depthSubmitted={0};
+        NVX_3D_FREE_BUFFER depthFree={0};
+        depthAlloc.Size=sizeof(depthAlloc);
+        depthAlloc.Version=NVX_3D_ABI_VERSION;
+        depthAlloc.Usage=NVX_3D_USAGE_DEPTH_TARGET|NVX_3D_USAGE_DEPTH_ZF32;
+        depthAlloc.Bytes=NVX_3D_DEPTH_TARGET_TOTAL_BYTES;
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_ALLOC,sizeof(depthAlloc),
+                     (LPCSTR)&depthAlloc,sizeof(depthAllocated),
+                     (LPSTR)&depthAllocated)) {
+            LogMsg("-> [FAIL] ZF32 depth-target allocation failed\n");ok=0;
+        } else {
+            LogMsg("-> Allocated ZF32 depth diagnostic buffer id=%llu\n",
+                   (unsigned long long)depthAllocated.BufferId);
+            depthSubmit.Size=sizeof(depthSubmit);
+            depthSubmit.Version=NVX_3D_ABI_VERSION;
+            depthSubmit.Operation=NVX_3D_SUBMIT_CLEAR_SURFACE;
+            depthSubmit.Width=64;depthSubmit.Height=16;
+            depthSubmit.BufferId=depthAllocated.BufferId;
+            depthSubmit.Color=0xffffffffU;
+            if(!ExtEscape(hdc,NVX_ESCAPE_3D_SUBMIT,sizeof(depthSubmit),
+                    (LPCSTR)&depthSubmit,sizeof(depthSubmitted),
+                    (LPSTR)&depthSubmitted)) { ok=0; }
+            memset(&depthSubmit,0,sizeof(depthSubmit));
+            memset(&depthSubmitted,0,sizeof(depthSubmitted));
+            depthSubmit.Size=sizeof(depthSubmit);
+            depthSubmit.Version=NVX_3D_ABI_VERSION;
+            depthSubmit.Operation=NVX_3D_SUBMIT_CLEAR_DEPTH;
+            depthSubmit.Width=64;depthSubmit.Height=16;
+            depthSubmit.BufferId=depthAllocated.BufferId;
+            if(!ExtEscape(hdc,NVX_ESCAPE_3D_SUBMIT,sizeof(depthSubmit),
+                    (LPCSTR)&depthSubmit,sizeof(depthSubmitted),
+                    (LPSTR)&depthSubmitted)) { ok=0; }
+            memset(&depthSubmit,0,sizeof(depthSubmit));
+            memset(&depthSubmitted,0,sizeof(depthSubmitted));
+            depthSubmit.Size=sizeof(depthSubmit);
+            depthSubmit.Version=NVX_3D_ABI_VERSION;
+            depthSubmit.Operation=NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH;
+            depthSubmit.Width=64;depthSubmit.Height=16;
+            depthSubmit.BufferId=depthAllocated.BufferId;
+            depthSubmit.Color=0xff00ff00U;
+            depthSubmit.Reserved[0]=(uint32_t)vertexAllocated.BufferId;
+            depthSubmit.Reserved[1]=(uint32_t)(vertexAllocated.BufferId>>32);
+            if(!ExtEscape(hdc,NVX_ESCAPE_3D_SUBMIT,sizeof(depthSubmit),
+                    (LPCSTR)&depthSubmit,sizeof(depthSubmitted),
+                    (LPSTR)&depthSubmitted)) {
+                LogMsg("-> [FAIL] ZF32 depth-tested known triangle failed\n");
+                ok=0;
+            } else {
+                LogMsg("-> ZF32 depth-tested known triangle fence=%llu draw_pixels=%lu background=%lu\n",
+                       (unsigned long long)depthSubmitted.FenceValue,
+                       (unsigned long)depthSubmitted.Reserved[0],
+                       (unsigned long)depthSubmitted.Reserved[1]);
+            }
+            depthFree.Size=sizeof(depthFree);
+            depthFree.Version=NVX_3D_ABI_VERSION;
+            depthFree.BufferId=depthAllocated.BufferId;
+            ExtEscape(hdc,NVX_ESCAPE_3D_FREE,sizeof(depthFree),
+                      (LPCSTR)&depthFree,0,NULL);
+        }
+    }
+    if(clearSubmitted&&vertexReady) {
+        memset(&submit,0,sizeof(submit));memset(&submitted,0,sizeof(submitted));
+        submit.Size=sizeof(submit);submit.Version=NVX_3D_ABI_VERSION;
+        submit.Operation=NVX_3D_SUBMIT_DRAW_TRIANGLE;
+        submit.Width=64;submit.Height=16;submit.BufferId=allocated.BufferId;
+        submit.Color=0xff00ff00U;
+        submit.Reserved[0]=(uint32_t)vertexAllocated.BufferId;
+        submit.Reserved[1]=(uint32_t)(vertexAllocated.BufferId>>32);
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_SUBMIT,sizeof(submit),(LPCSTR)&submit,
+                      sizeof(submitted),(LPSTR)&submitted)) {
+            LogMsg("-> [FAIL] client-vertex GR draw/readback failed (winerr=%lu)\n",
+                   (unsigned long)GetLastError());ok=0;
+        } else {
+            LogMsg("-> Client vertices rasterized by C797; fence=%llu draw_pixels=%lu white_pixels=%lu\n",
+                (unsigned long long)submitted.FenceValue,
+                (unsigned long)submitted.Reserved[0],
+                (unsigned long)submitted.Reserved[1]);
+            if(submitted.Reserved[0]<24||submitted.Reserved[1]==0||
+               submitted.Reserved[0]+submitted.Reserved[1]!=1024) {
+                LogMsg("-> [FAIL] client-vertex draw readback partition invalid\n");ok=0;
+            }
+            memset(&wait,0,sizeof(wait));memset(&waited,0,sizeof(waited));
+            wait.Size=sizeof(wait);wait.Version=NVX_3D_ABI_VERSION;
+            wait.FenceValue=submitted.FenceValue;wait.TimeoutMs=10000;
+            if(!ExtEscape(hdc,NVX_ESCAPE_3D_WAIT,sizeof(wait),(LPCSTR)&wait,
+                          sizeof(waited),(LPSTR)&waited)) {
+                LogMsg("-> [FAIL] client-vertex draw fence wait failed\n");ok=0;
+            }
+            if(!ExtEscape(hdc,NVX_ESCAPE_3D_QUERY_CAPS,0,NULL,
+                          sizeof(verifiedCaps),(LPSTR)&verifiedCaps)||
+               !(verifiedCaps.Features&NVX_3D_FEATURE_CLIENT_TRIANGLE)) {
+                LogMsg("-> [FAIL] miniport did not advertise verified client-triangle support\n");
+                ok=0;
+            } else {
+                LogMsg("-> Miniport advertises verified client-triangle submission\n");
+            }
+        }
     }
     freeRequest.Size=sizeof(freeRequest);freeRequest.Version=NVX_3D_ABI_VERSION;
     freeRequest.BufferId=allocated.BufferId;
     if(!ExtEscape(hdc,NVX_ESCAPE_3D_FREE,sizeof(freeRequest),
                   (LPCSTR)&freeRequest,0,NULL)) {
         LogMsg("-> [FAIL] 3D buffer release failed\n");ok=0;
+    }
+    if(vertexAllocated.BufferId) {
+        freeRequest.BufferId=vertexAllocated.BufferId;
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_FREE,sizeof(freeRequest),
+                      (LPCSTR)&freeRequest,0,NULL)) {
+            LogMsg("-> [FAIL] vertex-buffer release failed\n");ok=0;
+        }
     }
     if(ok) LogMsg("[NVX_3D_RESULT] PASS\n");
     else {LogMsg("[NVX_3D_RESULT] FAIL\n");failures++;}
@@ -548,7 +1654,18 @@ int main(int argc, char **argv)
     for (int arg = 1; arg < argc; ++arg) {
         if (!strcmp(argv[arg], "--2d-only")) only2d = 1;
         if (!strcmp(argv[arg], "--secondary")) secondary = 1;
+        if (!strcmp(argv[arg], "--mesa-gpu-bridge")) mesaGpuBridgeProbe = 1;
     }
+    SetEnvironmentVariableA("NVX_MESA_GALLIUM_BRIDGE",
+                            mesaGpuBridgeProbe ? "1" : NULL);
+#if defined(NVX_MESA_ZF32_DIAGNOSTIC) && NVX_MESA_ZF32_DIAGNOSTIC
+    SetEnvironmentVariableA("NVX_MESA_ZF32_DIAGNOSTIC",
+                            mesaGpuBridgeProbe ? "1" : NULL);
+#else
+    SetEnvironmentVariableA("NVX_MESA_ZF32_DIAGNOSTIC", NULL);
+#endif
+    if (mesaGpuBridgeProbe)
+        DeleteFileA("C:\\test_accel\\mesa_bridge.log");
     if (secondary) {
         EnumDisplayMonitors(NULL,NULL,FindSecondary,(LPARAM)&target);
         if (target.right <= target.left) {
@@ -587,8 +1704,21 @@ int main(int argc, char **argv)
     Test2D(hwnd, hdc);
     LogMsg("[2D_RESULT] %s\n", failures ? "FAIL" : "PASS");
     if (!only2d) {
+#if !defined(NVX_MESA_APPLOCAL_FRONTEND)
+        char runMesaFrontendTest[2];
+        /* Keep the system ICD test isolated. The direct Mesa frontend loads
+           a second WGL stack into this process and is opt-in for diagnostics. */
+        if (GetEnvironmentVariableA("NVX_RUN_MESA_FRONTEND_TEST",
+                                      runMesaFrontendTest,
+                                      sizeof(runMesaFrontendTest)) > 0 &&
+              runMesaFrontendTest[0] == '1' &&
+            GetFileAttributesA("C:\\test_accel\\nvxmesa.dll") != INVALID_FILE_ATTRIBUTES)
+            TestMesaWglFrontend(wc.hInstance);
+#endif
         int before = failures;
         TestOpenGL(hwnd, hdc);
+        if (mesaGpuBridgeProbe)
+            DumpMesaBridgeTrace();
         LogMsg("[OPENGL_RESULT] %s\n", failures != before ? "FAIL" : software3d ? "SOFTWARE" : "RENDERED");
         TestNvx3dSubmission(hdc);
         before = failures;

@@ -27,8 +27,8 @@ cp "$ROOT_DIR/src_disp/nvxdisp32.dll" "$ROOT_DIR/dist32/nvxdisp.dll"
 
 # 2. Build XP-compatible 32-bit ucrtbase shim and test binaries
 i686-w64-mingw32-gcc -O2 -shared -static-libgcc "$ROOT_DIR/test/ucrtbase_xp.c" "$ROOT_DIR/test/ucrtbase.def" -o "$ROOT_DIR/test/ucrtbase32.dll" -lm
-i686-w64-mingw32-gcc -O2 -Wall -Wextra -static-libgcc "$ROOT_DIR/test/test_gpu_accel.c" -lopengl32 -lgdi32 -luser32 -o "$ROOT_DIR/test/test_gpu_accel32.exe"
-i686-w64-mingw32-gcc -x c -O2 -static-libgcc "$ROOT_DIR/test/3d_tests/glxgears_main.cpp" -lopengl32 -lgdi32 -luser32 -o "$ROOT_DIR/test/3d_tests/wglgears32.exe"
+i686-w64-mingw32-gcc -O2 -Wall -Wextra -static-libgcc -D_WIN32_WINNT=0x0502 -DWINVER=0x0502 "$ROOT_DIR/test/test_gpu_accel.c" -lopengl32 -lgdi32 -luser32 -Wl,--major-subsystem-version,5 -Wl,--minor-subsystem-version,2 -o "$ROOT_DIR/test/test_gpu_accel32.exe"
+i686-w64-mingw32-gcc -x c -O2 -static-libgcc -D_WIN32_WINNT=0x0502 -DWINVER=0x0502 "$ROOT_DIR/test/3d_tests/glxgears_main.cpp" -lopengl32 -lgdi32 -luser32 -Wl,--major-subsystem-version,5 -Wl,--minor-subsystem-version,2 -o "$ROOT_DIR/test/3d_tests/wglgears32.exe"
 
 # 3. Create test runner batch script for 32-bit Windows XP
 RUN_TEST_BAT="$(mktemp /tmp/run_test32.XXXXXX.bat)"

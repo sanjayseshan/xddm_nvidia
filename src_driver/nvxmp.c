@@ -1413,6 +1413,29 @@ static PNVX_3D_USER_BUFFER_ENTRY Nvx3dFindBuffer(PNVX_DEVICE_EXTENSION engine,
     return NULL;
 }
 
+static BOOLEAN Nvx3dFillBuffer(PNVX_DEVICE_EXTENSION engine,ULONG64 gpuVa,
+                               ULONG bytes,ULONG usage)
+{
+    ULONG offset=0;
+    BOOLEAN depth=(usage&NVX_3D_USAGE_DEPTH_TARGET)!=0;
+    while(offset<bytes) {
+        ULONG chunk=bytes-offset;
+        if(depth&&offset>=NVX_3D_DEPTH_TARGET_OFFSET&&
+           offset<NVX_3D_DEPTH_TARGET_OFFSET+NVX_3D_DEPTH_TARGET_BYTES) {
+            offset=NVX_3D_DEPTH_TARGET_OFFSET+NVX_3D_DEPTH_TARGET_BYTES;
+            continue;
+        }
+        if(chunk>0x01000000U) chunk=0x01000000U;
+        if(depth&&offset<NVX_3D_DEPTH_TARGET_OFFSET&&
+           chunk>NVX_3D_DEPTH_TARGET_OFFSET-offset)
+            chunk=NVX_3D_DEPTH_TARGET_OFFSET-offset;
+        if(!chunk||!NvxGspSubmitFill(engine,gpuVa+offset,0,chunk))
+            return FALSE;
+        offset+=chunk;
+    }
+    return TRUE;
+}
+
 static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
     NVX_3D_ALLOC_BUFFER *request)
 {
@@ -1424,6 +1447,9 @@ static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
     for(i=0;i<NVX_3D_USER_BUFFER_SLOTS;i++)
         if(!engine->Nvx3dBuffers[i].Id) {slot=i;break;}
     if(slot==NVX_3D_USER_BUFFER_SLOTS) {Nvx3dUnlockBuffers();return FALSE;}
+    /* The GPU VRAM mapping uses 64 KiB leaf PTEs. A depth target may change
+       the PTE kind for its entire leaf, so keep its buffer 64 KiB aligned and
+       reserve the depth page without sharing that leaf with the color target. */
     candidate=start;
     for(;;) {
         BOOLEAN moved=FALSE;
@@ -1443,22 +1469,45 @@ static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
         }
         if(!moved) break;
     }
+    if(request->Usage&NVX_3D_USAGE_DEPTH_TARGET)
+        candidate=(candidate+0xffffULL)&~0xffffULL;
+    if(candidate>end||request->Bytes>end-candidate) {
+        Nvx3dUnlockBuffers();return FALSE;
+    }
     engine->Nvx3dNextBufferId++;
     if(!engine->Nvx3dNextBufferId) engine->Nvx3dNextBufferId++;
     engine->Nvx3dBuffers[slot].Id=engine->Nvx3dNextBufferId;
     engine->Nvx3dBuffers[slot].GpuVa=engine->GspVramGpuVa+candidate;
+    engine->Nvx3dBuffers[slot].DepthGpuVa=
+        (request->Usage&NVX_3D_USAGE_DEPTH_TARGET)?
+        engine->GspVramGpuVa+candidate+NVX_3D_DEPTH_TARGET_OFFSET:0;
     engine->Nvx3dBuffers[slot].Bytes=request->Bytes;
     engine->Nvx3dBuffers[slot].Usage=request->Usage;
     engine->Nvx3dBuffers[slot].Busy=TRUE;
     request->BufferId=engine->Nvx3dBuffers[slot].Id;
     request->GpuVa=engine->Nvx3dBuffers[slot].GpuVa;
     Nvx3dUnlockBuffers();
-    for(i=0;i<request->Bytes;i+=0x01000000U) {
-        ULONG chunk=request->Bytes-i;
-        if(chunk>0x01000000U) chunk=0x01000000U;
-        if(!NvxGspSubmitFill(engine,request->GpuVa+i,0,chunk)) break;
+    if((request->Usage&NVX_3D_USAGE_DEPTH_TARGET) &&
+       (request->Bytes<NVX_3D_DEPTH_TARGET_TOTAL_BYTES ||
+        !NvxGspSetDepthPageKind(engine,
+            request->GpuVa+NVX_3D_DEPTH_TARGET_OFFSET,
+            (request->Usage&NVX_3D_USAGE_DEPTH_ZF32)?6U:
+            (request->Usage&NVX_3D_USAGE_DEPTH_S8Z24)?3U:5U,TRUE))) {
+        if(engine->Nvx3dBuffers[slot].DepthGpuVa)
+            (void)NvxGspSetDepthPageKind(engine,
+                request->GpuVa+NVX_3D_DEPTH_TARGET_OFFSET,0U,FALSE);
+        if(Nvx3dLockBuffers()) {
+            PNVX_3D_USER_BUFFER_ENTRY entry=Nvx3dFindBuffer(engine,request->BufferId);
+            if(entry) VideoPortZeroMemory(entry,sizeof(*entry));
+            Nvx3dUnlockBuffers();
+        }
+        request->BufferId=request->GpuVa=0;
+        return FALSE;
     }
-    if(i<request->Bytes) {
+    if(!Nvx3dFillBuffer(engine,request->GpuVa,request->Bytes,request->Usage)) {
+        if(request->Usage&NVX_3D_USAGE_DEPTH_TARGET)
+            (void)NvxGspSetDepthPageKind(engine,
+                request->GpuVa+NVX_3D_DEPTH_TARGET_OFFSET,0U,FALSE);
         if(Nvx3dLockBuffers()) {
             PNVX_3D_USER_BUFFER_ENTRY entry=Nvx3dFindBuffer(engine,request->BufferId);
             if(entry) VideoPortZeroMemory(entry,sizeof(*entry));
@@ -1484,17 +1533,23 @@ static BOOLEAN Nvx3dFreeBuffer(PNVX_DEVICE_EXTENSION engine,ULONG64 id)
     entry=Nvx3dFindBuffer(engine,id);
     if(!entry||entry->Busy) {Nvx3dUnlockBuffers();return FALSE;}
     entry->Busy=TRUE;saved=*entry;Nvx3dUnlockBuffers();
-    for(ULONG i=0;i<saved.Bytes;i+=0x01000000U) {
-        ULONG chunk=saved.Bytes-i;
-        if(chunk>0x01000000U) chunk=0x01000000U;
-        if(!NvxGspSubmitFill(engine,saved.GpuVa+i,0,chunk)) {
-            if(Nvx3dLockBuffers()) {
-                entry=Nvx3dFindBuffer(engine,id);
-                if(entry) entry->Busy=FALSE;
-                Nvx3dUnlockBuffers();
-            }
-            return FALSE;
+    if(!Nvx3dFillBuffer(engine,saved.GpuVa,saved.Bytes,saved.Usage)) {
+        if(Nvx3dLockBuffers()) {
+            entry=Nvx3dFindBuffer(engine,id);
+            if(entry) entry->Busy=FALSE;
+            Nvx3dUnlockBuffers();
         }
+        return FALSE;
+    }
+            if((saved.Usage&NVX_3D_USAGE_DEPTH_TARGET) &&
+       !NvxGspSetDepthPageKind(engine,
+           saved.GpuVa+NVX_3D_DEPTH_TARGET_OFFSET,0U,FALSE)) {
+        if(Nvx3dLockBuffers()) {
+            entry=Nvx3dFindBuffer(engine,id);
+            if(entry) entry->Busy=FALSE;
+            Nvx3dUnlockBuffers();
+        }
+        return FALSE;
     }
     if(!Nvx3dLockBuffers()) return FALSE;
     entry=Nvx3dFindBuffer(engine,id);
@@ -2096,6 +2151,20 @@ BOOLEAN NTAPI HwVidStartIO(
             engine&&engine->GspGraphicsChannelReady&&
                 engine->GspGraphicsCommandVerified&&
                 engine->GspGraphicsPixelClearVerified);
+        if(engine&&!(caps->Features&NVX_3D_FEATURE_GR_CHANNEL)) {
+            LogStr("NVX [3D-CAPS]: channel_ready=");
+            LogHex(engine->GspGraphicsChannelReady);
+            LogStr(" command_verified=");LogHex(engine->GspGraphicsCommandVerified);
+            LogStr(" channel_faulted=");LogHex(engine->GspGraphicsChannelFaulted);
+            LogStr(" mmu_faulted=");LogHex(engine->GspMmuFaultQueued);
+            LogStr(" copy_verified=");LogHex(engine->GspCopyVerified);
+            LogStr(" clear_verified=");LogHex(engine->GspGraphicsPixelClearVerified);
+            LogStr("\n");
+        }
+        if(engine&&engine->GspGraphicsTriangleVerified)
+            caps->Features|=NVX_3D_FEATURE_TEST_TRIANGLE;
+        if(engine&&engine->GspGraphicsClientTriangleVerified)
+            caps->Features|=NVX_3D_FEATURE_CLIENT_TRIANGLE;
         RequestPacket->StatusBlock->Information=sizeof(*caps);
         status=NO_ERROR;
         break;
@@ -2137,13 +2206,91 @@ BOOLEAN NTAPI HwVidStartIO(
         break;
     }
 
+    case IOCTL_NVX_3D_UPLOAD_BUFFER: {
+        PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
+        NVX_3D_UPLOAD_BUFFER upload;
+        NVX_3D_USER_BUFFER_ENTRY saved;
+        PNVX_3D_USER_BUFFER_ENTRY entry;
+        ULONG headerBytes=sizeof(upload);
+        ULONG inputBytes=RequestPacket->InputBufferLength;
+        if(!RequestPacket->InputBuffer||inputBytes<headerBytes||
+           !engine||!Nvx3dLockBuffers()) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+        VideoPortMoveMemory(&upload,RequestPacket->InputBuffer,headerBytes);
+        if(upload.Size!=headerBytes||upload.Version!=NVX_3D_ABI_VERSION||
+           !upload.BufferId||!upload.Bytes||
+           upload.Bytes>NVX_3D_MAX_UPLOAD_BYTES||
+           inputBytes!=headerBytes+upload.Bytes) {
+            Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
+        }
+        entry=Nvx3dFindBuffer(engine,upload.BufferId);
+        if(!entry||entry->Busy||
+           !Nvx3dValidateUpload(&upload,inputBytes,entry->Bytes)) {
+            Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
+        }
+        entry->Busy=TRUE;saved=*entry;
+        Nvx3dUnlockBuffers();
+        if(NvxGspUpload(engine,saved.GpuVa+upload.Offset,
+                (PUCHAR)RequestPacket->InputBuffer+headerBytes,upload.Bytes)) {
+            status=NO_ERROR;
+            statusBlock->Information=inputBytes;
+        } else {
+            status=ERROR_DEVICE_NOT_READY;
+        }
+        if(Nvx3dLockBuffers()) {
+            entry=Nvx3dFindBuffer(engine,saved.Id);
+            if(entry) entry->Busy=FALSE;
+            Nvx3dUnlockBuffers();
+        }
+        break;
+    }
+
+    case IOCTL_NVX_3D_READBACK_BUFFER: {
+        PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
+        NVX_3D_READBACK request;
+        NVX_3D_USER_BUFFER_ENTRY saved;
+        PNVX_3D_USER_BUFFER_ENTRY entry;
+        if(!RequestPacket->InputBuffer||
+           RequestPacket->InputBufferLength!=sizeof(request)||
+           !RequestPacket->OutputBuffer||
+           RequestPacket->OutputBufferLength<NVX_3D_READBACK_BYTES||
+           !engine||!Nvx3dLockBuffers()) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+        VideoPortMoveMemory(&request,RequestPacket->InputBuffer,sizeof(request));
+        entry=Nvx3dFindBuffer(engine,request.BufferId);
+        if(!entry||entry->Busy||
+           !Nvx3dValidateReadback(&request,
+               RequestPacket->OutputBufferLength,entry->Bytes)) {
+            Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
+        }
+        entry->Busy=TRUE;saved=*entry;
+        Nvx3dUnlockBuffers();
+        if(NvxGspReadUserSurface(engine,saved.GpuVa,
+                (PULONG)RequestPacket->OutputBuffer,NVX_3D_READBACK_PIXELS)) {
+            status=NO_ERROR;
+            statusBlock->Information=NVX_3D_READBACK_BYTES;
+        } else {
+            status=ERROR_DEVICE_NOT_READY;
+        }
+        if(Nvx3dLockBuffers()) {
+            entry=Nvx3dFindBuffer(engine,saved.Id);
+            if(entry) entry->Busy=FALSE;
+            Nvx3dUnlockBuffers();
+        }
+        break;
+    }
+
     case IOCTL_NVX_3D_SUBMIT: {
         PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
             (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
         NVX_3D_SUBMIT request;
-        NVX_3D_USER_BUFFER_ENTRY saved;
-        PNVX_3D_USER_BUFFER_ENTRY entry;
-        ULONG64 fenceValue;
+        NVX_3D_USER_BUFFER_ENTRY saved={0},vertexSaved={0};
+        PNVX_3D_USER_BUFFER_ENTRY entry,vertexEntry=NULL;
+        ULONG64 fenceValue,vertexBufferId;
         if(!RequestPacket->InputBuffer||
            RequestPacket->InputBufferLength!=sizeof(request)||
            !RequestPacket->OutputBuffer||
@@ -2151,33 +2298,107 @@ BOOLEAN NTAPI HwVidStartIO(
             status=ERROR_INVALID_PARAMETER;break;
         }
         VideoPortMoveMemory(&request,RequestPacket->InputBuffer,sizeof(request));
-        if(!Nvx3dValidateSubmit(&request,sizeof(request),4096)||
+        if(!Nvx3dValidateSubmit(&request,sizeof(request),NVX_3D_MAX_BUFFER_BYTES)||
            !engine||!Nvx3dLockBuffers()) {
             status=ERROR_INVALID_PARAMETER;break;
         }
+        vertexBufferId=Nvx3dSubmitVertexBufferId(&request);
         entry=Nvx3dFindBuffer(engine,request.BufferId);
-        if(!entry||entry->Busy||entry->Bytes<4096) {
+        if(!entry||entry->Busy||entry->Bytes<
+           Nvx3dRequiredSubmitBytes(request.Operation)) {
             Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
         }
         entry->Busy=TRUE;saved=*entry;
+        if(request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE||
+           request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_PRESERVE||
+           request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH) {
+            vertexEntry=Nvx3dFindBuffer(engine,vertexBufferId);
+            if(!vertexEntry||vertexEntry->Busy||vertexEntry->Bytes<
+               (request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH?
+                    96U:72U)) {
+                entry->Busy=FALSE;Nvx3dUnlockBuffers();
+                status=ERROR_INVALID_PARAMETER;break;
+            }
+            vertexEntry->Busy=TRUE;vertexSaved=*vertexEntry;
+        }
         fenceValue=engine->Nvx3dLastFence+1;
         if(!fenceValue||fenceValue>0xffffffffULL) {
-            entry->Busy=FALSE;Nvx3dUnlockBuffers();
+            entry->Busy=FALSE;
+            if(vertexEntry) vertexEntry->Busy=FALSE;
+            Nvx3dUnlockBuffers();
             status=ERROR_DEVICE_NOT_READY;break;
         }
         engine->Nvx3dLastFence=fenceValue;
         Nvx3dUnlockBuffers();
-        if(!NvxGspSubmitUserClear(engine,saved.GpuVa,request.Color,fenceValue)) {
-            status=ERROR_DEVICE_NOT_READY;
+        if(request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE||
+           request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_PRESERVE||
+           request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH) {
+            ULONG drawPixels=0,whitePixels=0;
+            if(!NvxGspSubmitUserTriangleBuffer(engine,saved.GpuVa,
+                    saved.DepthGpuVa,vertexSaved.GpuVa,request.Color,
+                    request.Operation!=NVX_3D_SUBMIT_DRAW_TRIANGLE,
+                    request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH,
+                    (saved.Usage&NVX_3D_USAGE_DEPTH_METHOD_S8Z24)?
+                        NVX_3D_ZT_FORMAT_S8Z24:
+                    (saved.Usage&NVX_3D_USAGE_DEPTH_ZF32)?
+                        NVX_3D_ZT_FORMAT_ZF32:
+                    (saved.Usage&NVX_3D_USAGE_DEPTH_S8Z24)?
+                        NVX_3D_ZT_FORMAT_X8Z24:NVX_3D_ZT_FORMAT_Z24S8,
+                    fenceValue,
+                    &drawPixels,&whitePixels)) {
+                status=ERROR_DEVICE_NOT_READY;
+            } else {
+                request.Reserved[0]=drawPixels;
+                request.Reserved[1]=whitePixels;
+                request.FenceValue=fenceValue;
+                VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,sizeof(request));
+                statusBlock->Information=sizeof(request);status=NO_ERROR;
+                engine->GspGraphicsUserSubmitReady=TRUE;
+                engine->GspGraphicsClientTriangleVerified=TRUE;
+            }
+        } else if(request.Operation==NVX_3D_SUBMIT_CLEAR_DEPTH) {
+            if(!NvxGspSubmitUserDepthClear(engine,saved.DepthGpuVa,
+                    (saved.Usage&NVX_3D_USAGE_DEPTH_ZF32)!=0,fenceValue)) {
+                status=ERROR_DEVICE_NOT_READY;
+            } else {
+                request.FenceValue=fenceValue;
+                VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,sizeof(request));
+                statusBlock->Information=sizeof(request);status=NO_ERROR;
+                engine->GspGraphicsUserSubmitReady=TRUE;
+            }
+        } else if(request.Operation==NVX_3D_SUBMIT_TEST_TRIANGLE) {
+            ULONG greenPixels=0,whitePixels=0;
+            if(!NvxGspSubmitUserTriangle(engine,saved.GpuVa,fenceValue,
+                                          &greenPixels,&whitePixels)) {
+                status=ERROR_DEVICE_NOT_READY;
+            } else {
+                request.Reserved[0]=greenPixels;
+                request.Reserved[1]=whitePixels;
+                request.FenceValue=fenceValue;
+                VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,sizeof(request));
+                statusBlock->Information=sizeof(request);status=NO_ERROR;
+                engine->GspGraphicsUserSubmitReady=TRUE;
+            }
         } else {
-            request.FenceValue=fenceValue;
-            VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,sizeof(request));
-            statusBlock->Information=sizeof(request);status=NO_ERROR;
-            engine->GspGraphicsUserSubmitReady=TRUE;
+            ULONG matchingPixels=0;
+            if(!NvxGspSubmitUserClear(engine,saved.GpuVa,request.Color,
+                                      fenceValue,&matchingPixels)) {
+                status=ERROR_DEVICE_NOT_READY;
+            } else {
+                request.Reserved[0]=matchingPixels;
+                request.FenceValue=fenceValue;
+                VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,sizeof(request));
+                statusBlock->Information=sizeof(request);status=NO_ERROR;
+                engine->GspGraphicsUserSubmitReady=TRUE;
+            }
         }
         if(Nvx3dLockBuffers()) {
             entry=Nvx3dFindBuffer(engine,saved.Id);
             if(entry) entry->Busy=FALSE;
+            if(vertexBufferId) {
+                vertexEntry=Nvx3dFindBuffer(engine,vertexBufferId);
+                if(vertexEntry) vertexEntry->Busy=FALSE;
+            }
             Nvx3dUnlockBuffers();
         }
         break;

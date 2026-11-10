@@ -5,6 +5,7 @@
  */
 
 #include "driver.h"
+#include "opengl_icd.h"
 
 ULONG APIENTRY
 DrvEscape(SURFOBJ *pso,ULONG iEsc,ULONG cjIn,PVOID pvIn,
@@ -12,6 +13,29 @@ DrvEscape(SURFOBJ *pso,ULONG iEsc,ULONG cjIn,PVOID pvIn,
 {
     PPDEV ppdev;
     ULONG returned=0,code=0,status;
+
+    /* Windows 2000/XP OpenGL32 discovers an ICD through these legacy
+       DrvEscape queries. The ICD is selected by the `nvxdisp` registry key. */
+    if(iEsc==QUERYESCSUPPORT) {
+        ULONG requested;
+        if(!pvIn||cjIn<sizeof(requested)) return 0;
+        memcpy(&requested,pvIn,sizeof(requested));
+        returned=requested==OPENGL_GETINFO?1:0;
+        if(requested==OPENGL_GETINFO)
+            NvxDispLogEvent(0x200,iEsc,requested,returned);
+        return returned;
+    }
+    if(iEsc==OPENGL_GETINFO) {
+        ULONG subEscape;
+        if(!pvIn||cjIn<sizeof(subEscape)||!pvOut||
+           !pso||!pso->dhpdev) return 0;
+        memcpy(&subEscape,pvIn,sizeof(subEscape));
+        returned=NvxBuildOpenGlDriverInfo(subEscape,pvOut,cjOut);
+        NvxDispLogEvent(0x201,subEscape,returned,
+                        returned?(ULONG)((NVX_OPENGL_DRIVER_INFO *)pvOut)->Version:0);
+        return returned;
+    }
+
     if(!pso||!pso->dhpdev) return 0;
     ppdev=(PPDEV)pso->dhpdev;
     if(!ppdev->hDriver) return 0;
@@ -34,6 +58,20 @@ DrvEscape(SURFOBJ *pso,ULONG iEsc,ULONG cjIn,PVOID pvIn,
     case NVX_ESCAPE_3D_FREE:
         if(cjIn!=sizeof(NVX_3D_FREE_BUFFER)||!pvIn||cjOut) return 0;
         code=IOCTL_NVX_3D_FREE_BUFFER;break;
+    case NVX_ESCAPE_3D_UPLOAD: {
+        NVX_3D_UPLOAD_BUFFER upload;
+        if(!pvIn||cjIn<sizeof(upload)||cjOut) return 0;
+        memcpy(&upload,pvIn,sizeof(upload));
+        if(upload.Size!=sizeof(upload)||
+           upload.Version!=NVX_3D_ABI_VERSION||!upload.BufferId||
+           !upload.Bytes||upload.Bytes>NVX_3D_MAX_UPLOAD_BYTES||
+           cjIn!=sizeof(upload)+upload.Bytes) return 0;
+        code=IOCTL_NVX_3D_UPLOAD_BUFFER;break;
+    }
+    case NVX_ESCAPE_3D_READBACK:
+        if(cjIn!=sizeof(NVX_3D_READBACK)||!pvIn||!pvOut||
+           cjOut<NVX_3D_READBACK_BYTES) return 0;
+        code=IOCTL_NVX_3D_READBACK_BUFFER;break;
     default:
         return 0;
     }
@@ -90,11 +128,13 @@ DrvDescribePixelFormat(
     ppfd->iLayerType = PFD_MAIN_PLANE;
 
     if (iPixelFormat == 1) {
-        /* Format 1: Hardware double-buffered OpenGL */
-        ppfd->dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER | PFD_SUPPORT_GDI | PFD_GENERIC_FORMAT | PFD_GENERIC_ACCELERATED;
+        /* ICD-backed double-buffered format; presentation copies the back
+           surface into the scanout surface. */
+        ppfd->dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL |
+                        PFD_DOUBLEBUFFER | PFD_SWAP_COPY;
     } else {
-        /* Format 2: Single-buffered OpenGL */
-        ppfd->dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_SUPPORT_GDI | PFD_GENERIC_FORMAT | PFD_GENERIC_ACCELERATED;
+        ppfd->dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL |
+                        PFD_SUPPORT_GDI;
     }
 
     return 2;

@@ -1,0 +1,62 @@
+diff --git a/src/gallium/drivers/softpipe/sp_prim_vbuf.c b/src/gallium/drivers/softpipe/sp_prim_vbuf.c
+index d91946377d9..6f07fc59186 100644
+--- a/src/gallium/drivers/softpipe/sp_prim_vbuf.c
++++ b/src/gallium/drivers/softpipe/sp_prim_vbuf.c
+@@ -45,6 +45,13 @@
+ #include "util/u_memory.h"
+ #include "util/u_prim.h"
+ 
++extern int nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
++                                         const void *vertices,
++                                         const uint16_t *indices,
++                                         unsigned stride,
++                                         unsigned primitive,
++                                         unsigned count);
++
+ 
+ #define SP_MAX_VBUF_INDEXES 1024
+ #define SP_MAX_VBUF_SIZE    4096
+@@ -167,6 +174,10 @@ sp_vbuf_draw_elements(struct vbuf_render *vbr, const uint16_t *indices, uint nr)
+    const bool flatshade_first = softpipe->rasterizer->flatshade_first;
+    unsigned i;
+ 
++   if (nvx_wgl_try_softpipe_triangle(softpipe, vertex_buffer, indices, stride,
++                                     cvbr->prim, nr))
++      return;
++
+    switch (cvbr->prim) {
+    case MESA_PRIM_POINTS:
+       for (i = 0; i < nr; i++) {
+@@ -364,6 +375,10 @@ sp_vbuf_draw_arrays(struct vbuf_render *vbr, uint start, uint nr)
+    const bool flatshade_first = softpipe->rasterizer->flatshade_first;
+    unsigned i;
+ 
++   if (nvx_wgl_try_softpipe_triangle(softpipe, vertex_buffer, NULL, stride,
++                                     cvbr->prim, nr))
++      return;
++
+    switch (cvbr->prim) {
+    case MESA_PRIM_POINTS:
+       for (i = 0; i < nr; i++) {
+diff --git a/src/gallium/targets/wgl/wgl.c b/src/gallium/targets/wgl/wgl.c
+index 100753a18bf..482e111424c 100644
+--- a/src/gallium/targets/wgl/wgl.c
++++ b/src/gallium/targets/wgl/wgl.c
+@@ -76,6 +76,8 @@ static bool use_zink = false;
+ 
+ static const char *created_driver_name = NULL;
+ 
++extern void nvx_wgl_set_hdc(HDC hdc);
++
+ /* this must outlive later option lookups, which reuse the getenv buffer on windows */
+ DEBUG_GET_ONCE_OPTION(gallium_driver, "GALLIUM_DRIVER", "")
+ 
+@@ -120,6 +122,8 @@ wgl_screen_create(HDC hDC)
+    struct sw_winsys *winsys;
+    UNUSED bool sw_only = debug_get_bool_option("LIBGL_ALWAYS_SOFTWARE", false);
+ 
++   nvx_wgl_set_hdc(hDC);
++
+    winsys = gdi_create_sw_winsys(gdi_sw_acquire_hdc_by_value, gdi_sw_release_hdc_by_value);
+    if (!winsys)
+       return NULL;

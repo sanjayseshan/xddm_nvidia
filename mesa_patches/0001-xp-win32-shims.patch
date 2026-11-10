@@ -1,3 +1,428 @@
+diff --git a/meson.options b/meson.options
+index 281b043100d..bc7f5a367c8 100644
+--- a/meson.options
++++ b/meson.options
+@@ -816 +816 @@ option(
+-  min : 7,
++  min : 5,
+@@ -818,2 +818,2 @@ option(
+-  value : 8,
+-  description : 'Minimum Windows version to support. Defaults to Windows 8.'
++  value : 5,
++  description : 'Minimum Windows version to support (5 = Windows XP).'
+diff --git a/src/c11/impl/threads_win32.c b/src/c11/impl/threads_win32.c
+index 91870baa1ae..1cf4e9ff556 100644
+--- a/src/c11/impl/threads_win32.c
++++ b/src/c11/impl/threads_win32.c
+@@ -16,0 +17,3 @@
++#ifdef NVX_XP_WIN32_SHIMS
++#include "nvx_win32_xp.h"
++#endif
+@@ -79,9 +81,0 @@ static DWORD impl_abs2relmsec(const struct timespec *abs_time)
+-struct impl_call_once_param { void (*func)(void); };
+-static BOOL CALLBACK impl_call_once_callback(PINIT_ONCE InitOnce, PVOID Parameter, PVOID *Context)
+-{
+-    struct impl_call_once_param *param = (struct impl_call_once_param*)Parameter;
+-    (param->func)();
+-    ((void)InitOnce); ((void)Context);  // suppress warning
+-    return true;
+-}
+-
+@@ -126,3 +120,13 @@ call_once(once_flag *flag, void (*func)(void))
+-    struct impl_call_once_param param;
+-    param.func = func;
+-    InitOnceExecuteOnce((PINIT_ONCE)flag, impl_call_once_callback, (PVOID)&param, NULL);
++    for (;;) {
++        LONG state = InterlockedCompareExchange((volatile LONG *)&flag->status,
++                                                0, 0);
++        if (state == 2) return;
++        if (state == 0 &&
++            InterlockedCompareExchange((volatile LONG *)&flag->status,
++                                       1, 0) == 0) {
++            func();
++            InterlockedExchange((volatile LONG *)&flag->status, 2);
++            return;
++        }
++        Sleep(0);
++    }
+@@ -137,0 +142,3 @@ cnd_broadcast(cnd_t *cond)
++#ifdef NVX_XP_WIN32_SHIMS
++    nvx_xp_condition_wake((PCONDITION_VARIABLE)cond, TRUE);
++#else
+@@ -138,0 +146 @@ cnd_broadcast(cnd_t *cond)
++#endif
+@@ -146 +153,0 @@ cnd_destroy(cnd_t *cond)
+-    (void)cond;
+@@ -148 +155,3 @@ cnd_destroy(cnd_t *cond)
+-    // do nothing
++#ifdef NVX_XP_WIN32_SHIMS
++    nvx_xp_condition_destroy((PCONDITION_VARIABLE)cond);
++#endif
+@@ -155,0 +165,4 @@ cnd_init(cnd_t *cond)
++#ifdef NVX_XP_WIN32_SHIMS
++    cond->Ptr = NULL;
++    return nvx_xp_condition_init((PCONDITION_VARIABLE)cond) ? thrd_success : thrd_error;
++#else
+@@ -157,0 +171 @@ cnd_init(cnd_t *cond)
++#endif
+@@ -164,0 +179,3 @@ cnd_signal(cnd_t *cond)
++#ifdef NVX_XP_WIN32_SHIMS
++    nvx_xp_condition_wake((PCONDITION_VARIABLE)cond, FALSE);
++#else
+@@ -165,0 +183 @@ cnd_signal(cnd_t *cond)
++#endif
+@@ -177 +195,7 @@ cnd_timedwait(cnd_t *cond, mtx_t *mtx, const struct timespec *abs_time)
+-    if (SleepConditionVariableCS((PCONDITION_VARIABLE)cond, (PCRITICAL_SECTION)mtx, timeout))
++#ifdef NVX_XP_WIN32_SHIMS
++    if (nvx_xp_condition_wait((PCONDITION_VARIABLE)cond,
++                              (PCRITICAL_SECTION)mtx, timeout))
++#else
++    if (SleepConditionVariableCS((PCONDITION_VARIABLE)cond,
++                                 (PCRITICAL_SECTION)mtx, timeout))
++#endif
+@@ -188 +212,6 @@ cnd_wait(cnd_t *cond, mtx_t *mtx)
+-    SleepConditionVariableCS((PCONDITION_VARIABLE)cond, (PCRITICAL_SECTION)mtx, INFINITE);
++#ifdef NVX_XP_WIN32_SHIMS
++    return nvx_xp_condition_wait((PCONDITION_VARIABLE)cond,
++                                 (PCRITICAL_SECTION)mtx, INFINITE) ? thrd_success : thrd_error;
++#else
++    SleepConditionVariableCS((PCONDITION_VARIABLE)cond,
++                             (PCRITICAL_SECTION)mtx, INFINITE);
+@@ -189,0 +219 @@ cnd_wait(cnd_t *cond, mtx_t *mtx)
++#endif
+diff --git a/src/gallium/frontends/wgl/stw_context.c b/src/gallium/frontends/wgl/stw_context.c
+index f2dba80ced7..cb556c580fd 100644
+--- a/src/gallium/frontends/wgl/stw_context.c
++++ b/src/gallium/frontends/wgl/stw_context.c
+@@ -51,0 +52,3 @@
++
++extern void NvxXpIcdTrace(const char *event);
++extern void nvx_wgl_set_hdc(HDC hdc);
+@@ -147,0 +151,5 @@ DrvCreateContext(HDC hdc)
++   NvxXpIcdTrace("DrvCreateContext");
++   nvx_wgl_set_hdc(hdc);
++   /* XP may route pixel-format queries through GDI instead of the ICD. */
++   if (!stw_init_screen(hdc))
++      return 0;
+@@ -1045,4 +1050,6 @@
+ PGLCLTPROCTABLE APIENTRY
+ DrvSetContext(HDC hdc, DHGLRC dhglrc, PFN_SETPROCTABLE pfnSetProcTable)
+ {
++   NvxXpIcdTrace("DrvSetContext");
++   nvx_wgl_set_hdc(hdc);
+    PGLCLTPROCTABLE r = (PGLCLTPROCTABLE)&cpt;
+diff --git a/src/gallium/frontends/wgl/stw_device.c b/src/gallium/frontends/wgl/stw_device.c
+index dae1f8da3b7..b372d8dae14 100644
+--- a/src/gallium/frontends/wgl/stw_device.c
++++ b/src/gallium/frontends/wgl/stw_device.c
+@@ -53,0 +54,2 @@ struct stw_device *stw_dev = NULL;
++extern void NvxXpIcdTrace(const char *event);
++
+@@ -295,0 +298,2 @@ DrvSetCallbackProcs(INT nProcs, PROC *pProcs)
++   NvxXpIcdTrace("DrvSetCallbackProcs");
++
+@@ -308,0 +313 @@ DrvValidateVersion(ULONG ulVersion)
++   NvxXpIcdTrace("DrvValidateVersion");
+diff --git a/src/gallium/frontends/wgl/stw_framebuffer.c b/src/gallium/frontends/wgl/stw_framebuffer.c
+index e433fe130e6..fa840a97332 100644
+--- a/src/gallium/frontends/wgl/stw_framebuffer.c
++++ b/src/gallium/frontends/wgl/stw_framebuffer.c
+@@ -46,0 +47,2 @@
++
++extern void NvxXpIcdTrace(const char *event);
+@@ -527,0 +530,2 @@ DrvSetPixelFormat(HDC hdc, LONG iPixelFormat)
++   NvxXpIcdTrace("DrvSetPixelFormat");
++
+@@ -587,0 +592 @@ stw_pixelformat_get(HDC hdc)
++#if !defined(NVX_XP_WIN32_SHIMS)
+@@ -645,0 +651 @@ DrvPresentBuffers(HDC hdc, LPPRESENTBUFFERS data)
++#endif
+@@ -668,0 +675 @@ stw_framebuffer_present_locked(HDC hdc,
++#if !defined(NVX_XP_WIN32_SHIMS)
+@@ -684,0 +692 @@ stw_framebuffer_present_locked(HDC hdc,
++#endif
+diff --git a/src/gallium/frontends/wgl/stw_pixelformat.c b/src/gallium/frontends/wgl/stw_pixelformat.c
+index f7fd58e2e8b..8211052c6f2 100644
+--- a/src/gallium/frontends/wgl/stw_pixelformat.c
++++ b/src/gallium/frontends/wgl/stw_pixelformat.c
+@@ -42,0 +43,2 @@
++
++extern void NvxXpIcdTrace(const char *event);
+@@ -165,0 +168 @@ stw_pixelformat_add(struct stw_device *stw_dev,
++#if !defined(NVX_XP_WIN32_SHIMS)
+@@ -166,0 +170 @@ stw_pixelformat_add(struct stw_device *stw_dev,
++#endif
+@@ -429,0 +434,2 @@ DrvDescribePixelFormat(HDC hdc, INT iPixelFormat, ULONG cjpfd,
++   NvxXpIcdTrace("DrvDescribePixelFormat");
++
+diff --git a/src/gallium/targets/libgl-gdi/opengl32.def.in b/src/gallium/targets/libgl-gdi/opengl32.def.in
+index ceffdf09936..9f2fe295d8e 100644
+--- a/src/gallium/targets/libgl-gdi/opengl32.def.in
++++ b/src/gallium/targets/libgl-gdi/opengl32.def.in
+@@ -379 +378,0 @@ DrvGetProcAddress@4
+-DrvPresentBuffers@8
+diff --git a/src/gallium/targets/wgl/gallium_wgl.def.in b/src/gallium/targets/wgl/gallium_wgl.def.in
+index 412225f631f..acef89de1e9 100644
+--- a/src/gallium/targets/wgl/gallium_wgl.def.in
++++ b/src/gallium/targets/wgl/gallium_wgl.def.in
+@@ -10 +9,0 @@ DrvGetProcAddress@4
+-DrvPresentBuffers@8
+diff --git a/src/gallium/targets/wgl/meson.build b/src/gallium/targets/wgl/meson.build
+index 3a194b323d6..cbeefd71e56 100644
+--- a/src/gallium/targets/wgl/meson.build
++++ b/src/gallium/targets/wgl/meson.build
+@@ -16 +16,3 @@ libgallium_wgl = shared_library(
+-  ['wgl.c'],
++  ['wgl.c', '../../../../../mesa_patches/nvx_win32_xp_tick.c',
++   '../../../../../mesa_patches/nvx_icd_trace.c',
++   '../../../../../mesa_patches/nvx_wgl_bridge.c'],
+diff --git a/src/util/cnd_monotonic.c b/src/util/cnd_monotonic.c
+index 71d9ac0d247..ed315258397 100644
+--- a/src/util/cnd_monotonic.c
++++ b/src/util/cnd_monotonic.c
+@@ -35,0 +36,3 @@
++#ifdef NVX_XP_WIN32_SHIMS
++#include "c11/impl/nvx_win32_xp.h"
++#endif
+@@ -48,0 +52,3 @@ u_cnd_monotonic_init(struct u_cnd_monotonic *cond)
++#ifdef NVX_XP_WIN32_SHIMS
++   return nvx_xp_condition_init((PCONDITION_VARIABLE)cond) ? thrd_success : thrd_error;
++#else
+@@ -50,0 +57 @@ u_cnd_monotonic_init(struct u_cnd_monotonic *cond)
++#endif
+@@ -77,0 +85,3 @@ u_cnd_monotonic_destroy(struct u_cnd_monotonic *cond)
++#ifdef NVX_XP_WIN32_SHIMS
++   nvx_xp_condition_destroy((PCONDITION_VARIABLE)cond);
++#else
+@@ -78,0 +89 @@ u_cnd_monotonic_destroy(struct u_cnd_monotonic *cond)
++#endif
+@@ -89,0 +101,3 @@ u_cnd_monotonic_broadcast(struct u_cnd_monotonic *cond)
++#ifdef NVX_XP_WIN32_SHIMS
++   nvx_xp_condition_wake((PCONDITION_VARIABLE)cond, TRUE);
++#else
+@@ -90,0 +105 @@ u_cnd_monotonic_broadcast(struct u_cnd_monotonic *cond)
++#endif
+@@ -102,0 +118,3 @@ u_cnd_monotonic_signal(struct u_cnd_monotonic *cond)
++#ifdef NVX_XP_WIN32_SHIMS
++   nvx_xp_condition_wake((PCONDITION_VARIABLE)cond, FALSE);
++#else
+@@ -103,0 +122 @@ u_cnd_monotonic_signal(struct u_cnd_monotonic *cond)
++#endif
+@@ -121,0 +141,4 @@ u_cnd_monotonic_timedwait(struct u_cnd_monotonic *cond, mtx_t *mtx,
++#ifdef NVX_XP_WIN32_SHIMS
++   if (nvx_xp_condition_wait((PCONDITION_VARIABLE)cond,
++                             (PCRITICAL_SECTION)mtx, timeout))
++#else
+@@ -123,0 +147 @@ u_cnd_monotonic_timedwait(struct u_cnd_monotonic *cond, mtx_t *mtx,
++#endif
+@@ -149,0 +174,4 @@ u_cnd_monotonic_wait(struct u_cnd_monotonic *cond, mtx_t *mtx)
++#ifdef NVX_XP_WIN32_SHIMS
++   return nvx_xp_condition_wait((PCONDITION_VARIABLE)cond,
++                                (PCRITICAL_SECTION)mtx, INFINITE) ? thrd_success : thrd_error;
++#else
+@@ -152,0 +181 @@ u_cnd_monotonic_wait(struct u_cnd_monotonic *cond, mtx_t *mtx)
++#endif
+diff --git a/src/util/futex.c b/src/util/futex.c
+index df3e949de3d..1c531e5924a 100644
+--- a/src/util/futex.c
++++ b/src/util/futex.c
+@@ -116,0 +117,121 @@ int futex_wait(uint32_t *addr, int32_t value, const struct timespec *timeout)
++#elif defined(_WIN32) && defined(NVX_XP_FUTEX)
++
++#include <windows.h>
++#include <stdint.h>
++#include <limits.h>
++#include <assert.h>
++#include <errno.h>
++
++/* XP-compatible address wait queues. Waiters remain on their bucket list
++ * until either a wake removes them or a timeout removes them under the same
++ * lock, so a signal cannot target a dead stack waiter. */
++#define NVX_XP_FUTEX_BUCKETS 64
++struct nvx_xp_futex_waiter {
++   uint32_t *addr;
++   HANDLE event;
++   BOOL signaled;
++   struct nvx_xp_futex_waiter *next;
++};
++struct nvx_xp_futex_bucket {
++   CRITICAL_SECTION lock;
++   struct nvx_xp_futex_waiter *waiters;
++};
++static struct nvx_xp_futex_bucket nvx_xp_futex_buckets[NVX_XP_FUTEX_BUCKETS];
++static volatile LONG nvx_xp_futex_init_state;
++
++static void nvx_xp_futex_init(void)
++{
++   LONG state = InterlockedCompareExchange(&nvx_xp_futex_init_state, 1, 0);
++   if (state == 0) {
++      unsigned i;
++      for (i = 0; i < NVX_XP_FUTEX_BUCKETS; i++)
++         InitializeCriticalSection(&nvx_xp_futex_buckets[i].lock);
++      InterlockedExchange(&nvx_xp_futex_init_state, 2);
++   } else {
++      while (InterlockedCompareExchange(&nvx_xp_futex_init_state, 0, 0) != 2)
++         Sleep(0);
++   }
++}
++
++static struct nvx_xp_futex_bucket *nvx_xp_futex_bucket_for(uint32_t *addr)
++{
++   uintptr_t key = (uintptr_t)addr;
++   return &nvx_xp_futex_buckets[(key >> 2) % NVX_XP_FUTEX_BUCKETS];
++}
++
++static DWORD nvx_xp_futex_timeout(const struct timespec *deadline)
++{
++   struct timespec now;
++   int64_t ms;
++   if (!deadline) return INFINITE;
++   timespec_get(&now, TIME_MONOTONIC);
++   ms = ((int64_t)deadline->tv_sec - (int64_t)now.tv_sec) * 1000 +
++        ((int64_t)deadline->tv_nsec - (int64_t)now.tv_nsec) / 1000000;
++   if (ms <= 0) return 0;
++   if (ms >= (int64_t)INFINITE) return INFINITE - 1;
++   return (DWORD)ms;
++}
++
++int futex_wake(uint32_t *addr, int32_t count)
++{
++   struct nvx_xp_futex_bucket *bucket;
++   struct nvx_xp_futex_waiter **link;
++   int woken = 0;
++   assert(count >= 0);
++   nvx_xp_futex_init();
++   bucket = nvx_xp_futex_bucket_for(addr);
++   EnterCriticalSection(&bucket->lock);
++   link = &bucket->waiters;
++   while (*link && woken < count) {
++      struct nvx_xp_futex_waiter *waiter = *link;
++      if (waiter->addr == addr) {
++         *link = waiter->next;
++         waiter->signaled = TRUE;
++         SetEvent(waiter->event);
++         woken++;
++      } else {
++         link = &waiter->next;
++      }
++   }
++   LeaveCriticalSection(&bucket->lock);
++   return woken;
++}
++
++int futex_wait(uint32_t *addr, int32_t value, const struct timespec *timeout)
++{
++   struct nvx_xp_futex_bucket *bucket;
++   struct nvx_xp_futex_waiter waiter;
++   struct nvx_xp_futex_waiter **link;
++   DWORD result;
++   int was_signaled;
++   if (InterlockedCompareExchange((volatile LONG *)addr, 0, 0) != value)
++      return EAGAIN;
++   waiter.event = CreateEvent(NULL, TRUE, FALSE, NULL);
++   if (!waiter.event) return -1;
++   waiter.addr = addr;
++   waiter.signaled = FALSE;
++   nvx_xp_futex_init();
++   bucket = nvx_xp_futex_bucket_for(addr);
++   EnterCriticalSection(&bucket->lock);
++   if (InterlockedCompareExchange((volatile LONG *)addr, 0, 0) != value) {
++      LeaveCriticalSection(&bucket->lock);
++      CloseHandle(waiter.event);
++      return EAGAIN;
++   }
++   waiter.next = bucket->waiters;
++   bucket->waiters = &waiter;
++   LeaveCriticalSection(&bucket->lock);
++
++   result = WaitForSingleObject(waiter.event, nvx_xp_futex_timeout(timeout));
++   EnterCriticalSection(&bucket->lock);
++   link = &bucket->waiters;
++   while (*link && *link != &waiter) link = &(*link)->next;
++   if (*link == &waiter) *link = waiter.next;
++   was_signaled = waiter.signaled;
++   LeaveCriticalSection(&bucket->lock);
++   CloseHandle(waiter.event);
++   if (result == WAIT_OBJECT_0 || was_signaled) return 0;
++   if (result == WAIT_TIMEOUT) return ETIMEDOUT;
++   return -1;
++}
++
+diff --git a/src/util/futex.h b/src/util/futex.h
+index b7ce0884155..3b57dbc1d5e 100644
+--- a/src/util/futex.h
++++ b/src/util/futex.h
+@@ -36 +36 @@
+-#elif defined(_WIN32) && !defined(WINDOWS_NO_FUTEX)
++#elif defined(_WIN32) && (defined(NVX_XP_FUTEX) || !defined(WINDOWS_NO_FUTEX))
+diff --git a/src/util/rwlock.c b/src/util/rwlock.c
+index 1d215d320f2..647033ba13a 100644
+--- a/src/util/rwlock.c
++++ b/src/util/rwlock.c
+@@ -8,0 +9,3 @@
++#if defined(NVX_XP_WIN32_SHIMS)
++#include "../c11/impl/nvx_win32_xp.h"
++#endif
+@@ -11,0 +15 @@
++#if !defined(NVX_XP_WIN32_SHIMS)
+@@ -14,0 +19 @@ static_assert(sizeof(struct u_rwlock) == sizeof(SRWLOCK),
++#endif
+@@ -18,0 +24,18 @@ int u_rwlock_init(struct u_rwlock *rwlock)
++#if defined(NVX_XP_WIN32_SHIMS)
++   nvx_xp_rwlock_state *state = (nvx_xp_rwlock_state *)calloc(1, sizeof(*state));
++   if (!state)
++      return -1;
++   InitializeCriticalSection(&state->guard);
++   state->readers_done = CreateSemaphore(NULL, 0, LONG_MAX, NULL);
++   state->writers_done = CreateSemaphore(NULL, 0, LONG_MAX, NULL);
++   if (!state->readers_done || !state->writers_done) {
++      if (state->readers_done)
++         CloseHandle(state->readers_done);
++      if (state->writers_done)
++         CloseHandle(state->writers_done);
++      DeleteCriticalSection(&state->guard);
++      free(state);
++      return -1;
++   }
++   rwlock->rwlock.Ptr = state;
++#else
+@@ -19,0 +43 @@ int u_rwlock_init(struct u_rwlock *rwlock)
++#endif
+@@ -28,0 +53,10 @@ int u_rwlock_destroy(struct u_rwlock *rwlock)
++#if defined(NVX_XP_WIN32_SHIMS)
++   nvx_xp_rwlock_state *state = (nvx_xp_rwlock_state *)rwlock->rwlock.Ptr;
++   if (state) {
++      CloseHandle(state->readers_done);
++      CloseHandle(state->writers_done);
++      DeleteCriticalSection(&state->guard);
++      free(state);
++      rwlock->rwlock.Ptr = NULL;
++   }
++#endif
+@@ -37,0 +72,3 @@ int u_rwlock_rdlock(struct u_rwlock *rwlock)
++#if defined(NVX_XP_WIN32_SHIMS)
++   nvx_xp_rwlock_rdlock(&rwlock->rwlock.Ptr);
++#else
+@@ -38,0 +76 @@ int u_rwlock_rdlock(struct u_rwlock *rwlock)
++#endif
+@@ -47,0 +86,3 @@ int u_rwlock_rdunlock(struct u_rwlock *rwlock)
++#if defined(NVX_XP_WIN32_SHIMS)
++   nvx_xp_rwlock_rdunlock(&rwlock->rwlock.Ptr);
++#else
+@@ -48,0 +90 @@ int u_rwlock_rdunlock(struct u_rwlock *rwlock)
++#endif
+@@ -57,0 +100,3 @@ int u_rwlock_wrlock(struct u_rwlock *rwlock)
++#if defined(NVX_XP_WIN32_SHIMS)
++   nvx_xp_rwlock_wrlock(&rwlock->rwlock.Ptr);
++#else
+@@ -58,0 +104 @@ int u_rwlock_wrlock(struct u_rwlock *rwlock)
++#endif
+@@ -67,0 +114,3 @@ int u_rwlock_wrunlock(struct u_rwlock *rwlock)
++#if defined(NVX_XP_WIN32_SHIMS)
++   nvx_xp_rwlock_wrunlock(&rwlock->rwlock.Ptr);
++#else
+@@ -68,0 +118 @@ int u_rwlock_wrunlock(struct u_rwlock *rwlock)
++#endif
 diff --git a/src/c11/impl/nvx_win32_xp.h b/src/c11/impl/nvx_win32_xp.h
 new file mode 100644
 index 00000000000..5ca56f96ba7
@@ -179,546 +604,3 @@ index 00000000000..5ca56f96ba7
 +}
 +
 +#endif
-diff --git a/src/c11/impl/threads_win32.c b/src/c11/impl/threads_win32.c
-index 91870baa1ae..1cf4e9ff556 100644
---- a/src/c11/impl/threads_win32.c
-+++ b/src/c11/impl/threads_win32.c
-@@ -14,6 +14,9 @@
- #include "threads_win32.h"
- 
- #include <windows.h>
-+#ifdef NVX_XP_WIN32_SHIMS
-+#include "nvx_win32_xp.h"
-+#endif
- 
- /*
- Configuration macro:
-@@ -76,15 +79,6 @@ static DWORD impl_abs2relmsec(const struct timespec *abs_time)
-     return rel_ms;
- }
- 
--struct impl_call_once_param { void (*func)(void); };
--static BOOL CALLBACK impl_call_once_callback(PINIT_ONCE InitOnce, PVOID Parameter, PVOID *Context)
--{
--    struct impl_call_once_param *param = (struct impl_call_once_param*)Parameter;
--    (param->func)();
--    ((void)InitOnce); ((void)Context);  // suppress warning
--    return true;
--}
--
- static struct impl_tss_dtor_entry {
-     tss_t key;
-     tss_dtor_t dtor;
-@@ -123,9 +117,19 @@ void
- call_once(once_flag *flag, void (*func)(void))
- {
-     assert(flag && func);
--    struct impl_call_once_param param;
--    param.func = func;
--    InitOnceExecuteOnce((PINIT_ONCE)flag, impl_call_once_callback, (PVOID)&param, NULL);
-+    for (;;) {
-+        LONG state = InterlockedCompareExchange((volatile LONG *)&flag->status,
-+                                                0, 0);
-+        if (state == 2) return;
-+        if (state == 0 &&
-+            InterlockedCompareExchange((volatile LONG *)&flag->status,
-+                                       1, 0) == 0) {
-+            func();
-+            InterlockedExchange((volatile LONG *)&flag->status, 2);
-+            return;
-+        }
-+        Sleep(0);
-+    }
- }
- 
- 
-@@ -135,7 +139,11 @@ int
- cnd_broadcast(cnd_t *cond)
- {
-     assert(cond != NULL);
-+#ifdef NVX_XP_WIN32_SHIMS
-+    nvx_xp_condition_wake((PCONDITION_VARIABLE)cond, TRUE);
-+#else
-     WakeAllConditionVariable((PCONDITION_VARIABLE)cond);
-+#endif
-     return thrd_success;
- }
- 
-@@ -143,9 +151,10 @@ cnd_broadcast(cnd_t *cond)
- void
- cnd_destroy(cnd_t *cond)
- {
--    (void)cond;
-     assert(cond != NULL);
--    // do nothing
-+#ifdef NVX_XP_WIN32_SHIMS
-+    nvx_xp_condition_destroy((PCONDITION_VARIABLE)cond);
-+#endif
- }
- 
- // 7.25.3.3
-@@ -153,8 +162,13 @@ int
- cnd_init(cnd_t *cond)
- {
-     assert(cond != NULL);
-+#ifdef NVX_XP_WIN32_SHIMS
-+    cond->Ptr = NULL;
-+    return nvx_xp_condition_init((PCONDITION_VARIABLE)cond) ? thrd_success : thrd_error;
-+#else
-     InitializeConditionVariable((PCONDITION_VARIABLE)cond);
-     return thrd_success;
-+#endif
- }
- 
- // 7.25.3.4
-@@ -162,7 +176,11 @@ int
- cnd_signal(cnd_t *cond)
- {
-     assert(cond != NULL);
-+#ifdef NVX_XP_WIN32_SHIMS
-+    nvx_xp_condition_wake((PCONDITION_VARIABLE)cond, FALSE);
-+#else
-     WakeConditionVariable((PCONDITION_VARIABLE)cond);
-+#endif
-     return thrd_success;
- }
- 
-@@ -174,7 +192,13 @@ cnd_timedwait(cnd_t *cond, mtx_t *mtx, const struct timespec *abs_time)
-     assert(mtx != NULL);
-     assert(abs_time != NULL);
-     const DWORD timeout = impl_abs2relmsec(abs_time);
--    if (SleepConditionVariableCS((PCONDITION_VARIABLE)cond, (PCRITICAL_SECTION)mtx, timeout))
-+#ifdef NVX_XP_WIN32_SHIMS
-+    if (nvx_xp_condition_wait((PCONDITION_VARIABLE)cond,
-+                              (PCRITICAL_SECTION)mtx, timeout))
-+#else
-+    if (SleepConditionVariableCS((PCONDITION_VARIABLE)cond,
-+                                 (PCRITICAL_SECTION)mtx, timeout))
-+#endif
-         return thrd_success;
-     return (GetLastError() == ERROR_TIMEOUT) ? thrd_timedout : thrd_error;
- }
-@@ -185,8 +209,14 @@ cnd_wait(cnd_t *cond, mtx_t *mtx)
- {
-     assert(cond != NULL);
-     assert(mtx != NULL);
--    SleepConditionVariableCS((PCONDITION_VARIABLE)cond, (PCRITICAL_SECTION)mtx, INFINITE);
-+#ifdef NVX_XP_WIN32_SHIMS
-+    return nvx_xp_condition_wait((PCONDITION_VARIABLE)cond,
-+                                 (PCRITICAL_SECTION)mtx, INFINITE) ? thrd_success : thrd_error;
-+#else
-+    SleepConditionVariableCS((PCONDITION_VARIABLE)cond,
-+                             (PCRITICAL_SECTION)mtx, INFINITE);
-     return thrd_success;
-+#endif
- }
- 
- 
-diff --git a/src/gallium/frontends/wgl/stw_framebuffer.c b/src/gallium/frontends/wgl/stw_framebuffer.c
-index e433fe130e6..7d3b877dfae 100644
---- a/src/gallium/frontends/wgl/stw_framebuffer.c
-+++ b/src/gallium/frontends/wgl/stw_framebuffer.c
-@@ -585,6 +585,7 @@ stw_pixelformat_get(HDC hdc)
- }
- 
- 
-+#if !defined(NVX_XP_WIN32_SHIMS)
- BOOL APIENTRY
- DrvPresentBuffers(HDC hdc, LPPRESENTBUFFERS data)
- {
-@@ -643,6 +644,7 @@ DrvPresentBuffers(HDC hdc, LPPRESENTBUFFERS data)
- 
-    return true;
- }
-+#endif
- 
- 
- /**
-@@ -666,6 +668,7 @@ stw_framebuffer_present_locked(HDC hdc,
- 
-       return result;
-    }
-+#if !defined(NVX_XP_WIN32_SHIMS)
-    else if (stw_dev->callbacks.pfnPresentBuffers &&
-             stw_dev->stw_winsys->compose) {
-       PRESENTBUFFERSCB data;
-@@ -682,6 +685,7 @@ stw_framebuffer_present_locked(HDC hdc,
- 
-       return stw_dev->callbacks.pfnPresentBuffers(hdc, &data);
-    }
-+#endif
-    else {
-       struct pipe_screen *screen = stw_dev->screen;
-       struct stw_context *ctx = stw_current_context();
-diff --git a/src/gallium/targets/libgl-gdi/opengl32.def.in b/src/gallium/targets/libgl-gdi/opengl32.def.in
-index ceffdf09936..9f2fe295d8e 100644
---- a/src/gallium/targets/libgl-gdi/opengl32.def.in
-+++ b/src/gallium/targets/libgl-gdi/opengl32.def.in
-@@ -376,7 +376,6 @@ DrvDescribeLayerPlane@20
- DrvDescribePixelFormat@16
- DrvGetLayerPaletteEntries@20
- DrvGetProcAddress@4
--DrvPresentBuffers@8
- DrvRealizeLayerPalette@12
- DrvReleaseContext@4
- DrvSetCallbackProcs@8
-diff --git a/src/gallium/targets/wgl/gallium_wgl.def.in b/src/gallium/targets/wgl/gallium_wgl.def.in
-index 412225f631f..acef89de1e9 100644
---- a/src/gallium/targets/wgl/gallium_wgl.def.in
-+++ b/src/gallium/targets/wgl/gallium_wgl.def.in
-@@ -7,7 +7,6 @@ DrvDescribeLayerPlane@20
- DrvDescribePixelFormat@16
- DrvGetLayerPaletteEntries@20
- DrvGetProcAddress@4
--DrvPresentBuffers@8
- DrvRealizeLayerPalette@12
- DrvReleaseContext@4
- DrvSetCallbackProcs@8
-diff --git a/src/util/cnd_monotonic.c b/src/util/cnd_monotonic.c
-index 71d9ac0d247..ed315258397 100644
---- a/src/util/cnd_monotonic.c
-+++ b/src/util/cnd_monotonic.c
-@@ -33,6 +33,9 @@
- 
- #ifdef _WIN32
- #include <windows.h>
-+#ifdef NVX_XP_WIN32_SHIMS
-+#include "c11/impl/nvx_win32_xp.h"
-+#endif
- 
- static_assert(sizeof(struct u_cnd_monotonic) == sizeof(CONDITION_VARIABLE),
-               "The size of u_cnd_monotonic must equal to CONDITION_VARIABLE");
-@@ -46,8 +49,12 @@ u_cnd_monotonic_init(struct u_cnd_monotonic *cond)
-    assert(cond != NULL);
- 
- #ifdef _WIN32
-+#ifdef NVX_XP_WIN32_SHIMS
-+   return nvx_xp_condition_init((PCONDITION_VARIABLE)cond) ? thrd_success : thrd_error;
-+#else
-    InitializeConditionVariable((PCONDITION_VARIABLE)cond);
-    return thrd_success;
-+#endif
- #else
-    int ret = thrd_error;
-    pthread_condattr_t condattr;
-@@ -75,7 +82,11 @@ u_cnd_monotonic_destroy(struct u_cnd_monotonic *cond)
-    assert(cond != NULL);
- 
- #ifdef _WIN32
-+#ifdef NVX_XP_WIN32_SHIMS
-+   nvx_xp_condition_destroy((PCONDITION_VARIABLE)cond);
-+#else
-    // Do nothing
-+#endif
- #else
-    pthread_cond_destroy(&cond->cond);
- #endif
-@@ -87,7 +98,11 @@ u_cnd_monotonic_broadcast(struct u_cnd_monotonic *cond)
-    assert(cond != NULL);
- 
- #ifdef _WIN32
-+#ifdef NVX_XP_WIN32_SHIMS
-+   nvx_xp_condition_wake((PCONDITION_VARIABLE)cond, TRUE);
-+#else
-    WakeAllConditionVariable((PCONDITION_VARIABLE)cond);
-+#endif
-    return thrd_success;
- #else
-    return (pthread_cond_broadcast(&cond->cond) == 0) ? thrd_success : thrd_error;
-@@ -100,7 +115,11 @@ u_cnd_monotonic_signal(struct u_cnd_monotonic *cond)
-    assert(cond != NULL);
- 
- #ifdef _WIN32
-+#ifdef NVX_XP_WIN32_SHIMS
-+   nvx_xp_condition_wake((PCONDITION_VARIABLE)cond, FALSE);
-+#else
-    WakeConditionVariable((PCONDITION_VARIABLE)cond);
-+#endif
-    return thrd_success;
- #else
-    return (pthread_cond_signal(&cond->cond) == 0) ? thrd_success : thrd_error;
-@@ -119,8 +138,13 @@ u_cnd_monotonic_timedwait(struct u_cnd_monotonic *cond, mtx_t *mtx,
-    const uint64_t future = (abs_time->tv_sec * 1000) + (abs_time->tv_nsec / 1000000);
-    const uint64_t now = os_time_get_nano() / 1000000;
-    const DWORD timeout = (future > now) ? (DWORD)(future - now) : 0;
-+#ifdef NVX_XP_WIN32_SHIMS
-+   if (nvx_xp_condition_wait((PCONDITION_VARIABLE)cond,
-+                             (PCRITICAL_SECTION)mtx, timeout))
-+#else
-    if (SleepConditionVariableCS((PCONDITION_VARIABLE)cond,
-                                 (PCRITICAL_SECTION)mtx, timeout))
-+#endif
-       return thrd_success;
-    return (GetLastError() == ERROR_TIMEOUT) ? thrd_timedout : thrd_error;
- #else
-@@ -147,9 +171,14 @@ u_cnd_monotonic_wait(struct u_cnd_monotonic *cond, mtx_t *mtx)
-    assert(mtx != NULL);
- 
- #ifdef _WIN32
-+#ifdef NVX_XP_WIN32_SHIMS
-+   return nvx_xp_condition_wait((PCONDITION_VARIABLE)cond,
-+                                (PCRITICAL_SECTION)mtx, INFINITE) ? thrd_success : thrd_error;
-+#else
-    SleepConditionVariableCS((PCONDITION_VARIABLE)cond,
-                             (PCRITICAL_SECTION)mtx, INFINITE);
-    return thrd_success;
-+#endif
- #else
-    return (pthread_cond_wait(&cond->cond, mtx) == 0) ? thrd_success : thrd_error;
- #endif
-diff --git a/src/util/futex.c b/src/util/futex.c
-index df3e949de3d..1c531e5924a 100644
---- a/src/util/futex.c
-+++ b/src/util/futex.c
-@@ -114,6 +114,127 @@ int futex_wait(uint32_t *addr, int32_t value, const struct timespec *timeout)
-    return futex(addr, FUTEX_WAIT, value, &tsrel, NULL);
- }
- 
-+#elif defined(_WIN32) && defined(NVX_XP_FUTEX)
-+
-+#include <windows.h>
-+#include <stdint.h>
-+#include <limits.h>
-+#include <assert.h>
-+#include <errno.h>
-+
-+/* XP-compatible address wait queues. Waiters remain on their bucket list
-+ * until either a wake removes them or a timeout removes them under the same
-+ * lock, so a signal cannot target a dead stack waiter. */
-+#define NVX_XP_FUTEX_BUCKETS 64
-+struct nvx_xp_futex_waiter {
-+   uint32_t *addr;
-+   HANDLE event;
-+   BOOL signaled;
-+   struct nvx_xp_futex_waiter *next;
-+};
-+struct nvx_xp_futex_bucket {
-+   CRITICAL_SECTION lock;
-+   struct nvx_xp_futex_waiter *waiters;
-+};
-+static struct nvx_xp_futex_bucket nvx_xp_futex_buckets[NVX_XP_FUTEX_BUCKETS];
-+static volatile LONG nvx_xp_futex_init_state;
-+
-+static void nvx_xp_futex_init(void)
-+{
-+   LONG state = InterlockedCompareExchange(&nvx_xp_futex_init_state, 1, 0);
-+   if (state == 0) {
-+      unsigned i;
-+      for (i = 0; i < NVX_XP_FUTEX_BUCKETS; i++)
-+         InitializeCriticalSection(&nvx_xp_futex_buckets[i].lock);
-+      InterlockedExchange(&nvx_xp_futex_init_state, 2);
-+   } else {
-+      while (InterlockedCompareExchange(&nvx_xp_futex_init_state, 0, 0) != 2)
-+         Sleep(0);
-+   }
-+}
-+
-+static struct nvx_xp_futex_bucket *nvx_xp_futex_bucket_for(uint32_t *addr)
-+{
-+   uintptr_t key = (uintptr_t)addr;
-+   return &nvx_xp_futex_buckets[(key >> 2) % NVX_XP_FUTEX_BUCKETS];
-+}
-+
-+static DWORD nvx_xp_futex_timeout(const struct timespec *deadline)
-+{
-+   struct timespec now;
-+   int64_t ms;
-+   if (!deadline) return INFINITE;
-+   timespec_get(&now, TIME_MONOTONIC);
-+   ms = ((int64_t)deadline->tv_sec - (int64_t)now.tv_sec) * 1000 +
-+        ((int64_t)deadline->tv_nsec - (int64_t)now.tv_nsec) / 1000000;
-+   if (ms <= 0) return 0;
-+   if (ms >= (int64_t)INFINITE) return INFINITE - 1;
-+   return (DWORD)ms;
-+}
-+
-+int futex_wake(uint32_t *addr, int32_t count)
-+{
-+   struct nvx_xp_futex_bucket *bucket;
-+   struct nvx_xp_futex_waiter **link;
-+   int woken = 0;
-+   assert(count >= 0);
-+   nvx_xp_futex_init();
-+   bucket = nvx_xp_futex_bucket_for(addr);
-+   EnterCriticalSection(&bucket->lock);
-+   link = &bucket->waiters;
-+   while (*link && woken < count) {
-+      struct nvx_xp_futex_waiter *waiter = *link;
-+      if (waiter->addr == addr) {
-+         *link = waiter->next;
-+         waiter->signaled = TRUE;
-+         SetEvent(waiter->event);
-+         woken++;
-+      } else {
-+         link = &waiter->next;
-+      }
-+   }
-+   LeaveCriticalSection(&bucket->lock);
-+   return woken;
-+}
-+
-+int futex_wait(uint32_t *addr, int32_t value, const struct timespec *timeout)
-+{
-+   struct nvx_xp_futex_bucket *bucket;
-+   struct nvx_xp_futex_waiter waiter;
-+   struct nvx_xp_futex_waiter **link;
-+   DWORD result;
-+   int was_signaled;
-+   if (InterlockedCompareExchange((volatile LONG *)addr, 0, 0) != value)
-+      return EAGAIN;
-+   waiter.event = CreateEvent(NULL, TRUE, FALSE, NULL);
-+   if (!waiter.event) return -1;
-+   waiter.addr = addr;
-+   waiter.signaled = FALSE;
-+   nvx_xp_futex_init();
-+   bucket = nvx_xp_futex_bucket_for(addr);
-+   EnterCriticalSection(&bucket->lock);
-+   if (InterlockedCompareExchange((volatile LONG *)addr, 0, 0) != value) {
-+      LeaveCriticalSection(&bucket->lock);
-+      CloseHandle(waiter.event);
-+      return EAGAIN;
-+   }
-+   waiter.next = bucket->waiters;
-+   bucket->waiters = &waiter;
-+   LeaveCriticalSection(&bucket->lock);
-+
-+   result = WaitForSingleObject(waiter.event, nvx_xp_futex_timeout(timeout));
-+   EnterCriticalSection(&bucket->lock);
-+   link = &bucket->waiters;
-+   while (*link && *link != &waiter) link = &(*link)->next;
-+   if (*link == &waiter) *link = waiter.next;
-+   was_signaled = waiter.signaled;
-+   LeaveCriticalSection(&bucket->lock);
-+   CloseHandle(waiter.event);
-+   if (result == WAIT_OBJECT_0 || was_signaled) return 0;
-+   if (result == WAIT_TIMEOUT) return ETIMEDOUT;
-+   return -1;
-+}
-+
- #elif defined(_WIN32) && !defined(WINDOWS_NO_FUTEX)
- 
- #include <windows.h>
-diff --git a/src/util/futex.h b/src/util/futex.h
-index b7ce0884155..3b57dbc1d5e 100644
---- a/src/util/futex.h
-+++ b/src/util/futex.h
-@@ -33,7 +33,7 @@
- #define UTIL_FUTEX_SUPPORTED 1
- #elif defined(__OpenBSD__)
- #define UTIL_FUTEX_SUPPORTED 1
--#elif defined(_WIN32) && !defined(WINDOWS_NO_FUTEX)
-+#elif defined(_WIN32) && (defined(NVX_XP_FUTEX) || !defined(WINDOWS_NO_FUTEX))
- #define UTIL_FUTEX_SUPPORTED 1
- #else
- #define UTIL_FUTEX_SUPPORTED 0
-diff --git a/src/util/rwlock.c b/src/util/rwlock.c
-index 1d215d320f2..647033ba13a 100644
---- a/src/util/rwlock.c
-+++ b/src/util/rwlock.c
-@@ -6,17 +6,41 @@
- 
- #include <assert.h>
- #include "rwlock.h"
-+#if defined(NVX_XP_WIN32_SHIMS)
-+#include "../c11/impl/nvx_win32_xp.h"
-+#endif
- 
- #if defined(_WIN32) && !defined(HAVE_PTHREAD)
- #include <windows.h>
-+#if !defined(NVX_XP_WIN32_SHIMS)
- static_assert(sizeof(struct u_rwlock) == sizeof(SRWLOCK),
-    "struct u_rwlock should have equal size with SRWLOCK");
- #endif
-+#endif
- 
- int u_rwlock_init(struct u_rwlock *rwlock)
- {
- #if defined(_WIN32) && !defined(HAVE_PTHREAD)
-+#if defined(NVX_XP_WIN32_SHIMS)
-+   nvx_xp_rwlock_state *state = (nvx_xp_rwlock_state *)calloc(1, sizeof(*state));
-+   if (!state)
-+      return -1;
-+   InitializeCriticalSection(&state->guard);
-+   state->readers_done = CreateSemaphore(NULL, 0, LONG_MAX, NULL);
-+   state->writers_done = CreateSemaphore(NULL, 0, LONG_MAX, NULL);
-+   if (!state->readers_done || !state->writers_done) {
-+      if (state->readers_done)
-+         CloseHandle(state->readers_done);
-+      if (state->writers_done)
-+         CloseHandle(state->writers_done);
-+      DeleteCriticalSection(&state->guard);
-+      free(state);
-+      return -1;
-+   }
-+   rwlock->rwlock.Ptr = state;
-+#else
-    InitializeSRWLock((PSRWLOCK)(&rwlock->rwlock));
-+#endif
-    return 0;
- #else
-    return pthread_rwlock_init(&rwlock->rwlock, NULL);
-@@ -26,6 +50,16 @@ int u_rwlock_init(struct u_rwlock *rwlock)
- int u_rwlock_destroy(struct u_rwlock *rwlock)
- {
- #if defined(_WIN32) && !defined(HAVE_PTHREAD)
-+#if defined(NVX_XP_WIN32_SHIMS)
-+   nvx_xp_rwlock_state *state = (nvx_xp_rwlock_state *)rwlock->rwlock.Ptr;
-+   if (state) {
-+      CloseHandle(state->readers_done);
-+      CloseHandle(state->writers_done);
-+      DeleteCriticalSection(&state->guard);
-+      free(state);
-+      rwlock->rwlock.Ptr = NULL;
-+   }
-+#endif
-    return 0;
- #else
-    return pthread_rwlock_destroy(&rwlock->rwlock);
-@@ -35,7 +69,11 @@ int u_rwlock_destroy(struct u_rwlock *rwlock)
- int u_rwlock_rdlock(struct u_rwlock *rwlock)
- {
- #if defined(_WIN32) && !defined(HAVE_PTHREAD)
-+#if defined(NVX_XP_WIN32_SHIMS)
-+   nvx_xp_rwlock_rdlock(&rwlock->rwlock.Ptr);
-+#else
-    AcquireSRWLockShared((PSRWLOCK)&rwlock->rwlock);
-+#endif
-    return 0;
- #else
-    return pthread_rwlock_rdlock(&rwlock->rwlock);
-@@ -45,7 +83,11 @@ int u_rwlock_rdlock(struct u_rwlock *rwlock)
- int u_rwlock_rdunlock(struct u_rwlock *rwlock)
- {
- #if defined(_WIN32) && !defined(HAVE_PTHREAD)
-+#if defined(NVX_XP_WIN32_SHIMS)
-+   nvx_xp_rwlock_rdunlock(&rwlock->rwlock.Ptr);
-+#else
-    ReleaseSRWLockShared((PSRWLOCK)&rwlock->rwlock);
-+#endif
-    return 0;
- #else
-    return pthread_rwlock_unlock(&rwlock->rwlock);
-@@ -55,7 +97,11 @@ int u_rwlock_rdunlock(struct u_rwlock *rwlock)
- int u_rwlock_wrlock(struct u_rwlock *rwlock)
- {
- #if defined(_WIN32) && !defined(HAVE_PTHREAD)
-+#if defined(NVX_XP_WIN32_SHIMS)
-+   nvx_xp_rwlock_wrlock(&rwlock->rwlock.Ptr);
-+#else
-    AcquireSRWLockExclusive((PSRWLOCK)&rwlock->rwlock);
-+#endif
-    return 0;
- #else
-    return pthread_rwlock_wrlock(&rwlock->rwlock);
-@@ -65,7 +111,11 @@ int u_rwlock_wrlock(struct u_rwlock *rwlock)
- int u_rwlock_wrunlock(struct u_rwlock *rwlock)
- {
- #if defined(_WIN32) && !defined(HAVE_PTHREAD)
-+#if defined(NVX_XP_WIN32_SHIMS)
-+   nvx_xp_rwlock_wrunlock(&rwlock->rwlock.Ptr);
-+#else
-    ReleaseSRWLockExclusive((PSRWLOCK)&rwlock->rwlock);
-+#endif
-    return 0;
- #else
-    return pthread_rwlock_unlock(&rwlock->rwlock);

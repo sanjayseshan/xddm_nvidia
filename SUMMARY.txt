@@ -1,5 +1,85 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v3.0.0.1: Phase 2A checkpoint; Phase 2B in progress)
+Updated: November 10, 2026 (bounded Mesa color draws reach C797; general OpenGL incomplete)
+
+Current Phase 2C status (verified November 10, 2026):
+- The Mesa submodule is pinned and XP compatibility changes live in the external
+  `mesa_patches/` directory. The x64 ICD/front-end imports and PE subsystem pass
+  audits against the XP guest; the reported `qsort_s`/`GetTickCount64` imports
+  are absent from the current package.
+- XP system WGL now initializes the ICD after the legacy XP metadata was aligned
+  to interface `Version=2` and driver `DriverVersion=0x00010000` in both the
+  display escape and registry. The trace in
+  `test_logs/v3.0.0.1-20261110-020644.log` records `DrvValidateVersion`,
+  `DrvSetCallbackProcs`, pixel-format callbacks, and `DrvSetContext`. The normal
+  `wglCreateContext`/`wglMakeCurrent` path rendered 100 frames and read back
+  center pixel `255,0,0` with `GL_NO_ERROR`. It reports Mesa `softpipe`, so
+  rasterization remains CPU-based; this fixed ICD dispatch, not GPU acceleration.
+- Mesa's `DrvCreateContext` now initializes its screen lazily. The direct probe
+  in `test_logs/v3.0.0.1-20261110-015903.log` succeeded without explicit screen
+  initialization or an ICD `DrvSetPixelFormat` call. Before correcting the XP
+  metadata, the `0x425` pixel format descriptor did not make WGL enter Mesa;
+  see `test_logs/v3.0.0.1-20261110-020217.log`.
+- The latest hardware test adds `NVX_3D_SUBMIT_DRAW_TRIANGLE`: XP uploaded a
+  changed 3-vertex array to a separate GPU allocation and asked the miniport to
+  rasterize it with kernel-owned C797 methods/shader state. The GPU readback
+  partition was 288 drawn pixels and 736 white background pixels; fence 6
+  completed, then the miniport advertised the verified client-triangle
+  capability, confirmed by a follow-up caps query. Its log is
+  `test_logs/v3.0.0.1-20261110-023854.log`. The same run
+  verified a 256-byte arbitrary upload with zero GPU readback mismatches and
+  passed XP package audits and 2D checks. Startup firmware assertions remain
+  at one; no MMU fault was reported.
+- An earlier tested app-local path uses Mesa's XP-compatible
+  `libgl-gdi/opengl32.dll` deployed beside the application as `opengl32.dll`
+  (`NVX_MESA_APPLOCAL=1`). The full XP
+  test rendered 100 cube frames, read back center pixel `255,0,0`, and reported
+  no GL error. It reports `Mesa / softpipe` and is CPU rendering, not RTX
+  acceleration (`test_logs/v3.0.0.1-20261109-234722.log`). System32 remains
+  untouched.
+- The shared CE copy path enables multi-line DMA, and white clear/prefill
+  verify all 1,024 pixels of the 64x16 target. The bounded triangle now uses
+  three vertices with `TRIANGLES`; the prior four-vertex strip described a
+  rectangle. The November 10 hardware run reports `[NVX_3D_RESULT] PASS`, with
+  512 green RGB pixels and 512 white pixels and a completed fence; the boot
+  probe also verifies the triangle (`test_logs/v3.0.0.1-20261110-010419.log`).
+  Shader green has zero alpha, which
+  the verifier accounts for. Startup firmware assertion count is one; no MMU
+  fault was reported. This validates the fixed kernel diagnostic, not general
+  application OpenGL submission. The normal ICD path currently reports
+  `[OPENGL_RESULT] SOFTWARE`.
+- The Mesa-to-GPU bridge is now proven for a restricted color workload through
+  the system XP WGL ICD. `DrvSetContext(HDC, ...)` supplies the current app HDC
+  to the external Gallium bridge, resolving the earlier caps-escape failure.
+  `test_logs/v3.0.0.1-20261110-080311.log` shows the softpipe vbuf callback
+  submitting nine 64x16 tiles to C797. Fenced GPU readback verified 6,384
+  green, 528 red, and 2,304 background pixels. `[MESA_TO_GPU_RESULT] PASS`
+  confirms those pixels came from the GPU. The normal renderer still identifies
+  as `softpipe`; cube acceleration is not proven.
+- Depth remains a hard failure. That same run submits `X8Z24` with KIND 3, the
+  pair used for Mesa's `PIPE_FORMAT_Z24X8_UNORM`, but the GPU reports
+  `3D-Z KIND Violation` on multiple GPCs. The depth fence times out, firmware
+  assertions rise from one at boot to three, and `[OPENGL_RESULT] FAIL`; no MMU
+  fault is logged. Alternate `S8Z24`/KIND 3 and `X8Z24`/KIND 5 experiments
+  also failed and have been reverted. The current package was rebuilt with
+  the matching `X8Z24`/KIND 3 configuration.
+- The cube probe initially reported a false GPU pass because its local batch
+  counter was reset while the ICD status counter was cumulative. The harness
+  now compares the ICD count before and after the cube draw. Corrected run
+  `test_logs/v3.0.0.1-20261110-080658.log` reports `MESA_GPU_CUBE_RESULT FAIL`
+  with zero new batches after the depth fault, so the cube remains CPU-rendered.
+- Phase 2C remains incomplete: the external bridge supports only bounded
+  flat-color triangles/quads and a small cube probe. Mesa continues to render
+  general OpenGL through softpipe; shader translation, depth, GPU-backed
+  presentation, and a general Gallium hardware backend are missing.
+  The ABI supports owned VRAM allocation,
+  bounded uploads, fixed clear, and a bounded client-supplied triangle using a
+  kernel-owned shader. It does not accept Mesa shader programs or general
+  application draws. Do not describe OpenGL as
+  hardware-accelerated until the renderer identifies GA104 and a real OpenGL
+  draw/pixel/fence path is verified on XP.
+
+Latest concrete references: `PHASE2C_MESA_EVALUATION.md`, `handoff.txt`, and
+`test_logs/v3.0.0.1-20261110-023854.log`.
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -1020,3 +1100,148 @@ checksums are in FIRMWARE_PROVENANCE.md.
    - Upstream `open-gpu-kernel-modules` relies on a monolithic 1M-line Linux kernel framework that cannot be linked into 16-bit/32-bit Windows 98 VxDs or Windows XP XDDM miniports without an OS adaptation layer.
    - `src_driver/nvx_openrm_shim.c` and official OpenRM headers (`msgq.c`, `gsp_fw_wpr_meta.h`, `nvtypes.h`) provide hardware register access, doorbell notifications, and Falcon booter execution.
    - Refactoring roadmap for `nvx_gsp.c`: separate monolithic RPC and channel code into clean logical modules (`nvx_ce.c` for 2D Copy Engine acceleration, `nvx_disp_rpc.c` for display scanout, and `nvx_gsp.c` for core bootstrap) using official upstream SDK data structures.
+
+Phase 2C hardware bridge update (November 10, 2026): the system XP WGL ICD now
+routes bounded flat-color triangle and quad batches from Mesa's softpipe vbuf
+callback into the NVX miniport. The miniport clears a target once, submits
+preserve-target C797 draws with kernel-owned shader/method state, and fences
+each draw. Mesa reads back the target through CE, copies GPU pixels into the
+softpipe color tile, and skips software rasterization for the intercepted
+batch. RTX 3070 run `test_logs/v3.0.0.1-20261110-035522.log` reports
+`[MESA_TO_GPU_RESULT] PASS` and `[MESA_GPU_PIXEL_RESULT] PASS` with 156 green,
+156 red, and 712 black pixels from two `GL_QUADS`. The fixed triangle
+diagnostic, 2D, dual-head display, and XP import checks passed; firmware
+assertions stayed at the startup count of one and no MMU fault was logged.
+
+This remains a restricted draw path. Mesa reports `softpipe`; the normal cube
+and depth-tested draws remain on the CPU, as do clears and unsupported state.
+The GPU target is 64x16, colors must be flat within each triangle, and the
+kernel still supplies a fixed shader. Mesa customizations remain external in
+`mesa_patches/`, with the submodule clean at its pinned revision after builds.
+Continue toward normal viewport sizes, depth/state and shader support, and
+GPU-backed presentation before considering Phase 2C complete.
+
+
+Latest Phase 2C verification (November 10, 2026):
+`test_logs/v3.0.0.1-20261110-041843.log` verifies the two-quad Mesa bridge, a
+bounded project cube batch, and subsequent fixed/client-triangle C797 readback.
+A stale red texel from the cube was eliminated by invalidating the shared
+shader texture cache between texel updates. `[NVX_3D_RESULT] PASS`; the overall
+classification remains `SOFTWARE_3D_ONLY` because the normal depth-tested
+100-frame cube is still rendered by softpipe. XP imports, 2D and dual-head
+checks pass; startup assertions remain one and there are no MMU faults.
+
+
+Latest Phase 2C hardware verification (November 10, 2026):
+`test_logs/v3.0.0.1-20261110-043538.log` verifies a 576x16 Mesa draw rendered
+across nine 64x16 GPU tiles, including clipped triangles crossing tile edges.
+GPU readback found 6,384 green pixels across all tiles, 528 red pixels in the
+last tile, and 2,304 black pixels. The bounded cube probe submits a GPU batch;
+subsequent fixed/client-triangle checks pass after C797 texture-cache
+invalidation. The suite still classifies general OpenGL as
+`SOFTWARE_3D_ONLY`; depth-tested full-scene rendering remains on softpipe. XP
+import, 2D, dual-head and host checks pass; there is one startup firmware
+assertion and no MMU faults. Mesa remains clean at its pinned revision.
+
+Latest Phase 2C depth investigation (November 10, 2026): the XP x64 Mesa
+27.0.0-devel build succeeds with the external patches and
+`min-windows-version=5`; XP x64 import/subsystem audits pass, and the Mesa
+submodule is clean. Run `test_logs/v3.0.0.1-20261110-062947.log` passes the
+nine-tile Mesa color bridge, fixed C797 triangle, 2D, and dual-head checks.
+Depth CE roundtrip has zero mismatches, while depth-tested C797 submission
+raises `3D-Z KIND Violation`. Direct 64 KB PTE mapping plus both tested
+format/kind pairings (`X8Z24`/3 and `Z24S8`/5) still fail. With depth compare
+and write disabled there is no kind exception; enabling read-only comparison
+reproduces it. Firmware assertions reach three from a startup count of one;
+there is no MMU fault. General depth-tested OpenGL remains on softpipe, so
+Phase 2C is incomplete. The next investigation is the zeta read/compare
+surface state and GPU PTE mapping.
+
+Depth shader finding (November 10, 2026): the latest hardware run
+`test_logs/v3.0.0.1-20261110-091657.log` no longer reports a zeta kind
+violation after using a float-1.0 ZF32 clear (`0x3f800000`). The fixed kernel
+shader's red triangle changes color pixels, but the nearer green and farther
+blue triangles write no matching color pixels, and
+`[MESA_GPU_DEPTH_RESULT]` remains FAIL with red at the center. The depth
+readback diagnostic is not reliable evidence of successful depth writes: it
+counts 392 words as changed while its center sample remains `1.0`; correct its
+layout/comparison before relying on that counter.
+
+Disassembly of the upstream Ampere head-surface vertex program shows it loads
+position XY from `a[0x100]`, stores transformed X/Y to `a[0x70]/a[0x74]`,
+stores W from a constant at `a[0x7c]`, and never writes clip Z at `a[0x78]`.
+Its other vertex load feeds texture coordinates, not Z. The Mesa bridge supplies
+post-vertex XY/Z, but the miniport still binds this fixed kernel shader and
+does not accept Mesa shader programs. A raw SASS rewrite was removed because
+the tested XY register cannot be redirected to Z without corrupting W. The XP
+Mesa build is softpipe-only and does not build NAK; a valid depth path needs a
+correctly compiled Ampere vertex program with a matched attribute/output
+interface and revalidation of the ZF32 surface layout. The isolated float
+clear fix is retained, but full depth-tested rendering and general Phase 2C
+remain incomplete. Mesa's pinned submodule remains unmodified.
+
+Follow-up (November 10, 2026): added
+`test/audit_ampere_vertex_shader.py` and made it part of
+`src_driver/Makefile`'s `check` target and the full hardware test preflight.
+It validates the pinned upstream shader instruction words and reports that
+the current bounded shader has no clip-Z output. The audit and
+`make -C src_driver check` pass; this is a diagnostic gate, not a depth fix.
+Next build or supply a compiler-produced Ampere vertex program with a defined
+POSITION.z input and clip-Z output, wire it as a project-owned external shader
+artifact, then rerun the XP x64 hardware suite and verify overlapping depth
+triangles, general Mesa draws, XP imports, display, and 2D behavior. Do not
+claim Phase 2C complete until general OpenGL draws use the GPU path and pass
+those hardware checks.
+
+Follow-up run `test_logs/v3.0.0.1-20261110-063441.log` was previously
+described as adding UVM's `ATOMIC_DISABLE` attribute. That interpretation was
+wrong: its PTE `0x00000038002E4001` sets bit 35, which the VER2 video PTE
+layout assigns to the peer ID, while `ATOMIC_DISABLE` is bit 7. The actual PTE
+correction is tested in `081227.log` below.
+
+Depth PTE address experiment `test_logs/v3.0.0.1-20261110-064222.log` encoded
+only the zeta leaf with `offset >> 8`, following UVM's VER2 video address
+construction. It still faults with `3D-Z KIND Violation` on multiple GPCs,
+times out the depth fence, and ends FAIL; the Mesa depth bridge pixels are not
+copied. Nine-tile color readback (6,384 green/528 red/2,304 background), 2D,
+and display checks pass. This depth-only encoding is reverted because it
+differs from the existing VRAM leaf address convention. UVM's generic PTE kind
+and the driver's zeta PTE kind remain a point to investigate, not a confirmed
+root cause. Full depth-tested OpenGL remains incomplete.
+
+Run `test_logs/v3.0.0.1-20261110-070254.log` now applies strict Mesa bridge
+verification and an ICD WGL-screen startup marker. The system WGL context says
+Mesa/softpipe, but no bridge trace file or startup marker is produced. The
+expected color pattern is therefore software output, and strict color, depth,
+cube, and overall OpenGL checks fail. The depth diagnostic still raises
+`3D-Z KIND Violation`. XP import/subsystem audit passes; `mesa/` remains clean.
+The depth PTE KIND was moved to documented bits 63:56 (logged entry
+`0x03000008002E4001`), but that hardware-correct field placement alone did not
+resolve the zeta fault. First establish that XP WGL initializes the patched
+Gallium screen and reaches the softpipe vbuf callback.
+
+Latest zeta PTE test (November 10, 2026):
+`test_logs/v3.0.0.1-20261110-081227.log` encodes a video-aperture VER2 leaf
+with peer ID zero and `ATOMIC_DISABLE` at bit 7, matching NVIDIA UVM's
+`make_pte_turing` implementation. Logged depth PTEs are
+`0x03000000002E5081` and `0x03000000002E7081`. The nine-tile GPU color
+readback still passes, but depth submission still raises `3D-Z KIND Violation`
+on multiple GPCs and times out. Assertions rise from one to three, no MMU fault
+is logged, cube remains unaccelerated, and the suite fails. Peer-ID and atomic
+fields are now ruled out as the remaining fix; continue with zeta surface state
+and target configuration.
+
+
+Depth/viewport follow-up (November 10, 2026): the corrected Mesa bridge
+tile-local XY input preserves the nine-tile color readback. The normal Mesa
+Z24X8 allocation maps to C797 X8Z24 and PTE kind 3, but
+`test_logs/v3.0.0.1-20261110-102041.log` still raises `3D-Z KIND Violation`
+and times out the fence; assertions rise from one to three. The ZF32 diagnostic
+uses generic-memory PTE kind 6 and avoids that exception (`102438.log`); the
+red triangle draws, but covered depth values read as zero, so nearer green is
+rejected by LESS. `103146.log` reproduces this with viewport scaling disabled:
+color quads, fixed/client-triangle, 2D, and dual-head checks pass; assertions
+remain at one and no MMU fault is logged. Viewport-enabled identity and NDC
+experiments lose all color coverage and are reverted. Continue validating
+clip-Z output and ZF32 readback; general shaders/state, depth-tested OpenGL,
+and GPU presentation remain incomplete.

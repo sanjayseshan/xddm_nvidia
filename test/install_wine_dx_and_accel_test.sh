@@ -22,11 +22,11 @@ i686-w64-mingw32-gcc -O2 -shared -static-libgcc "$ROOT_DIR/test/ucrtbase_xp.c" "
 
 # Build acceleration test suite
 x86_64-w64-mingw32-gcc -O2 -Wall -Wextra -static-libgcc "$ROOT_DIR/test/test_gpu_accel.c" -lopengl32 -lgdi32 -luser32 -o "$ROOT_DIR/test/test_gpu_accel.exe"
-i686-w64-mingw32-gcc -O2 -Wall -Wextra -static-libgcc "$ROOT_DIR/test/test_gpu_accel.c" -lopengl32 -lgdi32 -luser32 -o "$ROOT_DIR/test/test_gpu_accel32.exe"
+i686-w64-mingw32-gcc -O2 -Wall -Wextra -static-libgcc -D_WIN32_WINNT=0x0502 -DWINVER=0x0502 "$ROOT_DIR/test/test_gpu_accel.c" -lopengl32 -lgdi32 -luser32 -Wl,--major-subsystem-version,5 -Wl,--minor-subsystem-version,2 -o "$ROOT_DIR/test/test_gpu_accel32.exe"
 
 # Build online 3D benchmark (wglgears)
 x86_64-w64-mingw32-gcc -x c -O2 -static-libgcc "$ROOT_DIR/test/3d_tests/glxgears_main.cpp" -lopengl32 -lgdi32 -luser32 -o "$ROOT_DIR/test/3d_tests/wglgears.exe"
-i686-w64-mingw32-gcc -x c -O2 -static-libgcc "$ROOT_DIR/test/3d_tests/glxgears_main.cpp" -lopengl32 -lgdi32 -luser32 -o "$ROOT_DIR/test/3d_tests/wglgears32.exe"
+i686-w64-mingw32-gcc -x c -O2 -static-libgcc -D_WIN32_WINNT=0x0502 -DWINVER=0x0502 "$ROOT_DIR/test/3d_tests/glxgears_main.cpp" -lopengl32 -lgdi32 -luser32 -Wl,--major-subsystem-version,5 -Wl,--minor-subsystem-version,2 -o "$ROOT_DIR/test/3d_tests/wglgears32.exe"
 
 cp "$ROOT_DIR/src_driver/nvxmp.sys" "$ROOT_DIR/dist_full/nvxmp.sys"
 cp "$ROOT_DIR/src_disp/nvxdisp.dll" "$ROOT_DIR/dist_full/nvxdisp.dll"

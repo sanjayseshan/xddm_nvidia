@@ -70,12 +70,17 @@ AddReg = nvx_SoftwareSettings_AddReg
 HKR,, InstalledDisplayDrivers,     0x00010000, "nvxdisp"
 HKR,, VgaCompatible,               0x00010001, 0
 HKR,, Device Description,          0x00000000, %NV3070%
+HKLM, "Software\Microsoft\Windows NT\CurrentVersion\OpenGLDrivers\nvxdisp", Dll,           0x00000000, "nvxogl64.dll"
+HKLM, "Software\Microsoft\Windows NT\CurrentVersion\OpenGLDrivers\nvxdisp", Version,       0x00010001, 2
+HKLM, "Software\Microsoft\Windows NT\CurrentVersion\OpenGLDrivers\nvxdisp", DriverVersion, 0x00010001, 0x00010000
+HKLM, "Software\Microsoft\Windows NT\CurrentVersion\OpenGLDrivers\nvxdisp", Flags,         0x00010001, 1
 
 [nvx.Miniport]
 nvxmp.sys
 
 [nvx.Display]
 nvxdisp.dll
+nvxogl64.dll
 
 [SourceDisksNames]
 1 = %DiskId%,,,""
@@ -83,6 +88,7 @@ nvxdisp.dll
 [SourceDisksFiles]
 nvxmp.sys  = 1
 nvxdisp.dll = 1
+nvxogl64.dll = 1
 
 [Strings]
 NVIDIA              = "NVIDIA Corporation (XDDM Community Port)"

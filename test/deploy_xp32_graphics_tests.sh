@@ -8,10 +8,16 @@ NVX_XP32_IMAGE="${NVX_XP32_IMAGE:-$ROOT_DIR/winxp_x32.qcow2}"
 qemu-img info "$NVX_XP32_IMAGE" >/dev/null
 NVX_TEST_BATCH="$(mktemp /tmp/nvx-graphics-tests.XXXXXX.bat)"
 trap 'rm -f "$NVX_TEST_BATCH"' EXIT
-i686-w64-mingw32-gcc -O2 -Wall -Wextra -static-libgcc test/test_gpu_accel.c \
-    -lopengl32 -lgdi32 -luser32 -o test/test_gpu_accel32.exe
-i686-w64-mingw32-gcc -x c -O2 -static-libgcc test/3d_tests/glxgears_main.cpp \
-    -lopengl32 -lgdi32 -luser32 -o test/3d_tests/wglgears32.exe
+i686-w64-mingw32-gcc -O2 -Wall -Wextra -static-libgcc \
+    -D_WIN32_WINNT=0x0502 -DWINVER=0x0502 test/test_gpu_accel.c \
+    -lopengl32 -lgdi32 -luser32 \
+    -Wl,--major-subsystem-version,5 -Wl,--minor-subsystem-version,2 \
+    -o test/test_gpu_accel32.exe
+i686-w64-mingw32-gcc -x c -O2 -static-libgcc \
+    -D_WIN32_WINNT=0x0502 -DWINVER=0x0502 test/3d_tests/glxgears_main.cpp \
+    -lopengl32 -lgdi32 -luser32 \
+    -Wl,--major-subsystem-version,5 -Wl,--minor-subsystem-version,2 \
+    -o test/3d_tests/wglgears32.exe
 python3 - "$NVX_TEST_BATCH" <<'PY'
 from pathlib import Path
 import sys

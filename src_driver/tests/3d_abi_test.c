@@ -6,16 +6,21 @@ int main(void)
 {
     NVX_3D_ALLOC_BUFFER alloc={0};
     NVX_3D_FREE_BUFFER freeRequest={0};
+    NVX_3D_UPLOAD_BUFFER upload={0};
     NVX_3D_SUBMIT submit={0};
     NVX_3D_WAIT_FENCE wait={0};
+    NVX_3D_READBACK readback={0};
+    uint32_t readbackPixels[NVX_3D_READBACK_PIXELS];
     NVX_3D_QUERY_CAPS caps;
     uint32_t information=99;
 
     assert(sizeof(NVX_3D_QUERY_CAPS)==32);
     assert(sizeof(NVX_3D_ALLOC_BUFFER)==32);
     assert(sizeof(NVX_3D_FREE_BUFFER)==16);
+    assert(sizeof(NVX_3D_UPLOAD_BUFFER)==32);
     assert(sizeof(NVX_3D_SUBMIT)==48);
     assert(sizeof(NVX_3D_WAIT_FENCE)==24);
+    assert(sizeof(NVX_3D_READBACK)==32);
 
     Nvx3dBuildCaps(&caps,0,0,0,0,0,0,0,0);
     assert(caps.Size==sizeof(caps)&&caps.Version==NVX_3D_ABI_VERSION);
@@ -25,7 +30,8 @@ int main(void)
     Nvx3dBuildCaps(&caps,1,1,0,0,1,1,1,1);
     assert(caps.Features==(NVX_3D_FEATURE_GR_CHANNEL|
         NVX_3D_FEATURE_I2M_VERIFIED|NVX_3D_FEATURE_CLEAR_VERIFIED|
-        NVX_3D_FEATURE_USER_ALLOC|NVX_3D_FEATURE_SUBMIT));
+        NVX_3D_FEATURE_USER_ALLOC|NVX_3D_FEATURE_UPLOAD|
+        NVX_3D_FEATURE_SUBMIT));
     assert(Nvx3dDispatch(NVX_3D_OP_QUERY_CAPS,NULL,0,&caps,sizeof(caps),
         &information,1,1,0,0,1,1)==NVX_3D_STATUS_SUCCESS);
     assert(information==sizeof(caps)&&caps.Features!=0);
@@ -39,18 +45,111 @@ int main(void)
     alloc.Size=sizeof(alloc);alloc.Version=NVX_3D_ABI_VERSION;
     alloc.Usage=3;alloc.Bytes=65536;
     assert(Nvx3dValidateAlloc(&alloc));
+    alloc.Usage=7;alloc.Bytes=NVX_3D_DEPTH_TARGET_TOTAL_BYTES;
+    assert(Nvx3dValidateAlloc(&alloc));
+    alloc.Usage=15;
+    assert(Nvx3dValidateAlloc(&alloc));
+    alloc.Usage=NVX_3D_USAGE_DEPTH_TARGET|NVX_3D_USAGE_DEPTH_ZF32;
+    alloc.Bytes=NVX_3D_DEPTH_TARGET_TOTAL_BYTES;
+    assert(Nvx3dValidateAlloc(&alloc));
+    alloc.Usage=NVX_3D_USAGE_DEPTH_TARGET|NVX_3D_USAGE_DEPTH_ZF32|
+                NVX_3D_USAGE_DEPTH_S8Z24;
+    assert(!Nvx3dValidateAlloc(&alloc));
+    alloc.Usage=4;assert(!Nvx3dValidateAlloc(&alloc));
+    alloc.Usage=8;assert(!Nvx3dValidateAlloc(&alloc));
+    alloc.Usage=3;alloc.Bytes=65536;
     assert(Nvx3dDispatch(NVX_3D_OP_ALLOC,&alloc,sizeof(alloc),NULL,0,NULL,
         0,0,0,0,0,0)==NVX_3D_STATUS_SUCCESS);
     alloc.Bytes=65535;assert(!Nvx3dValidateAlloc(&alloc));
     alloc.Bytes=NVX_3D_MAX_BUFFER_BYTES+4096;assert(!Nvx3dValidateAlloc(&alloc));
     alloc.Bytes=4096;alloc.BufferId=1;assert(!Nvx3dValidateAlloc(&alloc));
 
+    upload.Size=sizeof(upload);upload.Version=NVX_3D_ABI_VERSION;
+    upload.BufferId=1;upload.Offset=128;upload.Bytes=256;
+    assert(Nvx3dValidateUpload(&upload,sizeof(upload)+upload.Bytes,4096));
+    assert(!Nvx3dValidateUpload(&upload,sizeof(upload)+upload.Bytes-1,4096));
+    assert(!Nvx3dValidateUpload(&upload,sizeof(upload)+upload.Bytes,383));
+    upload.Offset++;
+    assert(!Nvx3dValidateUpload(&upload,sizeof(upload)+upload.Bytes,4096));
+    upload.Offset--;
+    upload.Bytes--;
+    assert(!Nvx3dValidateUpload(&upload,sizeof(upload)+upload.Bytes,4096));
+    upload.Bytes++;
+    upload.Offset=UINT32_MAX-64;
+    assert(!Nvx3dValidateUpload(&upload,sizeof(upload)+upload.Bytes,4096));
+    upload.Offset=0;upload.Bytes=NVX_3D_MAX_UPLOAD_BYTES+1;
+    assert(!Nvx3dValidateUpload(&upload,sizeof(upload)+upload.Bytes,65536));
+    upload.Bytes=256;upload.Reserved[0]=1;
+    assert(!Nvx3dValidateUpload(&upload,sizeof(upload)+upload.Bytes,4096));
+    upload.Reserved[0]=0;
+
     submit.Size=sizeof(submit);submit.Version=NVX_3D_ABI_VERSION;
     submit.Operation=NVX_3D_SUBMIT_CLEAR_SURFACE;
     submit.Width=64;submit.Height=16;submit.BufferId=1;
     assert(Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
+    submit.Color=0xffffffffU;
+    assert(Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
+    submit.Color=0x12345678U;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
+    submit.Color=0;
     assert(Nvx3dDispatch(NVX_3D_OP_SUBMIT,&submit,sizeof(submit),NULL,0,NULL,
         0,0,0,0,0,0)==NVX_3D_STATUS_SUCCESS);
+    submit.Operation=NVX_3D_SUBMIT_TEST_TRIANGLE;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),65535));
+    assert(Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
+    assert(Nvx3dDispatch(NVX_3D_OP_SUBMIT,&submit,sizeof(submit),NULL,0,NULL,
+        0,0,0,0,0,0)==NVX_3D_STATUS_SUCCESS);
+    submit.Operation=NVX_3D_SUBMIT_DRAW_TRIANGLE;
+    submit.Reserved[0]=2;submit.Color=0xff00ff00U;
+    assert(Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
+    assert(Nvx3dSubmitVertexBufferId(&submit)==2);
+    assert(Nvx3dDispatch(NVX_3D_OP_SUBMIT,&submit,sizeof(submit),NULL,0,NULL,
+        0,0,0,0,0,0)==NVX_3D_STATUS_SUCCESS);
+    submit.Operation=NVX_3D_SUBMIT_DRAW_TRIANGLE_PRESERVE;
+    submit.Color=0xffff0000U;
+    assert(Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
+    assert(Nvx3dDispatch(NVX_3D_OP_SUBMIT,&submit,sizeof(submit),NULL,0,NULL,
+        0,0,0,0,0,0)==NVX_3D_STATUS_SUCCESS);
+    submit.Operation=NVX_3D_SUBMIT_CLEAR_DEPTH;
+    submit.Color=0;submit.Reserved[0]=0;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),
+                                NVX_3D_DEPTH_TARGET_TOTAL_BYTES-1));
+    assert(Nvx3dValidateSubmit(&submit,sizeof(submit),
+                               NVX_3D_DEPTH_TARGET_TOTAL_BYTES));
+    assert(Nvx3dRequiredSubmitBytes(submit.Operation)==
+           NVX_3D_DEPTH_TARGET_TOTAL_BYTES);
+    submit.Operation=NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH;
+    submit.Reserved[0]=2;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),
+                                NVX_3D_DEPTH_TARGET_TOTAL_BYTES-1));
+    assert(Nvx3dValidateSubmit(&submit,sizeof(submit),
+                               NVX_3D_DEPTH_TARGET_TOTAL_BYTES));
+    assert(Nvx3dDispatch(NVX_3D_OP_SUBMIT,&submit,sizeof(submit),NULL,0,NULL,
+        0,0,0,0,0,0)==NVX_3D_STATUS_SUCCESS);
+    assert(Nvx3dSubmitVertexBufferId(&submit)==2);
+    assert(Nvx3dRequiredSubmitBytes(submit.Operation)==
+           NVX_3D_DEPTH_TARGET_TOTAL_BYTES);
+    submit.Reserved[0]=1;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),
+                                NVX_3D_DEPTH_TARGET_TOTAL_BYTES));
+    submit.Reserved[0]=0;submit.Operation=NVX_3D_SUBMIT_CLEAR_DEPTH;
+    submit.Color=0x01020304U;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),
+                                NVX_3D_DEPTH_TARGET_TOTAL_BYTES));
+    submit.Color=0;submit.Reserved[0]=1;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),
+                                NVX_3D_DEPTH_TARGET_TOTAL_BYTES));
+    submit.Reserved[0]=0;
+    submit.Operation=NVX_3D_SUBMIT_DRAW_TRIANGLE_PRESERVE;
+    submit.Color=0xffff0000U;
+    submit.Reserved[0]=1;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
+    submit.Reserved[0]=0;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
+    submit.Operation=NVX_3D_SUBMIT_TEST_TRIANGLE;submit.Color=0;
+    submit.Operation=99;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
+    submit.Operation=NVX_3D_SUBMIT_CLEAR_SURFACE;
     assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),4095));
     submit.Width=65;assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
     submit.Width=64;submit.Reserved[0]=1;
@@ -69,6 +168,25 @@ int main(void)
     assert(Nvx3dDispatch(NVX_3D_OP_FREE,&freeRequest,sizeof(freeRequest),NULL,0,
         NULL,0,0,0,0,0,0)==NVX_3D_STATUS_SUCCESS);
     freeRequest.BufferId=0;assert(!Nvx3dValidateFree(&freeRequest));
+
+    readback.Size=sizeof(readback);readback.Version=NVX_3D_ABI_VERSION;
+    readback.BufferId=1;readback.Width=NVX_3D_TRIANGLE_WIDTH;
+    readback.Height=NVX_3D_TRIANGLE_HEIGHT;
+    assert(Nvx3dValidateReadback(&readback,NVX_3D_READBACK_BYTES,
+                                 NVX_3D_TRIANGLE_TARGET_BYTES));
+    assert(Nvx3dDispatch(NVX_3D_OP_READBACK,&readback,sizeof(readback),
+        readbackPixels,sizeof(readbackPixels),&information,0,0,0,0,0,0)==
+        NVX_3D_STATUS_SUCCESS);
+    assert(information==NVX_3D_READBACK_BYTES);
+    assert(!Nvx3dValidateReadback(&readback,NVX_3D_READBACK_BYTES-1,
+                                  NVX_3D_TRIANGLE_TARGET_BYTES));
+    readback.Width++;
+    assert(!Nvx3dValidateReadback(&readback,NVX_3D_READBACK_BYTES,
+                                  NVX_3D_TRIANGLE_TARGET_BYTES));
+    readback.Width--;
+    readback.Reserved[1]=1;
+    assert(!Nvx3dValidateReadback(&readback,NVX_3D_READBACK_BYTES,
+                                  NVX_3D_TRIANGLE_TARGET_BYTES));
 
     puts("3D ABI layout, capabilities, ownership and command checks passed");
     return 0;
