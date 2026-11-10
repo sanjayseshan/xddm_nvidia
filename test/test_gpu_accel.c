@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <share.h>
+#include "../src_driver/nvx_3d_abi.h"
 
 static HANDLE hCom1 = INVALID_HANDLE_VALUE;
 static FILE *fLog = NULL;
@@ -322,6 +323,77 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
     LogMsg("-> OpenGL rendering test completed; renderer classification reported above.\n");
 }
 
+static void TestNvx3dSubmission(HDC hdc)
+{
+    NVX_3D_QUERY_CAPS caps={0};
+    NVX_3D_ALLOC_BUFFER alloc={0},allocated={0};
+    NVX_3D_SUBMIT submit={0},submitted={0};
+    NVX_3D_WAIT_FENCE wait={0},waited={0};
+    NVX_3D_FREE_BUFFER freeRequest={0};
+    int ok=1;
+    LogMsg("\n==================================================\n");
+    LogMsg(" [TEST 3D] NVX bounded GR allocation/submit/fence ABI\n");
+    LogMsg("==================================================\n");
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_QUERY_CAPS,0,NULL,sizeof(caps),
+                  (LPSTR)&caps)) {
+        LogMsg("-> [INFO] 3D caps escape unavailable\n");
+#if defined(NVX_REQUIRE_3D_ABI) && NVX_REQUIRE_3D_ABI
+        LogMsg("[NVX_3D_RESULT] FAIL\n");failures++;
+#else
+        LogMsg("[NVX_3D_RESULT] UNAVAILABLE\n");
+#endif
+        return;
+    }
+    LogMsg("-> NVX 3D features=0x%08lX class=0x%08lX ABI=%lu\n",
+        (unsigned long)caps.Features,(unsigned long)caps.GraphicsClass,
+        (unsigned long)caps.Version);
+    if((caps.Features&(NVX_3D_FEATURE_USER_ALLOC|NVX_3D_FEATURE_SUBMIT))!=
+       (NVX_3D_FEATURE_USER_ALLOC|NVX_3D_FEATURE_SUBMIT)||
+       caps.Version!=NVX_3D_ABI_VERSION) {
+        LogMsg("-> [INFO] safe 3D allocation/submit capabilities unavailable\n");
+#if defined(NVX_REQUIRE_3D_ABI) && NVX_REQUIRE_3D_ABI
+        LogMsg("[NVX_3D_RESULT] FAIL\n");failures++;
+#else
+        LogMsg("[NVX_3D_RESULT] UNAVAILABLE\n");
+#endif
+        return;
+    }
+    alloc.Size=sizeof(alloc);alloc.Version=NVX_3D_ABI_VERSION;
+    alloc.Usage=3;alloc.Bytes=65536;
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_ALLOC,sizeof(alloc),(LPCSTR)&alloc,
+                  sizeof(allocated),(LPSTR)&allocated)) {
+        LogMsg("-> [FAIL] 3D buffer allocation escape failed\n");
+        failures++;return;
+    }
+    LogMsg("-> Allocated buffer id=%llu gpuVa=0x%llX bytes=%lu\n",
+        (unsigned long long)allocated.BufferId,
+        (unsigned long long)allocated.GpuVa,(unsigned long)allocated.Bytes);
+    submit.Size=sizeof(submit);submit.Version=NVX_3D_ABI_VERSION;
+    submit.Operation=NVX_3D_SUBMIT_CLEAR_SURFACE;
+    submit.Width=64;submit.Height=16;submit.BufferId=allocated.BufferId;
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_SUBMIT,sizeof(submit),(LPCSTR)&submit,
+                  sizeof(submitted),(LPSTR)&submitted)) {
+        LogMsg("-> [FAIL] bounded C797 clear submission failed\n");ok=0;
+    } else {
+        LogMsg("-> Submitted clear; fence=%llu\n",
+            (unsigned long long)submitted.FenceValue);
+        wait.Size=sizeof(wait);wait.Version=NVX_3D_ABI_VERSION;
+        wait.FenceValue=submitted.FenceValue;wait.TimeoutMs=10000;
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_WAIT,sizeof(wait),(LPCSTR)&wait,
+                      sizeof(waited),(LPSTR)&waited)) {
+            LogMsg("-> [FAIL] 3D completion fence wait failed\n");ok=0;
+        } else LogMsg("-> 3D completion fence signaled\n");
+    }
+    freeRequest.Size=sizeof(freeRequest);freeRequest.Version=NVX_3D_ABI_VERSION;
+    freeRequest.BufferId=allocated.BufferId;
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_FREE,sizeof(freeRequest),
+                  (LPCSTR)&freeRequest,0,NULL)) {
+        LogMsg("-> [FAIL] 3D buffer release failed\n");ok=0;
+    }
+    if(ok) LogMsg("[NVX_3D_RESULT] PASS\n");
+    else {LogMsg("[NVX_3D_RESULT] FAIL\n");failures++;}
+}
+
 /* ---------------- Direct3D 9 / DirectX Tests ---------------- */
 static void TestDirect3D9(HWND hwnd)
 {
@@ -518,6 +590,7 @@ int main(int argc, char **argv)
         int before = failures;
         TestOpenGL(hwnd, hdc);
         LogMsg("[OPENGL_RESULT] %s\n", failures != before ? "FAIL" : software3d ? "SOFTWARE" : "RENDERED");
+        TestNvx3dSubmission(hdc);
         before = failures;
         TestDirect3D9(hwnd);
         LogMsg("[D3D9_RESULT] %s\n", failures != before ? "FAIL" : d3dUnavailable ? "UNAVAILABLE (no Direct3D HAL)" : "RENDERED (see device type)");

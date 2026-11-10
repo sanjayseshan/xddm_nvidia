@@ -1350,6 +1350,160 @@ BOOLEAN NTAPI HwVidInitialize(PVOID HwDeviceExtension) {
     return TRUE;
 }
 
+static volatile ULONG g_Nvx3dBufferLock=0;
+
+static BOOLEAN Nvx3dLockBuffers(VOID)
+{
+    ULONG wait;
+    for(wait=0;wait<100000;wait++) {
+        if(!__sync_lock_test_and_set(&g_Nvx3dBufferLock,1)) return TRUE;
+        VideoPortStallExecution(1);
+    }
+    return FALSE;
+}
+
+static VOID Nvx3dUnlockBuffers(VOID)
+{
+    __sync_lock_release(&g_Nvx3dBufferLock);
+}
+
+static ULONG64 Nvx3dMaxSurfaceBytes(PNVX_DEVICE_EXTENSION dev)
+{
+    /* Only the currently allocated scanout occupies framebuffer memory.
+       Reserving the largest advertised mode for both heads can consume more
+       than the mapped VRAM window even though those modes are never allocated
+       simultaneously, incorrectly disabling all user allocations. */
+    if(!dev||dev->CurrentModeIndex>=dev->NumModes||
+       dev->CurrentModeIndex>=MAX_NVX_MODES) return 0;
+    return (ULONG64)dev->Modes[dev->CurrentModeIndex].ScreenStride*
+           dev->Modes[dev->CurrentModeIndex].VisScreenHeight;
+}
+
+static BOOLEAN Nvx3dHeapBounds(PNVX_DEVICE_EXTENSION engine,
+                               ULONG64 *start,ULONG64 *end)
+{
+    PNVX_DEVICE_EXTENSION primary,secondary;
+    ULONG64 reserved,aligned,limit,secondaryBytes;
+    if(!engine||!start||!end||!engine->GspFbLayoutValid||
+       !engine->GspVramGpuVa||!engine->GspVramMapBytes||
+       engine->GspFbFreeLimit==~0ULL) return FALSE;
+    primary=engine->IsSecondaryDisplay?
+        (PNVX_DEVICE_EXTENSION)engine->PrimaryDeviceExtension:engine;
+    secondary=primary?(PNVX_DEVICE_EXTENSION)primary->SecondaryDeviceExtension:NULL;
+    reserved=Nvx3dMaxSurfaceBytes(primary);
+    secondaryBytes=Nvx3dMaxSurfaceBytes(secondary);
+    if(secondaryBytes && 0x2000000ULL+secondaryBytes>reserved)
+        reserved=0x2000000ULL+secondaryBytes;
+    if(reserved<engine->GspFbFreeBase) reserved=engine->GspFbFreeBase;
+    if(reserved>~0ULL-0xffffULL) return FALSE;
+    aligned=(reserved+0xffffULL)&~0xffffULL;
+    limit=engine->GspFbFreeLimit+1;
+    if(limit>engine->GspVramMapBytes) limit=engine->GspVramMapBytes;
+    if(aligned>=limit) return FALSE;
+    *start=aligned;*end=limit;
+    return TRUE;
+}
+
+static PNVX_3D_USER_BUFFER_ENTRY Nvx3dFindBuffer(PNVX_DEVICE_EXTENSION engine,
+                                                ULONG64 id)
+{
+    ULONG i;
+    for(i=0;i<NVX_3D_USER_BUFFER_SLOTS;i++)
+        if(engine->Nvx3dBuffers[i].Id==id) return &engine->Nvx3dBuffers[i];
+    return NULL;
+}
+
+static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
+    NVX_3D_ALLOC_BUFFER *request)
+{
+    ULONG i,slot=NVX_3D_USER_BUFFER_SLOTS;
+    ULONG64 start,end,candidate;
+    if(!engine||!request||!Nvx3dValidateAlloc(request)||
+       !engine->GspCopyVerified||engine->GspChannelFaulted||
+       !Nvx3dHeapBounds(engine,&start,&end)||!Nvx3dLockBuffers()) return FALSE;
+    for(i=0;i<NVX_3D_USER_BUFFER_SLOTS;i++)
+        if(!engine->Nvx3dBuffers[i].Id) {slot=i;break;}
+    if(slot==NVX_3D_USER_BUFFER_SLOTS) {Nvx3dUnlockBuffers();return FALSE;}
+    candidate=start;
+    for(;;) {
+        BOOLEAN moved=FALSE;
+        if(candidate>end||request->Bytes>end-candidate) {
+            Nvx3dUnlockBuffers();return FALSE;
+        }
+        for(i=0;i<NVX_3D_USER_BUFFER_SLOTS;i++) {
+            NVX_3D_USER_BUFFER_ENTRY *entry=&engine->Nvx3dBuffers[i];
+            ULONG64 entryStart,entryEnd;
+            if(!entry->Id) continue;
+            entryStart=entry->GpuVa-engine->GspVramGpuVa;
+            entryEnd=entryStart+entry->Bytes;
+            if(candidate<entryEnd&&entryStart<candidate+request->Bytes) {
+                candidate=(entryEnd+0xffffULL)&~0xffffULL;
+                moved=TRUE;break;
+            }
+        }
+        if(!moved) break;
+    }
+    engine->Nvx3dNextBufferId++;
+    if(!engine->Nvx3dNextBufferId) engine->Nvx3dNextBufferId++;
+    engine->Nvx3dBuffers[slot].Id=engine->Nvx3dNextBufferId;
+    engine->Nvx3dBuffers[slot].GpuVa=engine->GspVramGpuVa+candidate;
+    engine->Nvx3dBuffers[slot].Bytes=request->Bytes;
+    engine->Nvx3dBuffers[slot].Usage=request->Usage;
+    engine->Nvx3dBuffers[slot].Busy=TRUE;
+    request->BufferId=engine->Nvx3dBuffers[slot].Id;
+    request->GpuVa=engine->Nvx3dBuffers[slot].GpuVa;
+    Nvx3dUnlockBuffers();
+    for(i=0;i<request->Bytes;i+=0x01000000U) {
+        ULONG chunk=request->Bytes-i;
+        if(chunk>0x01000000U) chunk=0x01000000U;
+        if(!NvxGspSubmitFill(engine,request->GpuVa+i,0,chunk)) break;
+    }
+    if(i<request->Bytes) {
+        if(Nvx3dLockBuffers()) {
+            PNVX_3D_USER_BUFFER_ENTRY entry=Nvx3dFindBuffer(engine,request->BufferId);
+            if(entry) VideoPortZeroMemory(entry,sizeof(*entry));
+            Nvx3dUnlockBuffers();
+        }
+        request->BufferId=request->GpuVa=0;
+        return FALSE;
+    }
+    if(Nvx3dLockBuffers()) {
+        PNVX_3D_USER_BUFFER_ENTRY entry=Nvx3dFindBuffer(engine,request->BufferId);
+        if(entry) entry->Busy=FALSE;
+        Nvx3dUnlockBuffers();
+    }
+    engine->GspGraphicsUserAllocReady=TRUE;
+    return TRUE;
+}
+
+static BOOLEAN Nvx3dFreeBuffer(PNVX_DEVICE_EXTENSION engine,ULONG64 id)
+{
+    NVX_3D_USER_BUFFER_ENTRY saved;
+    PNVX_3D_USER_BUFFER_ENTRY entry;
+    if(!engine||!id||!Nvx3dLockBuffers()) return FALSE;
+    entry=Nvx3dFindBuffer(engine,id);
+    if(!entry||entry->Busy) {Nvx3dUnlockBuffers();return FALSE;}
+    entry->Busy=TRUE;saved=*entry;Nvx3dUnlockBuffers();
+    for(ULONG i=0;i<saved.Bytes;i+=0x01000000U) {
+        ULONG chunk=saved.Bytes-i;
+        if(chunk>0x01000000U) chunk=0x01000000U;
+        if(!NvxGspSubmitFill(engine,saved.GpuVa+i,0,chunk)) {
+            if(Nvx3dLockBuffers()) {
+                entry=Nvx3dFindBuffer(engine,id);
+                if(entry) entry->Busy=FALSE;
+                Nvx3dUnlockBuffers();
+            }
+            return FALSE;
+        }
+    }
+    if(!Nvx3dLockBuffers()) return FALSE;
+    entry=Nvx3dFindBuffer(engine,id);
+    if(entry&&entry->Busy&&entry->GpuVa==saved.GpuVa)
+        VideoPortZeroMemory(entry,sizeof(*entry));
+    Nvx3dUnlockBuffers();
+    return TRUE;
+}
+
 BOOLEAN NTAPI HwVidStartIO(
     PVOID HwDeviceExtension,
     PVIDEO_REQUEST_PACKET RequestPacket
@@ -1923,6 +2077,134 @@ BOOLEAN NTAPI HwVidStartIO(
         break;
     }
 
+    case IOCTL_NVX_3D_QUERY_CAPS: {
+        PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
+        NVX_3D_QUERY_CAPS *caps=(NVX_3D_QUERY_CAPS *)RequestPacket->OutputBuffer;
+        ULONG64 heapStart,heapEnd;
+        if(!caps||RequestPacket->OutputBufferLength<sizeof(*caps)) {
+            status=ERROR_INSUFFICIENT_BUFFER;break;
+        }
+        Nvx3dBuildCaps(caps,engine&&engine->GspGraphicsChannelReady,
+            engine&&engine->GspGraphicsCommandVerified,
+            engine&&engine->GspGraphicsChannelFaulted,
+            engine&&engine->GspMmuFaultQueued,
+            engine&&engine->GspGraphicsDataWriteVerified,
+            engine&&engine->GspGraphicsPixelClearVerified,
+            engine&&engine->GspCopyVerified&&
+                Nvx3dHeapBounds(engine,&heapStart,&heapEnd),
+            engine&&engine->GspGraphicsChannelReady&&
+                engine->GspGraphicsCommandVerified&&
+                engine->GspGraphicsPixelClearVerified);
+        RequestPacket->StatusBlock->Information=sizeof(*caps);
+        status=NO_ERROR;
+        break;
+    }
+
+    case IOCTL_NVX_3D_ALLOC_BUFFER: {
+        PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
+        NVX_3D_ALLOC_BUFFER request;
+        if(!RequestPacket->InputBuffer||
+           RequestPacket->InputBufferLength!=sizeof(request)||
+           !RequestPacket->OutputBuffer||
+           RequestPacket->OutputBufferLength<sizeof(request)) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+        VideoPortMoveMemory(&request,RequestPacket->InputBuffer,sizeof(request));
+        if(!Nvx3dValidateAlloc(&request)) {status=ERROR_INVALID_PARAMETER;break;}
+        if(!Nvx3dAllocateBuffer(engine,&request)) {
+            status=engine&&engine->GspCopyVerified?ERROR_NOT_ENOUGH_MEMORY:
+                                                    ERROR_NOT_SUPPORTED;
+            break;
+        }
+        VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,sizeof(request));
+        statusBlock->Information=sizeof(request);status=NO_ERROR;
+        break;
+    }
+
+    case IOCTL_NVX_3D_FREE_BUFFER: {
+        PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
+        NVX_3D_FREE_BUFFER request;
+        if(!RequestPacket->InputBuffer||
+           RequestPacket->InputBufferLength!=sizeof(request)) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+        VideoPortMoveMemory(&request,RequestPacket->InputBuffer,sizeof(request));
+        if(!Nvx3dValidateFree(&request)) {status=ERROR_INVALID_PARAMETER;break;}
+        status=Nvx3dFreeBuffer(engine,request.BufferId)?NO_ERROR:ERROR_NOT_FOUND;
+        break;
+    }
+
+    case IOCTL_NVX_3D_SUBMIT: {
+        PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
+        NVX_3D_SUBMIT request;
+        NVX_3D_USER_BUFFER_ENTRY saved;
+        PNVX_3D_USER_BUFFER_ENTRY entry;
+        ULONG64 fenceValue;
+        if(!RequestPacket->InputBuffer||
+           RequestPacket->InputBufferLength!=sizeof(request)||
+           !RequestPacket->OutputBuffer||
+           RequestPacket->OutputBufferLength<sizeof(request)) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+        VideoPortMoveMemory(&request,RequestPacket->InputBuffer,sizeof(request));
+        if(!Nvx3dValidateSubmit(&request,sizeof(request),4096)||
+           !engine||!Nvx3dLockBuffers()) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+        entry=Nvx3dFindBuffer(engine,request.BufferId);
+        if(!entry||entry->Busy||entry->Bytes<4096) {
+            Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
+        }
+        entry->Busy=TRUE;saved=*entry;
+        fenceValue=engine->Nvx3dLastFence+1;
+        if(!fenceValue||fenceValue>0xffffffffULL) {
+            entry->Busy=FALSE;Nvx3dUnlockBuffers();
+            status=ERROR_DEVICE_NOT_READY;break;
+        }
+        engine->Nvx3dLastFence=fenceValue;
+        Nvx3dUnlockBuffers();
+        if(!NvxGspSubmitUserClear(engine,saved.GpuVa,request.Color,fenceValue)) {
+            status=ERROR_DEVICE_NOT_READY;
+        } else {
+            request.FenceValue=fenceValue;
+            VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,sizeof(request));
+            statusBlock->Information=sizeof(request);status=NO_ERROR;
+            engine->GspGraphicsUserSubmitReady=TRUE;
+        }
+        if(Nvx3dLockBuffers()) {
+            entry=Nvx3dFindBuffer(engine,saved.Id);
+            if(entry) entry->Busy=FALSE;
+            Nvx3dUnlockBuffers();
+        }
+        break;
+    }
+
+    case IOCTL_NVX_3D_WAIT_FENCE: {
+        PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
+        NVX_3D_WAIT_FENCE request;
+        if(!RequestPacket->InputBuffer||
+           RequestPacket->InputBufferLength!=sizeof(request)||
+           !RequestPacket->OutputBuffer||
+           RequestPacket->OutputBufferLength<sizeof(request)) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+        VideoPortMoveMemory(&request,RequestPacket->InputBuffer,sizeof(request));
+        if(!Nvx3dValidateWait(&request)) {status=ERROR_INVALID_PARAMETER;break;}
+        if(!NvxGspWaitUserFence(engine,request.FenceValue,request.TimeoutMs)) {
+            status=ERROR_DEVICE_NOT_READY;break;
+        }
+        request.Status=0;
+        VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,sizeof(request));
+        statusBlock->Information=sizeof(request);status=NO_ERROR;
+        break;
+    }
+
+
     case IOCTL_NVX_GET_LOG: {
 #ifndef __VXDKERNEL__
         ULONG maxBytes = RequestPacket->OutputBufferLength;
@@ -2115,7 +2397,7 @@ ULONG NTAPI DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 2.0.0.63 (open-gpu-kernel-modules unified v2)\n");
+    LogStr(" NVX Video Miniport Driver 2.0.0.67 (open-gpu-kernel-modules unified v2)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

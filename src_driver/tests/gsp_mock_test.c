@@ -398,7 +398,7 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
     if(off==0x220490 && dev.GspGPPut>1) {
         PUCHAR scratch=(PUCHAR)dev.GspDmaVirtual+GSP_SCRATCH_OFFSET;
         ULONG previous=(dev.GspGPPut+1023)%1024;
-        PULONG push=(PULONG)(scratch+0x9000+(previous%16)*0x100);
+        PULONG push=(PULONG)(scratch+0xd000+(previous%16)*0x100);
         if(push[2]==0x20048100) {
             assert(push[11]==1 && push[8]==push[9] && push[9]==push[10]);
             memcpy(dmaPointer(((ULONG64)push[5]<<32)|push[6],push[10]),
@@ -422,18 +422,18 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
         assert(address==dev.GspScratchGpuVa+0x9000&&(entry>>42)==68);
         assert(push[0]==0x20018000&&push[1]==0xc7b5);
         assert(push[2]==0x20048100&&push[3]==0&&push[4]==0x21000000);
-        assert(push[5]==0&&push[6]==0x1000d000);
+        assert(push[5]==0&&push[6]==0x1000f000);
         assert(push[14]==0x20048100&&push[16]==0x1000a000&&push[17]==0&&push[18]==0x21000000);
         assert(push[26]==0x20048100&&push[28]==0x21000000&&push[29]==0&&push[30]==0x1000b000);
-        assert(push[38]==0x20048100&&push[40]==0x1000d000&&push[41]==0&&push[42]==0x21000000);
+        assert(push[38]==0x20048100&&push[40]==0x1000f000&&push[41]==0&&push[42]==0x21000000);
         assert(push[50]==0x20048100&&push[52]==0x21000000&&push[53]==0&&push[54]==0x1000e000);
         assert(push[62]==0x20038090&&push[64]==0x1000c000);
         assert(push[66]==0x200180c0&&push[67]==0x0400000c);
         if(scenario!=4) { /* timeout: GPU never writes completion */
-            memcpy(scratch+0xd000,gpuVram+0x1000000,256);
+            memcpy(scratch+0xf000,gpuVram+0x1000000,256);
             memcpy(gpuVram+0x1000000,scratch+0xa000,256);
             memcpy(scratch+0xb000,gpuVram+0x1000000,256);
-            memcpy(gpuVram+0x1000000,scratch+0xd000,256);
+            memcpy(gpuVram+0x1000000,scratch+0xf000,256);
             memcpy(scratch+0xe000,gpuVram+0x1000000,256);
             *(PULONG)(scratch+0xc000)=push[65];
             userd[0x88/4]=1;
@@ -538,7 +538,7 @@ static void test_reusable_queue(void) {
     assert(dev_q.GspGPPut == 3);
     assert(dev_q.GspNextFence == 0x102);
     {
-        PULONG push=(PULONG)(scratch+0x9000+2*0x100);
+        PULONG push=(PULONG)(scratch+0xd000+2*0x100);
         assert(push[8] == 4096); /* input pitch */
         assert(push[9] == 4096); /* output pitch */
         assert(push[10] == 1024); /* bytes per line */

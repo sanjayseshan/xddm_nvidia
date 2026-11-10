@@ -651,7 +651,8 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
             LogStr("NVX [RM]: queried CE fault method buffer size: ");LogHex(mthdSize);LogStr("\n");
         }
     }
-    /* Reserve [0x9000,0xd000) separately for commands/data/completion. */
+    /* GR GPFIFO occupies 0x9000; runtime CE push slots use 0xd000; C797
+       push data uses 0xf000. Keep all three allocations disjoint. */
     if(!mthdSize||mthdSize>0x5000||!dev->GspScratchGpuVa) return FALSE;
 
     /* Allocate TSG on Device */
@@ -927,6 +928,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     volatile ULONG *userd;
     volatile ULONG *grFence;
     volatile ULONG *grData;
+    volatile ULONG *grReadback;
     volatile ULONG64 *fifo;
     const ULONG channelHandle=0xc56f0002;
     const ULONG grHandle=0xc6970001;
@@ -1355,6 +1357,9 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     grFenceVa=dev->GspScratchGpuVa+0xb500;
     grData=(volatile ULONG *)(scratch+0xb600);
     grDataVa=dev->GspScratchGpuVa+0xb600;
+    /* The spare final scratch page is a CE readback destination after the
+       GR draw is fenced. It is outside the FIFO, USERD, semaphore and target. */
+    grReadback=(volatile ULONG *)(scratch+0xe000);
     /* The GR context VA is promoted, but its external semaphore access remains
        unverified. Use this already-mapped coherent scratch word to isolate the
        target mapping from the report-semaphore method itself. */
@@ -1525,12 +1530,15 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     }
     __sync_synchronize();
     userd[0x8c/4]=1;
+    dev->GspGraphicsGPPut=1;
     __sync_synchronize();
     /* USERD is allocated at fixed index 2 above.  On GA104 the scheduler
        exposes that graphics channel in CHRAM slot 2; ring that channel's
        doorbell rather than borrowing channel 1 (the independent CE channel).
        Keep RM's opaque token authoritative whenever it supplies one. */
     token=(dbcfg&0xffff0000U)|2U;
+    dev->GspGraphicsRunlistBase=runlistBase;
+    dev->GspGraphicsSubmitToken=token;
     if(dev->Bar0Length>=0x30094)
         VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),token);
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+runlistBase+0x90),2);
@@ -1562,7 +1570,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         } else if(grStatusAvailable&&!dev->GspGraphicsChannelFaulted&&!dev->GspMmuFaultQueued&&
                   userd[0x88/4]==1&&grFence[0]==0x47524632&&
                   grFence[1]==0x13579bdf&&grFence[2]==0x2468ace0) {
-            ULONG i,matchCount=0,clearMatchCount=0;
+            ULONG i,matchCount=0,clearMatchCount=0,readbackMatchCount=0;
             dev->GspGraphicsCommandVerified=TRUE;
             for(i=0;i<16;i++) {
                 if(grData[i]==0x67723000U+i) matchCount++;
@@ -1572,9 +1580,22 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
                 dev->GspGraphicsDataWriteVerified=TRUE;
                 LogStr("NVX [GR]: I2M data write verified; 16 dwords matched in scratch memory.\n");
             } else if(clearMatchCount==16) {
-                dev->GspGraphicsDataWriteVerified=TRUE;
-                dev->GspGraphicsPixelClearVerified=TRUE;
-                LogStr("NVX [GR]: 3D CLEAR_SURFACE verified; 16 dwords zeroed in scratch memory.\n");
+                /* Read the entire 4KB block-linear target through the already
+                   verified CE copy path. Black is invariant under detiling,
+                   so every word must be zero regardless of GOB byte order. */
+                VideoPortZeroMemory((PVOID)grReadback,4096);
+                if(NvxGspSubmitCopy2D(dev,dev->GspScratchGpuVa+0xe000,
+                    grDataVa,256,256,256,16)) {
+                    for(i=0;i<1024;i++) if(grReadback[i]==0) readbackMatchCount++;
+                }
+                if(readbackMatchCount==1024) {
+                    dev->GspGraphicsDataWriteVerified=TRUE;
+                    dev->GspGraphicsPixelClearVerified=TRUE;
+                    LogStr("NVX [GR]: 3D CLEAR_SURFACE readback verified; all 1024 target dwords are zero.\n");
+                } else {
+                    LogStr("NVX [GR]: CLEAR_SURFACE readback mismatch; zero_words=");
+                    LogHex(readbackMatchCount);LogStr(" expected=0x400\n");
+                }
             } else {
                 LogStr("NVX [GR]: data mismatch; i2m_matches=");LogHex(matchCount);
                 LogStr(" clear_matches=");LogHex(clearMatchCount);
@@ -1677,6 +1698,144 @@ BOOLEAN NvxGspUnregisterFaultShadow(PNVX_DEVICE_EXTENSION dev)
     return !dev||!dev->GspFaultShadowRegistered;
 }
 #endif
+
+/* The user ABI deliberately exposes a validated CLEAR_SURFACE operation,
+ * not arbitrary methods on this shared privileged channel. The kernel builds
+ * the C797 pushbuffer and owns the semaphore address. */
+static volatile ULONG NvxGrUserSubmitBusy=0;
+
+BOOLEAN NvxGspSubmitUserClear(PVOID HwDeviceExtension,ULONG64 dstVa,
+                              ULONG color,ULONG64 fenceValue)
+{
+    PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    PUCHAR scratch;
+    volatile ULONG *userd,*fence;
+    volatile ULONG64 *fifo;
+    PULONG push;
+    ULONG n=0,i,put,wait;
+    ULONG64 pushVa,fenceVa;
+    if(!dev||!dev->GspInitialized||!dev->GspGraphicsChannelReady||
+       !dev->GspGraphicsCommandVerified||dev->GspGraphicsChannelFaulted||
+       dev->GspMmuFaultQueued||color||!fenceValue||fenceValue>0xffffffffULL||
+       (dstVa&0xffffULL)||!dev->GspDmaVirtual||!dev->GspGraphicsRunlistBase)
+        return FALSE;
+    for(wait=0;wait<20000;wait++) {
+        if(!__sync_lock_test_and_set(&NvxGrUserSubmitBusy,1)) break;
+        VideoPortStallExecution(10);
+    }
+    if(wait==20000) return FALSE;
+    scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET;
+    userd=(volatile ULONG *)(scratch+0xb400);
+    fence=(volatile ULONG *)(scratch+0xb500);
+    fifo=(volatile ULONG64 *)(scratch+0x9000);
+    push=(PULONG)(scratch+0xf000);
+    pushVa=dev->GspScratchGpuVa+0xf000;
+    fenceVa=dev->GspScratchGpuVa+0xb500;
+    fence[0]=0;__sync_synchronize();
+#define NVX_GR_INCR(_m,_c) (push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|((_c)<<16)|((_m)>>2))
+    NVX_GR_INCR(NVC56F_SET_OBJECT,1);push[n++]=0xC797;
+    NVX_GR_INCR(NVC797_SET_COLOR_TARGET_FORMAT(0),1);
+    push[n++]=NVC797_SET_COLOR_TARGET_FORMAT_V_DISABLED;
+    NVX_GR_INCR(NVC797_SET_ZT_SELECT,1);push[n++]=0;
+    NVX_GR_INCR(NVC797_SET_POINT_CENTER_MODE,1);
+    push[n++]=NVC797_SET_POINT_CENTER_MODE_V_OGL;
+    NVX_GR_INCR(NVC797_SET_SAMPLER_BINDING,1);
+    push[n++]=NVC797_SET_SAMPLER_BINDING_V_VIA_HEADER_BINDING;
+    NVX_GR_INCR(NVC797_SET_VIEWPORT_SCALE_OFFSET,1);push[n++]=0;
+    for(i=0;i<16;i++) {
+        NVX_GR_INCR(NVC797_SET_VIEWPORT_CLIP_HORIZONTAL(i),2);
+        push[n++]=(32768U<<16);push[n++]=(32768U<<16);
+    }
+    NVX_GR_INCR(NVC797_SET_PROVOKING_VERTEX,1);
+    push[n++]=NVC797_SET_PROVOKING_VERTEX_V_LAST;
+    NVX_GR_INCR(NVC797_SET_SINGLE_ROP_CONTROL,1);push[n++]=1;
+    NVX_GR_INCR(NVC797_SET_SINGLE_CT_WRITE_CONTROL,1);push[n++]=1;
+    NVX_GR_INCR(NVC797_SET_BLEND(0),1);push[n++]=1;
+    NVX_GR_INCR(NVC797_SET_BLEND_CONST_RED,4);
+    push[n++]=0;push[n++]=0;push[n++]=0;push[n++]=0;
+    NVX_GR_INCR(NVC797_SET_BLEND_SEPARATE_FOR_ALPHA,1);push[n++]=0;
+    NVX_GR_INCR(NVC797_SET_BLEND_COLOR_OP,3);
+    push[n++]=NVC797_SET_BLEND_COLOR_OP_V_OGL_FUNC_ADD;
+    push[n++]=NVC797_SET_BLEND_COLOR_SOURCE_COEFF_V_OGL_ONE;
+    push[n++]=NVC797_SET_BLEND_COLOR_DEST_COEFF_V_OGL_ZERO;
+    NVX_GR_INCR(NVC797_SET_LINE_WIDTH_FLOAT,1);push[n++]=0x3f800000U;
+    NVX_GR_INCR(NVC797_SET_LINE_MULTISAMPLE_OVERRIDE,1);push[n++]=0;
+    NVX_GR_INCR(NVC797_SET_WINDOW_ORIGIN,1);
+    push[n++]=DRF_DEF(C797,_SET_WINDOW_ORIGIN,_MODE,_UPPER_LEFT)|
+              DRF_DEF(C797,_SET_WINDOW_ORIGIN,_FLIP_Y,_TRUE);
+    NVX_GR_INCR(NVC797_SET_ZCULL_BOUNDS,1);
+    push[n++]=DRF_DEF(C797,_SET_ZCULL_BOUNDS,_Z_MIN_UNBOUNDED_ENABLE,_FALSE)|
+              DRF_DEF(C797,_SET_ZCULL_BOUNDS,_Z_MAX_UNBOUNDED_ENABLE,_FALSE);
+    NVX_GR_INCR(NVC797_SET_SHADER_EXCEPTIONS,1);push[n++]=0;
+    NVX_GR_INCR(NVC797_SET_GO_IDLE_TIMEOUT,1);push[n++]=0x800;
+    NVX_GR_INCR(NVC797_SET_SPH_VERSION,2);
+    push[n++]=(4U)|(4U<<16);push[n++]=(4U)|(4U<<16);
+    NVX_GR_INCR(NVC797_SET_CT_SELECT,1);push[n++]=1;
+    NVX_GR_INCR(NVC797_SET_COLOR_TARGET_A(0),6);
+    push[n++]=(ULONG)(dstVa>>32);push[n++]=(ULONG)dstVa;
+    push[n++]=64;push[n++]=16;
+    push[n++]=NVC797_SET_COLOR_TARGET_FORMAT_V_A8R8G8B8;push[n++]=0;
+    NVX_GR_INCR(NVC797_SET_SURFACE_CLIP_HORIZONTAL,2);
+    push[n++]=(64U<<16);push[n++]=(16U<<16);
+    NVX_GR_INCR(NVC797_SET_COLOR_CLEAR_VALUE(0),4);
+    push[n++]=0;push[n++]=0;push[n++]=0;push[n++]=0;
+    NVX_GR_INCR(NVC797_SET_CLEAR_RECT_HORIZONTAL,2);
+    push[n++]=(64U<<16);push[n++]=(16U<<16);
+    NVX_GR_INCR(NVC797_CLEAR_SURFACE,1);
+    push[n++]=DRF_DEF(C797,_CLEAR_SURFACE,_R_ENABLE,_TRUE)|
+              DRF_DEF(C797,_CLEAR_SURFACE,_G_ENABLE,_TRUE)|
+              DRF_DEF(C797,_CLEAR_SURFACE,_B_ENABLE,_TRUE)|
+              DRF_DEF(C797,_CLEAR_SURFACE,_A_ENABLE,_TRUE);
+    NVX_GR_INCR(NVC797_WAIT_FOR_IDLE,1);push[n++]=0;
+    NVX_GR_INCR(NVC797_SET_REPORT_SEMAPHORE_A,4);
+    push[n++]=(ULONG)(fenceVa>>32);push[n++]=(ULONG)fenceVa;
+    push[n++]=(ULONG)fenceValue;
+    push[n++]=DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_OPERATION,_RELEASE)|
+              DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_RELEASE,_AFTER_ALL_PRECEEDING_WRITES_COMPLETE)|
+              DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_PIPELINE_LOCATION,_ALL)|
+              DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_STRUCTURE_SIZE,_ONE_WORD);
+#undef NVX_GR_INCR
+    if(n>4096U) {
+        __sync_lock_release(&NvxGrUserSubmitBusy);return FALSE;
+    }
+    put=dev->GspGraphicsGPPut%512;
+    fifo[put]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|((ULONG64)n<<42);
+    __sync_synchronize();
+    dev->GspGraphicsGPPut=(put+1)%512;
+    userd[0x8c/4]=dev->GspGraphicsGPPut;
+    __sync_synchronize();
+    if(dev->Bar0Length>=0x30094)
+        VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+0x30090),
+                                     dev->GspGraphicsSubmitToken);
+    VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+
+        dev->GspGraphicsRunlistBase+0x90),2);
+    dev->Nvx3dLastFence=fenceValue;
+    for(wait=0;wait<100000;wait++) {
+        if(fence[0]==(ULONG)fenceValue) {
+            __sync_synchronize();dev->Nvx3dCompletedFence=fenceValue;
+            __sync_lock_release(&NvxGrUserSubmitBusy);return TRUE;
+        }
+        VideoPortStallExecution(100);
+    }
+    dev->GspGraphicsChannelFaulted=TRUE;
+    __sync_lock_release(&NvxGrUserSubmitBusy);
+    return FALSE;
+}
+
+BOOLEAN NvxGspWaitUserFence(PVOID HwDeviceExtension,ULONG64 fenceValue,
+                            ULONG timeoutMs)
+{
+    PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    ULONG elapsed=0;
+    if(!dev||!fenceValue||fenceValue>dev->Nvx3dLastFence||timeoutMs>30000)
+        return FALSE;
+    while(elapsed<=timeoutMs) {
+        if(dev->Nvx3dCompletedFence>=fenceValue) return TRUE;
+        if(dev->GspGraphicsChannelFaulted||dev->GspMmuFaultQueued) return FALSE;
+        VideoPortStallExecution(1000);elapsed++;
+    }
+    return FALSE;
+}
 
 /* Modular components matching OpenRM architecture */
 #include "nvx_ce.c"

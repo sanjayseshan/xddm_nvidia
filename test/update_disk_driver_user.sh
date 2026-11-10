@@ -69,6 +69,10 @@ fi
 
 cp -v "$NVX_PACKAGE/nvxmp.sys" "$NVX_DRIVERS/nvxmp.sys"
 cp -v "$NVX_PACKAGE/nvxdisp.dll" "$NVX_SYSTEM32/nvxdisp.dll"
+if [ -f "$NVX_PACKAGE/test_gpu_accel.exe" ]; then
+    mkdir -p "$NVX_MOUNT/test_accel"
+    cp -v "$NVX_PACKAGE/test_gpu_accel.exe" "$NVX_MOUNT/test_accel/test_gpu_accel.exe"
+fi
 sync
 guestunmount --retry=10 "$NVX_MOUNT"
 wait_for_release

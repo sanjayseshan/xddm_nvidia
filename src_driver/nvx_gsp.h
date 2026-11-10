@@ -297,6 +297,16 @@ typedef struct _VIDEO_MODE_DEF {
     ULONG VbeModeAlt;
 } VIDEO_MODE_DEF;
 
+#define NVX_3D_USER_BUFFER_SLOTS 64U
+typedef struct _NVX_3D_USER_BUFFER_ENTRY {
+    ULONG64 Id;
+    ULONG64 GpuVa;
+    ULONG Bytes;
+    ULONG Usage;
+    ULONG Busy;
+} NVX_3D_USER_BUFFER_ENTRY;
+typedef NVX_3D_USER_BUFFER_ENTRY *PNVX_3D_USER_BUFFER_ENTRY;
+
 typedef struct _NVX_DEVICE_EXTENSION {
     ULONG DeviceId;
     ULONG RevisionId;
@@ -418,6 +428,12 @@ typedef struct _NVX_DEVICE_EXTENSION {
     BOOLEAN GspGraphicsDataWriteVerified;
     BOOLEAN GspGraphicsPixelClearVerified;
     BOOLEAN GspGraphicsChannelFaulted;
+    BOOLEAN GspGraphicsUserAllocReady;
+    BOOLEAN GspGraphicsUserSubmitReady;
+    ULONG64 Nvx3dNextBufferId;
+    ULONG64 Nvx3dLastFence;
+    ULONG64 Nvx3dCompletedFence;
+    NVX_3D_USER_BUFFER_ENTRY Nvx3dBuffers[NVX_3D_USER_BUFFER_SLOTS];
     BOOLEAN GspFbLayoutValid;
     ULONG GspFbRegionCount;
     ULONG64 GspFbFreeBase,GspFbFreeLimit;
@@ -429,6 +445,9 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG GspNextFence;
     ULONG GspRunlistBase;
     ULONG GspSubmitToken;
+    ULONG GspGraphicsRunlistBase;
+    ULONG GspGraphicsSubmitToken;
+    ULONG GspGraphicsGPPut;
     ULONG RpcTxSequence,RpcRxSequence;
     NV2080_CTRL_GR_GET_CTX_BUFFER_INFO_PARAMS GrContextInfoParams;
     UCHAR RpcTxRecord[32768];
@@ -463,6 +482,10 @@ BOOLEAN NvxGspSubmitCopy(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,ULO
 BOOLEAN NvxGspSubmitCopy2D(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,
                            ULONG srcPitch,ULONG dstPitch,ULONG bytesPerLine,ULONG lineCount);
 BOOLEAN NvxGspSubmitFill(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG bytes);
+BOOLEAN NvxGspSubmitUserClear(PVOID HwDeviceExtension,ULONG64 dstVa,
+                              ULONG color,ULONG64 fenceValue);
+BOOLEAN NvxGspWaitUserFence(PVOID HwDeviceExtension,ULONG64 fenceValue,
+                            ULONG timeoutMs);
 BOOLEAN NvxGspUpload(PVOID HwDeviceExtension,ULONG64 dstVa,const void *src,ULONG bytes);
 
 VOID NvxGspShutdown(PVOID HwDeviceExtension);

@@ -4,8 +4,12 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="2.0.0.63"
+NVX_TEST_VERSION="2.0.0.67"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
+NVX_TEST_FLAGS=()
+if [ "${NVX_GR_SUBMISSION_PROBE:-0}" = "1" ]; then
+    NVX_TEST_FLAGS+=("-DNVX_REQUIRE_3D_ABI=1")
+fi
 
 mkdir -p "$NVX_ARCHIVE"
 if [ -f "$NVX_ROOT/vm_serial.log" ]; then
@@ -13,6 +17,10 @@ if [ -f "$NVX_ROOT/vm_serial.log" ]; then
 fi
 
 echo "==> Running host tests and building the RM-managed GR-channel probe v$NVX_TEST_VERSION (no ISO)"
+x86_64-w64-mingw32-gcc -O2 -Wall -Wextra -static-libgcc "${NVX_TEST_FLAGS[@]}" \
+    "$NVX_ROOT/test/test_gpu_accel.c" -lopengl32 -lgdi32 -luser32 \
+    -o "$NVX_ROOT/test/test_gpu_accel.exe"
+cp "$NVX_ROOT/test/test_gpu_accel.exe" "$NVX_ROOT/dist_full/test_gpu_accel.exe"
 if [ "${NVX_GR_CHANNEL_PROBE:-0}" = "1" ]; then
     NVX_DRIVER_BUILD_TARGET=full-gr-probe
     NVX_DRIVER_BUILD_ARGS=("NVX_ENABLE_GR_CHANNEL_PROBE=1")
@@ -78,12 +86,29 @@ finish() {
         else
             echo "DISPLAY RESULT: No display verification recorded; monitor activation is unverified."
         fi
+        if grep -q '\[OPENGL_RESULT\]' "$NVX_RUN_LOG"; then
+            grep '\[OPENGL_RESULT\]' "$NVX_RUN_LOG" | tail -1
+            if grep -q '\[OPENGL_RESULT\] RENDERED' "$NVX_RUN_LOG"; then
+                echo "OPENGL RESULT: rendered through a non-software OpenGL renderer; verify renderer name and GPU activity."
+            elif grep -q '\[OPENGL_RESULT\] SOFTWARE' "$NVX_RUN_LOG"; then
+                echo "OPENGL RESULT: software renderer only; hardware OpenGL is not operational."
+            else
+                echo "OPENGL RESULT: test failed or did not finish."
+            fi
+        else
+            echo "OPENGL RESULT: no current renderer classification was recorded."
+        fi
+        if grep -q '\[NVX_3D_RESULT\]' "$NVX_RUN_LOG"; then
+            grep '\[NVX_3D_RESULT\]' "$NVX_RUN_LOG" | tail -1
+        else
+            echo "NVX 3D RESULT: no user allocation/submission test result was recorded."
+        fi
         grep -E "Miniport Driver|\[SEC2\]|\[GSP\]|\[RM\]|\[GR\]|\[COPY\]|\[FB\]|\[FBMAP\]|\[RESET\]" "$NVX_RUN_LOG" | tail -80 || true
         if grep -q 'NVX \[GR\]: GR submission disabled' "$NVX_RUN_LOG"; then
             echo "GR RESULT: context layout queried; no graphics submission or rendering was tested."
         elif grep -q 'NVX \[GR\]: firmware assertions observed during submission' "$NVX_RUN_LOG"; then
             echo "GR RESULT: firmware assertions occurred during the probe; graphics execution is unverified."
-        elif grep -q 'NVX \[GR\]: 3D CLEAR_SURFACE verified' "$NVX_RUN_LOG"; then
+        elif grep -qE 'NVX \[GR\]: 3D CLEAR_SURFACE (verified|readback verified)' "$NVX_RUN_LOG"; then
             echo "GR RESULT: 3D rasterizer clear and semaphore completed successfully!"
         elif grep -q 'NVX \[GR\]: I2M data write verified' "$NVX_RUN_LOG"; then
             echo "GR RESULT: graphics pipeline data write and semaphore completed successfully!"

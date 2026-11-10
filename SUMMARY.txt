@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.62: verified Ampere GR 3D I2M pipeline memory writes)
+Updated: November 9, 2026 (v2.0.0.67: full GR clear-target readback verified)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -39,6 +39,11 @@ Hardware OpenGL roadmap — November 8, 2026:
   new OS shim, but its Metal translator and macOS kernel interface do not plug
   into XP. For XP, a real WGL ICD plus a Mesa/NVK backend and a Windows RM/GPUVA
   shim would still be required.
+- Checkout check (November 9): HEAD is commit `4562854` on `v2-nvidia-open`.
+  `nvx_disp_rpc.c` is included at the end of `nvx_gsp.c`, so its omission from
+  the Makefile source list is intentional and does not omit the GR call site.
+  The remaining validation gap is that the clean default build disables the
+  opt-in GR probe; the v2.0.0.63 log must be tied to its probe-enabled build.
 - Do not import NullMoth's macOS-specific code as a dependency. Its README
   marks the plugin/translator/kernel components PolyForm Noncommercial and its
   Mesa NVK patch MIT. Reuse the architecture and upstream Mesa instead. Mesa's
@@ -409,6 +414,76 @@ Hardware OpenGL roadmap — November 8, 2026:
   exact match, and released the completion semaphore with intact memory guards and zero
   firmware assertions or MMU faults (`GR RESULT: graphics pipeline data write and semaphore completed successfully!`).
   Evidence: `test_logs/v2.0.0.62-20261109-152545.log`.
+- v2.0.0.63 extended the real-hardware GR probe with an RM-promoted block-linear
+  A8R8G8B8 color target, surface clip/clear state, `CLEAR_SURFACE`, and a C797
+  completion semaphore. The RTX 3070 completed I2M writes and the clear; the
+  16-word scratch region matched the expected result, the fence and guards
+  passed, and no new assertion or MMU fault was observed during submission.
+  The log does record one firmware assertion during startup. This validates GR
+  command execution, memory writes, and a surface-clear operation, not triangle
+  rasterization, rendered-pixel readback, OpenGL, or an ICD. The probe is still
+  initialization-time diagnostic code, not a user-mode submission interface.
+  Evidence: `test_logs/v2.0.0.63-20261109-174147.log`.
+
+### XP x64 hardware OpenGL: next implementation stage
+- Build a minimal GR draw/readback path before integrating Mesa: initialize a
+  controlled render target and viewport, submit a minimal triangle, wait on a
+  completion fence, and validate pixels through an explicit readback path.
+  Keep this gated as a diagnostic until physical validation proves it does not
+  disturb display or Copy Engine operation.
+- Promote the proven command sequence into a bounded, fixed-width miniport
+  submission/memory/synchronization ABI. The existing GR probe runs during
+  initialization and the current display-driver OpenGL hooks are scaffolding;
+  there is no safe general user-mode GR interface yet.
+- Implement the XP x64 WGL/OpenGL ICD and context/pixel-format lifecycle over
+  that ABI. Evaluate Mesa/NVK once the interface and minimal draw path work;
+  neither Mesa/NVK nor an ICD is integrated in this checkout.
+- Phase 2A initial ABI slice: `nvx_3d_abi.h` defines fixed-width x86/x64
+  capability, allocation, submit, and fence request layouts; the miniport wires
+  `IOCTL_NVX_3D_QUERY_CAPS` and advertises only GR diagnostic features actually
+  verified on that device. Allocation/submit/wait IOCTLs currently return
+  `ERROR_NOT_SUPPORTED`; no user GPU address or raw pushbuffer is exposed until
+  caller ownership, buffer teardown, and packet validation are implemented.
+  Host tests cover layout, size bounds, alignment and reserved outputs, and
+  cross-compile the ABI checks for x86/x64. `make -C src_driver check` and
+  `make -C src_driver full` pass. Hardware execution was not attempted.
+- v2.0.0.64 extends the first ABI slice with `Nvx3dQueryCaps`, which is wired
+  to `IOCTL_NVX_3D_QUERY_CAPS` and called from XP display surface setup. It
+  reports only probe-verified GR/I2M/clear bits; alloc/submit/wait remain
+  validated then return `ERROR_NOT_SUPPORTED`. Host tests cover caps behavior,
+  null/short output, fault suppression, ABI sizes, and malformed alloc/submit/
+  fence requests; x86/x64 ABI cross-compiles pass. Driver and display host
+  suites and x64 builds pass. A later full-access run updated the XP guest
+  rootlessly and proved the caps IOCTL in display initialization (status 0,
+  features `0x7`, class `0xC797`) on both display heads. Its existing GR probe
+  again verified I2M, `CLEAR_SURFACE`, and the semaphore; startup assertion
+  count remained one and there was no queued MMU fault. The refreshed test
+  binary reported GDI Generic / OpenGL 1.1 and `[OPENGL_RESULT] SOFTWARE`.
+  Allocation, user submission, and fence wait remain unsupported; Phase 2A is
+  incomplete. Evidence: `test_logs/v2.0.0.64-20261109-184530.log`.
+- v2.0.0.65 fills the ABI's max push dword and max allocation size fields and
+  updates the test runner to rebuild/deploy the current x64 diagnostic, then
+  print its OpenGL renderer classification. Host ABI tests validate these caps.
+- v2.0.0.66 completes the safe Phase 2A escape/IOCTL path: active-scanout-aware
+  bounded VRAM allocation/free, a validated 64x16 black `CLEAR_SURFACE` submit
+  built by the kernel, and completion-fence wait. It intentionally does not
+  expose arbitrary user pushbuffers or direct doorbells on the privileged
+  shared GR channel. Host `make -C src_driver check` passes, including x86/x64
+  ABI cross-compiles and GSP/CE mocks. The full rootless RTX 3070 run reports
+  caps `0x1F`, allocates buffer id 2 at `0x22E20000`, submits fence 2, observes
+  completion, frees the allocation, and prints `[NVX_3D_RESULT] PASS` in
+  `test_logs/v2.0.0.66-20261109-191100.log`. The in-kernel GR clear/semaphore
+  probe also succeeds; the log records one startup firmware assertion and no
+  queued MMU fault. OpenGL remains `[OPENGL_RESULT] SOFTWARE`; this is the
+  miniport resource/submission foundation, not an ICD or triangle renderer.
+  Phase 2B is next: hardware triangle draw plus rendered-pixel readback.
+- v2.0.0.67 extends the isolated GR probe to copy the complete 4KB block-linear
+  clear target through the verified CE path and verify all 1024 words. The
+  rootless hardware run `test_logs/v2.0.0.67-20261109-192403.log` confirms the
+  target readback, the Phase 2A ABI `[NVX_3D_RESULT] PASS`, and unchanged dual-head
+  display verification; OpenGL still reports SOFTWARE. The test runner now
+  recognizes the readback log marker. This verifies clear-surface pixel memory,
+  not triangle rasterization. Triangle shaders are the remaining Phase 2B gate.
 
 ### Linux and macOS Reference Architecture
 

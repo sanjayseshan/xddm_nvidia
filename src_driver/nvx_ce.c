@@ -5,13 +5,13 @@
 static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
 {
     /* C56F/C7B5 535 ABI. Scratch layout: GPFIFO 0..1fff, instance 2000,
-       USERD 3200, CE fault buffer 4000..8fff, push 9000, source a000,
+       USERD 3200, CE fault buffer 4000..8fff, init push 9000, source a000,
        destination b000, completion c000. No scanout/VRAM is touched. */
     PUCHAR scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET;
     volatile ULONG *userd=(volatile ULONG *)(scratch+0x3200);
     volatile ULONG *dst=(volatile ULONG *)(scratch+0xb000);
     volatile ULONG *fence=(volatile ULONG *)(scratch+0xc000);
-    volatile ULONG *backup=(volatile ULONG *)(scratch+0xd000);
+    volatile ULONG *backup=(volatile ULONG *)(scratch+0xf000);
     volatile ULONG *restored=(volatile ULONG *)(scratch+0xe000);
     PULONG src=(PULONG)(scratch+0xa000),push=(PULONG)(scratch+0x9000);
     volatile ULONG64 *fifo=(volatile ULONG64 *)scratch;
@@ -97,10 +97,10 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
     push[n++]=256;push[n++]=256;push[n++]=256;push[n++]=1; \
     push[n++]=0x200180c0;push[n++]=0x04000186; \
 } while(0)
-    NVX_APPEND_COPY(vramVa,va+0xd000);
+    NVX_APPEND_COPY(vramVa,va+0xf000);
     NVX_APPEND_COPY(va+0xa000,vramVa);
     NVX_APPEND_COPY(vramVa,va+0xb000);
-    NVX_APPEND_COPY(va+0xd000,vramVa);
+    NVX_APPEND_COPY(va+0xf000,vramVa);
     NVX_APPEND_COPY(vramVa,va+0xe000);
 #undef NVX_APPEND_COPY
     push[n++]=0x20038090; /* SET_SEMAPHORE_A/B/PAYLOAD */
@@ -226,8 +226,8 @@ static BOOLEAN NvxGspSubmitCopyUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,UL
     va=dev->GspScratchGpuVa;
 
     slot=dev->GspGPPut%16;
-    push=(PULONG)(scratch+0x9000+slot*0x100);
-    pushVa=va+0x9000+slot*0x100;
+    push=(PULONG)(scratch+0xd000+slot*0x100);
+    pushVa=va+0xd000+slot*0x100;
     fenceVal=dev->GspNextFence++;
     if(!fenceVal) fenceVal=dev->GspNextFence++;
 
@@ -365,8 +365,8 @@ static BOOLEAN NvxGspSubmitFillUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,UL
     va=dev->GspScratchGpuVa;
 
     slot=dev->GspGPPut%16;
-    push=(PULONG)(scratch+0x9000+slot*0x100);
-    pushVa=va+0x9000+slot*0x100;
+    push=(PULONG)(scratch+0xd000+slot*0x100);
+    pushVa=va+0xd000+slot*0x100;
     fenceVal=dev->GspNextFence++;
     if(!fenceVal) fenceVal=dev->GspNextFence++;
 

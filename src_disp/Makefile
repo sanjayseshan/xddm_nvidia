@@ -25,10 +25,10 @@ nvxdisp32.dll: $(OBJS32) nvxdisp32.def tests/check_xp32_imports.py
 	$(CC32) $(OBJS32) nvxdisp32.def -Wl,--kill-at $(LDFLAGS32) -o $@
 	python3 tests/check_xp32_imports.py $@
 
-%.o: %.c driver.h color.h
+%.o: %.c driver.h color.h ../src_driver/nvx_3d_abi.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
-%32.o: %.c driver.h color.h
+%32.o: %.c driver.h color.h ../src_driver/nvx_3d_abi.h
 	$(CC32) $(CFLAGS32) -c $< -o $@
 
 clean:

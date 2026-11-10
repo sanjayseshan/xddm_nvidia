@@ -6,6 +6,43 @@
 
 #include "driver.h"
 
+ULONG APIENTRY
+DrvEscape(SURFOBJ *pso,ULONG iEsc,ULONG cjIn,PVOID pvIn,
+          ULONG cjOut,PVOID pvOut)
+{
+    PPDEV ppdev;
+    ULONG returned=0,code=0,status;
+    if(!pso||!pso->dhpdev) return 0;
+    ppdev=(PPDEV)pso->dhpdev;
+    if(!ppdev->hDriver) return 0;
+    switch(iEsc) {
+    case NVX_ESCAPE_3D_QUERY_CAPS:
+        if(cjIn||cjOut<sizeof(NVX_3D_QUERY_CAPS)||!pvOut) return 0;
+        code=IOCTL_NVX_3D_QUERY_CAPS;break;
+    case NVX_ESCAPE_3D_ALLOC:
+        if(cjIn!=sizeof(NVX_3D_ALLOC_BUFFER)||!pvIn||
+           cjOut<sizeof(NVX_3D_ALLOC_BUFFER)||!pvOut) return 0;
+        code=IOCTL_NVX_3D_ALLOC_BUFFER;break;
+    case NVX_ESCAPE_3D_SUBMIT:
+        if(cjIn!=sizeof(NVX_3D_SUBMIT)||!pvIn||
+           cjOut<sizeof(NVX_3D_SUBMIT)||!pvOut) return 0;
+        code=IOCTL_NVX_3D_SUBMIT;break;
+    case NVX_ESCAPE_3D_WAIT:
+        if(cjIn!=sizeof(NVX_3D_WAIT_FENCE)||!pvIn||
+           cjOut<sizeof(NVX_3D_WAIT_FENCE)||!pvOut) return 0;
+        code=IOCTL_NVX_3D_WAIT_FENCE;break;
+    case NVX_ESCAPE_3D_FREE:
+        if(cjIn!=sizeof(NVX_3D_FREE_BUFFER)||!pvIn||cjOut) return 0;
+        code=IOCTL_NVX_3D_FREE_BUFFER;break;
+    default:
+        return 0;
+    }
+    status=EngDeviceIoControl(ppdev->hDriver,code,pvIn,cjIn,pvOut,cjOut,
+                              &returned);
+    if(status) return 0;
+    return returned?returned:1;
+}
+
 /*
  * DrvDescribePixelFormat:
  * Enumerates supported OpenGL pixel formats for the GDI/OpenGL ICD subsystem.

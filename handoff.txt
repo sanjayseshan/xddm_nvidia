@@ -1,0 +1,239 @@
+# Handoff Document: Ampere GA104 (RTX 3070) 3D Hardware Acceleration on Windows XP x64
+
+Date: November 9, 2026
+Branch: v2-nvidia-open
+Current Driver Version: v2.0.0.63 (Commit 4562854)
+Target Hardware: NVIDIA GeForce RTX 3070 (GA104, PCI Device ID 0x2484) via VFIO Passthrough
+Target OS: Windows XP Professional x64 Edition (NT 5.2.3790)
+
+================================================================================
+1. Executive Summary & Current State
+================================================================================
+
+What is Completed (Phase 1):
+Phase 1 achieved the first verified in-kernel hardware 3D rasterization execution
+on Ampere under Windows XP x64 without regressions to the 2D Copy Engine or native
+dual-head display paths:
+
+1. Class Engine & Runlist Setup:
+   - Class C56F (Ampere Channel GPFIFO) allocated with RM-owned context memory
+     (NV01_MEMORY_SYSTEM_OS_DESCRIPTOR).
+   - Class C797 (AMPERE_B 3D Graphics object) instantiated, scheduled on the
+     graphics runlist (0xC00000), and bound with classEngineID = 0xC797.
+2. I2M Data Streaming:
+   - Verified inline data writes to GPU scratch memory using LINE_LENGTH_IN,
+     LINE_COUNT, OFFSET_OUT, and LAUNCH_DMA with ONE_INC opcode streaming into
+     LOAD_INLINE_DATA.
+   - Verified Host fence semaphore release (0x47524632).
+3. 3D Rasterizer Clear (CLEAR_SURFACE):
+   - Implemented tile-aligned block-linear color target binding (64x16 ARGB8888,
+     1 GOB geometry) based on open-gpu-kernel-modules (nvHs3dClearSurface,
+     nv3dSetColorTarget).
+   - Configured full 3D pipeline state: single ROP control, single CT write
+     control, blend state, provoking vertex (LAST), viewport clipping, and clear
+     rect matching 64x16.
+   - Emitted CLEAR_SURFACE (0x19D0) with RGBA enable mask.
+   - Verified that prior scratch data in VRAM was completely zeroed out by the
+     hardware raster clear engine with 0 firmware assertions, 0 MMU faults, and
+     0 channel exceptions.
+
+================================================================================
+2. Architecture Overview for Phase 2 (Hardware OpenGL Acceleration)
+================================================================================
+
+Windows XP applications use the OpenGL Installable Client Driver (ICD) model
+rather than Direct3D or Linux DRM:
+
++-------------------------------------------------------------+
+|          Windows XP 3D Application (Games / Demos)          |
++-------------------------------------------------------------+
+                              |
+                              v
++-------------------------------------------------------------+
+|         system opengl32.dll (Microsoft WGL Dispatcher)      |
++-------------------------------------------------------------+
+                              |
+                              v DrvGetProcAddress / WGL ICD
++-------------------------------------------------------------+
+|        NVX OpenGL ICD (nvxogl64.dll / nvxogl32.dll)         |
+|  - WGL Context & Pixel Format lifecycle                     |
+|  - OS Shim layer (translating POSIX/Linux calls to Win32)   |
++-------------------------------------------------------------+
+                              |
+                              v
++-------------------------------------------------------------+
+|         Mesa Submodule (Gallium / Zink / NVK / Core)        |
+|  - OpenGL State Tracker & Vertex/Fragment Program Compiler  |
+|  - Generates Ampere C797 Pushbuffer command streams         |
++-------------------------------------------------------------+
+                              |
+                              v
++-------------------------------------------------------------+
+|               Miniport IOCTLs (nvxmp.sys)                   |
+|  - IOCTL_NVX_3D_QUERY_CAPS                                  |
+|  - IOCTL_NVX_3D_ALLOC_BUFFER / BIND_GPU_VA                  |
+|  - IOCTL_NVX_3D_SUBMIT (Pushbuffer Kickoff & Token)         |
+|  - IOCTL_NVX_3D_WAIT_FENCE                                  |
++-------------------------------------------------------------+
+                              |
+                              v
++-------------------------------------------------------------+
+|           NVIDIA GA104 Hardware (C797 3D Channel)           |
++-------------------------------------------------------------+
+
+================================================================================
+3. Phase 2 Implementation Roadmap
+================================================================================
+
+Step 2A: Miniport 3D Submission IOCTL Interface
+Expose the kernel 3D channel safely to user-space in src_driver/miniport.h and
+src_driver/nvxmp.c:
+
+1. IOCTL_NVX_3D_QUERY_CAPS:
+   - User mode queries device capabilities: class (0xC797), maximum pushbuffer
+     size, page size, doorbell aperture.
+2. IOCTL_NVX_3D_ALLOC_BUFFER:
+   - Allocates contiguous or page-table-backed VRAM / system memory for render
+     targets, textures, and vertex streams.
+3. IOCTL_NVX_3D_SUBMIT:
+   - Takes user-mode command pushbuffers, validates packet bounds, writes to the
+     channel GPFIFO, and rings the doorbell.
+4. IOCTL_NVX_3D_WAIT_FENCE:
+   - Blocks or polls on fence semaphore values until GPU execution completes.
+
+Step 2B: In-Kernel Hardware Primitive Draw Test
+Before user-space ICD bringup, submit a minimal triangle primitive directly in the
+driver probe (src_driver/nvx_gsp.c):
+- Configure vertex format (SET_VERTEX_STREAM_A, SET_VERTEX_ATTRIBUTE).
+- Emit BEGIN_PRIMITIVE(TRIANGLES) -> 3 vertices -> END_PRIMITIVE.
+- Verify rasterized pixel values in the render target memory.
+
+Step 2C: Mesa Submodule & Windows XP ICD Shim
+1. Submodule Integration:
+   - Add Mesa (https://gitlab.freedesktop.org/mesa/mesa.git) as a submodule under
+     mesa/.
+2. Windows XP Shim Layer (src_icd/ or nvxogl/):
+   - Export standard ICD entry points:
+     * DrvCreateContext, DrvDeleteContext, DrvMakeCurrent, DrvReleaseContext
+     * DrvSetPixelFormat, DrvDescribePixelFormat, DrvSwapBuffers
+     * DrvGetProcAddress
+   - Implement the bridge between Mesa's command generation and the
+     IOCTL_NVX_3D_SUBMIT interface.
+
+================================================================================
+4. Key Files and References
+================================================================================
+
+- Miniport Driver: src_driver/nvx_gsp.c
+  GSP-RM initialization, graphics probe, I2M and CLEAR_SURFACE implementation.
+- Miniport Header: src_driver/miniport.h
+  IOCTL definitions and miniport structures.
+- Display Driver: src_disp/opengl.c
+  DDI pixel format negotiation and swap buffer synchronization.
+- Test Harness: test/test_full_driver.sh
+  Hardware verification test runner with QEMU VFIO auto-retry.
+- OpenRM Headers: open-gpu-kernel-modules/src/common/sdk/nvidia/inc/class/clc797.h
+  Ampere 3D methods (NVC797_*).
+- OpenRM 3D Ref: open-gpu-kernel-modules/src/nvidia-modeset/src/nvkms-headsurface-3d.c
+  Block-linear surface setup and nvHs3dClearSurface.
+
+================================================================================
+5. Development & Testing Commands
+================================================================================
+
+- Build Miniport & Run Host Mock Tests:
+  make -C src_driver check full-gr-probe \
+      NVX_ENABLE_GR_CHANNEL_PROBE=1 \
+      NVX_ENABLE_GR_PROMOTE_PROBE=1 \
+      NVX_ENABLE_GR_SUBMISSION_PROBE=1
+
+- Execute Full Hardware VFIO Test:
+  NVX_AUTO_RETRY=1 \
+  NVX_GR_CHANNEL_PROBE=1 \
+  NVX_GR_PROMOTE_PROBE=1 \
+  NVX_GR_SUBMISSION_PROBE=1 \
+  ./test/test_full_driver.sh
+
+- Verify Test Run Output:
+  Check the latest log in test_logs/ for:
+  NVX [GR]: 3D CLEAR_SURFACE verified; 16 dwords zeroed in scratch memory.
+  GR RESULT: 3D rasterizer clear and semaphore completed successfully!
+
+Latest full-access hardware run: `test_logs/v2.0.0.64-20261109-184530.log`.
+Rootless image update and VM launch succeeded. The caps IOCTL returned success
+with feature mask `0x7` and class `0xC797` on primary and secondary display
+surface initialization. The isolated GR probe verified I2M, `CLEAR_SURFACE`,
+and its completion semaphore; firmware assertion count remained at its startup
+value of one, with no queued MMU fault. The rebuilt diagnostic reported
+Microsoft GDI Generic / OpenGL 1.1 and `[OPENGL_RESULT] SOFTWARE`. Hardware
+OpenGL is not operational. Allocation, user submission, and fence wait still
+return `ERROR_NOT_SUPPORTED`, so Phase 2A is not complete.
+
+The runner now compiles and installs the current x64 diagnostic executable to
+`C:\\test_accel\\test_gpu_accel.exe` for each run, and separately reports
+renderer classification. Caps include fixed maximum push and allocation bounds
+even though submit/allocation feature bits remain unset.
+
+================================================================================
+6. Checkout Verification Update (November 9, 2026)
+================================================================================
+
+The working tree checked during handoff review is at commit 4562854 on
+v2-nvidia-open. The v2.0.0.63 log records one startup firmware assertion; the
+GR submission itself reported no new assertion or MMU fault. Its clear check
+compares the 16-word scratch region with zero after CLEAR_SURFACE; it is not
+triangle rasterization or rendered-pixel readback.
+
+Build check: nvx_disp_rpc.c is included at the end of nvx_gsp.c, so it is
+intentionally not listed separately in the Makefile. The clean default build
+does disable the opt-in GR probe; tie the v2.0.0.63 hardware result to the
+probe-enabled build command and binary before implementing Phase 2A user-mode
+IOCTLs.
+
+Phase 2A first slice in the current worktree: `nvx_3d_abi.h` defines fixed-width
+capability/allocation/submit/fence structures and bounds helpers. The miniport
+implements `IOCTL_NVX_3D_QUERY_CAPS`; alloc, submit, and wait requests fail
+closed with ERROR_NOT_SUPPORTED. The VideoPort request path does not yet supply
+a caller-owned resource lifetime, so it is unsafe to return GPU addresses or
+accept arbitrary pushbuffers. Host ABI/bounds tests and x86/x64 cross-compiles
+pass, as do the existing `make -C src_driver check` suite and x64 `full` build.
+No hardware test was run for this interface slice.
+
+v2.0.0.64 adds the caps query to the XP display surface initialization path and
+host tests for null/short output, verified-feature reporting, fault suppression,
+ABI layouts, and malformed request bounds. Both architecture ABI cross-compiles,
+driver/display host suites and x64 builds pass. The full guest runner stopped in
+the rootless updater before VM launch: libguestfs `supermin` exits 1, including
+with `LIBGUESTFS_BACKEND=direct`. It refreshed package binaries but did not
+modify/boot the XP disk. Guest IOCTL transport validation remains pending.
+
+Phase 2A completion update (v2.0.0.66, November 9, 2026):
+The miniport now implements the fixed-width x86/x64 capabilities, allocation,
+submission, wait, and free escape/IOCTL paths. Allocation uses bounded aligned
+VRAM after active primary/secondary scanout footprints. Submission deliberately
+accepts one validated operation (64x16 black CLEAR_SURFACE) and constructs the
+C797 pushbuffer and semaphore in kernel-owned memory; arbitrary user pushbuffers
+and direct user doorbells remain disabled because this GR channel is privileged
+and shared. This completes the safe Phase 2A resource and synchronization
+interface for the supported operation, while preserving the handoff's broader
+general-command-stream scope as future work.
+
+Validation: `make -C src_driver check` passes, including ABI layouts and x86/x64
+cross-compiles, GR/CE mocks, VBE and OpenRM shim tests. The full rootless VFIO run
+`test_logs/v2.0.0.66-20261109-191100.log` reports caps `features=0x1F`, allocates
+buffer id 2 at GPU VA `0x22E20000`, submits clear fence 2, observes completion,
+and frees the buffer; `[NVX_3D_RESULT] PASS`. The separate in-kernel GR probe
+also reports its clear/semaphore result. Startup firmware assertion count is
+one (no additional assertion is reported for the user clear); no queued MMU
+fault is reported. The same run reports `[OPENGL_RESULT] SOFTWARE`, so Phase 2A
+does not mean hardware OpenGL is available. Next is Phase 2B: a primitive draw
+and rendered-pixel readback, then the x64 ICD/Mesa work in Phase 2C.
+
+Phase 2B update (v2.0.0.67): the initialization-time probe now copies all
+4096 bytes of its block-linear target through CE after the C797 clear fence and
+checks all 1024 dwords. The full VFIO log confirms the readback, Phase 2A
+`[NVX_3D_RESULT] PASS`, dual-head operation, and `[OPENGL_RESULT] SOFTWARE`.
+The clear/readback addition is a foundation for Phase 2B, not a triangle test.
+A valid C797 vertex and fragment shader pair plus their program, constants,
+texture/vertex bindings, and draw state are still required before a triangle
+can be submitted safely and its colored pixels verified.

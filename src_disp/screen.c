@@ -507,6 +507,16 @@ DrvEnableSurface(
                           &ppdev->ScreenGpuVaBase,sizeof(ppdev->ScreenGpuVaBase),&outBytes);
     NvxGdiTrace(ppdev->hDriver,11,ioctlStatus,outBytes,
                 (ULONG)(ppdev->ScreenGpuVaBase>>32));
+    {
+        NVX_3D_QUERY_CAPS caps;
+        ULONG capsStatus,capsBytes=0;
+        memset(&caps,0,sizeof(caps));
+        capsStatus=EngDeviceIoControl(ppdev->hDriver,IOCTL_NVX_3D_QUERY_CAPS,
+                                      NULL,0,&caps,sizeof(caps),&capsBytes);
+        NvxGdiTrace(ppdev->hDriver,18,capsStatus,
+                    capsStatus?0:caps.Features,
+                    capsStatus?0:caps.GraphicsClass);
+    }
     ppdev->MappedFramebuffer = VideoMemoryInfo.FrameBufferBase;
     if (!ppdev->ScreenDelta || ppdev->ScreenHeight > (~0UL / ppdev->ScreenDelta))
     {

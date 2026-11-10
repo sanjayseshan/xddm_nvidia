@@ -80,7 +80,7 @@ For detailed design notes, see [src_win98/README.md](src_win98/README.md).
 - **Compatible GPUs:** GA104-based cards (GeForce RTX 3070, RTX 3060 Ti, GA104 RTX 3060).
 - **Tested Host Platform:** AMD Ryzen 7000 series on AM5 motherboard (bare metal) and QEMU/KVM with VFIO GPU passthrough.
 - **Monitors Tested:** Dual DisplayPort setup running 1920×1080 (Primary) and 2560×1440 (Secondary) at 60 Hz.
-- **Scope & Limitations:** 2D desktop acceleration, solid fills, and multi-monitor desktop extension are supported. 3D acceleration (OpenGL, DirectX 8/9/11/12), video decode acceleration (NVDEC), and audio over HDMI/DP are currently unaccelerated/unimplemented.
+- **Scope & Limitations:** 2D desktop acceleration, solid fills, and multi-monitor desktop extension are supported. An experimental XP x64 GR diagnostic now verifies Ampere I2M writes and a block-linear surface clear on hardware. Triangle rendering, rendered-pixel readback, an OpenGL ICD, and Direct3D acceleration are not implemented. Video decode acceleration (NVDEC) and audio over HDMI/DP are also unimplemented.
 
 ---
 
@@ -91,7 +91,12 @@ The miniport log confirms real Ampere Copy Engine submissions. Other GDI
 operations still use software rasterization with GPU uploads; this is partial
 2D acceleration, not a complete DirectDraw/Direct3D driver.
 
-Hardware 3D is **not implemented on either XP architecture**. The saved x64
+Hardware OpenGL is **not implemented on either XP architecture**. The XP x64
+miniport has an experimental bounded 3D escape ABI for capability query,
+framebuffer allocation/release, a kernel-constructed C797 surface-clear
+submission, and completion-fence wait. It verifies I2M memory writes and reads
+back all 4 KB of a block-linear surface after a hardware clear on GA104; it
+does not yet render a triangle or read back rasterized geometry. The saved x64
 log `test_logs/xp_v2_20261108-161607.log` reports Microsoft `GDI Generic`, a
 software OpenGL renderer. The old test ignored failed swaps/device creation
 and printed an unconditional PASS. The corrected suite checks those failures,
@@ -117,9 +122,11 @@ appends the guest result files and gears output there after shutdown. It does
 not add a serial-port dependency to the gears benchmark. Both test programs
 are also compiled for x64 from the same corrected sources.
 
-Full hardware 3D needs a GR channel/context and resource/synchronization path,
-a GPU shader compiler and rendering backend, then an OpenGL ICD or equivalent
-API implementation. A Direct3D HAL or translation layer is a separate task.
+Full hardware OpenGL needs a GR channel/context and resource/synchronization
+path exposed through a bounded user/kernel interface, then a GPU shader
+compiler and rendering backend, and an XP x64 OpenGL ICD. The current ABI only
+accepts a fixed safe clear operation; it does not accept arbitrary user command
+streams. A Direct3D HAL or translation layer is a separate task.
 The x86 and x64 miniports can share a fixed-width kernel submission ABI, while
 each XP architecture needs its own matching OpenGL ICD binary. Copy Engine
 initialization and pixel-format registration alone do not provide these.

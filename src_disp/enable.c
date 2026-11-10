@@ -23,6 +23,7 @@ static DRVFN DrvFunctionTable[] =
     {INDEX_DrvTextOut,          (PFN)DrvTextOut},
     {INDEX_DrvDitherColor,      (PFN)DrvDitherColor},
     {INDEX_DrvSynchronize,      (PFN)DrvSynchronize},
+    {INDEX_DrvEscape,           (PFN)DrvEscape},
 #if defined(NVX_ENABLE_EXPERIMENTAL_OPENGL_DDI) && NVX_ENABLE_EXPERIMENTAL_OPENGL_DDI
     /* Scaffolding only: leave Windows' generic renderer in charge until an
        ICD/MCD and a real buffer-swap implementation exist. */

@@ -41,6 +41,10 @@ clean:
 
 .PHONY: check
 check:
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I. -o /tmp/nvx-3d-abi-test tests/3d_abi_test.c
+	ASAN_OPTIONS=detect_leaks=0 /tmp/nvx-3d-abi-test
+	i686-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -c -I. -o /tmp/nvx-3d-abi-x86.o tests/3d_abi_test.c
+	x86_64-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -c -I. -o /tmp/nvx-3d-abi-x64.o tests/3d_abi_test.c
 	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I. -o /tmp/nvx-gr-context-test tests/gr_context_test.c nvx_gr_context.c
 	ASAN_OPTIONS=detect_leaks=0 /tmp/nvx-gr-context-test
 	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I. -o /tmp/nvx-display-test tests/display_test.c
