@@ -1229,6 +1229,17 @@ done:
     if (mesa) FreeLibrary(mesa);
 }
 
+static int WaitNvx3dFence(HDC hdc,uint64_t fenceValue)
+{
+    NVX_3D_WAIT_FENCE wait={0},waited={0};
+    wait.Size=sizeof(wait);wait.Version=NVX_3D_ABI_VERSION;
+    wait.FenceValue=fenceValue;wait.TimeoutMs=10000;
+    return ExtEscape(hdc,NVX_ESCAPE_3D_WAIT,sizeof(wait),
+                     (LPCSTR)&wait,sizeof(waited),(LPSTR)&waited)!=0&&
+           waited.Status==NVX_3D_STATUS_SUCCESS&&
+           waited.FenceValue==fenceValue;
+}
+
 static void TestNvx3dSubmission(HDC hdc)
 {
     NVX_3D_QUERY_CAPS caps={0};
@@ -1236,11 +1247,14 @@ static void TestNvx3dSubmission(HDC hdc)
     NVX_3D_ALLOC_BUFFER alloc={0},allocated={0};
     NVX_3D_ALLOC_BUFFER vertexAlloc={0},vertexAllocated={0};
     NVX_3D_ALLOC_BUFFER surfaceAlloc={0},surfaceAllocated={0};
+    NVX_3D_ALLOC_BUFFER surfaceVertexAlloc={0},surfaceVertexAllocated={0};
     struct { NVX_3D_UPLOAD_BUFFER header; UCHAR data[256]; } upload;
     struct { NVX_3D_UPLOAD_BUFFER header; float data[18]; } vertexUpload;
     struct { NVX_3D_UPLOAD_BUFFER header; float data[36]; } batchUpload;
+    struct { NVX_3D_UPLOAD_BUFFER header; float data[36]; } surfaceUpload;
     NVX_3D_SUBMIT submit={0},submitted={0};
     NVX_3D_SUBMIT surfaceSubmit={0},surfaceSubmitted={0};
+    NVX_3D_SUBMIT surfaceDraw={0},surfaceDrawn={0};
     NVX_3D_READBACK readbackRequest={0};
     NVX_3D_WAIT_FENCE wait={0},waited={0};
     NVX_3D_FREE_BUFFER freeRequest={0};
@@ -1622,6 +1636,72 @@ static void TestNvx3dSubmission(HDC hdc)
                             (unsigned long)layout.Bytes,
                             (unsigned long)surfaceSubmitted.Reserved[0],
                             (unsigned long long)surfaceSubmitted.FenceValue);
+                    }
+                }
+                surfaceVertexAlloc.Size=sizeof(surfaceVertexAlloc);
+                surfaceVertexAlloc.Version=NVX_3D_ABI_VERSION;
+                surfaceVertexAlloc.Usage=1;
+                surfaceVertexAlloc.Bytes=4096;
+                if(!ExtEscape(hdc,NVX_ESCAPE_3D_ALLOC,
+                              sizeof(surfaceVertexAlloc),
+                              (LPCSTR)&surfaceVertexAlloc,
+                              sizeof(surfaceVertexAllocated),
+                              (LPSTR)&surfaceVertexAllocated)) {
+                    LogMsg("[NVX_3D_SURFACE_DRAW_RESULT] FAIL vertex allocation\n");
+                    ok=0;
+                } else {
+                    static const float quad[36]={
+                        -1,-1,0.5f,0,0,1, 1,-1,0.5f,1,0,1,
+                         1, 1,0.5f,1,1,1, -1,-1,0.5f,0,0,1,
+                         1, 1,0.5f,1,1,1, -1, 1,0.5f,0,1,1
+                    };
+                    memset(&surfaceUpload,0,sizeof(surfaceUpload));
+                    surfaceUpload.header.Size=sizeof(surfaceUpload.header);
+                    surfaceUpload.header.Version=NVX_3D_ABI_VERSION;
+                    surfaceUpload.header.BufferId=surfaceVertexAllocated.BufferId;
+                    surfaceUpload.header.Bytes=sizeof(quad);
+                    memcpy(surfaceUpload.data,quad,sizeof(quad));
+                    if(!ExtEscape(hdc,NVX_ESCAPE_3D_UPLOAD,
+                            sizeof(surfaceUpload.header)+sizeof(quad),
+                            (LPCSTR)&surfaceUpload,0,NULL)) {
+                        LogMsg("[NVX_3D_SURFACE_DRAW_RESULT] FAIL vertex upload\n");
+                        ok=0;
+                    } else {
+                        surfaceDraw.Size=sizeof(surfaceDraw);
+                        surfaceDraw.Version=NVX_3D_ABI_VERSION;
+                        surfaceDraw.Operation=NVX_3D_SUBMIT_VERIFY_COLOR_TARGET_DRAW;
+                        surfaceDraw.Width=layout.Width;
+                        surfaceDraw.Height=layout.Height;
+                        surfaceDraw.Color=0xff20d040U;
+                        surfaceDraw.BufferId=surfaceAllocated.BufferId;
+                        surfaceDraw.Reserved[0]=6;
+                        surfaceDraw.Reserved[1]=(uint32_t)surfaceVertexAllocated.BufferId;
+                        surfaceDraw.Reserved[2]=(uint32_t)(surfaceVertexAllocated.BufferId>>32);
+                        surfaceDraw.Reserved[3]=layout.TileMode;
+                        if(!ExtEscape(hdc,NVX_ESCAPE_3D_SUBMIT,
+                                sizeof(surfaceDraw),(LPCSTR)&surfaceDraw,
+                                sizeof(surfaceDrawn),(LPSTR)&surfaceDrawn) ||
+                           !surfaceDrawn.FenceValue ||
+                           !WaitNvx3dFence(hdc,surfaceDrawn.FenceValue)) {
+                            LogMsg("[NVX_3D_SURFACE_DRAW_RESULT] FAIL full-target C797 draw/fence\n");
+                            ok=0;
+                        } else {
+                            LogMsg("[NVX_3D_SURFACE_DRAW_RESULT] PASS %lux%lu vertices=6 pixel_samples=5 fence=%llu\n",
+                                (unsigned long)layout.Width,
+                                (unsigned long)layout.Height,
+                                (unsigned long long)surfaceDrawn.FenceValue);
+                        }
+                    }
+                    {
+                        NVX_3D_FREE_BUFFER vertexFree={0};
+                        vertexFree.Size=sizeof(vertexFree);
+                        vertexFree.Version=NVX_3D_ABI_VERSION;
+                        vertexFree.BufferId=surfaceVertexAllocated.BufferId;
+                        if(!ExtEscape(hdc,NVX_ESCAPE_3D_FREE,sizeof(vertexFree),
+                                      (LPCSTR)&vertexFree,0,NULL)) {
+                            LogMsg("[NVX_3D_SURFACE_DRAW_RESULT] FAIL vertex release\n");
+                            ok=0;
+                        }
                     }
                 }
                 surfaceFree.Size=sizeof(surfaceFree);

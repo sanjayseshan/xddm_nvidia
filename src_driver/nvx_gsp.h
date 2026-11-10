@@ -497,6 +497,9 @@ BOOLEAN NvxGspSubmitUserClear(PVOID HwDeviceExtension,ULONG64 dstVa,
 BOOLEAN NvxGspSubmitUserColorTargetClear(PVOID HwDeviceExtension,
     ULONG64 dstVa,ULONG width,ULONG height,ULONG tileMode,ULONG color,
     ULONG64 fenceValue,ULONG *matchingSamples);
+BOOLEAN NvxGspSubmitUserColorTargetTriangles(PVOID HwDeviceExtension,
+    ULONG64 dstVa,ULONG width,ULONG height,ULONG tileMode,ULONG64 vertexVa,
+    ULONG vertexCount,ULONG color,ULONG64 fenceValue,BOOLEAN verifyFullTarget);
 BOOLEAN NvxGspSubmitUserTriangle(PVOID HwDeviceExtension,ULONG64 dstVa,
                                  ULONG64 fenceValue,ULONG *greenPixels,
                                  ULONG *whitePixels);

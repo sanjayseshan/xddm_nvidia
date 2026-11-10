@@ -2318,16 +2318,28 @@ BOOLEAN NTAPI HwVidStartIO(
             entry->TileMode>0x70U || !entry->PitchBytes)) {
             Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
         }
+        if((request.Operation==NVX_3D_SUBMIT_DRAW_COLOR_TARGET ||
+            request.Operation==NVX_3D_SUBMIT_VERIFY_COLOR_TARGET_DRAW) &&
+           (!(entry->Usage&NVX_3D_USAGE_COLOR_TARGET) ||
+            request.Width!=entry->Width || request.Height!=entry->Height ||
+            request.Reserved[3]!=entry->TileMode || !entry->PitchBytes)) {
+            Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
+        }
         entry->Busy=TRUE;saved=*entry;
         if(request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE||
            request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_PRESERVE||
            request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH||
-           request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLES) {
+           request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLES||
+           request.Operation==NVX_3D_SUBMIT_DRAW_COLOR_TARGET||
+           request.Operation==NVX_3D_SUBMIT_VERIFY_COLOR_TARGET_DRAW) {
             vertexEntry=Nvx3dFindBuffer(engine,vertexBufferId);
             if(!vertexEntry||vertexEntry->Busy||vertexEntry->Bytes<
                (request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH?
                     96U:request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLES?
-                    request.Height*24U:72U)) {
+                    request.Height*24U:
+                    (request.Operation==NVX_3D_SUBMIT_DRAW_COLOR_TARGET||
+                     request.Operation==NVX_3D_SUBMIT_VERIFY_COLOR_TARGET_DRAW)?
+                    request.Reserved[0]*24U:72U)) {
                 entry->Busy=FALSE;Nvx3dUnlockBuffers();
                 status=ERROR_INVALID_PARAMETER;break;
             }
@@ -2365,6 +2377,23 @@ BOOLEAN NTAPI HwVidStartIO(
             } else {
                 request.Reserved[0]=drawPixels;
                 request.Reserved[1]=whitePixels;
+                request.FenceValue=fenceValue;
+                VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,sizeof(request));
+                statusBlock->Information=sizeof(request);status=NO_ERROR;
+                engine->GspGraphicsUserSubmitReady=TRUE;
+                engine->GspGraphicsClientTriangleVerified=TRUE;
+            }
+        } else if(request.Operation==NVX_3D_SUBMIT_DRAW_COLOR_TARGET ||
+                  request.Operation==NVX_3D_SUBMIT_VERIFY_COLOR_TARGET_DRAW) {
+            ULONG vertexCount=request.Reserved[0];
+            if(!NvxGspSubmitUserColorTargetTriangles(engine,saved.GpuVa,
+                    saved.Width,saved.Height,saved.TileMode,vertexSaved.GpuVa,
+                    vertexCount,request.Color,fenceValue,
+                    request.Operation==NVX_3D_SUBMIT_VERIFY_COLOR_TARGET_DRAW)) {
+                status=ERROR_DEVICE_NOT_READY;
+            } else {
+                request.Reserved[0]=request.Reserved[1]=
+                    request.Reserved[2]=request.Reserved[3]=0;
                 request.FenceValue=fenceValue;
                 VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,sizeof(request));
                 statusBlock->Information=sizeof(request);status=NO_ERROR;

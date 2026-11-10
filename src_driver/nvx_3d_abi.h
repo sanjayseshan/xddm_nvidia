@@ -6,7 +6,7 @@
 
 /* Fixed-width ABI shared by XP x64/x86 clients and the miniport.  GPU VAs are
  * always 64-bit; no kernel pointers or RM handles cross this boundary. */
-#define NVX_3D_ABI_VERSION 5U
+#define NVX_3D_ABI_VERSION 6U
 #define NVX_3D_MAX_PUSH_DWORDS 4096U
 #define NVX_3D_PAGE_BYTES 4096U
 #define NVX_3D_MAX_BUFFER_BYTES (64U * 1024U * 1024U)
@@ -44,6 +44,8 @@
 #define NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH 6U
 #define NVX_3D_SUBMIT_DRAW_TRIANGLES 7U
 #define NVX_3D_SUBMIT_CLEAR_COLOR_TARGET 8U
+#define NVX_3D_SUBMIT_DRAW_COLOR_TARGET 9U
+#define NVX_3D_SUBMIT_VERIFY_COLOR_TARGET_DRAW 10U
 #define NVX_3D_MAX_BATCH_VERTICES 36U
 #define NVX_3D_USAGE_DEPTH_TARGET 2U
 #define NVX_3D_USAGE_DEPTH_S8Z24 4U
@@ -193,15 +195,15 @@ typedef struct NVX_3D_SUBMIT {
     uint32_t Operation;
     uint32_t Width;
     /* Fixed target height is 16 except DRAW_TRIANGLES, where Height is the
-     * vertex count (3..36, divisible by three). */
+     * vertex count (3..36), and dynamic color-target operations. */
     uint32_t Height;
     /* CLEAR_SURFACE and draw operations use packed AARRGGBB color. */
     uint32_t Color;
     uint64_t BufferId;
     uint64_t FenceValue;
-    /* DRAW_TRIANGLE input: low/high halves of VertexBufferId. On output the
-       fields report drawn and background pixel counts, respectively. */
-    uint32_t Reserved[2];
+    /* DRAW_TRIANGLE input: low/high halves of VertexBufferId. Dynamic color
+       draw: vertex count, VBO low/high, and target tile mode. */
+    uint32_t Reserved[4];
 } NVX_3D_SUBMIT;
 
 typedef struct NVX_3D_WAIT_FENCE {
@@ -279,6 +281,7 @@ Nvx3dValidateSubmit(const NVX_3D_SUBMIT *request, uint32_t inputBytes,
 {
     uint32_t i;
     uint64_t vertexBufferId;
+    NVX_3D_COLOR_SURFACE_LAYOUT colorLayout;
     int validOperation;
     if(!request || inputBytes!=sizeof(*request) || request->Size!=sizeof(*request) ||
        request->Version!=NVX_3D_ABI_VERSION ||
@@ -292,12 +295,30 @@ Nvx3dValidateSubmit(const NVX_3D_SUBMIT *request, uint32_t inputBytes,
         request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH ||
         request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLES;
     if(!validOperation &&
-       request->Operation!=NVX_3D_SUBMIT_CLEAR_COLOR_TARGET) return 0;
+       request->Operation!=NVX_3D_SUBMIT_CLEAR_COLOR_TARGET &&
+       request->Operation!=NVX_3D_SUBMIT_DRAW_COLOR_TARGET &&
+       request->Operation!=NVX_3D_SUBMIT_VERIFY_COLOR_TARGET_DRAW) return 0;
     if(request->Operation==NVX_3D_SUBMIT_CLEAR_COLOR_TARGET) {
         if(!request->Width || !request->Height ||
            request->Width>NVX_3D_MAX_SURFACE_DIMENSION ||
            request->Height>NVX_3D_MAX_SURFACE_DIMENSION ||
            request->Reserved[0] || request->Reserved[1]) return 0;
+        return 1;
+    }
+    if(request->Operation==NVX_3D_SUBMIT_DRAW_COLOR_TARGET ||
+       request->Operation==NVX_3D_SUBMIT_VERIFY_COLOR_TARGET_DRAW) {
+        if(!Nvx3dComputeColorSurfaceLayout(request->Width,request->Height,
+                                           &colorLayout) ||
+           allocatedBytes<colorLayout.Bytes ||
+           request->Height>NVX_3D_MAX_SURFACE_DIMENSION ||
+           request->Reserved[0]<3U ||
+           request->Reserved[0]>NVX_3D_MAX_BATCH_VERTICES ||
+           request->Reserved[0]%3U ||
+           request->Reserved[3]!=colorLayout.TileMode ||
+           (!request->Reserved[1]&&!request->Reserved[2]) ||
+           ((((uint64_t)request->Reserved[2]<<32)|request->Reserved[1])==
+             request->BufferId))
+            return 0;
         return 1;
     }
     if(request->Width!=64) return 0;
@@ -338,6 +359,9 @@ Nvx3dValidateSubmit(const NVX_3D_SUBMIT *request, uint32_t inputBytes,
 static inline uint64_t
 Nvx3dSubmitVertexBufferId(const NVX_3D_SUBMIT *request)
 {
+    if(request&&(request->Operation==NVX_3D_SUBMIT_DRAW_COLOR_TARGET ||
+                 request->Operation==NVX_3D_SUBMIT_VERIFY_COLOR_TARGET_DRAW))
+        return ((uint64_t)request->Reserved[2]<<32)|request->Reserved[1];
     return request?(((uint64_t)request->Reserved[1]<<32)|
                     request->Reserved[0]):0;
 }

@@ -14,12 +14,33 @@ cube is still CPU rendered. Separately, the restricted WGL-to-miniport bridge
 successfully submits bounded diagnostic triangles and reads back verified GPU
 pixels. These probes do not constitute a general Gallium hardware driver.
 
-The latest safe-path RTX 3070 run is
-`test_logs/v3.0.0.1-20261110-145245.log`. It completed with
+The latest full RTX 3070 run is
+`test_logs/v3.0.0.1-20261110-153326.log`. It completed with
 `Failures=0 software3d=1` and `Status: SOFTWARE_3D_ONLY`. The startup assertion
 count stayed at one, with no MMU or GR channel fault; bounded GR, 2D, and
-dual-head checks passed. The post-animation bridge trace identifies the normal
-app draw rejection as `tile workload exceeds bounded bridge limit`.
+dual-head checks passed. ABI v6 verified a full-size C797 triangle draw,
+five post-draw pixel samples, and fence 136. The normal app remains software:
+the post-animation bridge trace rejects its 632x453 viewport because it
+exceeds the 64-tile bridge limit.
+
+### Latest hardware test: ABI v6 dynamic target draw
+
+- `test_logs/v3.0.0.1-20261110-153326.log` — clean Mesa ICD rebuild, XP
+  import/subsystem audits, boot, hardware checks, and guest shutdown passed.
+  The 632x453 block-linear target clear/sample check passed at fence 134. A
+  six-vertex full-target C797 draw then passed five post-raster pixel samples
+  and fence 136 (`[NVX_3D_SURFACE_DRAW_RESULT] PASS ... pixel_samples=5`).
+  Suite result is `Failures=0 software3d=1`; firmware assertions remain at
+  one and there are no MMU or GR channel faults. Antigravity still reports
+  `[OPENGL_RESULT] SOFTWARE`. Bridge status shows 103 callbacks and only three
+  diagnostic GPU batches; its last status is the expected 64-tile-limit
+  rejection for the ordinary 632x453 app viewport.
+
+- ABI v6 adds dynamic full-size color-target triangle submission and an
+  optional five-pixel CE readback verification operation. This proves the
+  miniport can rasterize a full-size target, but the operation is not yet
+  called by Gallium's WGL path and accepts the current diagnostic vertex/color
+  format only. It does not provide general OpenGL acceleration.
 
 ## Latest hardware evidence
 
@@ -35,6 +56,17 @@ app draw rejection as `tile workload exceeds bounded bridge limit`.
     GR draw, 2D checks, and dual-head status checks pass.
   - `[OPENGL_RESULT] SOFTWARE` remains. This validates a dynamic GPU color
     target clear and sample readback only; Phase 2C is still incomplete.
+
+- `test_logs/v3.0.0.1-20261110-153326.log` — ABI v6 full-target draw run.
+  The 632x453 target clear/sample check passed at fence 134. A six-vertex
+  C797 draw then passed five post-raster pixel samples and fence 136
+  (`[NVX_3D_SURFACE_DRAW_RESULT] PASS ... pixel_samples=5`). XP import and
+  subsystem audits, clean guest shutdown, 2D, and display checks passed. The
+  suite reports `Failures=0 software3d=1`; firmware assertions remain at one
+  with no MMU or GR channel faults. Antigravity still reports
+  `[OPENGL_RESULT] SOFTWARE`. Its bridge status reports 103 callbacks and
+  three diagnostic batches, with the ordinary 632x453 viewport rejected by
+  the 64-tile safety limit.
 
 - `test_logs/v3.0.0.1-20261110-151225.log` — first hardware run of ABI v5
   dynamic color targets. Host tests, ICD/package XP import audits, and clean
@@ -125,6 +157,10 @@ app draw rejection as `tile workload exceeds bounded bridge limit`.
   readback; `Nvx3dTuringColorPixelOffset()` now matches the Turing 2D sector
   order, and the next hardware run verified the full-size target edge and
   fence. This is still only the C797 clear path, not general rendering.
+- ABI v6 adds dynamic full-size-target triangle draws and optional five-pixel
+  CE readback verification. Hardware confirmed the draw writes the expected
+  pixels and completes its fence. The WGL bridge does not yet call this path;
+  it remains a diagnostic ABI, not normal OpenGL acceleration.
 - Miniport arbitrary-color `CLEAR_SURFACE` accepts packed AARRGGBB, converts
   normalized channels to float bits, and compares readback against the exact
   requested color. Hardware confirmed `0xFF1A1A33` across all pixels.
@@ -156,12 +192,13 @@ app draw rejection as `tile workload exceeds bounded bridge limit`.
 
 ## Next work to complete Phase 2C
 
-1. Extend ABI v5 surfaces from clear-only to reusable color/depth resources,
-   GPU draws, batched command submission, complete readback, and presentation.
-   The 632x453 clear/sample/fence path now passes hardware validation.
+1. Replace per-call diagnostic target use with reusable full-size color/depth
+   resources, buffer updates, batched draws, readback, and presentation. A
+   full-size clear and constant-color triangle draw pass, but are not
+   connected to WGL or reusable resources.
 2. Specify project-owned XP resource, context, mapping, and fence interfaces;
-   the current draw, depth, and readback ABI is still hard-coded to one
-   64x16 diagnostic surface.
+   ABI v6 remains test-oriented and has no general Gallium resource/context
+   contract.
 3. Implement a project-owned Gallium driver and XP winsys in `mesa_patches/`,
    using Mesa/NVC0 only as a read-only reference for Gallium contracts and
    Ampere methods. Preserve WGL software fallback while bringing up GPU color
@@ -169,8 +206,9 @@ app draw rejection as `tile workload exceeds bounded bridge limit`.
 4. Add reusable full-size block-linear color/depth targets, batched command
    submission, fences, and presentation. Do not route large viewports through
    the existing synchronous per-tile bridge; the 144802 experiment faulted GR.
-5. Move ordinary OpenGL draws to the project-owned hardware driver, then
-   validate Antigravity renderer identity and pixel output without assertion
+5. Connect WGL/Gallium to the new resource and draw path, then move ordinary
+   OpenGL draws to the project-owned hardware driver. Validate Antigravity
+   renderer identity and pixel output without assertion
    growth, MMU faults, or display/2D regressions.
 6. Run the full hardware command after each significant integration step.
    Bounded bridge probes remain diagnostic evidence only.
@@ -179,7 +217,7 @@ app draw rejection as `tile workload exceeds bounded bridge limit`.
 
 - `mesa/` — pinned upstream Mesa submodule; keep clean.
 - `mesa_patches/nvx_wgl_bridge.c` — restricted WGL/Gallium diagnostic bridge.
-- `src_driver/nvx_3d_abi.h` — miniport user submission ABI and validation.
+- `src_driver/nvx_3d_abi.h` — ABI v6 miniport user submission ABI and validation.
 - `src_driver/nvx_ce.c` — CE copy/fill submissions and semaphore waits; useful
   when debugging the dynamic target sample readback.
 - `src_driver/nvx_gsp.c` — C797 submissions, clears, shader variant, depth,

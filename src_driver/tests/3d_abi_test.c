@@ -19,7 +19,7 @@ int main(void)
     assert(sizeof(NVX_3D_ALLOC_BUFFER)==48);
     assert(sizeof(NVX_3D_FREE_BUFFER)==16);
     assert(sizeof(NVX_3D_UPLOAD_BUFFER)==32);
-    assert(sizeof(NVX_3D_SUBMIT)==48);
+    assert(sizeof(NVX_3D_SUBMIT)==56);
     assert(sizeof(NVX_3D_WAIT_FENCE)==24);
     assert(sizeof(NVX_3D_READBACK)==32);
     assert(sizeof(NVX_3D_COLOR_SURFACE_LAYOUT)==24);
@@ -215,6 +215,22 @@ int main(void)
     submit.Reserved[0]=1;
     assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),surface.Bytes));
     submit.Reserved[0]=0;submit.Width=4097;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),surface.Bytes));
+    submit.Operation=NVX_3D_SUBMIT_DRAW_COLOR_TARGET;
+    submit.Width=surface.Width;submit.Height=surface.Height;
+    submit.Color=0xff20d040U;submit.BufferId=1;
+    submit.Reserved[0]=6;submit.Reserved[1]=2;
+    submit.Reserved[2]=0;submit.Reserved[3]=surface.TileMode;
+    assert(Nvx3dValidateSubmit(&submit,sizeof(submit),surface.Bytes));
+    assert(Nvx3dSubmitVertexBufferId(&submit)==2);
+    submit.Operation=NVX_3D_SUBMIT_VERIFY_COLOR_TARGET_DRAW;
+    assert(Nvx3dValidateSubmit(&submit,sizeof(submit),surface.Bytes));
+    submit.Operation=NVX_3D_SUBMIT_DRAW_COLOR_TARGET;
+    submit.Reserved[0]=5;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),surface.Bytes));
+    submit.Reserved[0]=6;submit.Reserved[3]=0;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),surface.Bytes));
+    submit.Reserved[3]=surface.TileMode;submit.Reserved[1]=0;
     assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),surface.Bytes));
 
     wait.Size=sizeof(wait);wait.Version=NVX_3D_ABI_VERSION;
