@@ -2,7 +2,7 @@
 
 Date: November 9, 2026
 Branch: v2-nvidia-open
-Current Driver Version: v2.0.0.63 (Commit 4562854)
+Current Driver Version: v3.0.0.1 (Phase 2A checkpoint; Phase 2B in progress)
 Target Hardware: NVIDIA GeForce RTX 3070 (GA104, PCI Device ID 0x2484) via VFIO Passthrough
 Target OS: Windows XP Professional x64 Edition (NT 5.2.3790)
 

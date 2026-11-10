@@ -1,5 +1,5 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 9, 2026 (v2.0.0.67: full GR clear-target readback verified)
+Updated: November 9, 2026 (v3.0.0.1: Phase 2A checkpoint; Phase 2B in progress)
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -484,6 +484,9 @@ Hardware OpenGL roadmap — November 8, 2026:
   display verification; OpenGL still reports SOFTWARE. The test runner now
   recognizes the readback log marker. This verifies clear-surface pixel memory,
   not triangle rasterization. Triangle shaders are the remaining Phase 2B gate.
+- v3.0.0.1 carries the completed Phase 2A ABI and readback implementation onto
+  master. Phase 2B remains open pending a hardware triangle draw with verified
+  non-clear pixels and clean firmware/MMU/display/2D results.
 
 ### Linux and macOS Reference Architecture
 
