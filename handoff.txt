@@ -14,12 +14,32 @@ cube is still CPU rendered. Separately, the restricted WGL-to-miniport bridge
 successfully submits bounded diagnostic triangles and reads back verified GPU
 pixels. These probes do not constitute a general Gallium hardware driver.
 
-The latest real RTX 3070 run completed with `Failures=0 software3d=1` and
-`Status: SOFTWARE_3D_ONLY`. It showed one startup firmware assertion count and
-no subsequent assertion growth, no MMU fault, and a healthy GR channel through
-the later ABI test. This is the best current baseline.
+The latest safe-path RTX 3070 run is
+`test_logs/v3.0.0.1-20261110-145245.log`. It completed with
+`Failures=0 software3d=1` and `Status: SOFTWARE_3D_ONLY`. The startup assertion
+count stayed at one, with no MMU or GR channel fault; bounded GR, 2D, and
+dual-head checks passed. The post-animation bridge trace identifies the normal
+app draw rejection as `tile workload exceeds bounded bridge limit`.
 
 ## Latest hardware evidence
+
+- `test_logs/v3.0.0.1-20261110-145245.log` — latest safe-path full suite after
+  adding the post-animation bridge status snapshot and restoring the 64-tile
+  guard:
+  - Host tests, XP package import/subsystem audits, Mesa ICD build, and clean
+    guest shutdown pass. Mesa submodule is restored clean after build.
+  - Pixel, depth, cube, six-vertex C797 batch, 2D copies/fills, and dual-head
+    checks pass. The run ends `Failures=0 software3d=1` and
+    `SOFTWARE_3D_ONLY`; startup assertion count stays at one, with no MMU or
+    channel fault.
+  - The ordinary 100-frame app workload makes 103 bridge callbacks but adds
+    no GPU batches; its 632x453 viewport exceeds the 64-tile limit and is
+    rejected before submission. `[OPENGL_RESULT] SOFTWARE` remains correct.
+- `test_logs/v3.0.0.1-20261110-144802.log` — one-large-draw experiment,
+  reverted afterward. Repeated synchronous per-tile color/depth clear, draw,
+  and readback grew firmware assertions from one to five and faulted GR. Do
+  not re-enable the experiment; implement reusable targets, batched submission,
+  and synchronization before trying application-sized draws again.
 
 - `test_logs/v3.0.0.1-20261110-142434.log` — latest full hardware suite after
   ABI v4 triangle batching:
@@ -81,6 +101,10 @@ the later ABI test. This is the best current baseline.
   softpipe post-VS vertices and updates softpipe tiles; it does not translate
   Gallium shaders/state or render ordinary frames to a full-size GPU target.
   Do not describe Phase 2C as done.
+- The prior `GetTickCount64` and `qsort_s` imports and Antigravity
+  initialization error are resolved in the current package: the XP import
+  audit passes for the ICD and test binaries, and Antigravity initializes and
+  renders 100 software frames. Remaining compiler warnings are unrelated.
 - Mesa's existing NVC0 Gallium driver has the relevant C797/Ampere command,
   surface-layout, and shader-generation code, but it is not presently
   buildable as this XP WGL ICD: upstream's WGL target constructs software
@@ -94,25 +118,28 @@ the later ABI test. This is the best current baseline.
   Linux-only device/winsys sources (`util/os_mman.h`, `xf86drm.h`). An external
   compile-only `sys/ioccom.h` shim is in
   `mesa_patches/nouveau-xp-include/`; it does not implement DRM or hardware
-  access. Reusing the compiler while replacing Nouveau's DRM device, buffer,
-  pushbuffer, and fence layer is the next integration route.
+  access. Treat Nouveau as a read-only reference; a project-owned XP winsys,
+  resource, command, and fence layer is the next integration route. Keep
+  project changes outside Mesa's Nouveau driver directories.
 - Mesa submodule must remain clean; customizations belong in `mesa_patches/`.
 
 ## Next work to complete Phase 2C
 
-1. Implement the missing XP Windows Gallium winsys over the existing miniport
-   allocation, upload, submit, fence, and readback/presentation interfaces;
-   do not use softpipe post-VS output as the renderer.
-2. Wire Mesa's NVC0 Gallium driver and C797 shader/state/resource machinery to
-   that winsys, starting with normal OpenGL triangle draws and the tested color
-   and depth formats. Keep Mesa modifications in `mesa_patches/`.
-3. Generalize target layout and lifetime for full application viewports,
-   including block height, pitch, depth, synchronization, and presentation.
-4. Run Antigravity's ordinary OpenGL animation on the GPU and verify its
-   renderer reports hardware, while keeping zero assertion growth/MMU faults
-   and no display/2D regressions.
-5. Re-run the full hardware command after each significant integration step.
-   The bounded bridge probes are diagnostic evidence only.
+1. Specify project-owned XP resource, context, mapping, and fence interfaces;
+   the current render target, clear, draw, and readback ABI is hard-coded to
+   one 64x16 diagnostic surface.
+2. Implement a project-owned Gallium driver and XP winsys in `mesa_patches/`,
+   using Mesa/NVC0 only as a read-only reference for Gallium contracts and
+   Ampere methods. Preserve WGL software fallback while bringing up GPU color
+   triangle draws.
+3. Add reusable full-size block-linear color/depth targets, batched command
+   submission, fences, and presentation. Do not route large viewports through
+   the existing synchronous per-tile bridge; the 144802 experiment faulted GR.
+4. Move ordinary OpenGL draws to the project-owned hardware driver, then
+   validate Antigravity renderer identity and pixel output without assertion
+   growth, MMU faults, or display/2D regressions.
+5. Run the full hardware command after each significant integration step.
+   Bounded bridge probes remain diagnostic evidence only.
 
 ## Relevant files
 

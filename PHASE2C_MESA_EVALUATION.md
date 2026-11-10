@@ -14,13 +14,20 @@ to the GA104. Bounded pixel, depth, cube, and batched-triangle probes verify
 real GPU writes, fences, and readback. This is diagnostic acceleration; it does
 not make the ordinary Mesa renderer hardware accelerated.
 
-The latest full RTX 3070 run is
-`test_logs/v3.0.0.1-20261110-142913.log`. XP import/subsystem audits,
+The latest safe-path full RTX 3070 run is
+`test_logs/v3.0.0.1-20261110-145245.log`. XP import/subsystem audits,
 pixel/depth/cube probes, the six-vertex C797 batch, 2D checks, and display
 checks pass. The suite reports zero failures. Firmware assertion count remains
-at its startup value of one, with no MMU or GR channel fault. The normal
-Antigravity workload reports `[OPENGL_RESULT] SOFTWARE`, and the suite ends
-`SOFTWARE_3D_ONLY`.
+at its startup value of one, with no MMU or GR channel fault. The ordinary app
+workload makes 103 bridge callbacks but adds no GPU batches; its 632x453
+viewport exceeds the guarded 64-tile limit. It reports
+`[OPENGL_RESULT] SOFTWARE`, and the suite ends `SOFTWARE_3D_ONLY`.
+
+The one-large-draw experiment in
+`test_logs/v3.0.0.1-20261110-144802.log` is reverted. Its repeated synchronous
+per-tile depth/color clears, draws, and readbacks grew firmware assertions from
+one to five and faulted GR. Do not re-enable this path; implement reusable
+targets and batched submission before application-sized draws.
 
 The earlier XP startup errors are resolved. The ICD imports no unavailable
 `GetTickCount64`, `qsort_s`, or Vista condition-variable entry points; the
@@ -56,7 +63,8 @@ The compiler-only XP cross-build used an external `sys/ioccom.h` shim at
 `mesa_patches/nouveau-xp-include/`; it only supplies DRM UAPI ioctl encodings
 needed to compile headers and does not implement DRM calls or a GPU winsys.
 Do not add the Nouveau DRM screens or advertise the driver as usable on XP on
-the basis of this compile result.
+the basis of this compile result. Treat Nouveau as a read-only reference;
+project-owned XP winsys and Gallium work belongs in `mesa_patches/`.
 
 ## Mesa pin and XP build
 

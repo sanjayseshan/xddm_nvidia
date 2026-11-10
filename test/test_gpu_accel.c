@@ -1077,6 +1077,9 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
     double dt = tEnd - tStart;
     double fps = dt > 0 ? (double)framesRendered / dt : 0;
     LogMsg("-> Rendered %d frames in %.4f s (%.1f FPS)\n", framesRendered, dt, fps);
+    /* Capture the final bridge callback result from the normal application
+       workload, not only from the bounded diagnostic probes above. */
+    DumpMesaBridgeTrace();
 
     {
         BYTE pixel[4] = {0};

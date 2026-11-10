@@ -1,7 +1,22 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 10, 2026 (bounded Mesa color draws reach C797; general OpenGL incomplete)
+Updated: November 10, 2026 (safe-path boot after app-sized draw rejection diagnosis)
 
 Current Phase 2C status (verified November 10, 2026):
+- Latest safe-path full RTX 3070 run:
+  `test_logs/v3.0.0.1-20261110-145245.log`. Host tests, XP import/subsystem
+  audits, Mesa ICD build, bounded GPU probes, 2D operations, dual-head checks,
+  and clean guest shutdown passed. Firmware assertion count stayed at its
+  startup value of one, with no MMU or GR fault. The post-animation bridge
+  trace shows 103 callbacks and no new GPU batches because Antigravity's
+  632x453 viewport exceeds the guarded 64-tile limit. Result remains
+  `SOFTWARE_3D_ONLY`.
+- The one-large-draw experiment (`test_logs/v3.0.0.1-20261110-144802.log`) was
+  reverted after repeated synchronous per-tile work grew assertions from one
+  to five and faulted GR. Reusable application-sized targets and batched
+  submission are required before retrying that workload.
+- Current package audit confirms the earlier XP `GetTickCount64`, `qsort_s`,
+  and initialization failures are resolved. Antigravity initializes and
+  renders, but through Mesa softpipe.
 - The Mesa submodule is pinned and XP compatibility changes live in the external
   `mesa_patches/` directory. The x64 ICD/front-end imports and PE subsystem pass
   audits against the XP guest; the reported `qsort_s`/`GetTickCount64` imports
