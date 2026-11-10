@@ -400,3 +400,16 @@ batch is fenced and copied back into softpipe, proving that at least part of
 this restricted cube workload reaches C797. The full-size depth-tested cube
 and general OpenGL workload remain unproven; the suite still fails its depth
 check.
+
+### Latest color and cube result, depth still blocked (November 10, 2026)
+
+`test_logs/v3.0.0.1-20261110-105101.log` demonstrates working viewport
+transformation for the restricted color batches. After allowing signed X/Y
+vertex inputs within +/-1/8 in the miniport, the nine-tile readback passes
+(6,384 green, 528 red, 2,304 background); the bounded cube probe passes with
+one new GPU batch; and fenced GPU readback is copied into Mesa's tile. The
+full-size depth-tested path still fails: all three intermediate samples remain
+red, ZF32 values read as zero over covered pixels, and `[OPENGL_RESULT]` is
+FAIL. Firmware assertions remain at the startup count of one and the log has
+no MMU fault. Next isolate clip-Z output and ZF32 write/readback, then continue
+general Mesa shader/state translation and GPU presentation.

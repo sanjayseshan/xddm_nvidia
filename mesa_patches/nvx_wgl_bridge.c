@@ -692,11 +692,10 @@ nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
                   }
                   if (depth_test) {
                      unsigned base = j * 8;
-                     /* Match the color path's tile-local XY inputs. The
-                      * head-surface VS applies its fixed 64x16 transform;
-                      * fixed-function viewport scaling stays disabled. */
-                     hw_vertices[base + 0] = local_x;
-                     hw_vertices[base + 1] = local_y;
+                     /* The shader multiplies XY by 64x16. Supply NDC/64 so
+                      * the viewport maps clip coordinates to tile pixels. */
+                     hw_vertices[base + 0] = (2.0f * local_x - 1.0f) / 64.0f;
+                     hw_vertices[base + 1] = (2.0f * local_y - 1.0f) / 16.0f;
                      hw_vertices[base + 2] = local_z;
                      hw_vertices[base + 3] = 1.0f;
                      hw_vertices[base + 4] = 0.0f;
@@ -705,8 +704,8 @@ nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
                      hw_vertices[base + 7] = 1.0f;
                   } else {
                      unsigned base = j * 6;
-                     hw_vertices[base + 0] = local_x;
-                     hw_vertices[base + 1] = local_y;
+                     hw_vertices[base + 0] = (2.0f * local_x - 1.0f) / 64.0f;
+                     hw_vertices[base + 1] = (2.0f * local_y - 1.0f) / 16.0f;
                      /* Color-only draws use the original XYUVRQ shader ABI. */
                      hw_vertices[base + 2] = local_z;
                      hw_vertices[base + 3] = 0.0f;

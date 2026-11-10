@@ -1266,3 +1266,16 @@ new GPU batch. Successful bridge batches are fenced and copied back into the
 softpipe tile, so at least part of this restricted cube workload reaches C797.
 This is not evidence that the full-size depth-tested animated cube uses the
 GPU; the overall OpenGL/depth result remains FAIL.
+
+Latest viewport/input-validation result (November 10, 2026):
+`test_logs/v3.0.0.1-20261110-105101.log` confirms that the external bridge's
+NDC coordinates plus C797 viewport transform restore real GPU color batches.
+The nine-tile pixel counts pass (6,384 green, 528 red, 2,304 background), the
+bounded cube probe adds one GPU batch and passes, and fenced GPU-to-Mesa copy
+passes. The miniport allows signed XY vertex inputs only within +/-1/8; Z and
+non-position components remain constrained to [0,1]. Firmware assertion count
+stays at its initial value of one, with no MMU fault. Depth remains broken:
+intermediate samples stay red and ZF32 readback remains zero, so
+`[MESA_GPU_DEPTH_RESULT]` and `[OPENGL_RESULT]` fail. Continue with ZF32
+clip-Z/write/readback diagnosis before broadening shader/state support or
+claiming full cube acceleration.

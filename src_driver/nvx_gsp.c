@@ -1983,7 +1983,8 @@ static volatile ULONG NvxGrUserSubmitBusy=0;
 static VOID NvxGspAppendUserTriangle(PNVX_DEVICE_EXTENSION dev,PUCHAR scratch,
                                     PULONG push,PULONG count,
                                     BOOLEAN uploadedVertices,
-                                    BOOLEAN depthShader)
+                                    BOOLEAN depthShader,
+                                    BOOLEAN viewportTransform)
 {
     static const ULONG vertices[18]={
         0,0,0,0,0,0x3f800000U,
@@ -2090,10 +2091,18 @@ static VOID NvxGspAppendUserTriangle(PNVX_DEVICE_EXTENSION dev,PUCHAR scratch,
        startup probe configures this once, but relying on that previous state
        made the standalone user operation sensitive to stale/default clips. */
     NVX_TRI_INCR(NVC797_SET_VIEWPORT_SCALE_OFFSET,1);
-    /* The vendor head-surface shader already emits tile-local pixel XY.
-       Keep fixed-function XY viewport scaling disabled; the depth experiment
-       still needs a validated clip-Z/viewport setup before enabling it. */
-    push[n++]=NVC797_SET_VIEWPORT_SCALE_OFFSET_ENABLE_FALSE;
+    /* Preserve-target Mesa batches supply clip-space XY. Fixed/client
+       diagnostic draws keep the vendor shader's proven pixel-space path. */
+    push[n++]=viewportTransform?
+        NVC797_SET_VIEWPORT_SCALE_OFFSET_ENABLE_TRUE:
+        NVC797_SET_VIEWPORT_SCALE_OFFSET_ENABLE_FALSE;
+    if(viewportTransform) {
+        NVX_TRI_INCR(NVC797_SET_VIEWPORT_SCALE_X(0),3);
+        push[n++]=0x42000000U;push[n++]=0x41000000U;
+        push[n++]=0x3f800000U;
+        NVX_TRI_INCR(NVC797_SET_VIEWPORT_OFFSET_X(0),3);
+        push[n++]=0x42000000U;push[n++]=0x41000000U;push[n++]=0;
+    }
     NVX_TRI_INCR(NVC797_SET_VIEWPORT_CLIP_CONTROL,1);
     push[n++]=NVC797_SET_VIEWPORT_CLIP_CONTROL_PIXEL_MIN_Z_CLAMP<<3|
               NVC797_SET_VIEWPORT_CLIP_CONTROL_PIXEL_MAX_Z_CLAMP<<4|
@@ -2203,8 +2212,19 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
         }
         __sync_synchronize();
         for(i=0;i<(depthMode?24U:18U);i++) {
-            if(((volatile ULONG *)(scratch+0xb800))[i]>0x3f800000U) {
-                LogStr("NVX [3D-TRI]: uploaded vertex component outside [0,1].\n");
+            ULONG component=((volatile ULONG *)(scratch+0xb800))[i];
+            ULONG componentInVertex=i%(depthMode?8U:6U);
+            BOOLEAN positionXY=(componentInVertex<2U);
+            /* Mesa's bounded bridge uploads clip-space XY divided by the
+               viewport dimensions. Permit a small signed range that covers
+               64x16 tiles and the bounded depth probe; all Z and other
+               attributes stay in [0,1]. */
+            if((positionXY &&
+                !(component<=0x3e000000U ||
+                  (component>=0x80000000U && component<=0xbe000000U))) ||
+               (!positionXY&&component>0x3f800000U)) {
+                LogStr("NVX [3D-TRI]: uploaded vertex component outside bounded range index=");
+                LogHex(i);LogStr(" bits=");LogHex(component);LogStr(".\n");
                 __sync_lock_release(&NvxGrUserSubmitBusy);
                 return FALSE;
             }
@@ -2355,7 +2375,8 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
         NVX_GR_INCR(NVC797_INVALIDATE_TEXTURE_DATA_CACHE,1);
         push[n++]=NVC797_INVALIDATE_TEXTURE_DATA_CACHE_LINES_ALL;
         NvxGspAppendUserTriangle(dev,scratch,push,&n,vertexVa!=0,
-                                 depthMode!=0);
+                                 depthMode!=0,
+                                 depthMode!=0||preserveTarget);
     }
 #endif
     NVX_GR_INCR(NVC797_WAIT_FOR_IDLE,1);push[n++]=0;

@@ -1254,3 +1254,16 @@ batch path waits for GPU fences and copies the GPU readback into softpipe's
 tile, so this proves at least one supported cube batch reached C797. It does
 not prove the full-size, depth-tested 100-frame cube is accelerated;
 `[OPENGL_RESULT]` remains FAIL because overlapping depth triangles still fail.
+
+Latest viewport/input-validation iteration (November 10, 2026):
+`test_logs/v3.0.0.1-20261110-105101.log` proves the Mesa bridge's NDC/viewport
+path works for its supported color batches after the miniport's uploaded XY
+validation was widened to a signed, bounded +/-1/8 range. Nine-tile readback
+passes (6,384 green, 528 red, 2,304 background), the bounded cube probe passes
+with one new GPU batch, and the fenced GPU-to-Mesa copy passes. Firmware
+assertions remain at the startup count of one and no MMU fault appears. Depth
+still fails: all three intermediate triangle samples remain red; the ZF32
+diagnostic reads zero for depth across the covered area. `[OPENGL_RESULT]`
+remains FAIL. The viewport experiment restores color coverage and does not
+resolve clip-Z/depth storage. Next isolate the ZF32 output/readback path, then
+implement general shader/state translation and presentation.
