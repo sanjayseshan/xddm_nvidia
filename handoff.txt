@@ -33,6 +33,16 @@ the later ABI test. This is the best current baseline.
     with no growth, no MMU faults, and no channel fault.
   - Normal Antigravity remains `OPENGL_RESULT SOFTWARE`; the run ends
     `SOFTWARE_3D_ONLY` because Phase 2C is unfinished.
+- `test_logs/v3.0.0.1-20261110-142913.log` — rerun from a clean Mesa ICD
+  rebuild with the documented full hardware command:
+  - XP import/subsystem audits pass for the driver, ICD, and test binaries.
+  - Mesa pixel, depth, and cube bridge probes pass; the six-vertex C797 batch
+    passes with 224 green pixels and fence 132.
+  - `[NVX_3D_RESULT] PASS`, zero suite failures, successful 2D/display checks.
+    Firmware assertion count remains at its startup value of one; no MMU or
+    GR channel fault is reported.
+  - Antigravity still reports `[OPENGL_RESULT] SOFTWARE` and the suite ends
+    `SOFTWARE_3D_ONLY`; this is not full Phase 2C validation.
 - `test_logs/v3.0.0.1-20261110-140826.log` — prior full suite before ABI v4:
   the pixel/depth/cube bridge probes pass and the channel remains healthy.
   - Arbitrary color clear `0xFF1A1A33` readback matched all 1,024 pixels in
@@ -71,22 +81,30 @@ the later ABI test. This is the best current baseline.
   softpipe post-VS vertices and updates softpipe tiles; it does not translate
   Gallium shaders/state or render ordinary frames to a full-size GPU target.
   Do not describe Phase 2C as done.
+- Mesa's existing NVC0 Gallium driver has the relevant C797/Ampere command,
+  surface-layout, and shader-generation code, but it is not presently
+  buildable as this XP WGL ICD: upstream's WGL target constructs software
+  winsys-backed softpipe (or optional D3D12/Zink), while Nouveau's hardware
+  driver depends on its Linux DRM/Nouveau winsys. The missing integration is a
+  Windows Gallium winsys/resource/context path backed by the miniport ABI,
+  followed by NVC0 driver wiring and resource/fence/presentation support.
 - Mesa submodule must remain clean; customizations belong in `mesa_patches/`.
 
 ## Next work to complete Phase 2C
 
-1. Extend validated batching to broader vertex counts, per-vertex attributes,
-   state, depth, and larger GPU render targets. Current batch support is only
-   same-color triangles over the fixed 64x16 target.
-2. Build a real Gallium driver path that translates Mesa shaders/state and
-   submits GPU work without relying on softpipe post-VS output or tile updates.
-3. Support full application viewports efficiently, including render/depth
-   target layout and presentation, with XP-safe resource and fence lifetime.
-4. Make Antigravity's ordinary OpenGL workload report hardware rendering and
-   pass its animation with zero assertion/MMU faults and no display/2D
-   regressions.
-5. Re-run the full hardware command below after substantial changes. Current
-   bounded probes verify primitives and batching, not full Phase 2C.
+1. Implement the missing XP Windows Gallium winsys over the existing miniport
+   allocation, upload, submit, fence, and readback/presentation interfaces;
+   do not use softpipe post-VS output as the renderer.
+2. Wire Mesa's NVC0 Gallium driver and C797 shader/state/resource machinery to
+   that winsys, starting with normal OpenGL triangle draws and the tested color
+   and depth formats. Keep Mesa modifications in `mesa_patches/`.
+3. Generalize target layout and lifetime for full application viewports,
+   including block height, pitch, depth, synchronization, and presentation.
+4. Run Antigravity's ordinary OpenGL animation on the GPU and verify its
+   renderer reports hardware, while keeping zero assertion growth/MMU faults
+   and no display/2D regressions.
+5. Re-run the full hardware command after each significant integration step.
+   The bounded bridge probes are diagnostic evidence only.
 
 ## Relevant files
 
