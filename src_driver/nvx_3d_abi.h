@@ -6,7 +6,7 @@
 
 /* Fixed-width ABI shared by XP x64/x86 clients and the miniport.  GPU VAs are
  * always 64-bit; no kernel pointers or RM handles cross this boundary. */
-#define NVX_3D_ABI_VERSION 4U
+#define NVX_3D_ABI_VERSION 5U
 #define NVX_3D_MAX_PUSH_DWORDS 4096U
 #define NVX_3D_PAGE_BYTES 4096U
 #define NVX_3D_MAX_BUFFER_BYTES (64U * 1024U * 1024U)
@@ -14,6 +14,10 @@
 #define NVX_3D_TRIANGLE_TARGET_BYTES 65536U
 #define NVX_3D_TRIANGLE_WIDTH 64U
 #define NVX_3D_TRIANGLE_HEIGHT 16U
+#define NVX_3D_MAX_SURFACE_DIMENSION 4096U
+#define NVX_3D_GOB_WIDTH_BYTES 64U
+#define NVX_3D_GOB_HEIGHT_ROWS 8U
+#define NVX_3D_SURFACE_ALIGNMENT 65536U
 #define NVX_3D_READBACK_PIXELS (NVX_3D_TRIANGLE_WIDTH * NVX_3D_TRIANGLE_HEIGHT)
 #define NVX_3D_READBACK_BYTES (NVX_3D_READBACK_PIXELS * sizeof(uint32_t))
 
@@ -39,11 +43,13 @@
 #define NVX_3D_SUBMIT_CLEAR_DEPTH 5U
 #define NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH 6U
 #define NVX_3D_SUBMIT_DRAW_TRIANGLES 7U
+#define NVX_3D_SUBMIT_CLEAR_COLOR_TARGET 8U
 #define NVX_3D_MAX_BATCH_VERTICES 36U
 #define NVX_3D_USAGE_DEPTH_TARGET 2U
 #define NVX_3D_USAGE_DEPTH_S8Z24 4U
 #define NVX_3D_USAGE_DEPTH_METHOD_S8Z24 8U
 #define NVX_3D_USAGE_DEPTH_ZF32 16U
+#define NVX_3D_USAGE_COLOR_TARGET 32U
 #define NVX_3D_ZT_FORMAT_Z24S8 0U
 #define NVX_3D_ZT_FORMAT_X8Z24 1U
 #define NVX_3D_ZT_FORMAT_S8Z24 2U
@@ -64,6 +70,66 @@
 #define NVX_3D_STATUS_NOT_SUPPORTED     50U
 #define NVX_3D_STATUS_BUFFER_TOO_SMALL 122U
 
+/* Checked block-linear RGBA8 layout for a 2D C797 color target. This mirrors
+ * the NVC0/NIL 64x8-byte GOB tiling and height-based block-height selection;
+ * allocation remains 64 KiB aligned for the current VRAM page-table mapping.
+ * TileMode is the NVC797_SET_COLOR_TARGET_MEMORY encoding (Y in bits 6:4). */
+typedef struct NVX_3D_COLOR_SURFACE_LAYOUT {
+    uint32_t Width;
+    uint32_t Height;
+    uint32_t PitchBytes;
+    uint32_t TileMode;
+    uint32_t Bytes;
+    uint32_t Reserved;
+} NVX_3D_COLOR_SURFACE_LAYOUT;
+
+static inline uint32_t
+Nvx3dAlignU32(uint32_t value, uint32_t alignment)
+{
+    return (value + alignment - 1U) & ~(alignment - 1U);
+}
+
+static inline int
+Nvx3dComputeColorSurfaceLayout(uint32_t width, uint32_t height,
+                               NVX_3D_COLOR_SURFACE_LAYOUT *layout)
+{
+    uint32_t yLog2, blockRows, alignedHeight, pitch, bytes;
+    uint64_t rawBytes;
+
+    if (!layout || !width || !height ||
+        width > NVX_3D_MAX_SURFACE_DIMENSION ||
+        height > NVX_3D_MAX_SURFACE_DIMENSION)
+        return 0;
+
+    /* NIL's proprietary-driver heuristic for 2D image height. */
+    yLog2 = height >= 86U ? 4U : height >= 43U ? 3U :
+            height >= 22U ? 2U : height >= 11U ? 1U : 0U;
+    blockRows = (height + NVX_3D_GOB_HEIGHT_ROWS - 1U) /
+                NVX_3D_GOB_HEIGHT_ROWS;
+    while(yLog2 && (1U << yLog2) > blockRows) yLog2--;
+    while(yLog2 && (1U<<yLog2)>blockRows) yLog2--;
+
+    if ((uint64_t)width * 4U > 0xffffffffULL)
+        return 0;
+    pitch = Nvx3dAlignU32(width * 4U, NVX_3D_GOB_WIDTH_BYTES);
+    alignedHeight = Nvx3dAlignU32(height,
+                                  NVX_3D_GOB_HEIGHT_ROWS << yLog2);
+    rawBytes = (uint64_t)pitch * alignedHeight;
+    if (rawBytes > NVX_3D_MAX_BUFFER_BYTES)
+        return 0;
+    bytes = Nvx3dAlignU32((uint32_t)rawBytes, NVX_3D_SURFACE_ALIGNMENT);
+    if (bytes > NVX_3D_MAX_BUFFER_BYTES)
+        return 0;
+
+    layout->Width = width;
+    layout->Height = height;
+    layout->PitchBytes = pitch;
+    layout->TileMode = yLog2 << 4;
+    layout->Bytes = bytes;
+    layout->Reserved = 0;
+    return 1;
+}
+
 typedef struct NVX_3D_QUERY_CAPS {
     uint32_t Size;
     uint32_t Version;
@@ -82,6 +148,10 @@ typedef struct NVX_3D_ALLOC_BUFFER {
     uint32_t Bytes;
     uint64_t BufferId;
     uint64_t GpuVa;
+    uint32_t Width;
+    uint32_t Height;
+    uint32_t PitchBytes;
+    uint32_t TileMode;
 } NVX_3D_ALLOC_BUFFER;
 
 typedef struct NVX_3D_FREE_BUFFER {
@@ -196,7 +266,7 @@ Nvx3dValidateSubmit(const NVX_3D_SUBMIT *request, uint32_t inputBytes,
     int validOperation;
     if(!request || inputBytes!=sizeof(*request) || request->Size!=sizeof(*request) ||
        request->Version!=NVX_3D_ABI_VERSION ||
-       request->Width!=64 || request->BufferId==0 ||
+       request->BufferId==0 ||
        request->FenceValue || allocatedBytes<4096) return 0;
     validOperation=request->Operation==NVX_3D_SUBMIT_CLEAR_SURFACE ||
         request->Operation==NVX_3D_SUBMIT_TEST_TRIANGLE ||
@@ -205,7 +275,16 @@ Nvx3dValidateSubmit(const NVX_3D_SUBMIT *request, uint32_t inputBytes,
         request->Operation==NVX_3D_SUBMIT_CLEAR_DEPTH ||
         request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH ||
         request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLES;
-    if(!validOperation) return 0;
+    if(!validOperation &&
+       request->Operation!=NVX_3D_SUBMIT_CLEAR_COLOR_TARGET) return 0;
+    if(request->Operation==NVX_3D_SUBMIT_CLEAR_COLOR_TARGET) {
+        if(!request->Width || !request->Height ||
+           request->Width>NVX_3D_MAX_SURFACE_DIMENSION ||
+           request->Height>NVX_3D_MAX_SURFACE_DIMENSION ||
+           request->Reserved[0] || request->Reserved[1]) return 0;
+        return 1;
+    }
+    if(request->Width!=64) return 0;
     if(request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLES) {
         if(request->Height<3U || request->Height>NVX_3D_MAX_BATCH_VERTICES ||
            request->Height%3U) return 0;
@@ -289,20 +368,38 @@ Nvx3dValidateUpload(const NVX_3D_UPLOAD_BUFFER *request,
 static inline int
 Nvx3dValidateAlloc(const NVX_3D_ALLOC_BUFFER *request)
 {
-    return request && request->Size==sizeof(*request) &&
-        request->Version==NVX_3D_ABI_VERSION && request->Usage<=31U &&
-        (!(request->Usage&NVX_3D_USAGE_DEPTH_S8Z24) ||
-         (request->Usage&NVX_3D_USAGE_DEPTH_TARGET)) &&
-        (!(request->Usage&NVX_3D_USAGE_DEPTH_METHOD_S8Z24) ||
-         (request->Usage&NVX_3D_USAGE_DEPTH_S8Z24)) &&
-        (!(request->Usage&NVX_3D_USAGE_DEPTH_ZF32) ||
-         (request->Usage&NVX_3D_USAGE_DEPTH_TARGET)) &&
-        (!(request->Usage&NVX_3D_USAGE_DEPTH_ZF32) ||
-         !(request->Usage&(NVX_3D_USAGE_DEPTH_S8Z24|
-                           NVX_3D_USAGE_DEPTH_METHOD_S8Z24))) &&
-        request->Bytes && request->Bytes<=NVX_3D_MAX_BUFFER_BYTES &&
-        !(request->Bytes&(NVX_3D_PAGE_BYTES-1U)) &&
-        !request->BufferId && !request->GpuVa;
+    NVX_3D_COLOR_SURFACE_LAYOUT layout;
+    if(!request || request->Size!=sizeof(*request) ||
+       request->Version!=NVX_3D_ABI_VERSION || request->Usage>63U ||
+       ((request->Usage&NVX_3D_USAGE_DEPTH_S8Z24) &&
+        !(request->Usage&NVX_3D_USAGE_DEPTH_TARGET)) ||
+       ((request->Usage&NVX_3D_USAGE_DEPTH_METHOD_S8Z24) &&
+        !(request->Usage&NVX_3D_USAGE_DEPTH_S8Z24)) ||
+       ((request->Usage&NVX_3D_USAGE_DEPTH_ZF32) &&
+        !(request->Usage&NVX_3D_USAGE_DEPTH_TARGET)) ||
+       ((request->Usage&NVX_3D_USAGE_DEPTH_ZF32) &&
+        (request->Usage&(NVX_3D_USAGE_DEPTH_S8Z24|
+                         NVX_3D_USAGE_DEPTH_METHOD_S8Z24))) ||
+       ((request->Usage&NVX_3D_USAGE_COLOR_TARGET) &&
+        (request->Usage&NVX_3D_USAGE_DEPTH_TARGET)) ||
+       !request->Bytes || request->Bytes>NVX_3D_MAX_BUFFER_BYTES ||
+       (request->Bytes&(NVX_3D_PAGE_BYTES-1U)) ||
+       request->BufferId || request->GpuVa)
+        return 0;
+
+    if(request->Usage&NVX_3D_USAGE_COLOR_TARGET) {
+        if(!Nvx3dComputeColorSurfaceLayout(request->Width,request->Height,
+                                           &layout) ||
+           request->Bytes!=layout.Bytes ||
+           request->PitchBytes!=layout.PitchBytes ||
+           request->TileMode!=layout.TileMode)
+            return 0;
+    } else if(request->Width || request->Height || request->PitchBytes ||
+              request->TileMode) {
+        return 0;
+    }
+
+    return 1;
 }
 
 static inline int

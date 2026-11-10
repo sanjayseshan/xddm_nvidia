@@ -1235,13 +1235,16 @@ static void TestNvx3dSubmission(HDC hdc)
     NVX_3D_QUERY_CAPS verifiedCaps={0};
     NVX_3D_ALLOC_BUFFER alloc={0},allocated={0};
     NVX_3D_ALLOC_BUFFER vertexAlloc={0},vertexAllocated={0};
+    NVX_3D_ALLOC_BUFFER surfaceAlloc={0},surfaceAllocated={0};
     struct { NVX_3D_UPLOAD_BUFFER header; UCHAR data[256]; } upload;
     struct { NVX_3D_UPLOAD_BUFFER header; float data[18]; } vertexUpload;
     struct { NVX_3D_UPLOAD_BUFFER header; float data[36]; } batchUpload;
     NVX_3D_SUBMIT submit={0},submitted={0};
+    NVX_3D_SUBMIT surfaceSubmit={0},surfaceSubmitted={0};
     NVX_3D_READBACK readbackRequest={0};
     NVX_3D_WAIT_FENCE wait={0},waited={0};
     NVX_3D_FREE_BUFFER freeRequest={0};
+    NVX_3D_FREE_BUFFER surfaceFree={0};
     int ok=1,clearSubmitted=0,vertexReady=0;
     LogMsg("\n==================================================\n");
     LogMsg(" [TEST 3D] NVX bounded GR allocation/submit/fence ABI\n");
@@ -1564,6 +1567,70 @@ static void TestNvx3dSubmission(HDC hdc)
                            greenPixels>=24?"PASS":"FAIL",greenPixels,
                            (unsigned long long)submitted.FenceValue);
                     if(greenPixels<24) ok=0;
+                }
+            }
+        }
+    }
+    {
+        NVX_3D_COLOR_SURFACE_LAYOUT layout={0};
+        if(!Nvx3dComputeColorSurfaceLayout(632,453,&layout)) {
+            LogMsg("[NVX_3D_SURFACE_RESULT] FAIL layout computation\n");
+            ok=0;
+        } else {
+            surfaceAlloc.Size=sizeof(surfaceAlloc);
+            surfaceAlloc.Version=NVX_3D_ABI_VERSION;
+            surfaceAlloc.Usage=NVX_3D_USAGE_COLOR_TARGET;
+            surfaceAlloc.Bytes=layout.Bytes;
+            surfaceAlloc.Width=layout.Width;
+            surfaceAlloc.Height=layout.Height;
+            surfaceAlloc.PitchBytes=layout.PitchBytes;
+            surfaceAlloc.TileMode=layout.TileMode;
+            if(!ExtEscape(hdc,NVX_ESCAPE_3D_ALLOC,sizeof(surfaceAlloc),
+                          (LPCSTR)&surfaceAlloc,sizeof(surfaceAllocated),
+                          (LPSTR)&surfaceAllocated)) {
+                LogMsg("[NVX_3D_SURFACE_RESULT] FAIL color-target allocation\n");
+                ok=0;
+            } else {
+                surfaceSubmit.Size=sizeof(surfaceSubmit);
+                surfaceSubmit.Version=NVX_3D_ABI_VERSION;
+                surfaceSubmit.Operation=NVX_3D_SUBMIT_CLEAR_COLOR_TARGET;
+                surfaceSubmit.Width=layout.Width;
+                surfaceSubmit.Height=layout.Height;
+                surfaceSubmit.BufferId=surfaceAllocated.BufferId;
+                surfaceSubmit.Color=0xff204080U;
+                if(!ExtEscape(hdc,NVX_ESCAPE_3D_SUBMIT,sizeof(surfaceSubmit),
+                              (LPCSTR)&surfaceSubmit,sizeof(surfaceSubmitted),
+                              (LPSTR)&surfaceSubmitted)) {
+                    LogMsg("[NVX_3D_SURFACE_RESULT] FAIL C797 full-surface clear\n");
+                    ok=0;
+                } else {
+                    memset(&wait,0,sizeof(wait));memset(&waited,0,sizeof(waited));
+                    wait.Size=sizeof(wait);wait.Version=NVX_3D_ABI_VERSION;
+                    wait.FenceValue=surfaceSubmitted.FenceValue;
+                    wait.TimeoutMs=10000;
+                    if(!ExtEscape(hdc,NVX_ESCAPE_3D_WAIT,sizeof(wait),
+                                  (LPCSTR)&wait,sizeof(waited),(LPSTR)&waited) ||
+                       surfaceSubmitted.Reserved[0]!=5) {
+                        LogMsg("[NVX_3D_SURFACE_RESULT] FAIL fence/sample verification\n");
+                        ok=0;
+                    } else {
+                        LogMsg("[NVX_3D_SURFACE_RESULT] PASS %lux%lu pitch=%lu tileMode=0x%X bytes=%lu samples=%lu fence=%llu\n",
+                            (unsigned long)layout.Width,
+                            (unsigned long)layout.Height,
+                            (unsigned long)layout.PitchBytes,
+                            (unsigned)layout.TileMode,
+                            (unsigned long)layout.Bytes,
+                            (unsigned long)surfaceSubmitted.Reserved[0],
+                            (unsigned long long)surfaceSubmitted.FenceValue);
+                    }
+                }
+                surfaceFree.Size=sizeof(surfaceFree);
+                surfaceFree.Version=NVX_3D_ABI_VERSION;
+                surfaceFree.BufferId=surfaceAllocated.BufferId;
+                if(!ExtEscape(hdc,NVX_ESCAPE_3D_FREE,sizeof(surfaceFree),
+                              (LPCSTR)&surfaceFree,0,NULL)) {
+                    LogMsg("[NVX_3D_SURFACE_RESULT] FAIL color-target release\n");
+                    ok=0;
                 }
             }
         }

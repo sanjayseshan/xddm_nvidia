@@ -12,15 +12,33 @@ int main(void)
     NVX_3D_READBACK readback={0};
     uint32_t readbackPixels[NVX_3D_READBACK_PIXELS];
     NVX_3D_QUERY_CAPS caps;
+    NVX_3D_COLOR_SURFACE_LAYOUT surface;
     uint32_t information=99;
 
     assert(sizeof(NVX_3D_QUERY_CAPS)==32);
-    assert(sizeof(NVX_3D_ALLOC_BUFFER)==32);
+    assert(sizeof(NVX_3D_ALLOC_BUFFER)==48);
     assert(sizeof(NVX_3D_FREE_BUFFER)==16);
     assert(sizeof(NVX_3D_UPLOAD_BUFFER)==32);
     assert(sizeof(NVX_3D_SUBMIT)==48);
     assert(sizeof(NVX_3D_WAIT_FENCE)==24);
     assert(sizeof(NVX_3D_READBACK)==32);
+    assert(sizeof(NVX_3D_COLOR_SURFACE_LAYOUT)==24);
+
+    assert(Nvx3dComputeColorSurfaceLayout(64,16,&surface));
+    assert(surface.PitchBytes==256&&surface.TileMode==0x10&&
+           surface.Bytes==65536&&surface.Reserved==0);
+    assert(Nvx3dComputeColorSurfaceLayout(632,453,&surface));
+    assert(surface.Width==632&&surface.Height==453&&
+           surface.PitchBytes==2560&&surface.TileMode==0x40&&
+           surface.Bytes==1310720);
+    assert(Nvx3dComputeColorSurfaceLayout(4096,4096,&surface));
+    assert(surface.PitchBytes==16384&&surface.TileMode==0x40&&
+           surface.Bytes==NVX_3D_MAX_BUFFER_BYTES);
+    assert(!Nvx3dComputeColorSurfaceLayout(0,453,&surface));
+    assert(!Nvx3dComputeColorSurfaceLayout(632,0,&surface));
+    assert(!Nvx3dComputeColorSurfaceLayout(4097,453,&surface));
+    assert(!Nvx3dComputeColorSurfaceLayout(4096,4097,&surface));
+    assert(!Nvx3dComputeColorSurfaceLayout(4096,4096,NULL));
 
     Nvx3dBuildCaps(&caps,0,0,0,0,0,0,0,0);
     assert(caps.Size==sizeof(caps)&&caps.Version==NVX_3D_ABI_VERSION);
@@ -44,6 +62,22 @@ int main(void)
 
     alloc.Size=sizeof(alloc);alloc.Version=NVX_3D_ABI_VERSION;
     alloc.Usage=3;alloc.Bytes=65536;
+    assert(Nvx3dValidateAlloc(&alloc));
+    assert(Nvx3dComputeColorSurfaceLayout(632,453,&surface));
+    alloc.Usage=NVX_3D_USAGE_COLOR_TARGET;alloc.Bytes=surface.Bytes;
+    alloc.Width=surface.Width;alloc.Height=surface.Height;
+    alloc.PitchBytes=surface.PitchBytes;alloc.TileMode=surface.TileMode;
+    assert(Nvx3dValidateAlloc(&alloc));
+    alloc.PitchBytes++;
+    assert(!Nvx3dValidateAlloc(&alloc));
+    alloc.PitchBytes=surface.PitchBytes;alloc.TileMode++;
+    assert(!Nvx3dValidateAlloc(&alloc));
+    alloc.TileMode=surface.TileMode;alloc.Bytes-=NVX_3D_SURFACE_ALIGNMENT;
+    assert(!Nvx3dValidateAlloc(&alloc));
+    alloc.Bytes=surface.Bytes;alloc.Usage|=NVX_3D_USAGE_DEPTH_TARGET;
+    assert(!Nvx3dValidateAlloc(&alloc));
+    alloc.Usage=3;alloc.Bytes=65536;alloc.Width=alloc.Height=0;
+    alloc.PitchBytes=alloc.TileMode=0;
     assert(Nvx3dValidateAlloc(&alloc));
     alloc.Usage=7;alloc.Bytes=NVX_3D_DEPTH_TARGET_TOTAL_BYTES;
     assert(Nvx3dValidateAlloc(&alloc));
@@ -166,6 +200,14 @@ int main(void)
     submit.Width=64;submit.Reserved[0]=1;
     assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
     submit.Reserved[0]=0;
+    submit.Operation=NVX_3D_SUBMIT_CLEAR_COLOR_TARGET;
+    submit.Width=632;submit.Height=453;submit.Color=0xff204080U;
+    assert(Nvx3dComputeColorSurfaceLayout(632,453,&surface));
+    assert(Nvx3dValidateSubmit(&submit,sizeof(submit),surface.Bytes));
+    submit.Reserved[0]=1;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),surface.Bytes));
+    submit.Reserved[0]=0;submit.Width=4097;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),surface.Bytes));
 
     wait.Size=sizeof(wait);wait.Version=NVX_3D_ABI_VERSION;
     wait.FenceValue=1;wait.TimeoutMs=30000;

@@ -304,6 +304,10 @@ typedef struct _NVX_3D_USER_BUFFER_ENTRY {
     ULONG64 DepthGpuVa;
     ULONG Bytes;
     ULONG Usage;
+    ULONG Width;
+    ULONG Height;
+    ULONG PitchBytes;
+    ULONG TileMode;
     ULONG Busy;
 } NVX_3D_USER_BUFFER_ENTRY;
 typedef NVX_3D_USER_BUFFER_ENTRY *PNVX_3D_USER_BUFFER_ENTRY;
@@ -490,6 +494,9 @@ BOOLEAN NvxGspSubmitFill(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG
 BOOLEAN NvxGspSubmitUserClear(PVOID HwDeviceExtension,ULONG64 dstVa,
                               ULONG color,ULONG64 fenceValue,
                               ULONG *matchingPixels);
+BOOLEAN NvxGspSubmitUserColorTargetClear(PVOID HwDeviceExtension,
+    ULONG64 dstVa,ULONG width,ULONG height,ULONG tileMode,ULONG color,
+    ULONG64 fenceValue,ULONG *matchingSamples);
 BOOLEAN NvxGspSubmitUserTriangle(PVOID HwDeviceExtension,ULONG64 dstVa,
                                  ULONG64 fenceValue,ULONG *greenPixels,
                                  ULONG *whitePixels);

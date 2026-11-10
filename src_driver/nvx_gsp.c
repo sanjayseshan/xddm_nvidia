@@ -41,15 +41,24 @@
 #define NVX_ENABLE_GR_UNPRIVILEGED_CONTEXT_PROBE 0
 #endif
 
-/* Convert a pixel coordinate in a one-GOB-height block-linear ARGB surface to
-   its byte offset. The 64x16 probe surface uses four GOBs per row. */
-static ULONG NvxGspBlockLinearPixelOffset(ULONG x,ULONG y,ULONG widthPixels)
+/* Convert a pixel coordinate in a C797 block-linear ARGB target to its byte
+   offset. TileMode carries the vertical GOB block height in bits 6:4. */
+static ULONG NvxGspBlockLinearPixelOffsetEx(ULONG x,ULONG y,
+                                             ULONG widthPixels,
+                                             ULONG tileMode)
 {
-    ULONG lx=x&15U,ly=y&7U;
+    ULONG lx=x&15U,ly=y&7U,blockHeight=1U<<((tileMode>>4)&7U);
+    ULONG gobY=y/8U,gobsPerRow=(widthPixels+15U)/16U;
     ULONG k=(lx&1U)|((lx&2U))|((ly&1U)<<2)|((lx&4U)<<1)|
         ((ly&2U)<<3)|((ly&4U)<<3)|((lx&8U)<<3);
-    ULONG gob=(y/8U)*((widthPixels+15U)/16U)+(x/16U);
+    ULONG gob=((gobY/blockHeight)*gobsPerRow+(x/16U))*blockHeight+
+              (gobY%blockHeight);
     return gob*512U+k*4U;
+}
+
+static ULONG NvxGspBlockLinearPixelOffset(ULONG x,ULONG y,ULONG widthPixels)
+{
+    return NvxGspBlockLinearPixelOffsetEx(x,y,widthPixels,0);
 }
 
 static ULONG NvxGspReadBlockLinearPixel(const volatile UCHAR *bytes,
@@ -2175,7 +2184,8 @@ static VOID NvxGspAppendUserTriangle(PNVX_DEVICE_EXTENSION dev,PUCHAR scratch,
 static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
     ULONG64 depthVa,ULONG color,ULONG64 fenceValue,BOOLEAN drawTriangle,
     BOOLEAN preserveTarget,ULONG depthMode,ULONG depthFormat,ULONG64 vertexVa,
-    ULONG vertexCount,ULONG triangleColor,
+    ULONG vertexCount,ULONG triangleColor,ULONG targetWidth,
+    ULONG targetHeight,ULONG targetTileMode,
     ULONG *greenPixels,ULONG *whitePixels)
 {
     PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
@@ -2192,6 +2202,9 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
        dev->GspMmuFaultQueued||
        (drawTriangle&&(vertexCount<3U||vertexCount>NVX_3D_MAX_BATCH_VERTICES||
         vertexCount%3U))||
+       !targetWidth||!targetHeight||targetWidth>NVX_3D_MAX_SURFACE_DIMENSION||
+       targetHeight>NVX_3D_MAX_SURFACE_DIMENSION||
+       (targetTileMode&~0x70U)||
        depthMode>5U||depthFormat>NVX_3D_ZT_FORMAT_ZF32||
        (depthMode&&((depthVa&0xffffULL)||depthVa<dev->GspVramGpuVa||
         depthVa>=dev->GspVramGpuVa+dev->GspVramMapBytes))||
@@ -2332,10 +2345,11 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
     NVX_GR_INCR(NVC797_SET_CT_SELECT,1);push[n++]=1;
     NVX_GR_INCR(NVC797_SET_COLOR_TARGET_A(0),6);
     push[n++]=(ULONG)(dstVa>>32);push[n++]=(ULONG)dstVa;
-    push[n++]=64;push[n++]=16;
-    push[n++]=NVC797_SET_COLOR_TARGET_FORMAT_V_A8R8G8B8;push[n++]=0;
+    push[n++]=targetWidth;push[n++]=targetHeight;
+    push[n++]=NVC797_SET_COLOR_TARGET_FORMAT_V_A8R8G8B8;
+    push[n++]=targetTileMode;
     NVX_GR_INCR(NVC797_SET_SURFACE_CLIP_HORIZONTAL,2);
-    push[n++]=(64U<<16);push[n++]=(16U<<16);
+    push[n++]=(targetWidth<<16);push[n++]=(targetHeight<<16);
     if(depthMode) {
         NVX_GR_INCR(NVC797_SET_ZT_A,2);
         push[n++]=(ULONG)(depthVa>>32);push[n++]=(ULONG)depthVa;
@@ -2395,7 +2409,7 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
         push[n++]=NvxUnorm8ToFloatBits(color&0xffU);
         push[n++]=NvxUnorm8ToFloatBits((color>>24)&0xffU);
         NVX_GR_INCR(NVC797_SET_CLEAR_RECT_HORIZONTAL,2);
-        push[n++]=(64U<<16);push[n++]=(16U<<16);
+        push[n++]=(targetWidth<<16);push[n++]=(targetHeight<<16);
         NVX_GR_INCR(NVC797_CLEAR_SURFACE,1);
         push[n++]=DRF_DEF(C797,_CLEAR_SURFACE,_R_ENABLE,_TRUE)|
                   DRF_DEF(C797,_CLEAR_SURFACE,_G_ENABLE,_TRUE)|
@@ -2570,31 +2584,73 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
             if(!drawTriangle&&whitePixels) {
                 volatile ULONG *readback=(volatile ULONG *)(scratch+0xe000);
                 ULONG matches=0,black=0,other=0,expected=color;
-                VideoPortZeroMemory((PVOID)readback,4096);
-                if(!NvxGspSubmitCopy2D(dev,dev->GspScratchGpuVa+0xe000,
-                                       dstVa,256,256,256,16)) {
-                    LogStr("NVX [3D-CLEAR]: CE target readback submission failed.\n");
-                    __sync_lock_release(&NvxGrUserSubmitBusy);return FALSE;
+                if(targetWidth==64U&&targetHeight==16U) {
+                    VideoPortZeroMemory((PVOID)readback,4096);
+                    if(!NvxGspSubmitCopy2D(dev,dev->GspScratchGpuVa+0xe000,
+                                           dstVa,256,256,256,16)) {
+                        LogStr("NVX [3D-CLEAR]: CE target readback submission failed.\n");
+                        __sync_lock_release(&NvxGrUserSubmitBusy);return FALSE;
+                    }
+                    for(i=0;i<1024;i++) {
+                        ULONG x=i%64U,y=i/64U;
+                        ULONG pixel=NvxGspReadBlockLinearPixel(
+                            (volatile UCHAR *)readback,x,y,64);
+                        if(pixel==expected) matches++;
+                        else if(pixel==0) black++;
+                        else other++;
+                    }
+                    *whitePixels=matches;
+                    LogStr("NVX [3D-CLEAR]: expected=");LogHex(expected);
+                    LogStr(" matching_pixels=");LogHex(matches);
+                    LogStr(" black=");LogHex(black);LogStr(" other=");LogHex(other);
+                    LogStr(" samples=");
+                    LogHex(NvxGspReadBlockLinearPixel(
+                        (volatile UCHAR *)readback,0,0,64));
+                    LogStr(",");LogHex(NvxGspReadBlockLinearPixel(
+                        (volatile UCHAR *)readback,7,7,64));
+                    LogStr(",");LogHex(NvxGspReadBlockLinearPixel(
+                        (volatile UCHAR *)readback,8,0,64));
+                    LogStr(",");LogHex(NvxGspReadBlockLinearPixel(
+                        (volatile UCHAR *)readback,0,8,64));
+                    LogStr(",");LogHex(NvxGspReadBlockLinearPixel(
+                        (volatile UCHAR *)readback,63,15,64));
+                    LogStr("\n");
+                } else {
+                    static const ULONG sampleXY[5][2]={{0,0},{1,0},{0,1},
+                        {0xffffffffU,0xffffffffU},{0xfffffffeU,0xfffffffeU}};
+                    for(i=0;i<5;i++) {
+                        ULONG x=sampleXY[i][0],y=sampleXY[i][1];
+                        ULONG offset,pixel;
+                        if(i>=3) {
+                            x=targetWidth>(i==3?1U:2U)?
+                                targetWidth-(i==3?1U:2U):0;
+                            y=targetHeight>(i==3?1U:2U)?
+                                targetHeight-(i==3?1U:2U):0;
+                        }
+                        offset=NvxGspBlockLinearPixelOffsetEx(
+                            x,y,targetWidth,targetTileMode);
+                        VideoPortZeroMemory((PVOID)readback,4);
+                        if(!NvxGspSubmitCopy2D(dev,
+                                dev->GspScratchGpuVa+0xe000,
+                                dstVa+offset,4,4,4,1)) {
+                            LogStr("NVX [3D-SURFACE]: sample readback failed.\n");
+                            __sync_lock_release(&NvxGrUserSubmitBusy);return FALSE;
+                        }
+                        pixel=readback[0];
+                        if(pixel!=expected) {
+                            LogStr("NVX [3D-SURFACE]: clear sample mismatch x=");
+                            LogHex(x);LogStr(" y=");LogHex(y);
+                            LogStr(" expected=");LogHex(expected);
+                            LogStr(" actual=");LogHex(pixel);LogStr("\n");
+                            __sync_lock_release(&NvxGrUserSubmitBusy);return FALSE;
+                        }
+                        matches++;
+                    }
+                    *whitePixels=matches;
+                    LogStr("NVX [3D-SURFACE]: C797 block-linear clear verified at five corners/edge samples; width=");
+                    LogHex(targetWidth);LogStr(" height=");LogHex(targetHeight);
+                    LogStr(" tileMode=");LogHex(targetTileMode);LogStr("\n");
                 }
-                for(i=0;i<1024;i++) {
-                    ULONG x=i%64U,y=i/64U;
-                    ULONG pixel=NvxGspReadBlockLinearPixel((volatile UCHAR *)readback,
-                                                            x,y,64);
-                    if(pixel==expected) matches++;
-                    else if(pixel==0) black++;
-                    else other++;
-                }
-                *whitePixels=matches;
-                LogStr("NVX [3D-CLEAR]: expected=");LogHex(expected);
-                LogStr(" matching_pixels=");LogHex(matches);
-                LogStr(" black=");LogHex(black);LogStr(" other=");LogHex(other);
-                LogStr(" samples=");
-                LogHex(NvxGspReadBlockLinearPixel((volatile UCHAR *)readback,0,0,64));
-                LogStr(",");LogHex(NvxGspReadBlockLinearPixel((volatile UCHAR *)readback,7,7,64));
-                LogStr(",");LogHex(NvxGspReadBlockLinearPixel((volatile UCHAR *)readback,8,0,64));
-                LogStr(",");LogHex(NvxGspReadBlockLinearPixel((volatile UCHAR *)readback,0,8,64));
-                LogStr(",");LogHex(NvxGspReadBlockLinearPixel((volatile UCHAR *)readback,63,15,64));
-                LogStr("\n");
             }
             __sync_lock_release(&NvxGrUserSubmitBusy);return TRUE;
         }
@@ -2622,7 +2678,16 @@ BOOLEAN NvxGspSubmitUserClear(PVOID HwDeviceExtension,ULONG64 dstVa,
 {
     return NvxGspSubmitUserOperation(HwDeviceExtension,dstVa,0,color,
                                      fenceValue,FALSE,FALSE,0,NVX_3D_ZT_FORMAT_Z24S8,
-                                     0,0,0,NULL,matchingPixels);
+                                     0,0,0,64U,16U,0,NULL,matchingPixels);
+}
+
+BOOLEAN NvxGspSubmitUserColorTargetClear(PVOID HwDeviceExtension,
+    ULONG64 dstVa,ULONG width,ULONG height,ULONG tileMode,ULONG color,
+    ULONG64 fenceValue,ULONG *matchingSamples)
+{
+    return NvxGspSubmitUserOperation(HwDeviceExtension,dstVa,0,color,
+        fenceValue,FALSE,FALSE,0,NVX_3D_ZT_FORMAT_Z24S8,
+        0,0,0,width,height,tileMode,NULL,matchingSamples);
 }
 
 BOOLEAN NvxGspSubmitUserTriangle(PVOID HwDeviceExtension,ULONG64 dstVa,
@@ -2631,7 +2696,8 @@ BOOLEAN NvxGspSubmitUserTriangle(PVOID HwDeviceExtension,ULONG64 dstVa,
 {
     return NvxGspSubmitUserOperation(HwDeviceExtension,dstVa,0,0,fenceValue,
                                      TRUE,FALSE,0,NVX_3D_ZT_FORMAT_Z24S8,
-                                     0,3U,0xff00ff00U,greenPixels,whitePixels);
+                                     0,3U,0xff00ff00U,64U,16U,0,
+                                     greenPixels,whitePixels);
 }
 
 BOOLEAN NvxGspSubmitUserTriangleBuffer(PVOID HwDeviceExtension,ULONG64 dstVa,
@@ -2646,7 +2712,7 @@ BOOLEAN NvxGspSubmitUserTriangleBuffer(PVOID HwDeviceExtension,ULONG64 dstVa,
     return NvxGspSubmitUserOperation(HwDeviceExtension,dstVa,depthVa,0,fenceValue,
                                      TRUE,preserveTarget,depthTest?5:0,depthFormat,
                                      vertexVa,depthTest?3U:vertexCount,color,
-                                     drawPixels,whitePixels);
+                                     64U,16U,0,drawPixels,whitePixels);
 }
 
 BOOLEAN NvxGspSubmitUserDepthClear(PVOID HwDeviceExtension,ULONG64 depthVa,
@@ -2717,7 +2783,7 @@ BOOLEAN NvxGspRunZf32Diagnostic(PVOID HwDeviceExtension,ULONG64 dstVa,
     }
     if(!NvxGspSubmitUserOperation(HwDeviceExtension,dstVa,depthVa,0,
         fenceValue,TRUE,TRUE,5,NVX_3D_ZT_FORMAT_ZF32,vertexVa,
-        3U,0xff00ff00U,&drawn,&white)) return FALSE;
+        3U,0xff00ff00U,64U,16U,0,&drawn,&white)) return FALSE;
     {
         PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
         scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET;

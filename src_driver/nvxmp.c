@@ -1483,6 +1483,10 @@ static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
         engine->GspVramGpuVa+candidate+NVX_3D_DEPTH_TARGET_OFFSET:0;
     engine->Nvx3dBuffers[slot].Bytes=request->Bytes;
     engine->Nvx3dBuffers[slot].Usage=request->Usage;
+    engine->Nvx3dBuffers[slot].Width=request->Width;
+    engine->Nvx3dBuffers[slot].Height=request->Height;
+    engine->Nvx3dBuffers[slot].PitchBytes=request->PitchBytes;
+    engine->Nvx3dBuffers[slot].TileMode=request->TileMode;
     engine->Nvx3dBuffers[slot].Busy=TRUE;
     request->BufferId=engine->Nvx3dBuffers[slot].Id;
     request->GpuVa=engine->Nvx3dBuffers[slot].GpuVa;
@@ -2308,6 +2312,12 @@ BOOLEAN NTAPI HwVidStartIO(
            Nvx3dRequiredSubmitBytes(request.Operation)) {
             Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
         }
+        if(request.Operation==NVX_3D_SUBMIT_CLEAR_COLOR_TARGET &&
+           (!(entry->Usage&NVX_3D_USAGE_COLOR_TARGET) ||
+            request.Width!=entry->Width || request.Height!=entry->Height ||
+            entry->TileMode>0x70U || !entry->PitchBytes)) {
+            Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
+        }
         entry->Busy=TRUE;saved=*entry;
         if(request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE||
            request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_PRESERVE||
@@ -2379,6 +2389,19 @@ BOOLEAN NTAPI HwVidStartIO(
             } else {
                 request.Reserved[0]=greenPixels;
                 request.Reserved[1]=whitePixels;
+                request.FenceValue=fenceValue;
+                VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,sizeof(request));
+                statusBlock->Information=sizeof(request);status=NO_ERROR;
+                engine->GspGraphicsUserSubmitReady=TRUE;
+            }
+        } else if(request.Operation==NVX_3D_SUBMIT_CLEAR_COLOR_TARGET) {
+            ULONG matchingSamples=0;
+            if(!NvxGspSubmitUserColorTargetClear(engine,saved.GpuVa,
+                    saved.Width,saved.Height,saved.TileMode,request.Color,
+                    fenceValue,&matchingSamples)) {
+                status=ERROR_DEVICE_NOT_READY;
+            } else {
+                request.Reserved[0]=matchingSamples;
                 request.FenceValue=fenceValue;
                 VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,sizeof(request));
                 statusBlock->Information=sizeof(request);status=NO_ERROR;
