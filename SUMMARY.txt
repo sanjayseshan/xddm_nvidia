@@ -1268,6 +1268,14 @@ remains FAIL. The viewport experiment restores color coverage and does not
 resolve clip-Z/depth storage. Next isolate the ZF32 output/readback path, then
 implement general shader/state translation and presentation.
 
+Raw Z follow-up (November 10, 2026): `test_logs/v3.0.0.1-20261110-105650.log`
+shows all 1,024 raw words copied from the ZF32 target are zero after each
+depth draw; none match 1.0, 0.25, or 0.75. `nvdisasm` confirms the generated
+vertex shader variant decodes as `ALD.64 R12, a[0x88]` followed by
+`AST.64 a[0x78], R12`, with the SPH position-Z output declared. Despite this,
+the hardware target contains only zeros. The immediate blocker is mapping the
+vertex Z/W input and clip-position output (or the C797 zeta state) correctly.
+
 Depth raw-word follow-up (November 10, 2026): the rerun
 `test_logs/v3.0.0.1-20261110-105650.log` records exactly 1,024 raw zero words
 after each depth draw, with no 1.0, 0.25, or 0.75 words. This rules out the
