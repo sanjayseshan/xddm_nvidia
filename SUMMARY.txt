@@ -1267,3 +1267,12 @@ diagnostic reads zero for depth across the covered area. `[OPENGL_RESULT]`
 remains FAIL. The viewport experiment restores color coverage and does not
 resolve clip-Z/depth storage. Next isolate the ZF32 output/readback path, then
 implement general shader/state translation and presentation.
+
+Depth raw-word follow-up (November 10, 2026): the rerun
+`test_logs/v3.0.0.1-20261110-105650.log` records exactly 1,024 raw zero words
+after each depth draw, with no 1.0, 0.25, or 0.75 words. This rules out the
+color-GOB pixel decoder as the sole explanation. `nvdisasm` confirms the
+project-owned shader variant contains `ALD.64 R12, a[0x88]` and
+`AST.64 a[0x78], R12`, and the SPH position-Z bit is set; hardware still
+produces zeros. Investigate why that Z/W output does not reach ZF32 before
+continuing to general shader/state translation.

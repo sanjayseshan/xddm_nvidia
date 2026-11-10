@@ -1279,3 +1279,13 @@ intermediate samples stay red and ZF32 readback remains zero, so
 `[MESA_GPU_DEPTH_RESULT]` and `[OPENGL_RESULT]` fail. Continue with ZF32
 clip-Z/write/readback diagnosis before broadening shader/state support or
 claiming full cube acceleration.
+
+Depth raw-word follow-up (November 10, 2026):
+`test_logs/v3.0.0.1-20261110-105650.log` records exactly 1,024 raw zero words
+after each depth draw, with no 1.0, 0.25, or 0.75 words. This rules out the
+color-GOB pixel decoder as the sole explanation. `nvdisasm` decodes the
+project-owned depth VS additions as `ALD.64 R12, a[0x88]` and
+`AST.64 a[0x78], R12`; the SPH position-Z declaration is also set. Despite
+that, hardware writes zero depth. Next investigate vertex attribute/output
+mapping or C797 zeta setup to explain the missing Z values before broadening
+shader/state support.

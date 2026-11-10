@@ -2410,6 +2410,7 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
                 volatile ULONG *colorReadback=(volatile ULONG *)(scratch+0xe000);
                 volatile ULONG *depthReadback=(volatile ULONG *)(scratch+0x6000);
                 ULONG matching=0,white=0,depthWrite=0;
+                ULONG rawOne=0,rawZero=0,rawQuarter=0,rawThreeQuarter=0;
                 ULONG depthMin=0xffffffffU,depthMax=0,firstDepth=0;
                 if(NvxGspSubmitCopy2D(dev,dev->GspScratchGpuVa+0xe000,
                                       dstVa,256,256,256,16)) {
@@ -2423,6 +2424,13 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
                 }
                 if(NvxGspSubmitCopy2D(dev,dev->GspScratchGpuVa+0x6000,
                                       depthVa,256,256,256,16)) {
+                    for(i=0;i<NVX_3D_READBACK_PIXELS;i++) {
+                        ULONG raw=depthReadback[i];
+                        if(raw==0x3f800000U) rawOne++;
+                        else if(raw==0) rawZero++;
+                        else if(raw==0x3e800000U) rawQuarter++;
+                        else if(raw==0x3f400000U) rawThreeQuarter++;
+                    }
                     for(i=0;i<NVX_3D_READBACK_PIXELS;i++) {
                         ULONG value=NvxGspReadDepthBlockLinearPixel(
                             (volatile UCHAR *)depthReadback,i%64U,i/64U,64);
@@ -2438,6 +2446,10 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
                 LogHex(((volatile ULONG *)(scratch+0xb800))[2]);LogStr(",");
                 LogHex(((volatile ULONG *)(scratch+0xb800))[10]);LogStr(",");
                 LogHex(((volatile ULONG *)(scratch+0xb800))[18]);
+                LogStr(" raw_words one=");LogHex(rawOne);
+                LogStr(" zero=");LogHex(rawZero);
+                LogStr(" quarter=");LogHex(rawQuarter);
+                LogStr(" three_quarter=");LogHex(rawThreeQuarter);
                 LogStr(" depth_first=");LogHex(firstDepth);
                 LogStr(" depth_min=");LogHex(depthMin);
                 LogStr(" depth_max=");LogHex(depthMax);LogStr("\n");

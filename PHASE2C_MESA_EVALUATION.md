@@ -413,3 +413,12 @@ red, ZF32 values read as zero over covered pixels, and `[OPENGL_RESULT]` is
 FAIL. Firmware assertions remain at the startup count of one and the log has
 no MMU fault. Next isolate clip-Z output and ZF32 write/readback, then continue
 general Mesa shader/state translation and GPU presentation.
+
+Depth raw-word follow-up: `test_logs/v3.0.0.1-20261110-105650.log` shows all
+1,024 raw words are zero after each depth draw, with no 1.0, 0.25, or 0.75
+values. `nvdisasm` decodes the project-owned Z/W shader addition as
+`ALD.64 R12, a[0x88]` followed by `AST.64 a[0x78], R12`, and the SPH header
+declares position Z. The hardware still produces only zero depth, so the
+remaining issue is likely in the vertex attribute/output mapping or C797 zeta
+configuration rather than the readback pixel swizzle. Verify that mapping on
+hardware before implementing broader depth-tested rendering.
