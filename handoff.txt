@@ -24,49 +24,50 @@ The Mesa submodule is clean. Current project edits are uncommitted in:
 
 ## Verified work
 
-Latest full real-hardware run: `test_logs/v3.0.0.1-20261110-113552.log`.
+Latest full real-hardware run: `test_logs/v3.0.0.1-20261110-114642.log`.
 It rebuilt the XP x64 Mesa ICD, updated the XP image, audited packaged PE
 imports against the guest's XP system DLLs, and booted the XP x64 guest with
-RTX 3070 passthrough.
+RTX 3070 passthrough. The guest completed and shut down cleanly.
 
 - The Antigravity test executable initialized and ran its OpenGL checks. It
   rendered 100 frames, but identified the renderer as `Mesa / softpipe`; its
-  normal WGL path is not using GPU rasterization. The reported initialization
-  warning was not recorded in the serial log. Its error code still needs to be
-  captured if it recurs.
+  normal WGL path is not using GPU rasterization. It ended with `Failures=2`
+  and `software3d=1`. The previously reported initialization warning was not
+  recorded in this run's serial log; capture its text/code if it recurs.
 - The bounded Mesa color probe passed on GPU:
   `MESA_GPU_PIXEL_RESULT PASS green_pixels=6384 red_pixels=528 background_pixels=2304`.
 - The bounded cube probe passed with 46 colored pixels and one new GPU batch:
   `MESA_GPU_CUBE_RESULT PASS colored_pixels=46 new_gpu_batches=1`.
 - Fenced GPU output copied back into the Mesa tile:
   `MESA_TO_GPU_RESULT PASS`.
+- Mesa depth draws still fail. The latest shader variant completed its
+  submissions and fences, but every tested draw reported zero color pixels,
+  zero changed depth pixels, and a clear-value center depth (`1.0`). No
+  successful depth output or ordering is established.
 - Existing kernel-owned C797 triangle draw, semaphore/fence, and readback pass.
   GPU 2D fills/copies and the XP display path also pass.
 - XP imports/subsystem checks pass for the package. The previously reported
   `GetTickCount64` and `qsort_s` imports are absent from the current Mesa ICD.
 - Firmware assertion count stayed at the startup value of one; no MMU fault was
-  recorded in the latest run.
+  recorded in the latest run. Display verification reported both heads active
+  and locked.
 - Host checks pass: `make -C src_driver check`, shader audit, and `git diff
   --check`. The test rebuilds the Mesa submodule without modifying its worktree.
 
 ## Current blocker: real depth output
 
-The Mesa bridge's bounded depth test still fails. Earlier variants that sourced
-clip Z from the generic attribute did not change depth readback: ZF32 stayed at
-zero and the first draw won every depth comparison.
+The Mesa bridge's bounded depth test still fails. The current diagnostic declares
+clip-space Z in the SPH, stores a candidate generic input to clip Z, and stores
+the paired value to clip W. The latest hardware run nevertheless produced no
+color fragments or depth writes for any tested depth. Its instruction dump
+prints zero words because it reads the wrong scratch offset; correct that log
+pointer and inspect the actual shader disassembly/register flow before another
+hardware run. Do not treat this variant as a working depth path.
 
-The current diagnostic changes clip-Z output to use R11, which the vertex shader
-loads from input position Y. In the latest hardware run this clipped all
-fragments and left the depth target at its clear value 1.0. This demonstrates
-that the added `AST a[0x78]` clip-Z output affects rasterization, but the chosen
-source values are outside the active clip range and do not produce a successful
-depth-tested draw. The experiment is diagnostic only and remains uncommitted.
-
-Next, feed a valid, controlled [0,1] depth value through the proven clip-Z
-output path, verify actual non-clear ZF32 values and front/back depth ordering,
-then connect Mesa's depth input to that path. Keep the shader input and clip
-ranges within the existing bounded ABI. The last run's relevant entries are
-near lines 2160–2240 of `test_logs/v3.0.0.1-20261110-113552.log`.
+Next, determine why the valid generic [0,1] depth input does not yield a
+rasterized triangle while the color-only shader does. Then prove non-clear
+ZF32 values and front/back ordering before wiring Mesa depth through the bridge.
+Relevant depth output is near lines 2160–2240 in the latest run log.
 
 ## Remaining Phase 2C work
 
@@ -101,7 +102,8 @@ near lines 2160–2240 of `test_logs/v3.0.0.1-20261110-113552.log`.
   VFIO run, and result summary.
 - `test/audit_xp_imports.py` — audits package imports and PE subsystem targets.
 - `PHASE2C_MESA_EVALUATION.md` — Mesa/NVK feasibility and architecture notes.
-- Latest hardware evidence: `test_logs/v3.0.0.1-20261110-113552.log`.
+- Previous hardware evidence: `test_logs/v3.0.0.1-20261110-113552.log`.
+- Latest hardware evidence: `test_logs/v3.0.0.1-20261110-114642.log`.
 
 Full hardware test command:
 
