@@ -88,6 +88,14 @@ the later ABI test. This is the best current baseline.
   driver depends on its Linux DRM/Nouveau winsys. The missing integration is a
   Windows Gallium winsys/resource/context path backed by the miniport ABI,
   followed by NVC0 driver wiring and resource/fence/presentation support.
+- A MinGW Meson configuration with `-Dgallium-drivers=softpipe,nouveau`
+  succeeds, and the 27-object `libnouveau_codegen.a` (including NVC0 shader
+  generation) cross-compiles. The full Nouveau Gallium library stops in
+  Linux-only device/winsys sources (`util/os_mman.h`, `xf86drm.h`). An external
+  compile-only `sys/ioccom.h` shim is in
+  `mesa_patches/nouveau-xp-include/`; it does not implement DRM or hardware
+  access. Reusing the compiler while replacing Nouveau's DRM device, buffer,
+  pushbuffer, and fence layer is the next integration route.
 - Mesa submodule must remain clean; customizations belong in `mesa_patches/`.
 
 ## Next work to complete Phase 2C

@@ -35,8 +35,12 @@ Ampere shader compiler, vertex formats, and block-linear surface calculations.
 The pinned upstream WGL target does not connect that driver: it creates a GDI
 software winsys and exposes softpipe, with optional D3D12 and Zink paths. The
 Nouveau hardware driver expects Linux DRM/Nouveau device, memory, channel, and
-fence interfaces. Enabling `gallium-drivers=nouveau` alone cannot provide an XP
-WGL hardware renderer.
+fence interfaces. An XP MinGW Meson configuration with
+`-Dgallium-drivers=softpipe,nouveau` succeeds, and its NVC0/Nouveau shader
+compiler static library cross-compiles (27 C++ objects). The full Nouveau
+Gallium library does not: its device/winsys sources require POSIX memory
+mapping and `xf86drm.h`. Enabling `gallium-drivers=nouveau` alone cannot
+provide an XP WGL hardware renderer.
 
 The missing layer is an XP Windows Gallium winsys/resource implementation that
 maps Gallium resources and contexts onto this project's miniport ABI. It must
@@ -47,6 +51,12 @@ diagnostic operations on a fixed 64x16 target, so those interfaces also need to
 grow with validated pitch, block height, format, and target bounds. The Mesa
 submodule must remain pristine; project-specific integration belongs in
 `mesa_patches/`.
+
+The compiler-only XP cross-build used an external `sys/ioccom.h` shim at
+`mesa_patches/nouveau-xp-include/`; it only supplies DRM UAPI ioctl encodings
+needed to compile headers and does not implement DRM calls or a GPU winsys.
+Do not add the Nouveau DRM screens or advertise the driver as usable on XP on
+the basis of this compile result.
 
 ## Mesa pin and XP build
 
