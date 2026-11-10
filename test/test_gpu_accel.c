@@ -1234,7 +1234,9 @@ static void TestNvx3dSubmission(HDC hdc)
     NVX_3D_ALLOC_BUFFER vertexAlloc={0},vertexAllocated={0};
     struct { NVX_3D_UPLOAD_BUFFER header; UCHAR data[256]; } upload;
     struct { NVX_3D_UPLOAD_BUFFER header; float data[18]; } vertexUpload;
+    struct { NVX_3D_UPLOAD_BUFFER header; float data[36]; } batchUpload;
     NVX_3D_SUBMIT submit={0},submitted={0};
+    NVX_3D_READBACK readbackRequest={0};
     NVX_3D_WAIT_FENCE wait={0},waited={0};
     NVX_3D_FREE_BUFFER freeRequest={0};
     int ok=1,clearSubmitted=0,vertexReady=0;
@@ -1417,6 +1419,25 @@ static void TestNvx3dSubmission(HDC hdc)
             if(!ExtEscape(hdc,NVX_ESCAPE_3D_SUBMIT,sizeof(depthSubmit),
                     (LPCSTR)&depthSubmit,sizeof(depthSubmitted),
                     (LPSTR)&depthSubmitted)) { ok=0; }
+            {
+                struct { NVX_3D_UPLOAD_BUFFER header; float data[24]; } depthVertexUpload;
+                static const float depthTriangle[24]={
+                    0.125f,0.125f,0.5f,1.0f, 0.5f,1.0f,0.0f,1.0f,
+                    0.125f,0.875f,0.5f,1.0f, 0.5f,1.0f,0.0f,1.0f,
+                    0.875f,0.125f,0.5f,1.0f, 0.5f,1.0f,0.0f,1.0f
+                };
+                memset(&depthVertexUpload,0,sizeof(depthVertexUpload));
+                depthVertexUpload.header.Size=sizeof(depthVertexUpload.header);
+                depthVertexUpload.header.Version=NVX_3D_ABI_VERSION;
+                depthVertexUpload.header.BufferId=vertexAllocated.BufferId;
+                depthVertexUpload.header.Bytes=sizeof(depthVertexUpload.data);
+                memcpy(depthVertexUpload.data,depthTriangle,sizeof(depthTriangle));
+                if(!ExtEscape(hdc,NVX_ESCAPE_3D_UPLOAD,sizeof(depthVertexUpload),
+                              (LPCSTR)&depthVertexUpload,0,NULL)) {
+                    LogMsg("-> [FAIL] depth vertex buffer upload failed\n");
+                    ok=0;
+                }
+            }
             memset(&depthSubmit,0,sizeof(depthSubmit));
             memset(&depthSubmitted,0,sizeof(depthSubmitted));
             depthSubmit.Size=sizeof(depthSubmit);
@@ -1480,6 +1501,67 @@ static void TestNvx3dSubmission(HDC hdc)
                 ok=0;
             } else {
                 LogMsg("-> Miniport advertises verified client-triangle submission\n");
+            }
+        }
+    }
+    if(clearSubmitted&&vertexReady&&
+       (caps.Features&NVX_3D_FEATURE_CLIENT_TRIANGLE)) {
+        uint32_t pixels[NVX_3D_READBACK_PIXELS];
+        unsigned greenPixels=0;
+        static const float triangles[36]={
+            0.05f,0.05f,0.0f,0.0f,0.0f,1.0f,
+            0.45f,0.05f,0.0f,0.0f,0.0f,1.0f,
+            0.25f,0.45f,0.0f,0.0f,0.0f,1.0f,
+            0.55f,0.55f,0.0f,0.0f,0.0f,1.0f,
+            0.95f,0.55f,0.0f,0.0f,0.0f,1.0f,
+            0.75f,0.95f,0.0f,0.0f,0.0f,1.0f
+        };
+        memset(&batchUpload,0,sizeof(batchUpload));
+        batchUpload.header.Size=sizeof(batchUpload.header);
+        batchUpload.header.Version=NVX_3D_ABI_VERSION;
+        batchUpload.header.BufferId=vertexAllocated.BufferId;
+        batchUpload.header.Bytes=sizeof(batchUpload.data);
+        memcpy(batchUpload.data,triangles,sizeof(triangles));
+        memset(&submit,0,sizeof(submit));memset(&submitted,0,sizeof(submitted));
+        submit.Size=sizeof(submit);submit.Version=NVX_3D_ABI_VERSION;
+        submit.Operation=NVX_3D_SUBMIT_DRAW_TRIANGLES;
+        submit.Width=64;submit.Height=6;submit.BufferId=allocated.BufferId;
+        submit.Color=0xff00ff00U;
+        submit.Reserved[0]=(uint32_t)vertexAllocated.BufferId;
+        submit.Reserved[1]=(uint32_t)(vertexAllocated.BufferId>>32);
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_UPLOAD,sizeof(batchUpload),
+                      (LPCSTR)&batchUpload,0,NULL) ||
+           !ExtEscape(hdc,NVX_ESCAPE_3D_SUBMIT,sizeof(submit),(LPCSTR)&submit,
+                      sizeof(submitted),(LPSTR)&submitted)) {
+            LogMsg("-> [FAIL] two-triangle batched C797 submission failed\n");
+            ok=0;
+        } else {
+            memset(&wait,0,sizeof(wait));memset(&waited,0,sizeof(waited));
+            wait.Size=sizeof(wait);wait.Version=NVX_3D_ABI_VERSION;
+            wait.FenceValue=submitted.FenceValue;wait.TimeoutMs=10000;
+            if(!ExtEscape(hdc,NVX_ESCAPE_3D_WAIT,sizeof(wait),(LPCSTR)&wait,
+                          sizeof(waited),(LPSTR)&waited)) {
+                LogMsg("-> [FAIL] batched triangle fence wait failed\n");
+                ok=0;
+            } else {
+                readbackRequest.Size=sizeof(readbackRequest);
+                readbackRequest.Version=NVX_3D_ABI_VERSION;
+                readbackRequest.BufferId=allocated.BufferId;
+                readbackRequest.Width=64;readbackRequest.Height=16;
+                if(!ExtEscape(hdc,NVX_ESCAPE_3D_READBACK,
+                    sizeof(readbackRequest),(LPCSTR)&readbackRequest,
+                    sizeof(pixels),(LPSTR)pixels)) {
+                    LogMsg("-> [FAIL] batched triangle readback failed\n");
+                    ok=0;
+                } else {
+                    for(unsigned p=0;p<NVX_3D_READBACK_PIXELS;p++)
+                        if((pixels[p]&0x00ffffffU)==0x0000ff00U)
+                            greenPixels++;
+                    LogMsg("[NVX_3D_BATCH_RESULT] %s vertices=6 green_pixels=%u fence=%llu\n",
+                           greenPixels>=24?"PASS":"FAIL",greenPixels,
+                           (unsigned long long)submitted.FenceValue);
+                    if(greenPixels<24) ok=0;
+                }
             }
         }
     }

@@ -90,11 +90,14 @@ int main(void)
     submit.Color=0xffffffffU;
     assert(Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
     submit.Color=0x12345678U;
-    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
+    assert(Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
     submit.Color=0;
     assert(Nvx3dDispatch(NVX_3D_OP_SUBMIT,&submit,sizeof(submit),NULL,0,NULL,
         0,0,0,0,0,0)==NVX_3D_STATUS_SUCCESS);
     submit.Operation=NVX_3D_SUBMIT_TEST_TRIANGLE;
+    submit.Color=0x12345678U;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
+    submit.Color=0;
     assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),65535));
     assert(Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
     assert(Nvx3dDispatch(NVX_3D_OP_SUBMIT,&submit,sizeof(submit),NULL,0,NULL,
@@ -110,6 +113,14 @@ int main(void)
     assert(Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
     assert(Nvx3dDispatch(NVX_3D_OP_SUBMIT,&submit,sizeof(submit),NULL,0,NULL,
         0,0,0,0,0,0)==NVX_3D_STATUS_SUCCESS);
+    submit.Operation=NVX_3D_SUBMIT_DRAW_TRIANGLES;
+    submit.Height=36;
+    assert(Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
+    submit.Height=4;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
+    submit.Height=39;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),65536));
+    submit.Height=16;
     submit.Operation=NVX_3D_SUBMIT_CLEAR_DEPTH;
     submit.Color=0;submit.Reserved[0]=0;
     assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),

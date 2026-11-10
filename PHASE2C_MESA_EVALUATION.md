@@ -1,14 +1,23 @@
 # Phase 2C: Mesa and XP x64 ICD
 
-Status (November 10, 2026): Mesa is pinned and the XP x64 softpipe ICD builds
+Current status (November 10, 2026): Mesa is pinned and the XP x64 softpipe ICD builds
 with XP-era imports. System WGL creates a current context. An external bridge
 now intercepts bounded flat-color triangle/quad batches from Mesa's softpipe
 vbuf callback, submits kernel-built C797 draws into one target, waits for each
 fence, reads the target back, and places those pixels in the WGL framebuffer.
 The RTX 3070 hardware run verifies green, red, and clear-background pixels for
-two GL quads. The ICD still reports `softpipe`; clears, depth-tested draws, the
-normal cube, full-size window targets, and unsupported state remain software.
-This is a restricted hardware bridge, not a general Mesa hardware backend.
+two GL quads, a depth-tested probe, and a cube probe. ABI v4 now batches up to
+12 same-color triangles; the guest verified two triangles in one C797 draw.
+The ICD still reports `softpipe`; full-size window targets, shader/state
+translation, and ordinary application rendering remain incomplete. This is a
+restricted hardware bridge, not a general Mesa hardware backend.
+
+Latest hardware validation is
+`test_logs/v3.0.0.1-20261110-142434.log`: all bounded Mesa bridge probes and
+the miniport batch probe pass, with zero suite failures and no new firmware
+assertions or MMU faults. Antigravity's normal renderer remains software, so
+Phase 2C is not complete. Older chronology below records earlier bring-up
+failures; later entries and `handoff.txt` are authoritative for current state.
 
 Latest hardware result: `test_logs/v3.0.0.1-20261110-081227.log`. The bridge
 now uses the application HDC supplied at `DrvSetContext`, so its caps escape

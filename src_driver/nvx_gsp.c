@@ -118,6 +118,22 @@ static VOID NvxGspBuildProbeTexture(PULONG sampler, PULONG header, ULONG64 gpuVa
 
 #endif
 
+/* Convert one normalized 8-bit channel to its IEEE-754 single-precision bit
+ * pattern without relying on floating-point runtime helpers in the miniport. */
+static ULONG NvxUnorm8ToFloatBits(ULONG channel)
+{
+    int exponent=-1;
+    ULONG64 significand;
+    channel&=0xffU;
+    if(!channel) return 0;
+    if(channel==255U) return 0x3f800000U;
+    while((((ULONG64)channel)<<(-exponent))<255U) exponent--;
+    significand=(((ULONG64)channel)<<(23-exponent));
+    significand=(significand+127U)/255U;
+    return ((ULONG)(exponent+127)<<23)|
+           ((ULONG)significand-0x00800000U);
+}
+
 /* ABI checks deliberately target firmware 535, not the current OpenRM ABI. */
 _Static_assert(sizeof(GspFwWprMeta) == 256, "WPR ABI");
 _Static_assert(offsetof(GspFwWprMeta, verified) == 248, "WPR verified ABI");
@@ -1984,12 +2000,18 @@ static VOID NvxGspAppendUserTriangle(PNVX_DEVICE_EXTENSION dev,PUCHAR scratch,
                                     PULONG push,PULONG count,
                                     BOOLEAN uploadedVertices,
                                     BOOLEAN depthShader,
-                                    BOOLEAN viewportTransform)
+                                    BOOLEAN viewportTransform,
+                                    ULONG vertexCount)
 {
     static const ULONG vertices[18]={
         0,0,0,0,0,0x3f800000U,
         0,0x3f800000U,0,0x3f800000U,0,0x3f800000U,
         0x3f800000U,0,0x3f800000U,0,0,0x3f800000U
+    };
+    static const ULONG depthVertices[24]={
+        0,0,0x3f000000U,0x3f800000U, 0x3f000000U,0x3f800000U,0,0x3f800000U,
+        0,0x3f800000U,0x3f000000U,0x3f800000U, 0x3f000000U,0x3f800000U,0,0x3f800000U,
+        0x3f800000U,0,0x3f000000U,0x3f800000U, 0x3f000000U,0x3f800000U,0,0x3f800000U
     };
     static const ULONG uniforms[8]={64,16,1,1,0,0,0,0};
     /* Keep depth VS code at a distinct GPU VA from the color VS. Scratch
@@ -1997,12 +2019,12 @@ static VOID NvxGspAppendUserTriangle(PNVX_DEVICE_EXTENSION dev,PUCHAR scratch,
     ULONG64 shaderVa=dev->GspScratchGpuVa+(depthShader?0x1000:0x8000);
     ULONG64 resourceVa=dev->GspScratchGpuVa+0x8000;
     ULONG64 cbVa=resourceVa+0x600;
-    ULONG64 vertexVa=resourceVa+0x800;
+    ULONG64 vertexVa=dev->GspScratchGpuVa+0xa000;
     ULONG64 textureVa=resourceVa+0x900;
     ULONG64 bindlessVa=resourceVa+0xa00;
     ULONG64 textureDataVa=dev->GspScratchGpuVa+0x7000;
     PULONG cb=(PULONG)(scratch+0x8600);
-    PULONG vertex=(PULONG)(scratch+0x8800);
+    PULONG vertex=(PULONG)(scratch+0xa000);
     PULONG texture=(PULONG)(scratch+0x8900);
     PULONG bindless=(PULONG)(scratch+0x8a00);
     ULONG n=*count,i;
@@ -2013,28 +2035,38 @@ static VOID NvxGspAppendUserTriangle(PNVX_DEVICE_EXTENSION dev,PUCHAR scratch,
     VideoPortMoveMemory(cb,(PVOID)uniforms,sizeof(uniforms));
     if(uploadedVertices)
         VideoPortMoveMemory(vertex,scratch+0xb800,
-                            depthShader?96U:sizeof(vertices));
+                            depthShader?96U:vertexCount*24U);
+    else if(depthShader)
+        VideoPortMoveMemory(vertex,(PVOID)depthVertices,sizeof(depthVertices));
     else
         VideoPortMoveMemory(vertex,(PVOID)vertices,sizeof(vertices));
     if(depthShader) {
-        /* SPH output mask bits 428..431 declare clip-space XYZW. The vendor
-           shader header declares X/Y/W (0xb000); add POSITION_Z. */
+        /* Preserve the required POSITION_W declaration. Add POSITION_Z to
+           the baseline XYW mask, yielding the valid XYZW mask 0xf000. */
         ((PULONG)(scratch+0x1000))[13]|=(1U<<14);
         LogStr("NVX [3D-DEPTH]: shader_va=");LogHex(shaderVa);
         LogStr(" SPH_OMAP_POSITION_XYZW=");
-        LogHex(((PULONG)(scratch+0x1000))[13]);LogStr("\n");
-        /* Attribute 0 is position at a[0x80]; a[0x100] is generic attribute
-           8 (texture coordinates). Fetch position Z/W from a[0x88]. */
-        PULONG load=(PULONG)(scratch+0x10d0);
-        PULONG store=(PULONG)(scratch+0x1130);
-        load[0]=0xff0c7321U;load[1]=0x000088ffU;
-        load[2]=0x00000400U;load[3]=0x000e2200U;
-        store[0]=0xff007322U;store[1]=0x0000780cU;
-        store[2]=0x000004ffU;store[3]=0x001fee00U;
-        LogStr("NVX [3D-DEPTH]: shader ZW load=");LogHex(load[0]);LogHex(load[1]);
-        LogStr(" store=");LogHex(store[0]);LogHex(store[1]);
-        LogStr(" vertex ZW=");LogHex(((PULONG)vertex)[2]);
-        LogHex(((PULONG)vertex)[3]);LogStr("\n");
+        LogHex(((PULONG)(scratch+0x1000))[13]);
+        LogStr(" SPH_IMAP_ATTR0=");
+        LogHex(((PULONG)(scratch+0x1000))[6]);LogStr("\n");
+        /* The baseline shader already loads generic attribute 8.x/y into
+           R8/R9 at +0x00. Emit that aligned pair to clip Z/W immediately
+           before EXIT, keeping the original varying and position stores. */
+        VideoPortMoveMemory(scratch+0x1220,scratch+0x1210,16);
+        VideoPortMoveMemory(scratch+0x1210,scratch+0x1200,16);
+        {
+            PULONG storeZW=(PULONG)(scratch+0x1200);
+            storeZW[0]=0xff007322U;storeZW[1]=0x00007808U;
+            storeZW[2]=0x000004ffU;storeZW[3]=0x001fee00U;
+        }
+        LogStr("NVX [3D-DEPTH]: shader generic ALD64=");
+        LogHex(((PULONG)(scratch+0x1000))[0]);
+        LogHex(((PULONG)(scratch+0x1000))[1]);
+        LogStr(" appended AST64 clip ZW from R8/R9");
+        LogStr(" vertex position ZW=");LogHex(((PULONG)vertex)[2]);
+        LogHex(((PULONG)vertex)[3]);LogStr(" generic ZW=");
+        LogHex(((PULONG)vertex)[4]);LogHex(((PULONG)vertex)[5]);
+        LogStr(" clipZ_source=attribute8.x(R8)\n");
     }
     bindless[0]=0;bindless[1]=255;bindless[2]=255;
     bindless[3]=255;bindless[4]=255;bindless[5]=255;
@@ -2099,9 +2131,12 @@ static VOID NvxGspAppendUserTriangle(PNVX_DEVICE_EXTENSION dev,PUCHAR scratch,
     if(viewportTransform) {
         NVX_TRI_INCR(NVC797_SET_VIEWPORT_SCALE_X(0),3);
         push[n++]=0x42000000U;push[n++]=0x41000000U;
-        push[n++]=0x3f800000U;
+        push[n++]=0x3f800000U; /* SCALE_Z = 1.0f */
         NVX_TRI_INCR(NVC797_SET_VIEWPORT_OFFSET_X(0),3);
-        push[n++]=0x42000000U;push[n++]=0x41000000U;push[n++]=0;
+        push[n++]=0x42000000U;push[n++]=0x41000000U;
+        push[n++]=0;          /* OFFSET_Z = 0.0f */
+        NVX_TRI_INCR(NVC797_SET_VIEWPORT_COORDINATE_SWIZZLE(0),1);
+        push[n++]=0x6420U; /* X=POS_X, Y=POS_Y, Z=POS_Z, W=POS_W */
     }
     NVX_TRI_INCR(NVC797_SET_VIEWPORT_CLIP_CONTROL,1);
     push[n++]=NVC797_SET_VIEWPORT_CLIP_CONTROL_PIXEL_MIN_Z_CLAMP<<3|
@@ -2110,8 +2145,9 @@ static VOID NvxGspAppendUserTriangle(PNVX_DEVICE_EXTENSION dev,PUCHAR scratch,
     NVX_TRI_INCR(NVC797_SET_VIEWPORT_Z_CLIP,1);
     push[n++]=NVC797_SET_VIEWPORT_Z_CLIP_RANGE_ZERO_TO_POSITIVE_W;
     for(i=0;i<16;i++) {
-        NVX_TRI_INCR(NVC797_SET_VIEWPORT_CLIP_HORIZONTAL(i),2);
+        NVX_TRI_INCR(NVC797_SET_VIEWPORT_CLIP_HORIZONTAL(i),4);
         push[n++]=(32768U<<16);push[n++]=(32768U<<16);
+        push[n++]=0;push[n++]=0x3f800000U; /* MIN_Z=0.0f, MAX_Z=1.0f */
     }
     NVX_TRI_INCR(NVC797_SET_PROVOKING_VERTEX,1);
     push[n++]=NVC797_SET_PROVOKING_VERTEX_V_LAST;
@@ -2125,10 +2161,11 @@ static VOID NvxGspAppendUserTriangle(PNVX_DEVICE_EXTENSION dev,PUCHAR scratch,
               DRF_DEF(C797,_SET_VERTEX_STREAM_A_FORMAT,_ENABLE,_TRUE);
     push[n++]=(ULONG)(vertexVa>>32);push[n++]=(ULONG)vertexVa;
     NVX_TRI_INCR(NVC797_SET_VERTEX_STREAM_SIZE_A(1),2);
-    push[n++]=0;push[n++]=depthShader?96U:72U;
+    push[n++]=0;push[n++]=depthShader?96U:vertexCount*24U;
     NVX_TRI_INCR(NVC797_OGL_SET_CULL,1);push[n++]=NVC797_OGL_SET_CULL_ENABLE_FALSE;
     NVX_TRI_INCR(NVC797_BEGIN,1);push[n++]=NVC797_BEGIN_OP_TRIANGLES;
-    NVX_TRI_INCR(NVC797_SET_VERTEX_ARRAY_START,2);push[n++]=0;push[n++]=3;
+    NVX_TRI_INCR(NVC797_SET_VERTEX_ARRAY_START,2);
+    push[n++]=0;push[n++]=depthShader?3U:vertexCount;
     NVX_TRI_INCR(NVC797_END,1);push[n++]=0;
 #undef NVX_TRI_INCR
     *count=n;
@@ -2138,7 +2175,7 @@ static VOID NvxGspAppendUserTriangle(PNVX_DEVICE_EXTENSION dev,PUCHAR scratch,
 static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
     ULONG64 depthVa,ULONG color,ULONG64 fenceValue,BOOLEAN drawTriangle,
     BOOLEAN preserveTarget,ULONG depthMode,ULONG depthFormat,ULONG64 vertexVa,
-    ULONG triangleColor,
+    ULONG vertexCount,ULONG triangleColor,
     ULONG *greenPixels,ULONG *whitePixels)
 {
     PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
@@ -2152,7 +2189,9 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
     if(whitePixels) *whitePixels=0;
     if(!dev||!dev->GspInitialized||!dev->GspGraphicsChannelReady||
        !dev->GspGraphicsCommandVerified||dev->GspGraphicsChannelFaulted||
-       dev->GspMmuFaultQueued||(!drawTriangle&&color&&color!=0xffffffffU)||
+       dev->GspMmuFaultQueued||
+       (drawTriangle&&(vertexCount<3U||vertexCount>NVX_3D_MAX_BATCH_VERTICES||
+        vertexCount%3U))||
        depthMode>5U||depthFormat>NVX_3D_ZT_FORMAT_ZF32||
        (depthMode&&((depthVa&0xffffULL)||depthVa<dev->GspVramGpuVa||
         depthVa>=dev->GspVramGpuVa+dev->GspVramMapBytes))||
@@ -2204,24 +2243,23 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
     if(drawTriangle&&vertexVa) {
         /* Accept only uploaded vertex bytes; all GR methods, shaders and
            semaphore addresses remain constructed by this kernel driver. */
-        ULONG vertexBytes=depthMode?96U:72U;
+        ULONG vertexBytes=depthMode?96U:vertexCount*24U;
         if(!NvxGspSubmitCopy2D(dev,dev->GspScratchGpuVa+0xb800,vertexVa,
                                vertexBytes,vertexBytes,vertexBytes,1)) {
             __sync_lock_release(&NvxGrUserSubmitBusy);
             return FALSE;
         }
         __sync_synchronize();
-        for(i=0;i<(depthMode?24U:18U);i++) {
+        for(i=0;i<(depthMode?24U:vertexCount*6U);i++) {
             ULONG component=((volatile ULONG *)(scratch+0xb800))[i];
             ULONG componentInVertex=i%(depthMode?8U:6U);
             BOOLEAN positionXY=(componentInVertex<2U);
-            /* Mesa's bounded bridge uploads clip-space XY divided by the
-               viewport dimensions. Permit a small signed range that covers
-               64x16 tiles and the bounded depth probe; all Z and other
-               attributes stay in [0,1]. */
+            /* Permit coordinates in [-1.0f, +1.0f] for positionXY (supporting
+               both Mesa's divided clip coordinates and client normalized [0,1]
+               coordinates); depth and generic attributes stay in [0.0f, 1.0f]. */
             if((positionXY &&
-                !(component<=0x3e000000U ||
-                  (component>=0x80000000U && component<=0xbe000000U))) ||
+                !(component<=0x3f800000U ||
+                  (component>=0x80000000U && component<=0xbf800000U))) ||
                (!positionXY&&component>0x3f800000U)) {
                 LogStr("NVX [3D-TRI]: uploaded vertex component outside bounded range index=");
                 LogHex(i);LogStr(" bits=");LogHex(component);LogStr(".\n");
@@ -2272,6 +2310,11 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
     push[n++]=DRF_DEF(C797,_SET_ZCULL_BOUNDS,_Z_MIN_UNBOUNDED_ENABLE,_FALSE)|
               DRF_DEF(C797,_SET_ZCULL_BOUNDS,_Z_MAX_UNBOUNDED_ENABLE,_FALSE);
     if(depthMode) {
+        NVX_GR_INCR(NVC797_SET_ZT_READ_ONLY,1);
+        push[n++]=NVC797_SET_ZT_READ_ONLY_ENABLE_Z_FALSE|
+                  NVC797_SET_ZT_READ_ONLY_ENABLE_STENCIL_FALSE;
+        NVX_GR_INCR(NVC797_SET_DEPTH_BOUNDS_TEST,1);
+        push[n++]=NVC797_SET_DEPTH_BOUNDS_TEST_ENABLE_FALSE;
         NVX_GR_INCR(NVC797_SET_ZCULL,1);
         /* The bounded probe has no Z-cull backing storage; keep the
            hierarchical Z engine disabled while ordinary Z testing runs. */
@@ -2347,12 +2390,10 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
         push[n++]=NVC797_CLEAR_SURFACE_Z_ENABLE_TRUE;
     } else if(!drawTriangle) {
         NVX_GR_INCR(NVC797_SET_COLOR_CLEAR_VALUE(0),4);
-        if(color==0xffffffffU) {
-            push[n++]=0x3f800000U;push[n++]=0x3f800000U;
-            push[n++]=0x3f800000U;push[n++]=0x3f800000U;
-        } else {
-            push[n++]=0;push[n++]=0;push[n++]=0;push[n++]=0;
-        }
+        push[n++]=NvxUnorm8ToFloatBits((color>>16)&0xffU);
+        push[n++]=NvxUnorm8ToFloatBits((color>>8)&0xffU);
+        push[n++]=NvxUnorm8ToFloatBits(color&0xffU);
+        push[n++]=NvxUnorm8ToFloatBits((color>>24)&0xffU);
         NVX_GR_INCR(NVC797_SET_CLEAR_RECT_HORIZONTAL,2);
         push[n++]=(64U<<16);push[n++]=(16U<<16);
         NVX_GR_INCR(NVC797_CLEAR_SURFACE,1);
@@ -2376,7 +2417,8 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
         push[n++]=NVC797_INVALIDATE_TEXTURE_DATA_CACHE_LINES_ALL;
         NvxGspAppendUserTriangle(dev,scratch,push,&n,vertexVa!=0,
                                  depthMode!=0,
-                                 depthMode!=0||preserveTarget);
+                                 depthMode!=0||preserveTarget,
+                                 vertexCount);
     }
 #endif
     NVX_GR_INCR(NVC797_WAIT_FOR_IDLE,1);push[n++]=0;
@@ -2410,7 +2452,8 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
                 volatile ULONG *colorReadback=(volatile ULONG *)(scratch+0xe000);
                 volatile ULONG *depthReadback=(volatile ULONG *)(scratch+0x6000);
                 ULONG matching=0,white=0,depthWrite=0;
-                ULONG rawOne=0,rawZero=0,rawQuarter=0,rawThreeQuarter=0;
+                ULONG rawOne=0,rawZero=0,rawQuarter=0,rawHalf=0;
+                ULONG rawThreeQuarter=0;
                 ULONG depthMin=0xffffffffU,depthMax=0,firstDepth=0;
                 if(NvxGspSubmitCopy2D(dev,dev->GspScratchGpuVa+0xe000,
                                       dstVa,256,256,256,16)) {
@@ -2429,6 +2472,7 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
                         if(raw==0x3f800000U) rawOne++;
                         else if(raw==0) rawZero++;
                         else if(raw==0x3e800000U) rawQuarter++;
+                        else if(raw==0x3f000000U) rawHalf++;
                         else if(raw==0x3f400000U) rawThreeQuarter++;
                     }
                     for(i=0;i<NVX_3D_READBACK_PIXELS;i++) {
@@ -2449,6 +2493,7 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
                 LogStr(" raw_words one=");LogHex(rawOne);
                 LogStr(" zero=");LogHex(rawZero);
                 LogStr(" quarter=");LogHex(rawQuarter);
+                LogStr(" half=");LogHex(rawHalf);
                 LogStr(" three_quarter=");LogHex(rawThreeQuarter);
                 LogStr(" depth_first=");LogHex(firstDepth);
                 LogStr(" depth_min=");LogHex(depthMin);
@@ -2524,7 +2569,7 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
             }
             if(!drawTriangle&&whitePixels) {
                 volatile ULONG *readback=(volatile ULONG *)(scratch+0xe000);
-                ULONG matches=0,black=0,other=0,expected=color==0xffffffffU?0xffffffffU:0;
+                ULONG matches=0,black=0,other=0,expected=color;
                 VideoPortZeroMemory((PVOID)readback,4096);
                 if(!NvxGspSubmitCopy2D(dev,dev->GspScratchGpuVa+0xe000,
                                        dstVa,256,256,256,16)) {
@@ -2577,7 +2622,7 @@ BOOLEAN NvxGspSubmitUserClear(PVOID HwDeviceExtension,ULONG64 dstVa,
 {
     return NvxGspSubmitUserOperation(HwDeviceExtension,dstVa,0,color,
                                      fenceValue,FALSE,FALSE,0,NVX_3D_ZT_FORMAT_Z24S8,
-                                     0,0,NULL,matchingPixels);
+                                     0,0,0,NULL,matchingPixels);
 }
 
 BOOLEAN NvxGspSubmitUserTriangle(PVOID HwDeviceExtension,ULONG64 dstVa,
@@ -2586,11 +2631,12 @@ BOOLEAN NvxGspSubmitUserTriangle(PVOID HwDeviceExtension,ULONG64 dstVa,
 {
     return NvxGspSubmitUserOperation(HwDeviceExtension,dstVa,0,0,fenceValue,
                                      TRUE,FALSE,0,NVX_3D_ZT_FORMAT_Z24S8,
-                                     0,0xff00ff00U,greenPixels,whitePixels);
+                                     0,3U,0xff00ff00U,greenPixels,whitePixels);
 }
 
 BOOLEAN NvxGspSubmitUserTriangleBuffer(PVOID HwDeviceExtension,ULONG64 dstVa,
-    ULONG64 depthVa,ULONG64 vertexVa,ULONG color,BOOLEAN preserveTarget,BOOLEAN depthTest,
+    ULONG64 depthVa,ULONG64 vertexVa,ULONG color,ULONG vertexCount,
+    BOOLEAN preserveTarget,BOOLEAN depthTest,
     ULONG depthFormat,
     ULONG64 fenceValue,
     ULONG *drawPixels,
@@ -2599,7 +2645,7 @@ BOOLEAN NvxGspSubmitUserTriangleBuffer(PVOID HwDeviceExtension,ULONG64 dstVa,
     if(!vertexVa) return FALSE;
     return NvxGspSubmitUserOperation(HwDeviceExtension,dstVa,depthVa,0,fenceValue,
                                      TRUE,preserveTarget,depthTest?5:0,depthFormat,
-                                     vertexVa,color,
+                                     vertexVa,depthTest?3U:vertexCount,color,
                                      drawPixels,whitePixels);
 }
 
@@ -2671,7 +2717,7 @@ BOOLEAN NvxGspRunZf32Diagnostic(PVOID HwDeviceExtension,ULONG64 dstVa,
     }
     if(!NvxGspSubmitUserOperation(HwDeviceExtension,dstVa,depthVa,0,
         fenceValue,TRUE,TRUE,5,NVX_3D_ZT_FORMAT_ZF32,vertexVa,
-        0xff00ff00U,&drawn,&white)) return FALSE;
+        3U,0xff00ff00U,&drawn,&white)) return FALSE;
     {
         PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
         scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET;

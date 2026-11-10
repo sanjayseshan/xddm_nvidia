@@ -146,14 +146,15 @@ nvx_upload(HDC hdc, uint64_t buffer_id, const float *vertices,
 {
    struct {
       NVX_3D_UPLOAD_BUFFER header;
-      float vertices[24];
+      float vertices[NVX_3D_MAX_BATCH_VERTICES * 6];
    } request;
 
    memset(&request, 0, sizeof(request));
    request.header.Size = sizeof(request.header);
    request.header.Version = NVX_3D_ABI_VERSION;
    request.header.BufferId = buffer_id;
-   if (vertex_bytes != 72 && vertex_bytes != 96)
+   if (vertex_bytes < 72 || vertex_bytes > sizeof(request.vertices) ||
+       (vertex_bytes != 96 && vertex_bytes % 24))
       return 0;
    request.header.Bytes = vertex_bytes;
    memcpy(request.vertices, vertices, vertex_bytes);
@@ -240,6 +241,47 @@ nvx_submit_triangle(HDC hdc, uint64_t target_id, uint64_t vbo_id,
 }
 
 static int
+nvx_submit_triangles(HDC hdc, uint64_t target_id, uint64_t vbo_id,
+                     const float *vertices, unsigned vertex_count,
+                     uint32_t color)
+{
+   NVX_3D_SUBMIT submit, submitted;
+   unsigned bytes = vertex_count * 6 * sizeof(float);
+   if (vertex_count < 3 || vertex_count > NVX_3D_MAX_BATCH_VERTICES ||
+       vertex_count % 3 || bytes > 4096) {
+      nvx_bridge_trace("batch reject: invalid vertex count or byte size");
+      return 0;
+   }
+   if (!nvx_upload(hdc, vbo_id, vertices, bytes)) {
+      nvx_bridge_trace("batch upload failed");
+      return 0;
+   }
+
+   memset(&submit, 0, sizeof(submit));
+   memset(&submitted, 0, sizeof(submitted));
+   submit.Size = sizeof(submit);
+   submit.Version = NVX_3D_ABI_VERSION;
+   submit.Operation = NVX_3D_SUBMIT_DRAW_TRIANGLES;
+   submit.Width = NVX_3D_TRIANGLE_WIDTH;
+   submit.Height = vertex_count;
+   submit.Color = color;
+   submit.BufferId = target_id;
+   submit.Reserved[0] = (uint32_t)vbo_id;
+   submit.Reserved[1] = (uint32_t)(vbo_id >> 32);
+   if (!ExtEscape(hdc, NVX_ESCAPE_3D_SUBMIT, sizeof(submit),
+                  (LPCSTR)&submit, sizeof(submitted),
+                  (LPSTR)&submitted) || !submitted.FenceValue) {
+      nvx_bridge_trace("batch submit failed or returned no fence");
+      return 0;
+   }
+   if (!nvx_wait_fence(hdc, submitted.FenceValue)) {
+      nvx_bridge_trace("batch fence wait failed");
+      return 0;
+   }
+   return 1;
+}
+
+static int
 nvx_clear_depth(HDC hdc, uint64_t target_id)
 {
    NVX_3D_SUBMIT submit, submitted;
@@ -293,8 +335,8 @@ nvx_update_softpipe_tile(struct softpipe_context *sp,
       nvx_bridge_trace("reject framebuffer: unsupported pipe format");
       return 0;
    }
-   if (x0 < 0 || y0 < 0 || x0 + 64 > (int)sp->framebuffer.width ||
-       y0 + 16 > (int)sp->framebuffer.height) {
+   if (x0 < 0 || y0 < 0 || x0 >= (int)sp->framebuffer.width ||
+       y0 >= (int)sp->framebuffer.height) {
       nvx_bridge_trace("reject viewport: target outside framebuffer bounds");
       return 0;
    }
@@ -304,6 +346,9 @@ nvx_update_softpipe_tile(struct softpipe_context *sp,
    }
    for (y = 0; y < 16; y++) {
       for (x = 0; x < 64; x++) {
+         if (x0 + x >= (int)sp->framebuffer.width ||
+             y0 + y >= (int)sp->framebuffer.height)
+            continue;
          uint32_t pixel = pixels[y * 64 + x];
          struct softpipe_cached_tile *tile =
             sp_get_cached_tile(sp->cbuf_cache[0], x0 + x, y0 + y, 0);
@@ -372,7 +417,7 @@ nvx_clip_axis(const struct nvx_bridge_vertex *input, unsigned count,
 
 static unsigned
 nvx_clip_triangle_to_tile(const struct nvx_bridge_triangle *triangle,
-                          float left, float top,
+                          float left, float top, float right, float bottom,
                           struct nvx_bridge_vertex output[12])
 {
    struct nvx_bridge_vertex a[12], b[12];
@@ -380,9 +425,9 @@ nvx_clip_triangle_to_tile(const struct nvx_bridge_triangle *triangle,
 
    memcpy(a, triangle->v, sizeof(triangle->v));
    count = nvx_clip_axis(a, count, b, 0, left, 1);
-   count = nvx_clip_axis(b, count, a, 0, left + 64.0f, 0);
+   count = nvx_clip_axis(b, count, a, 0, right, 0);
    count = nvx_clip_axis(a, count, b, 1, top, 1);
-   count = nvx_clip_axis(b, count, a, 1, top + 16.0f, 0);
+   count = nvx_clip_axis(b, count, a, 1, bottom, 0);
    memcpy(output, a, count * sizeof(*output));
    return count;
 }
@@ -399,6 +444,9 @@ nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
    const float *v[3];
    struct nvx_bridge_triangle triangles[12];
    struct nvx_bridge_vertex clipped[12];
+   float batches[12][NVX_3D_MAX_BATCH_VERTICES * 6];
+   uint32_t batch_colors[12];
+   unsigned batch_vertices[12];
    float hw_vertices[24];
    float rgba[4];
    uint32_t pixels[NVX_3D_READBACK_PIXELS];
@@ -410,6 +458,7 @@ nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
    unsigned viewport_width, viewport_height;
    float viewport_abs_x, viewport_abs_y;
    int viewport_x, viewport_y, tile_x, tile_y;
+   int tile_start_x, tile_start_y, tile_end_x, tile_end_y;
    int is_quads, depth_test;
    int ok = 0;
    int caps_escape;
@@ -512,31 +561,33 @@ nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
    viewport_height = (unsigned)(viewport_abs_y * 2.0f + 0.5f);
    viewport_x = (int)(viewport->translate[0] - viewport_abs_x + 0.5f);
    viewport_y = (int)(viewport->translate[1] - viewport_abs_y + 0.5f);
-   if (!viewport_width || !viewport_height || viewport_width % 64 ||
-       viewport_height % 16 || viewport_width > 4096 ||
-       viewport_height > 4096 || (viewport_x & 63) || viewport_x < 0 ||
-       viewport_y < 0 ||
+   if (!viewport_width || !viewport_height || viewport_width > 4096 ||
+       viewport_height > 4096 || viewport_x < 0 || viewport_y < 0 ||
        viewport_x + (int)viewport_width > (int)sp->framebuffer.width ||
        viewport_y + (int)viewport_height > (int)sp->framebuffer.height) {
       nvx_bridge_trace("reject viewport: dimensions, alignment, or bounds");
       return 0;
    }
+   tile_start_x = viewport_x & ~63;
+   tile_start_y = viewport_y & ~15;
+   tile_end_x = (viewport_x + (int)viewport_width + 63) & ~63;
+   tile_end_y = (viewport_y + (int)viewport_height + 15) & ~15;
+   if (((tile_end_x - tile_start_x) / 64) *
+       ((tile_end_y - tile_start_y) / 16) > 64) {
+      nvx_bridge_trace("reject viewport: tile workload exceeds bounded bridge limit");
+      return 0;
+   }
+   /* Clip each draw to its GL viewport inside the enclosing 64x16 GPU tile.
+    * The bridge's target clear supplies the framebuffer's active clear color
+    * for the untouched pixels in that tile. */
 
    for (i = 0; i < 4; i++)
       if (!nvx_float01(sp->cbuf_cache[0]->clear_color.f[i])) {
          nvx_bridge_trace("reject: framebuffer clear color is not normalized");
          return 0;
       }
-   if (sp->cbuf_cache[0]->clear_color.f[0] == 0.0f &&
-       sp->cbuf_cache[0]->clear_color.f[1] == 0.0f &&
-       sp->cbuf_cache[0]->clear_color.f[2] == 0.0f)
-      background = 0;
-   else if (sp->cbuf_cache[0]->clear_color.f[0] == 1.0f &&
-            sp->cbuf_cache[0]->clear_color.f[1] == 1.0f &&
-            sp->cbuf_cache[0]->clear_color.f[2] == 1.0f)
-      background = 0xffffffffU;
-   else {
-      nvx_bridge_trace("reject: GPU clear supports only black or white");
+   if (!nvx_pack_color(sp->cbuf_cache[0]->clear_color.f, &background)) {
+      nvx_bridge_trace("reject: framebuffer clear color cannot be packed");
       return 0;
    }
 
@@ -661,10 +712,10 @@ nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
                   (LPSTR)&vbo_result))
       goto done;
 
-   for (tile_y = viewport_y;
-        tile_y < viewport_y + (int)viewport_height; tile_y += 16) {
-      for (tile_x = viewport_x;
-           tile_x < viewport_x + (int)viewport_width; tile_x += 64) {
+   for (tile_y = tile_start_y; tile_y < tile_end_y; tile_y += 16) {
+      for (tile_x = tile_start_x; tile_x < tile_end_x; tile_x += 64) {
+         unsigned batch_count = 0;
+         memset(batch_vertices, 0, sizeof(batch_vertices));
          stage = "target clear";
          if (!nvx_clear_target(hdc, target_result.BufferId, background))
             goto done;
@@ -672,8 +723,23 @@ nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
          if (depth_test && !nvx_clear_depth(hdc, target_result.BufferId))
             goto done;
          for (triangle = 0; triangle < stored; triangle++) {
+            float clip_left = tile_x > viewport_x ? (float)tile_x :
+                                                       (float)viewport_x;
+            float clip_top = tile_y > viewport_y ? (float)tile_y :
+                                                     (float)viewport_y;
+            float viewport_right = viewport_x + (float)viewport_width;
+            float viewport_bottom = viewport_y + (float)viewport_height;
+            float clip_right = tile_x + 64.0f < viewport_right ?
+               tile_x + 64.0f : viewport_right;
+            float clip_bottom = tile_y + 16.0f < viewport_bottom ?
+               tile_y + 16.0f : viewport_bottom;
+            if (clip_right > sp->framebuffer.width)
+               clip_right = (float)sp->framebuffer.width;
+            if (clip_bottom > sp->framebuffer.height)
+               clip_bottom = (float)sp->framebuffer.height;
             unsigned vertices_in_polygon = nvx_clip_triangle_to_tile(
-               &triangles[triangle], (float)tile_x, (float)tile_y, clipped);
+               &triangles[triangle], clip_left, clip_top, clip_right,
+               clip_bottom, clipped);
             unsigned fan;
             for (fan = 1; fan + 1 < vertices_in_polygon; fan++) {
                struct nvx_bridge_vertex fan_vertices[3];
@@ -698,8 +764,8 @@ nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
                      hw_vertices[base + 1] = (2.0f * local_y - 1.0f) / 16.0f;
                      hw_vertices[base + 2] = local_z;
                      hw_vertices[base + 3] = 1.0f;
-                     hw_vertices[base + 4] = 0.0f;
-                     hw_vertices[base + 5] = 0.0f;
+                     hw_vertices[base + 4] = local_z;
+                     hw_vertices[base + 5] = 1.0f;
                      hw_vertices[base + 6] = 0.0f;
                      hw_vertices[base + 7] = 1.0f;
                   } else {
@@ -714,12 +780,36 @@ nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
                   }
                }
                stage = "triangle submit/fence";
-               if (!nvx_submit_triangle(hdc, target_result.BufferId,
-                                        vbo_result.BufferId, hw_vertices,
-                                        triangles[triangle].color,
-                                        depth_test)) {
-                  nvx_bridge_trace("submit failed: preserve draw or fence failed");
-                  goto done;
+               if (depth_test) {
+                  if (!nvx_submit_triangle(hdc, target_result.BufferId,
+                                           vbo_result.BufferId, hw_vertices,
+                                           triangles[triangle].color, 1)) {
+                     nvx_bridge_trace("submit failed: depth draw or fence failed");
+                     goto done;
+                  }
+               } else {
+                  unsigned batch;
+                  for (batch = 0; batch < batch_count; batch++)
+                     if (batch_colors[batch] == triangles[triangle].color &&
+                         batch_vertices[batch] + 3 <=
+                            NVX_3D_MAX_BATCH_VERTICES)
+                        break;
+                  if (batch == batch_count && batch_count < 12) {
+                     batch_colors[batch] = triangles[triangle].color;
+                     batch_count++;
+                  }
+                  if (batch < batch_count &&
+                      batch_vertices[batch] + 3 <=
+                         NVX_3D_MAX_BATCH_VERTICES) {
+                     memcpy(&batches[batch][batch_vertices[batch] * 6],
+                            hw_vertices, 3 * 6 * sizeof(float));
+                     batch_vertices[batch] += 3;
+                  } else if (!nvx_submit_triangle(hdc, target_result.BufferId,
+                              vbo_result.BufferId, hw_vertices,
+                              triangles[triangle].color, 0)) {
+                     nvx_bridge_trace("submit failed: fallback triangle or fence failed");
+                     goto done;
+                  }
                }
                if (depth_test && tile_x == viewport_x &&
                    tile_y == viewport_y) {
@@ -743,6 +833,16 @@ nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
                   }
                   nvx_bridge_trace(depth_message);
                }
+            }
+         }
+         for (triangle = 0; triangle < batch_count; triangle++) {
+            if (!batch_vertices[triangle])
+               continue;
+            if (!nvx_submit_triangles(hdc, target_result.BufferId,
+                  vbo_result.BufferId, batches[triangle],
+                  batch_vertices[triangle], batch_colors[triangle])) {
+               nvx_bridge_trace("submit failed: batched triangles or fence failed");
+               goto done;
             }
          }
          stage = "GPU target readback";

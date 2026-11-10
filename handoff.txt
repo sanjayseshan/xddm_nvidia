@@ -2,110 +2,110 @@
 
 Updated: November 10, 2026
 
-## Goal
+## Goal and current status
 
-Finish Phase 2C: provide a Windows XP x64 OpenGL ICD that uses RTX 3070
-hardware acceleration. Mesa remains a pinned submodule; all project-specific
-Mesa changes belong in `mesa_patches/`.
+Finish Phase 2C: provide a Windows XP x64 OpenGL ICD with RTX 3070 hardware
+acceleration. Mesa is a pinned submodule; project-specific Mesa code stays in
+`mesa_patches/`.
 
-## Status
+Phase 2C is **in progress, not complete**. XP loads the Mesa ICD and normal WGL
+applications run, but Antigravity reports Mesa `softpipe`; its normal 100-frame
+cube is still CPU rendered. Separately, the restricted WGL-to-miniport bridge
+successfully submits bounded diagnostic triangles and reads back verified GPU
+pixels. These probes do not constitute a general Gallium hardware driver.
 
-Phase 2C is **in progress and not complete**. XP's system WGL loads the Mesa
-ICD, and the Antigravity GPU test runs, but its normal OpenGL renderer is Mesa
-`softpipe` (CPU rendering). A separate, bounded Mesa-to-miniport diagnostic
-path submits GPU work and verifies pixels, but it is not a general Gallium
-hardware backend and does not make ordinary OpenGL draws GPU accelerated.
+The latest real RTX 3070 run completed with `Failures=0 software3d=1` and
+`Status: SOFTWARE_3D_ONLY`. It showed one startup firmware assertion count and
+no subsequent assertion growth, no MMU fault, and a healthy GR channel through
+the later ABI test. This is the best current baseline.
 
-The Mesa submodule is clean. Current project edits are uncommitted in:
+## Latest hardware evidence
 
-- `src_driver/nvx_gsp.c`
-- `mesa_patches/nvx_wgl_bridge.c`
-- `test/audit_ampere_vertex_shader.py`
+- `test_logs/v3.0.0.1-20261110-142434.log` — latest full hardware suite after
+  ABI v4 triangle batching:
+  - `[MESA_GPU_PIXEL_RESULT] PASS`: 6,384 green, 528 red, 2,304 background
+    pixels; 9 block-linear tiles verified.
+  - `[MESA_GPU_DEPTH_RESULT] PASS`: front pixel green (0,255,0).
+  - `[MESA_GPU_CUBE_RESULT] PASS`: 46 colored pixels, one new GPU batch.
+  - `[NVX_3D_BATCH_RESULT] PASS`: six vertices / two triangles submitted in
+    one kernel-built C797 draw; 224 green pixels read back; fence 132 completed.
+  - `[NVX_3D_RESULT] PASS`, zero suite failures, one startup assertion count
+    with no growth, no MMU faults, and no channel fault.
+  - Normal Antigravity remains `OPENGL_RESULT SOFTWARE`; the run ends
+    `SOFTWARE_3D_ONLY` because Phase 2C is unfinished.
+- `test_logs/v3.0.0.1-20261110-140826.log` — prior full suite before ABI v4:
+  the pixel/depth/cube bridge probes pass and the channel remains healthy.
+  - Arbitrary color clear `0xFF1A1A33` readback matched all 1,024 pixels in
+    the earlier run `test_logs/v3.0.0.1-20261110-140348.log`.
+- `test_logs/v3.0.0.1-20261110-140632.log` — intermediate run with the
+  workload cap at 16 tiles. The intentional 9-tile pixel probe was rejected;
+  this was corrected to 64 tiles and revalidated in the latest run.
+- `test_logs/v3.0.0.1-20261110-135951.log` — regression run before correcting
+  clear readback accounting and bounding the large viewport. Arbitrary clear
+  values were written correctly, but the diagnostic expected black and the
+  oversized application path caused extra firmware assertions and a GR fault.
+  Do not use this as the current baseline.
+- Earlier depth-shader investigation is retained in git history and the
+  preceding logs; the current generated shader keeps OMAP `0xf000` and emits
+  clip Z/W from aligned generic attribute 8 using `AST.64`.
 
-## Verified work
+## Current implementation and constraints
 
-Latest full real-hardware run: `test_logs/v3.0.0.1-20261110-114642.log`.
-It rebuilt the XP x64 Mesa ICD, updated the XP image, audited packaged PE
-imports against the guest's XP system DLLs, and booted the XP x64 guest with
-RTX 3070 passthrough. The guest completed and shut down cleanly.
+- `mesa_patches/nvx_wgl_bridge.c` is a project-owned, restricted bridge for
+  small post-VS triangles/quads with flat colors, supported state, and bounded
+  64x16 tiles. It converts Mesa coordinates, clips viewport edges, submits
+  GPU clears/draws, waits for fences, reads back, and updates softpipe tiles.
+- The bridge now rejects workloads exceeding 64 tiles before allocation or
+  submission. This protects the current one-target-at-a-time ABI from the
+  roughly 300-tile Antigravity viewport. The intended small 9-tile test and
+  one-tile depth/cube probes pass.
+- ABI v4 adds `DRAW_TRIANGLES`, with a validated maximum of 36 vertices, plus
+  bounded GPU upload and a single kernel-built C797 array draw. The two-triangle
+  RTX 3070 probe verifies the operation and fence. Mesa flat-color bridge draws
+  now group same-color triangles into batches; the nine-tile pixel probe and
+  cube probe pass with this bridge path.
+- Miniport arbitrary-color `CLEAR_SURFACE` accepts packed AARRGGBB, converts
+  normalized channels to float bits, and compares readback against the exact
+  requested color. Hardware confirmed `0xFF1A1A33` across all pixels.
+- The normal OpenGL renderer remains `softpipe`. The bridge still consumes
+  softpipe post-VS vertices and updates softpipe tiles; it does not translate
+  Gallium shaders/state or render ordinary frames to a full-size GPU target.
+  Do not describe Phase 2C as done.
+- Mesa submodule must remain clean; customizations belong in `mesa_patches/`.
 
-- The Antigravity test executable initialized and ran its OpenGL checks. It
-  rendered 100 frames, but identified the renderer as `Mesa / softpipe`; its
-  normal WGL path is not using GPU rasterization. It ended with `Failures=2`
-  and `software3d=1`. The previously reported initialization warning was not
-  recorded in this run's serial log; capture its text/code if it recurs.
-- The bounded Mesa color probe passed on GPU:
-  `MESA_GPU_PIXEL_RESULT PASS green_pixels=6384 red_pixels=528 background_pixels=2304`.
-- The bounded cube probe passed with 46 colored pixels and one new GPU batch:
-  `MESA_GPU_CUBE_RESULT PASS colored_pixels=46 new_gpu_batches=1`.
-- Fenced GPU output copied back into the Mesa tile:
-  `MESA_TO_GPU_RESULT PASS`.
-- Mesa depth draws still fail. The latest shader variant completed its
-  submissions and fences, but every tested draw reported zero color pixels,
-  zero changed depth pixels, and a clear-value center depth (`1.0`). No
-  successful depth output or ordering is established.
-- Existing kernel-owned C797 triangle draw, semaphore/fence, and readback pass.
-  GPU 2D fills/copies and the XP display path also pass.
-- XP imports/subsystem checks pass for the package. The previously reported
-  `GetTickCount64` and `qsort_s` imports are absent from the current Mesa ICD.
-- Firmware assertion count stayed at the startup value of one; no MMU fault was
-  recorded in the latest run. Display verification reported both heads active
-  and locked.
-- Host checks pass: `make -C src_driver check`, shader audit, and `git diff
-  --check`. The test rebuilds the Mesa submodule without modifying its worktree.
+## Next work to complete Phase 2C
 
-## Current blocker: real depth output
-
-The Mesa bridge's bounded depth test still fails. The current diagnostic declares
-clip-space Z in the SPH, stores a candidate generic input to clip Z, and stores
-the paired value to clip W. The latest hardware run nevertheless produced no
-color fragments or depth writes for any tested depth. Its instruction dump
-prints zero words because it reads the wrong scratch offset; correct that log
-pointer and inspect the actual shader disassembly/register flow before another
-hardware run. Do not treat this variant as a working depth path.
-
-Next, determine why the valid generic [0,1] depth input does not yield a
-rasterized triangle while the color-only shader does. Then prove non-clear
-ZF32 values and front/back ordering before wiring Mesa depth through the bridge.
-Relevant depth output is near lines 2160–2240 in the latest run log.
-
-## Remaining Phase 2C work
-
-1. Make the depth-tested GPU probe pass with non-clear depth readback and
-   correct front/back ordering.
-2. Replace the bounded diagnostic bridge with a real Mesa Gallium hardware
-   backend path: translate/bind Mesa shaders and relevant OpenGL state, submit
-   ordinary application draws, manage render/depth targets, synchronize, and
-   present/read back GPU-rendered pixels.
-3. Verify the normal XP WGL application path reports GA104/RTX 3070 hardware
-   rendering and passes representative OpenGL draw, depth, texture, and
-   presentation tests without falling back to softpipe.
-4. Re-run the XP x64 package import audit and full real-hardware suite; confirm
-   zero MMU faults, no assertion growth, and no 2D/display regressions.
-5. Resolve the Antigravity test's initialization warning if it recurs. The
-   latest guest run did not reproduce it or capture a dialog/error code.
-6. Commit the finished, tested changes. Do not describe Phase 2C as complete
-   while the normal OpenGL renderer remains softpipe or depth/general draws
-   remain unverified.
+1. Extend validated batching to broader vertex counts, per-vertex attributes,
+   state, depth, and larger GPU render targets. Current batch support is only
+   same-color triangles over the fixed 64x16 target.
+2. Build a real Gallium driver path that translates Mesa shaders/state and
+   submits GPU work without relying on softpipe post-VS output or tile updates.
+3. Support full application viewports efficiently, including render/depth
+   target layout and presentation, with XP-safe resource and fence lifetime.
+4. Make Antigravity's ordinary OpenGL workload report hardware rendering and
+   pass its animation with zero assertion/MMU faults and no display/2D
+   regressions.
+5. Re-run the full hardware command below after substantial changes. Current
+   bounded probes verify primitives and batching, not full Phase 2C.
 
 ## Relevant files
 
 - `mesa/` — pinned upstream Mesa submodule; keep clean.
-- `mesa_patches/nvx_wgl_bridge.c` — project-owned bounded WGL/Gallium bridge.
-- `test/build_mesa_xp64.sh` — XP x64 Mesa ICD build and external patch application.
-- `src_driver/nvx_gsp.c` — C797 submission, bounded vertex inputs, depth target,
-  shader diagnostic, fences, and readback.
-- `test/audit_ampere_vertex_shader.py` — validates the pinned vendor shader and
-  generated diagnostic variant.
-- `test/test_gpu_accel.c` — Antigravity XP graphics/WGL test application.
-- `test/test_full_driver.sh` — host build, XP package/image update, real-hardware
-  VFIO run, and result summary.
-- `test/audit_xp_imports.py` — audits package imports and PE subsystem targets.
+- `mesa_patches/nvx_wgl_bridge.c` — restricted WGL/Gallium diagnostic bridge.
+- `src_driver/nvx_3d_abi.h` — miniport user submission ABI and validation.
+- `src_driver/nvx_gsp.c` — C797 submissions, clears, shader variant, depth,
+  fences, GPU memory mapping, and readback.
+- `src_driver/tests/3d_abi_test.c` — host ABI validation tests.
+- `test/audit_ampere_vertex_shader.py` — validates the generated shader
+  variant and expected SPH/output instructions.
+- `test/test_gpu_accel.c` — XP OpenGL, bridge probes, and app benchmark.
+- `test/build_mesa_xp64.sh` — XP x64 Mesa build plus external project patches.
+- `test/audit_xp_imports.py` — XP imports and subsystem audit.
+- `test/test_full_driver.sh` — builds, updates XP guest, runs real RTX 3070
+  VFIO tests, and records serial logs.
 - `PHASE2C_MESA_EVALUATION.md` — Mesa/NVK feasibility and architecture notes.
-- Previous hardware evidence: `test_logs/v3.0.0.1-20261110-113552.log`.
-- Latest hardware evidence: `test_logs/v3.0.0.1-20261110-114642.log`.
 
-Full hardware test command:
+## Full hardware test command
 
 ```sh
 PATH=/tmp/nvx-tools-venv/bin:$PATH NVX_AUTO_RETRY=1 \

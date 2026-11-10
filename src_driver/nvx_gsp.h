@@ -495,6 +495,7 @@ BOOLEAN NvxGspSubmitUserTriangle(PVOID HwDeviceExtension,ULONG64 dstVa,
                                  ULONG *whitePixels);
 BOOLEAN NvxGspSubmitUserTriangleBuffer(PVOID HwDeviceExtension,ULONG64 dstVa,
                                  ULONG64 depthVa,ULONG64 vertexVa,ULONG color,
+                                 ULONG vertexCount,
                                  BOOLEAN preserveTarget,
                                  BOOLEAN depthTest,
                                  ULONG depthFormat,

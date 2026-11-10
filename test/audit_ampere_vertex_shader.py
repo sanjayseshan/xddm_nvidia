@@ -30,6 +30,12 @@ def main() -> int:
         raise SystemExit(
             f"unexpected baseline SPH position mask: 0x{baseline_omap:08x}"
         )
+    sph_imap_attr0 = 6
+    baseline_imap0 = struct.unpack_from("<I", blob, sph_imap_attr0 * 4)[0]
+    if baseline_imap0 & 0x0f != 0x03:
+        raise SystemExit(
+            f"unexpected baseline SPH attr0 IMAP mask: 0x{baseline_imap0:08x}"
+        )
     code = blob[VS_OFFSET:VS_OFFSET + VS_SIZE]
     instructions = []
     for offset in range(0, VS_SIZE, 16):
@@ -60,12 +66,17 @@ def main() -> int:
         raise SystemExit("expected baseline position-W load/store are missing")
     if any(low == 0x0000780cff007322 for low, _ in instructions):
         raise SystemExit("upstream head-surface VS unexpectedly writes clip Z")
-    # Attribute 0 (position) begins at a[0x80], so Z/W are a[0x88].
-    # a[0x100]/a[0x108] belong to generic attribute 8 (texture coordinates).
-    struct.pack_into("<QQ", blob, DEPTH_LOAD_OFFSET,
-                     0x000088ffff0c7321, 0x000e220000000400)
-    struct.pack_into("<QQ", blob, DEPTH_STORE_OFFSET,
-                     0x0000780cff007322, 0x001fee00000004ff)
+    # Preserve the vendor position stores and its aligned generic attribute-8
+    # ALD.64 R8,a[0x100]. Append AST.64 a[0x78],R8 before EXIT so R8/R9 become
+    # clip Z/W while the original varying output remains intact.
+    exit_offset = VS_OFFSET + 0x180
+    branch_offset = VS_OFFSET + 0x190
+    exit_instruction = bytes(blob[exit_offset:exit_offset + 16])
+    branch_instruction = bytes(blob[branch_offset:branch_offset + 16])
+    struct.pack_into("<QQ", blob, exit_offset,
+                     0x00007808ff007322, 0x001fee00000004ff)
+    blob[branch_offset:branch_offset + 16] = exit_instruction
+    blob[branch_offset + 16:branch_offset + 32] = branch_instruction
     struct.pack_into("<I", blob, sph_omap_system_values_ab * 4,
                      baseline_omap | sph_position_z)
     depth_code = blob[VS_OFFSET:VS_OFFSET + VS_SIZE]
@@ -73,12 +84,11 @@ def main() -> int:
         struct.unpack_from("<QQ", depth_code, offset)
         for offset in range(0, VS_SIZE, 16)
     }
-    depth_load = (0x000088ffff0c7321, 0x000e220000000400)
-    depth_store = (0x0000780cff007322, 0x001fee00000004ff)
-    if depth_load not in depth_instructions or depth_store not in depth_instructions:
+    depth_zw_load = (0x000100ffff087321, 0x000e220000000400)
+    depth_zw_store = (0x00007808ff007322, 0x001fee00000004ff)
+    if (depth_zw_load not in depth_instructions or
+            depth_zw_store not in depth_instructions):
         raise SystemExit("generated depth load/store encodings did not validate")
-    if baseline_load in depth_instructions or baseline_store in depth_instructions:
-        raise SystemExit("depth variant retained a replaced baseline instruction")
     depth_omap = struct.unpack_from(
         "<I", blob, sph_omap_system_values_ab * 4
     )[0]
@@ -89,7 +99,7 @@ def main() -> int:
     output = Path(tempfile.gettempdir()) / "nvx-ampere-depth-vs.bin"
     output.write_bytes(depth_code)
     print("Ampere head-surface VS audit: baseline declares clip XY/W, omits Z")
-    print("Ampere depth VS audit: SPH Z declaration and paired Z/W instruction encodings validated")
+    print("Ampere depth VS audit: SPH XYZW declaration and generic-attribute Z/W output validated")
     print(f"Ampere depth VS audit: candidate disassembly input written to {output}")
     return 0
 

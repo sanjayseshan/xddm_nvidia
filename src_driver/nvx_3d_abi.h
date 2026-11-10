@@ -6,7 +6,7 @@
 
 /* Fixed-width ABI shared by XP x64/x86 clients and the miniport.  GPU VAs are
  * always 64-bit; no kernel pointers or RM handles cross this boundary. */
-#define NVX_3D_ABI_VERSION 3U
+#define NVX_3D_ABI_VERSION 4U
 #define NVX_3D_MAX_PUSH_DWORDS 4096U
 #define NVX_3D_PAGE_BYTES 4096U
 #define NVX_3D_MAX_BUFFER_BYTES (64U * 1024U * 1024U)
@@ -38,6 +38,8 @@
 #define NVX_3D_SUBMIT_DRAW_TRIANGLE_PRESERVE 4U
 #define NVX_3D_SUBMIT_CLEAR_DEPTH 5U
 #define NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH 6U
+#define NVX_3D_SUBMIT_DRAW_TRIANGLES 7U
+#define NVX_3D_MAX_BATCH_VERTICES 36U
 #define NVX_3D_USAGE_DEPTH_TARGET 2U
 #define NVX_3D_USAGE_DEPTH_S8Z24 4U
 #define NVX_3D_USAGE_DEPTH_METHOD_S8Z24 8U
@@ -104,7 +106,10 @@ typedef struct NVX_3D_SUBMIT {
     uint32_t Version;
     uint32_t Operation;
     uint32_t Width;
+    /* Fixed target height is 16 except DRAW_TRIANGLES, where Height is the
+     * vertex count (3..36, divisible by three). */
     uint32_t Height;
+    /* CLEAR_SURFACE and draw operations use packed AARRGGBB color. */
     uint32_t Color;
     uint64_t BufferId;
     uint64_t FenceValue;
@@ -191,25 +196,31 @@ Nvx3dValidateSubmit(const NVX_3D_SUBMIT *request, uint32_t inputBytes,
     int validOperation;
     if(!request || inputBytes!=sizeof(*request) || request->Size!=sizeof(*request) ||
        request->Version!=NVX_3D_ABI_VERSION ||
-       request->Width!=64 || request->Height!=16 || request->BufferId==0 ||
+       request->Width!=64 || request->BufferId==0 ||
        request->FenceValue || allocatedBytes<4096) return 0;
     validOperation=request->Operation==NVX_3D_SUBMIT_CLEAR_SURFACE ||
         request->Operation==NVX_3D_SUBMIT_TEST_TRIANGLE ||
         request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE ||
         request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_PRESERVE ||
         request->Operation==NVX_3D_SUBMIT_CLEAR_DEPTH ||
-        request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH;
+        request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH ||
+        request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLES;
     if(!validOperation) return 0;
+    if(request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLES) {
+        if(request->Height<3U || request->Height>NVX_3D_MAX_BATCH_VERTICES ||
+           request->Height%3U) return 0;
+    } else if(request->Height!=16U) return 0;
     if(request->Color &&
-       !(request->Operation==NVX_3D_SUBMIT_CLEAR_SURFACE &&
-         request->Color==0xffffffffU) &&
+       request->Operation!=NVX_3D_SUBMIT_CLEAR_SURFACE &&
        request->Operation!=NVX_3D_SUBMIT_DRAW_TRIANGLE &&
        request->Operation!=NVX_3D_SUBMIT_DRAW_TRIANGLE_PRESERVE &&
-       request->Operation!=NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH) return 0;
+       request->Operation!=NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH &&
+       request->Operation!=NVX_3D_SUBMIT_DRAW_TRIANGLES) return 0;
     if((request->Operation==NVX_3D_SUBMIT_TEST_TRIANGLE ||
         request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE ||
         request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_PRESERVE ||
-        request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH) &&
+        request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH ||
+        request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLES) &&
        allocatedBytes<NVX_3D_TRIANGLE_TARGET_BYTES) return 0;
     if((request->Operation==NVX_3D_SUBMIT_CLEAR_DEPTH ||
         request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH) &&
@@ -217,7 +228,8 @@ Nvx3dValidateSubmit(const NVX_3D_SUBMIT *request, uint32_t inputBytes,
     vertexBufferId=((uint64_t)request->Reserved[1]<<32)|request->Reserved[0];
     if(request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE ||
        request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_PRESERVE ||
-       request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH) {
+       request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH ||
+       request->Operation==NVX_3D_SUBMIT_DRAW_TRIANGLES) {
         if(!vertexBufferId||vertexBufferId==request->BufferId) return 0;
     } else {
         for(i=0;i<sizeof(request->Reserved)/sizeof(request->Reserved[0]);i++)
@@ -243,7 +255,8 @@ Nvx3dRequiredSubmitBytes(uint32_t operation)
         return NVX_3D_DEPTH_TARGET_TOTAL_BYTES;
     if(operation==NVX_3D_SUBMIT_TEST_TRIANGLE ||
        operation==NVX_3D_SUBMIT_DRAW_TRIANGLE ||
-       operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_PRESERVE)
+       operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_PRESERVE ||
+       operation==NVX_3D_SUBMIT_DRAW_TRIANGLES)
         return NVX_3D_TRIANGLE_TARGET_BYTES;
     return 4096U;
 }

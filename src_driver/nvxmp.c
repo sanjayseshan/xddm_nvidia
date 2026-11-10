@@ -2311,11 +2311,13 @@ BOOLEAN NTAPI HwVidStartIO(
         entry->Busy=TRUE;saved=*entry;
         if(request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE||
            request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_PRESERVE||
-           request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH) {
+           request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH||
+           request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLES) {
             vertexEntry=Nvx3dFindBuffer(engine,vertexBufferId);
             if(!vertexEntry||vertexEntry->Busy||vertexEntry->Bytes<
                (request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH?
-                    96U:72U)) {
+                    96U:request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLES?
+                    request.Height*24U:72U)) {
                 entry->Busy=FALSE;Nvx3dUnlockBuffers();
                 status=ERROR_INVALID_PARAMETER;break;
             }
@@ -2332,10 +2334,13 @@ BOOLEAN NTAPI HwVidStartIO(
         Nvx3dUnlockBuffers();
         if(request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE||
            request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_PRESERVE||
-           request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH) {
+           request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH||
+           request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLES) {
             ULONG drawPixels=0,whitePixels=0;
             if(!NvxGspSubmitUserTriangleBuffer(engine,saved.GpuVa,
                     saved.DepthGpuVa,vertexSaved.GpuVa,request.Color,
+                    request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLES?
+                        request.Height:3U,
                     request.Operation!=NVX_3D_SUBMIT_DRAW_TRIANGLE,
                     request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH,
                     (saved.Usage&NVX_3D_USAGE_DEPTH_METHOD_S8Z24)?
