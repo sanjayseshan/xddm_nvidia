@@ -107,7 +107,6 @@ Nvx3dComputeColorSurfaceLayout(uint32_t width, uint32_t height,
     blockRows = (height + NVX_3D_GOB_HEIGHT_ROWS - 1U) /
                 NVX_3D_GOB_HEIGHT_ROWS;
     while(yLog2 && (1U << yLog2) > blockRows) yLog2--;
-    while(yLog2 && (1U<<yLog2)>blockRows) yLog2--;
 
     if ((uint64_t)width * 4U > 0xffffffffULL)
         return 0;
@@ -128,6 +127,23 @@ Nvx3dComputeColorSurfaceLayout(uint32_t width, uint32_t height,
     layout->Bytes = bytes;
     layout->Reserved = 0;
     return 1;
+}
+
+/* Byte address for an RGBA8 texel in Ampere's TuringColor2D GOB ordering. */
+static inline uint32_t
+Nvx3dTuringColorPixelOffset(uint32_t x, uint32_t y, uint32_t width,
+                            uint32_t tileMode)
+{
+    uint32_t xBytes=x*4U;
+    uint32_t blockHeight=1U<<((tileMode>>4)&7U);
+    uint32_t gobY=y/8U;
+    uint32_t gobsPerRow=(width+15U)/16U;
+    uint32_t gob=((gobY/blockHeight)*gobsPerRow+(xBytes/64U))*blockHeight+
+                 (gobY%blockHeight);
+    uint32_t inGobX=xBytes&63U,inGobY=y&7U;
+    uint32_t inGob=(inGobX/32U)*256U+((inGobX&31U)/16U)*64U+
+                   (inGobY&3U)*16U+((inGobY&4U)?128U:0U)+(inGobX&15U);
+    return gob*512U+inGob;
 }
 
 typedef struct NVX_3D_QUERY_CAPS {

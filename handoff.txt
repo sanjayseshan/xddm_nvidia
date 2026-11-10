@@ -23,6 +23,19 @@ app draw rejection as `tile workload exceeds bounded bridge limit`.
 
 ## Latest hardware evidence
 
+- `test_logs/v3.0.0.1-20261110-152012.log` — ABI v5 dynamic color-target
+  re-test after correcting the Turing 2D GOB intra-tile byte order:
+  - `[NVX_3D_SURFACE_RESULT] PASS 632x453 pitch=2560 tileMode=0x40
+    bytes=1310720 samples=5 fence=134`; this includes the previously failing
+    bottom-right pixel `(631,452)`.
+  - Host sanitizer/ABI tests, XP x64 miniport build, Mesa ICD package build,
+    XP import/subsystem audit, and clean guest shutdown passed.
+  - Suite result is `Failures=0 software3d=1`; startup firmware assertion
+    count remains one and no MMU or GR channel fault is logged. The bounded
+    GR draw, 2D checks, and dual-head status checks pass.
+  - `[OPENGL_RESULT] SOFTWARE` remains. This validates a dynamic GPU color
+    target clear and sample readback only; Phase 2C is still incomplete.
+
 - `test_logs/v3.0.0.1-20261110-151225.log` — first hardware run of ABI v5
   dynamic color targets. Host tests, ICD/package XP import audits, and clean
   guest shutdown passed. The legacy 64x16 clear/triangle/batch probes, 2D,
@@ -30,9 +43,9 @@ app draw rejection as `tile workload exceeds bounded bridge limit`.
   C797 clear fence completed, but the five-sample check failed at the final
   pixel `(631,452)` (read back zero instead of `0xff204080`); the suite ended
   `Failures=1 software3d=1`. Firmware assertion count remained at one and no
-  MMU or GR channel fault was logged. Treat the dynamic target path as
-  **unverified** until the edge-address/target-size mismatch is fixed. Do not
-  weaken the edge test to make the suite pass.
+  MMU or GR channel fault was logged. The next run fixed the mismatch by using
+  Ampere's Turing 2D GOB byte ordering for full-size target readback. Keep this
+  log as regression evidence.
 
 - `test_logs/v3.0.0.1-20261110-145245.log` — latest safe-path full suite after
   adding the post-animation bridge status snapshot and restoring the 64-tile
@@ -105,13 +118,13 @@ app draw rejection as `tile workload exceeds bounded bridge limit`.
   RTX 3070 probe verifies the operation and fence. Mesa flat-color bridge draws
   now group same-color triangles into batches; the nine-tile pixel probe and
   cube probe pass with this bridge path.
-- The uncommitted ABI v5 work adds an RGBA8 block-linear color-target layout,
+- The ABI v5 work adds an RGBA8 block-linear color-target layout,
   allocation metadata, and a size-aware C797 clear with semaphore and CE
   sample readback. Host layout/validation tests pass and the x64 miniport
-  builds. Real hardware completed the clear fence, but the last-pixel sample
-  failed as recorded above. ABI v5 is not ready to promote as a working
-  surface path until that mismatch is resolved and the entire hardware suite
-  passes.
+  builds. The first hardware run exposed Fermi-vs-Turing GOB ordering in
+  readback; `Nvx3dTuringColorPixelOffset()` now matches the Turing 2D sector
+  order, and the next hardware run verified the full-size target edge and
+  fence. This is still only the C797 clear path, not general rendering.
 - Miniport arbitrary-color `CLEAR_SURFACE` accepts packed AARRGGBB, converts
   normalized channels to float bits, and compares readback against the exact
   requested color. Hardware confirmed `0xFF1A1A33` across all pixels.
@@ -143,11 +156,9 @@ app draw rejection as `tile workload exceeds bounded bridge limit`.
 
 ## Next work to complete Phase 2C
 
-1. Diagnose the ABI v5 full-size target edge mismatch. Check C797 target
-   dimension/clip/clear semantics and block-linear byte-address mapping
-   against the reference driver; preserve the failing `(631,452)` sample.
-   Re-run the hardware suite and require all samples, completed fence, no new
-   assertion/MMU/GR fault, and existing display/2D checks to pass.
+1. Extend ABI v5 surfaces from clear-only to reusable color/depth resources,
+   GPU draws, batched command submission, complete readback, and presentation.
+   The 632x453 clear/sample/fence path now passes hardware validation.
 2. Specify project-owned XP resource, context, mapping, and fence interfaces;
    the current draw, depth, and readback ABI is still hard-coded to one
    64x16 diagnostic surface.

@@ -31,6 +31,14 @@ int main(void)
     assert(surface.Width==632&&surface.Height==453&&
            surface.PitchBytes==2560&&surface.TileMode==0x40&&
            surface.Bytes==1310720);
+    assert(Nvx3dTuringColorPixelOffset(0,0,632,0x40)==0);
+    assert(Nvx3dTuringColorPixelOffset(1,0,632,0x40)==4);
+    assert(Nvx3dTuringColorPixelOffset(0,1,632,0x40)==16);
+    assert(Nvx3dTuringColorPixelOffset(0,4,632,0x40)==128);
+    assert(Nvx3dTuringColorPixelOffset(4,0,632,0x40)==64);
+    assert(Nvx3dTuringColorPixelOffset(8,0,632,0x40)==256);
+    assert(Nvx3dTuringColorPixelOffset(0,8,632,0x40)==512);
+    assert(Nvx3dTuringColorPixelOffset(0,128,632,0x40)==327680);
     assert(Nvx3dComputeColorSurfaceLayout(4096,4096,&surface));
     assert(surface.PitchBytes==16384&&surface.TileMode==0x40&&
            surface.Bytes==NVX_3D_MAX_BUFFER_BYTES);

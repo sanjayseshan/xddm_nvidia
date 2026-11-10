@@ -41,19 +41,14 @@
 #define NVX_ENABLE_GR_UNPRIVILEGED_CONTEXT_PROBE 0
 #endif
 
-/* Convert a pixel coordinate in a C797 block-linear ARGB target to its byte
-   offset. TileMode carries the vertical GOB block height in bits 6:4. */
+/* Convert a pixel coordinate in an Ampere/Turing 2D GOB ARGB target to its
+   byte offset. TileMode carries the vertical GOB block height in bits 6:4.
+   The intra-GOB sector ordering differs from the legacy Fermi helper below. */
 static ULONG NvxGspBlockLinearPixelOffsetEx(ULONG x,ULONG y,
                                              ULONG widthPixels,
                                              ULONG tileMode)
 {
-    ULONG lx=x&15U,ly=y&7U,blockHeight=1U<<((tileMode>>4)&7U);
-    ULONG gobY=y/8U,gobsPerRow=(widthPixels+15U)/16U;
-    ULONG k=(lx&1U)|((lx&2U))|((ly&1U)<<2)|((lx&4U)<<1)|
-        ((ly&2U)<<3)|((ly&4U)<<3)|((lx&8U)<<3);
-    ULONG gob=((gobY/blockHeight)*gobsPerRow+(x/16U))*blockHeight+
-              (gobY%blockHeight);
-    return gob*512U+k*4U;
+    return Nvx3dTuringColorPixelOffset(x,y,widthPixels,tileMode);
 }
 
 static ULONG NvxGspBlockLinearPixelOffset(ULONG x,ULONG y,ULONG widthPixels)
