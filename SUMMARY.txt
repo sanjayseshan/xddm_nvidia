@@ -485,8 +485,22 @@ Hardware OpenGL roadmap — November 8, 2026:
   recognizes the readback log marker. This verifies clear-surface pixel memory,
   not triangle rasterization. Triangle shaders are the remaining Phase 2B gate.
 - v3.0.0.1 carries the completed Phase 2A ABI and readback implementation onto
-  master. Phase 2B remains open pending a hardware triangle draw with verified
-  non-clear pixels and clean firmware/MMU/display/2D results.
+  master. Commit `f4a15f0` completes the Phase 2B hardware triangle diagnostic:
+  the run `test_logs/v3.0.0.1-20261109-195815.log` reads back 960 black triangle
+  pixels against 64 white background pixels, with the semaphore complete and
+  display/2D checks passing. The run reports one startup firmware assertion;
+  no new assertion or MMU fault was reported for the draw. `[OPENGL_RESULT]
+  SOFTWARE` remains, because this is an initialization-time diagnostic rather
+  than a user-mode OpenGL draw path.
+- Phase 2C feasibility pass: pinned the read-only Mesa evaluation at
+  `cc2dcf9abdc6afc093e85d48e4cfa34eed60a01e`. Mesa contains a Windows Gallium
+  WGL/ICD front end, but NVK/Nouveau rely on Linux Vulkan/DRM interfaces and
+  cannot yet submit through the miniport ABI. The XP x64 cross-build setup
+  stopped before configuration because `x86_64-w64-mingw32-g++` is missing.
+  `PHASE2C_MESA_EVALUATION.md` records the attempt and gates. The next step is
+  to install `g++-mingw-w64-x86-64`, complete the WGL build evaluation, and
+  design a validated user-mode draw submission path before adding the Mesa
+  source as a submodule or registering an ICD.
 
 ### Linux and macOS Reference Architecture
 

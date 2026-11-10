@@ -80,7 +80,7 @@ For detailed design notes, see [src_win98/README.md](src_win98/README.md).
 - **Compatible GPUs:** GA104-based cards (GeForce RTX 3070, RTX 3060 Ti, GA104 RTX 3060).
 - **Tested Host Platform:** AMD Ryzen 7000 series on AM5 motherboard (bare metal) and QEMU/KVM with VFIO GPU passthrough.
 - **Monitors Tested:** Dual DisplayPort setup running 1920×1080 (Primary) and 2560×1440 (Secondary) at 60 Hz.
-- **Scope & Limitations:** 2D desktop acceleration, solid fills, and multi-monitor desktop extension are supported. An experimental XP x64 GR diagnostic now verifies Ampere I2M writes and a block-linear surface clear on hardware. Triangle rendering, rendered-pixel readback, an OpenGL ICD, and Direct3D acceleration are not implemented. Video decode acceleration (NVDEC) and audio over HDMI/DP are also unimplemented.
+- **Scope & Limitations:** 2D desktop acceleration, solid fills, and multi-monitor desktop extension are supported. An experimental XP x64 GR diagnostic verifies Ampere triangle rasterization and rendered-pixel readback on hardware. This diagnostic is not a user-mode rendering interface; an OpenGL ICD, general OpenGL draw submission, and Direct3D acceleration remain unimplemented. Video decode acceleration (NVDEC) and audio over HDMI/DP are also unimplemented.
 
 ---
 
@@ -94,16 +94,16 @@ operations still use software rasterization with GPU uploads; this is partial
 Hardware OpenGL is **not implemented on either XP architecture**. The XP x64
 miniport has an experimental bounded 3D escape ABI for capability query,
 framebuffer allocation/release, a kernel-constructed C797 surface-clear
-submission, and completion-fence wait. It verifies I2M memory writes and reads
-back all 4 KB of a block-linear surface after a hardware clear on GA104; it
-does not yet render a triangle or read back rasterized geometry. The saved x64
-log `test_logs/xp_v2_20261108-161607.log` reports Microsoft `GDI Generic`, a
-software OpenGL renderer. The old test ignored failed swaps/device creation
-and printed an unconditional PASS. The corrected suite checks those failures,
-reports the actual renderer, and returns a failing exit code for unavailable
-Direct3D 9 errors. On this driver, `0x8876086A` is `D3DERR_NOTAVAILABLE`:
-the display driver has no Direct3D HAL, so the test now reports this as an
-expected unavailable feature rather than an OpenGL or Copy Engine failure.
+submission, and completion-fence wait. A separate initialization-time GR probe
+submits an Ampere triangle and reads back its rasterized pixels, but this is
+not a user-mode OpenGL draw path. The guest still reports Microsoft `GDI
+Generic`, a software OpenGL renderer. The old test ignored failed swaps/device
+creation and printed an unconditional PASS. The corrected suite checks those
+failures, reports the actual renderer, and returns a failing exit code for
+unavailable Direct3D 9 errors. On this driver, `0x8876086A` is
+`D3DERR_NOTAVAILABLE`: the display driver has no Direct3D HAL, so the test now
+reports this as an expected unavailable feature rather than an OpenGL or Copy
+Engine failure.
 Experimental OpenGL DDI hooks are disabled by default so the working Windows
 software renderer can handle buffer swaps.
 

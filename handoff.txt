@@ -1,8 +1,8 @@
 # Handoff Document: Ampere GA104 (RTX 3070) 3D Hardware Acceleration on Windows XP x64
 
 Date: November 9, 2026
-Branch: v2-nvidia-open
-Current Driver Version: v3.0.0.1 (Phase 2A checkpoint; Phase 2B in progress)
+Branch: master
+Current Driver Version: v3.0.0.1 (Phase 2B hardware triangle probe committed)
 Target Hardware: NVIDIA GeForce RTX 3070 (GA104, PCI Device ID 0x2484) via VFIO Passthrough
 Target OS: Windows XP Professional x64 Edition (NT 5.2.3790)
 
@@ -120,6 +120,16 @@ Step 2C: Mesa Submodule & Windows XP ICD Shim
    - Implement the bridge between Mesa's command generation and the
      IOCTL_NVX_3D_SUBMIT interface.
 
+Phase 2C feasibility update (November 9, 2026): Mesa's current upstream WGL
+front end contains Windows ICD lifecycle code, but its NVK/Nouveau rendering
+backend depends on Linux Vulkan/DRM and cannot submit through this XP miniport.
+The attempted XP x64 MinGW cross configuration stopped because the host lacks
+`x86_64-w64-mingw32-g++`; install it with `sudo apt-get install
+g++-mingw-w64-x86-64`. See `PHASE2C_MESA_EVALUATION.md` for the pinned Mesa
+revision, build attempt, architecture gap, and next implementation gates. Do
+not add a Mesa submodule or advertise hardware ICD support until a backend and
+user-mode draw submission path build and run on XP.
+
 ================================================================================
 4. Key Files and References
 ================================================================================
@@ -159,7 +169,8 @@ Step 2C: Mesa Submodule & Windows XP ICD Shim
   NVX [GR]: 3D CLEAR_SURFACE verified; 16 dwords zeroed in scratch memory.
   GR RESULT: 3D rasterizer clear and semaphore completed successfully!
 
-Latest full-access hardware run: `test_logs/v2.0.0.64-20261109-184530.log`.
+Latest full-access hardware run before the Mesa evaluation:
+`test_logs/v3.0.0.1-20261109-195815.log`.
 Rootless image update and VM launch succeeded. The caps IOCTL returned success
 with feature mask `0x7` and class `0xC797` on primary and secondary display
 surface initialization. The isolated GR probe verified I2M, `CLEAR_SURFACE`,
