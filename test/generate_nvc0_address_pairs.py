@@ -146,7 +146,8 @@ def main():
             raise SystemExit(f"stale generated address inventory: {args.output}")
     else:
         args.output.write_text(generated, encoding="utf-8")
-    print(f"NVC0 direct-address method pairs: {generated.count('{') - 1}")
+    row_count = sum(line.startswith("    {") for line in generated.splitlines())
+    print(f"NVC0 direct-address method pairs: {row_count}")
 
 
 if __name__ == "__main__":
