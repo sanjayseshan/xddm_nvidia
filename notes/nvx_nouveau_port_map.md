@@ -139,6 +139,34 @@ NVC0's existing `nvc0_screen_create()` initialization stream. Preserve Mesa's
 NVC0 state and compiler code; do not route general OpenGL back through the
 softpipe bridge or bypass the miniport validator with raw user pushbuffers.
 
+### Pushbuffer translation details confirmed from the pinned Mesa source
+
+`nouveau_pushbuf_submit()` sends `drm_nouveau_gem_pushbuf` with three arrays:
+BO references, relocations, and push ranges. Each push range identifies a BO
+index plus a byte offset and length into its mapped CPU shadow. This gives the
+XP compatibility code a concrete copy-in boundary: validate all counts and
+indices, gather each range into a bounded dword stream, translate every
+relocation from `(reloc_bo_index, reloc_bo_offset, bo_index, flags, data,
+vor, tor)` to an NVX BO-id/offset/access record, then submit one copied NVX
+batch request. XP usermode can dereference these Mesa-owned arrays, but the
+miniport must still treat the resulting copied request as untrusted.
+
+The translation is not yet implementable as a safe execution path with the
+current ABI. `Nvx3dValidateNvc0Batch()` checks packet framing and BO ownership,
+but not C797 subchannel/method permissions, method-specific address
+relocations, or method payload constraints; `IOCTL_NVX_3D_VALIDATE_BATCH` is
+preflight only. The only current native NVC0 submit operation accepts the
+exact full-target clear profile. Do not wire `DRM_NOUVEAU_GEM_PUSHBUF` to that
+clear operation or report a successful kick for other streams.
+
+NVC0's initial screen setup immediately creates/maps a fence BO, binds SW,
+M2MF, COPY, 2D, and C797 objects, and emits setup state. It then allocates
+text, uniform, TLS, and texture descriptor BOs and references them from
+method streams. A logical XP channel can map to the miniport-owned channel only
+if NVX serializes submissions and defines ownership/lifetime for those engine
+bindings and BO references. Returning a synthetic channel response without
+that contract only advances the failure to object creation or the first kick.
+
 ## Project direction
 
 Prioritize integrating Mesa Nouveau NVC0 as the long-term OpenGL path. The active WGL bridge remains softpipe plus custom NVX operations and is not Nouveau, even where its miniport emits C797 work. Keep it only as a diagnostic/prototype while building the genuine Nouveau OS boundary. The target is to preserve Mesa's Nouveau state translation, NVC0 shader compiler, and command generation, and replace DRM-facing device, BO, channel, submission, and fence services with XP/NVX equivalents. Avoid extending the bridge into a second renderer. Do not claim Nouveau acceleration until a Gallium-created NVC0 screen submits a NVC0-generated command stream and a shader-backed draw passes a pixel comparison on XP hardware.
