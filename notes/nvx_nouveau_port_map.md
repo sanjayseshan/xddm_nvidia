@@ -80,6 +80,27 @@ implemented.
 
 ## Current NVC0 integration audit (November 11, 2026)
 
+The latest hardware boundary run
+`../test_logs/v3.0.0.2-20261111-165221.log` loads the XP ICD, confirms GA104
+through the HDC, and reaches `DRM_NOUVEAU_CHANNEL_ALLOC` (`0x02`). The XP shim
+records this as its first unsupported DRM operation and returns `ENOSYS`;
+OpenGL remains softpipe. The exact request contains framebuffer and TT
+context-DMA handles, then expects the kernel to return a channel handle,
+pushbuffer domains, a notifier handle, and up to eight enforced subchannel
+assignments. The current kernel-owned C56F channel is not a drop-in response:
+it has driver-owned scheduling and submission state, while Mesa's later
+`GEM_PUSHBUF` sends user pointers to BO, relocation, and push arrays.
+
+An XP implementation must define a different copied-request boundary. It
+needs client/session ownership, BO IDs and references, bounded relocation
+resolution, a C797 method/subchannel allowlist, and a fence result. The
+existing `NVX_3D_VALIDATE_BATCH` checks framing and relocation ownership but
+does not authorize methods or submit a batch. `NVX_3D_NVC0_NATIVE_CLEAR`
+submits only one exact clear profile. Therefore the observed channel failure
+cannot be fixed by returning the existing channel handle; the next work is the
+kernel-owned session and submission contract that can safely represent Mesa's
+generated stream.
+
 The standalone NVX device/BO adapters still have no Mesa NVC0 callsites. The
 WGL HDC discovery call is currently part of the optional diagnostic bridge; it
 does not select or construct a Gallium Nouveau screen.
