@@ -2,6 +2,18 @@
 
 Updated November 11, 2026, after the XP-backed `xf86drm` BO shim and VFIO run.
 
+## Client ownership requirement for a Nouveau channel (November 11, 2026)
+
+The existing `ClientToken` is generated in user mode and supplied on each
+buffer allocation. The miniport stores it and uses equality checks to group
+buffers and validate batch references, but does not issue the token or bind it
+to a kernel-observed client/session. It is therefore an accounting key, not an
+authorization boundary. A new channel/session contract must establish kernel-
+owned lifetime and caller identity before accepting Nouveau buffer references
+or commands. The current miniport also has one shared C56F channel and shared
+GR state, so a logical token alone cannot isolate multiple WGL clients. Do not
+promote this token or the shared channel into a generic DRM channel.
+
 ## Current end-to-end recheck (November 11, 2026)
 
 Rebuilt the XP x64 Nouveau+softpipe Mesa package with
