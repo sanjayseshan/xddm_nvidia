@@ -2,6 +2,30 @@
 
 Updated November 11, 2026, after the XP-backed `xf86drm` BO shim and VFIO run.
 
+## NVX batch BO references (ABI 13, current work)
+
+ABI 13 extends the bounded batch header with explicit BO reference count and
+adds fixed-width `NVX_3D_BUFFER_REFERENCE` entries. The miniport's existing
+validation-only batch IOCTL now validates unique referenced BO IDs against the
+client token and checks reference access bits; relocation records must also be
+covered by a matching reference. `NvxNouveauPushbufReference()` builds these
+records, and relocation registration merges access for the same BO. NVC0's
+Mesa path was source-audited: it uses `PUSH_REF` and direct GPU addresses in
+method dwords, with no `PUSH_RELOC` calls in the NVC0 driver directory. The
+references are therefore relevant, but kernel validation must still check the
+C797 methods and prove each direct address belongs to a referenced BO.
+
+`make -C src_driver check` passed with ASan/UBSan and x86/x64 MinGW checks.
+The XP miniport/display packages and `test_gpu_accel.c` compiled against ABI
+13. The real RTX 3070 run `../test_logs/v3.0.0.2-20261111-174031.log` reports
+`batch-preflight PASS` for 28 dwords and two clear-profile address records;
+the NVX 3D and 2D hardware checks passed. The log still reports
+`[OPENGL_RESULT] SOFTWARE`, one startup firmware assertion, and no MMU fault.
+The separate Nouveau+softpipe XP x64 Mesa cross-build completed 1350 Ninja
+actions and passed the XP import audit; Mesa was restored clean. This remains
+preflight only: no generic batch submission or native Nouveau screen is
+implemented.
+
 ## `xf86drm` replacement recheck (November 11, 2026)
 
 After reviewing the proposed Windows replacement boundary, the current host

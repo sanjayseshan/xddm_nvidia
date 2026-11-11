@@ -9,6 +9,9 @@ typedef struct NVX_NOUVEAU_PUSHBUF {
    uint32_t *dwords;
    uint32_t dword_count;
    uint32_t dword_capacity;
+   NVX_3D_BUFFER_REFERENCE *references;
+   uint32_t reference_count;
+   uint32_t reference_capacity;
    NVX_NOUVEAU_RELOCATION *relocations;
    uint32_t relocation_count;
    uint32_t relocation_capacity;
@@ -20,6 +23,8 @@ void NvxNouveauPushbufReset(NVX_NOUVEAU_PUSHBUF *push);
 void NvxNouveauPushbufDestroy(NVX_NOUVEAU_PUSHBUF *push);
 int NvxNouveauPushbufAppend(NVX_NOUVEAU_PUSHBUF *push,
                             const uint32_t *dwords, uint32_t count);
+int NvxNouveauPushbufReference(NVX_NOUVEAU_PUSHBUF *push,
+                               const NVX_NOUVEAU_BO *bo, uint32_t access);
 int NvxNouveauPushbufRelocate(NVX_NOUVEAU_PUSHBUF *push,
                               const NVX_NOUVEAU_BO *bo,
                               uint32_t command_word, uint64_t offset,

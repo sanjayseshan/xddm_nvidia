@@ -7,12 +7,13 @@
 
 /* Fixed-width ABI shared by XP x64/x86 clients and the miniport.  GPU VAs are
  * always 64-bit; no kernel pointers or RM handles cross this boundary. */
-#define NVX_3D_ABI_VERSION 12U
+#define NVX_3D_ABI_VERSION 13U
 #define NVX_3D_MAX_PUSH_DWORDS 4096U
 #define NVX_3D_MAX_BATCH_RELOCATIONS 256U
 #define NVX_3D_MAX_BATCH_BUFFERS 64U
 #define NVX_3D_MAX_BATCH_BYTES \
     (sizeof(NVX_3D_BATCH_HEADER) + \
+     NVX_3D_MAX_BATCH_BUFFERS * sizeof(NVX_3D_BUFFER_REFERENCE) + \
      NVX_3D_MAX_PUSH_DWORDS * sizeof(uint32_t) + \
      NVX_3D_MAX_BATCH_RELOCATIONS * sizeof(NVX_3D_RELOCATION))
 #define NVX_3D_NVC0_CLEAR_DWORDS 28U
@@ -272,11 +273,22 @@ typedef struct NVX_3D_RELOCATION {
     uint32_t Reserved[2];
 } NVX_3D_RELOCATION;
 
+/* BO residency/access reference for a copied NVC0 command batch. Addresses
+ * remain in the NVC0 stream and must be checked against these referenced,
+ * client-owned allocations by a method-aware kernel validator. */
+typedef struct NVX_3D_BUFFER_REFERENCE {
+    uint64_t BufferId;
+    uint32_t Access;
+    uint32_t Reserved;
+} NVX_3D_BUFFER_REFERENCE;
+
 typedef struct NVX_3D_BATCH_HEADER {
     uint32_t Size;
     uint32_t Version;
     uint32_t DwordCount;
+    uint32_t BufferReferenceCount;
     uint32_t RelocationCount;
+    uint32_t Reserved0;
     uint64_t ClientToken;
     uint32_t Reserved[2];
 } NVX_3D_BATCH_HEADER;
@@ -289,9 +301,12 @@ Nvx3dBatchRequiredBytes(const NVX_3D_BATCH_HEADER *header,
     if(!header||!requiredBytes||header->Size!=sizeof(*header)||
        header->Version!=NVX_3D_ABI_VERSION||!header->DwordCount||
        header->DwordCount>NVX_3D_MAX_PUSH_DWORDS||
+       header->BufferReferenceCount>NVX_3D_MAX_BATCH_BUFFERS||
        header->RelocationCount>NVX_3D_MAX_BATCH_RELOCATIONS)
         return 0;
     required=(uint64_t)sizeof(*header)+
+             (uint64_t)header->BufferReferenceCount*
+                         sizeof(NVX_3D_BUFFER_REFERENCE)+
              (uint64_t)header->DwordCount*sizeof(uint32_t)+
              (uint64_t)header->RelocationCount*sizeof(NVX_3D_RELOCATION);
     if(required>NVX_3D_MAX_BATCH_BYTES||required>0xffffffffULL)
@@ -360,9 +375,10 @@ Nvx3dBatchWordIsPayload(const uint8_t *dwords, uint32_t dwordCount,
 }
 
 /* Validate a copied, bounded NVC0 batch envelope before any consumer parses
- * methods or executes work. This checks packet framing and resource-relative
- * relocations only; a kernel execution path must additionally enforce its
- * C797 method/subchannel allowlist and address-method relocation rules. */
+ * methods or executes work. This checks packet framing, client-owned BO
+ * references and resource-relative relocations only; a kernel execution path
+ * must additionally enforce its C797 method/subchannel allowlist and verify
+ * that every GPU address in the stream belongs to a referenced BO. */
 static inline int
 Nvx3dValidateNvc0Batch(const void *input, uint32_t inputBytes,
                        const NVX_3D_ALLOC_BUFFER *ownedAllocations,
@@ -371,7 +387,7 @@ Nvx3dValidateNvc0Batch(const void *input, uint32_t inputBytes,
 {
     NVX_3D_BATCH_HEADER header;
     const uint8_t *bytes=(const uint8_t *)input;
-    const uint8_t *dwords,*relocations;
+    const uint8_t *references,*dwords,*relocations;
     uint32_t requiredBytes;
     uint32_t cursor=0,i,j;
 
@@ -382,15 +398,43 @@ Nvx3dValidateNvc0Batch(const void *input, uint32_t inputBytes,
     memcpy(&header,input,sizeof(header));
     if(header.Size!=sizeof(header)||header.Version!=NVX_3D_ABI_VERSION||
        !header.DwordCount||header.DwordCount>NVX_3D_MAX_PUSH_DWORDS||
+       header.BufferReferenceCount>NVX_3D_MAX_BATCH_BUFFERS||
        header.RelocationCount>NVX_3D_MAX_BATCH_RELOCATIONS||
-       header.ClientToken!=expectedClientToken||
+       header.ClientToken!=expectedClientToken||header.Reserved0||
        header.Reserved[0]||header.Reserved[1])
         return 0;
 
     if(!Nvx3dBatchRequiredBytes(&header,&requiredBytes)||
        requiredBytes!=inputBytes) return 0;
-    dwords=bytes+sizeof(header);
+    references=bytes+sizeof(header);
+    dwords=references+(uint64_t)header.BufferReferenceCount*
+                      sizeof(NVX_3D_BUFFER_REFERENCE);
     relocations=dwords+(uint64_t)header.DwordCount*sizeof(uint32_t);
+
+    for(i=0;i<header.BufferReferenceCount;i++) {
+        NVX_3D_BUFFER_REFERENCE reference;
+        uint32_t matches=0;
+        memcpy(&reference,references+(uint64_t)i*sizeof(reference),
+               sizeof(reference));
+        if(!reference.BufferId||reference.Reserved||
+           !(reference.Access&(NVX_3D_RELOC_READ|NVX_3D_RELOC_WRITE))||
+           (reference.Access&~(NVX_3D_RELOC_READ|NVX_3D_RELOC_WRITE)))
+            return 0;
+        for(j=0;j<i;j++) {
+            NVX_3D_BUFFER_REFERENCE previous;
+            memcpy(&previous,references+(uint64_t)j*sizeof(previous),
+                   sizeof(previous));
+            if(previous.BufferId==reference.BufferId) return 0;
+        }
+        for(j=0;j<ownedAllocationCount;j++) {
+            const NVX_3D_ALLOC_BUFFER *allocation=&ownedAllocations[j];
+            if(allocation->BufferId!=reference.BufferId) continue;
+            if(++matches>1U||allocation->ClientToken!=header.ClientToken||
+               !allocation->GpuVa||!allocation->Bytes)
+                return 0;
+        }
+        if(matches!=1U) return 0;
+    }
 
     while(cursor<header.DwordCount) {
         uint32_t packetHeader=Nvx3dBatchReadDword(dwords,cursor);
@@ -434,6 +478,16 @@ Nvx3dValidateNvc0Batch(const void *input, uint32_t inputBytes,
                !Nvx3dValidateRelocation(&relocation,header.DwordCount,
                                         allocation))
                 return 0;
+        }
+        if(matches!=1U) return 0;
+        matches=0;
+        for(j=0;j<header.BufferReferenceCount;j++) {
+            NVX_3D_BUFFER_REFERENCE reference;
+            memcpy(&reference,references+(uint64_t)j*sizeof(reference),
+                   sizeof(reference));
+            if(reference.BufferId==relocation.BufferId &&
+               (reference.Access&relocation.Access)==relocation.Access)
+                matches++;
         }
         if(matches!=1U) return 0;
     }

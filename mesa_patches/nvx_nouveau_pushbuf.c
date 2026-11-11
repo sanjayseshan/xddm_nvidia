@@ -22,6 +22,7 @@ NvxNouveauPushbufReset(NVX_NOUVEAU_PUSHBUF *push)
    if (!push)
       return;
    push->dword_count = 0;
+   push->reference_count = 0;
    push->relocation_count = 0;
 }
 
@@ -31,6 +32,7 @@ NvxNouveauPushbufDestroy(NVX_NOUVEAU_PUSHBUF *push)
    if (!push)
       return;
    free(push->dwords);
+   free(push->references);
    free(push->relocations);
    memset(push, 0, sizeof(*push));
 }
@@ -70,6 +72,47 @@ NvxNouveauPushbufAppend(NVX_NOUVEAU_PUSHBUF *push,
 }
 
 int
+NvxNouveauPushbufReference(NVX_NOUVEAU_PUSHBUF *push,
+                           const NVX_NOUVEAU_BO *bo, uint32_t access)
+{
+   uint32_t i, capacity;
+   NVX_3D_BUFFER_REFERENCE *grown;
+
+   if (!push || !push->device || !bo || bo->device != push->device ||
+       !bo->references || !bo->allocation.BufferId ||
+       bo->allocation.ClientToken != push->client_token ||
+       !(access & (NVX_3D_RELOC_READ | NVX_3D_RELOC_WRITE)) ||
+       (access & ~(NVX_3D_RELOC_READ | NVX_3D_RELOC_WRITE)))
+      return 0;
+
+   for (i = 0; i < push->reference_count; i++) {
+      NVX_3D_BUFFER_REFERENCE *reference = &push->references[i];
+      if (reference->BufferId != bo->allocation.BufferId)
+         continue;
+      reference->Access |= access;
+      return 1;
+   }
+   if (push->reference_count >= NVX_3D_MAX_BATCH_BUFFERS)
+      return 0;
+   if (push->reference_count == push->reference_capacity) {
+      capacity = push->reference_capacity ? push->reference_capacity * 2U : 8U;
+      if (capacity > NVX_3D_MAX_BATCH_BUFFERS)
+         capacity = NVX_3D_MAX_BATCH_BUFFERS;
+      grown = (NVX_3D_BUFFER_REFERENCE *)realloc(
+         push->references, (size_t)capacity * sizeof(*grown));
+      if (!grown)
+         return 0;
+      push->references = grown;
+      push->reference_capacity = capacity;
+   }
+   push->references[push->reference_count].BufferId = bo->allocation.BufferId;
+   push->references[push->reference_count].Access = access;
+   push->references[push->reference_count].Reserved = 0;
+   push->reference_count++;
+   return 1;
+}
+
+int
 NvxNouveauPushbufRelocate(NVX_NOUVEAU_PUSHBUF *push,
                           const NVX_NOUVEAU_BO *bo,
                           uint32_t command_word, uint64_t offset,
@@ -98,6 +141,8 @@ NvxNouveauPushbufRelocate(NVX_NOUVEAU_PUSHBUF *push,
       push->relocations = grown;
       push->relocation_capacity = capacity;
    }
+   if (!NvxNouveauPushbufReference(push, bo, access))
+      return 0;
    push->relocations[push->relocation_count++] = relocation;
    return 1;
 }
@@ -111,6 +156,8 @@ NvxNouveauPushbufValidate(NVX_NOUVEAU_PUSHBUF *push)
    int valid;
 
    if (!push || !push->device || !push->client_token || !push->dword_count ||
+       !push->reference_count ||
+       push->reference_count > NVX_3D_MAX_BATCH_BUFFERS ||
        push->dword_count > NVX_3D_MAX_PUSH_DWORDS ||
        push->relocation_count > NVX_3D_MAX_BATCH_RELOCATIONS)
       return 0;
@@ -119,9 +166,11 @@ NvxNouveauPushbufValidate(NVX_NOUVEAU_PUSHBUF *push)
    header.Size = sizeof(header);
    header.Version = NVX_3D_ABI_VERSION;
    header.DwordCount = push->dword_count;
+   header.BufferReferenceCount = push->reference_count;
    header.RelocationCount = push->relocation_count;
    header.ClientToken = push->client_token;
    total_bytes = sizeof(header) +
+      (uint64_t)push->reference_count * sizeof(*push->references) +
       (uint64_t)push->dword_count * sizeof(*push->dwords) +
       (uint64_t)push->relocation_count * sizeof(*push->relocations);
    if (total_bytes > NVX_3D_MAX_BATCH_BYTES || total_bytes > UINT32_MAX)
@@ -131,10 +180,15 @@ NvxNouveauPushbufValidate(NVX_NOUVEAU_PUSHBUF *push)
    if (!batch)
       return 0;
    memcpy(batch, &header, sizeof(header));
-   memcpy(batch + sizeof(header), push->dwords,
+   memcpy(batch + sizeof(header), push->references,
+          (size_t)push->reference_count * sizeof(*push->references));
+   memcpy(batch + sizeof(header) +
+          (size_t)push->reference_count * sizeof(*push->references),
+          push->dwords,
           (size_t)push->dword_count * sizeof(*push->dwords));
    if (push->relocation_count)
       memcpy(batch + sizeof(header) +
+             (size_t)push->reference_count * sizeof(*push->references) +
              (size_t)push->dword_count * sizeof(*push->dwords),
              push->relocations,
              (size_t)push->relocation_count * sizeof(*push->relocations));
@@ -162,6 +216,10 @@ NvxNouveauPushbufSubmitNvc0Clear(NVX_NOUVEAU_PUSHBUF *push,
        push->client_token != target->allocation.ClientToken ||
        push->dword_count != NVX_3D_NVC0_CLEAR_DWORDS ||
        push->relocation_count != 2 ||
+       push->reference_count != 1 || !push->references ||
+       push->references[0].BufferId != target->allocation.BufferId ||
+       push->references[0].Access !=
+          (NVX_3D_RELOC_READ | NVX_3D_RELOC_WRITE) ||
        !(target->allocation.Usage & NVX_3D_USAGE_COLOR_TARGET) ||
        (target->allocation.Usage & NVX_3D_USAGE_DEPTH_TARGET) ||
        !Nvx3dComputeColorSurfaceLayout(target->allocation.Width,

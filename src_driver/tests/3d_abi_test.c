@@ -5,8 +5,10 @@
 
 _Static_assert(sizeof(NVX_3D_QUERY_CAPS)==56,
                "x86 and x64 capability ABI size must match");
-_Static_assert(sizeof(NVX_3D_BATCH_HEADER)==32,
+_Static_assert(sizeof(NVX_3D_BATCH_HEADER)==40,
                "x86 and x64 batch header size must match");
+_Static_assert(sizeof(NVX_3D_BUFFER_REFERENCE)==16,
+               "x86 and x64 BO reference size must match");
 _Static_assert(sizeof(NVX_3D_RELOCATION)==40,
                "x86 and x64 relocation size must match");
 
@@ -15,14 +17,19 @@ build_test_batch(uint8_t *input, NVX_3D_ALLOC_BUFFER *allocation)
 {
     NVX_3D_BATCH_HEADER header={0};
     uint32_t dwords[6];
+    NVX_3D_BUFFER_REFERENCE reference={0};
     NVX_3D_RELOCATION relocs[2]={{0}};
-    uint32_t inputBytes=(uint32_t)(sizeof(header)+sizeof(dwords)+sizeof(relocs));
+    uint32_t inputBytes=(uint32_t)(sizeof(header)+sizeof(reference)+
+                                   sizeof(dwords)+sizeof(relocs));
 
     header.Size=sizeof(header);
     header.Version=NVX_3D_ABI_VERSION;
     header.DwordCount=6;
+    header.BufferReferenceCount=1;
     header.RelocationCount=2;
     header.ClientToken=0x123400000001ULL;
+    reference.BufferId=allocation->BufferId;
+    reference.Access=NVX_3D_RELOC_READ|NVX_3D_RELOC_WRITE;
     dwords[0]=Nvx3dNvc0SeqHeader(0x0100U,2U);
     dwords[1]=0;
     dwords[2]=0;
@@ -42,21 +49,27 @@ build_test_batch(uint8_t *input, NVX_3D_ALLOC_BUFFER *allocation)
     relocs[1].Bytes=8;
 
     memcpy(input,&header,sizeof(header));
-    memcpy(input+sizeof(header),dwords,sizeof(dwords));
-    memcpy(input+sizeof(header)+sizeof(dwords),relocs,sizeof(relocs));
+    memcpy(input+sizeof(header),&reference,sizeof(reference));
+    memcpy(input+sizeof(header)+sizeof(reference),dwords,sizeof(dwords));
+    memcpy(input+sizeof(header)+sizeof(reference)+sizeof(dwords),
+           relocs,sizeof(relocs));
     return inputBytes;
 }
 
 static void
 test_nvc0_batch_validator(void)
 {
-    uint8_t input[sizeof(NVX_3D_BATCH_HEADER)+6*sizeof(uint32_t)+
+    uint8_t input[sizeof(NVX_3D_BATCH_HEADER)+sizeof(NVX_3D_BUFFER_REFERENCE)+
+                  6*sizeof(uint32_t)+
                   2*sizeof(NVX_3D_RELOCATION)];
     NVX_3D_ALLOC_BUFFER allocation={0};
     NVX_3D_BATCH_HEADER header;
+    NVX_3D_BUFFER_REFERENCE reference;
     NVX_3D_RELOCATION reloc;
     uint32_t dword,inputBytes;
-    uint32_t relocOffset=(uint32_t)(sizeof(header)+6*sizeof(uint32_t));
+    uint32_t referenceOffset=(uint32_t)sizeof(header);
+    uint32_t relocOffset=(uint32_t)(sizeof(header)+
+        sizeof(NVX_3D_BUFFER_REFERENCE)+6*sizeof(uint32_t));
     const uint64_t token=0x123400000001ULL;
 
     allocation.Size=sizeof(allocation);
@@ -74,6 +87,42 @@ test_nvc0_batch_validator(void)
     inputBytes=build_test_batch(input,&allocation);
     memcpy(&header,input,sizeof(header));
     header.Reserved[0]=1;
+    memcpy(input,&header,sizeof(header));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    memcpy(&header,input,sizeof(header));
+    header.Reserved0=1;
+    memcpy(input,&header,sizeof(header));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    memcpy(&reference,input+referenceOffset,sizeof(reference));
+    reference.BufferId++;
+    memcpy(input+referenceOffset,&reference,sizeof(reference));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    memcpy(&reference,input+referenceOffset,sizeof(reference));
+    reference.Access=4U;
+    memcpy(input+referenceOffset,&reference,sizeof(reference));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    memcpy(&reference,input+referenceOffset,sizeof(reference));
+    reference.Access=NVX_3D_RELOC_READ;
+    memcpy(input+referenceOffset,&reference,sizeof(reference));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    memcpy(&reference,input+referenceOffset,sizeof(reference));
+    reference.Reserved=1;
+    memcpy(input+referenceOffset,&reference,sizeof(reference));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    memcpy(&header,input,sizeof(header));
+    header.BufferReferenceCount=NVX_3D_MAX_BATCH_BUFFERS+1U;
     memcpy(input,&header,sizeof(header));
     assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
 
@@ -208,7 +257,7 @@ int main(void)
 
     assert(sizeof(NVX_3D_QUERY_CAPS)==56);
     assert(sizeof(NVX_3D_ALLOC_BUFFER)==56);
-    assert(sizeof(NVX_3D_BATCH_HEADER)==32);
+    assert(sizeof(NVX_3D_BATCH_HEADER)==40);
     assert(sizeof(NVX_3D_RELOCATION)==40);
     assert(sizeof(NVX_3D_FREE_BUFFER)==16);
     assert(sizeof(NVX_3D_UPLOAD_BUFFER)==32);

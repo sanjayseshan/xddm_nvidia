@@ -1769,9 +1769,11 @@ static int TestNvc0ClearEscape(HDC hdc)
     NVX_3D_ALLOC_BUFFER alloc={0},allocated={0};
     NVX_3D_NVC0_CLEAR clear={0},submitted={0};
     uint8_t batch[sizeof(NVX_3D_BATCH_HEADER)+
+                  sizeof(NVX_3D_BUFFER_REFERENCE)+
                   NVX_3D_NVC0_CLEAR_DWORDS*sizeof(uint32_t)+
                   2*sizeof(NVX_3D_RELOCATION)];
     NVX_3D_BATCH_HEADER batchHeader={0};
+    NVX_3D_BUFFER_REFERENCE batchReference={0};
     NVX_3D_RELOCATION batchRelocations[2]={{0}};
     NVX_3D_WAIT_FENCE wait={0},waited={0};
     NVX_3D_READBACK readback={0};
@@ -1834,8 +1836,11 @@ static int TestNvc0ClearEscape(HDC hdc)
     batchHeader.Size=sizeof(batchHeader);
     batchHeader.Version=NVX_3D_ABI_VERSION;
     batchHeader.DwordCount=NVX_3D_NVC0_CLEAR_DWORDS;
+    batchHeader.BufferReferenceCount=1;
     batchHeader.RelocationCount=2;
     batchHeader.ClientToken=allocated.ClientToken;
+    batchReference.BufferId=allocated.BufferId;
+    batchReference.Access=NVX_3D_RELOC_READ|NVX_3D_RELOC_WRITE;
     batchRelocations[0].CommandWord=16;
     batchRelocations[0].Access=NVX_3D_RELOC_READ|NVX_3D_RELOC_WRITE;
     batchRelocations[0].BufferId=allocated.BufferId;
@@ -1844,8 +1849,10 @@ static int TestNvc0ClearEscape(HDC hdc)
     batchRelocations[1]=batchRelocations[0];
     batchRelocations[1].CommandWord=17;
     memcpy(batch,&batchHeader,sizeof(batchHeader));
-    memcpy(batch+sizeof(batchHeader),clear.Dwords,sizeof(clear.Dwords));
-    memcpy(batch+sizeof(batchHeader)+sizeof(clear.Dwords),
+    memcpy(batch+sizeof(batchHeader),&batchReference,sizeof(batchReference));
+    memcpy(batch+sizeof(batchHeader)+sizeof(batchReference),
+           clear.Dwords,sizeof(clear.Dwords));
+    memcpy(batch+sizeof(batchHeader)+sizeof(batchReference)+sizeof(clear.Dwords),
            batchRelocations,sizeof(batchRelocations));
 #if defined(NVX_TEST_NOUVEAU_PUSHBUF)
     if(!NvxWinsysInitHdc(&winsys,hdc)) {

@@ -51,31 +51,48 @@ relocation, validated submission, fences, then WGL screen creation and
 presentation. The current NVX semantic-operation ABI cannot satisfy NVC0's
 pushbuffer API.
 
-### Batch and relocation structure validator
+### Batch structure and BO-reference validator (NVX ABI 13)
 
-The common ABI now defines a 32-byte bounded batch header and fixed-width
-`NVX_3D_RELOCATION` records. `Nvx3dValidateNvc0Batch()` parses a copied batch
-with exact total-size checks, limits it to 4096 dwords and 256 relocations,
-accepts only structurally valid NVC0 type-2/type-6 method packets and type-8
-immediate headers, and rejects truncated/zero-length packets. Each relocation
-must target a packet payload word exactly once and reference a BO ID owned by
-the batch client token with valid access bits, range, reserved fields, and
-non-overflowing GPUVA. `NvxNouveauBoBuildRelocation()` constructs records from
-a live adapter BO; `NvxNouveauBoGetAddress()` provides checked CPU-side
-resolution.
+The common ABI defines a 40-byte bounded batch header, fixed-width
+`NVX_3D_BUFFER_REFERENCE` entries, and `NVX_3D_RELOCATION` records.
+`Nvx3dValidateNvc0Batch()` parses a copied batch with exact total-size checks,
+limits it to 64 BO references, 4096 dwords, and 256 relocations, accepts only
+structurally valid NVC0 type-2/type-6 method packets and type-8 immediate
+headers, and rejects truncated/zero-length packets. Each BO reference must be
+unique, owned by the batch client token, and have valid access bits. Each
+relocation must target a packet payload word exactly once, reference an owned
+BO, and have valid access/range/reserved fields without GPUVA overflow.
+`NvxNouveauPushbufReference()` records BO residency/access, and relocation
+registration adds or merges the corresponding BO reference.
+
+Source audit of the pinned NVC0 Gallium driver found no `PUSH_RELOC` calls
+under `src/gallium/drivers/nouveau/nvc0`; NVC0 writes GPU addresses into method
+dwords and registers BO residency/access through `PUSH_REF`. The generic
+Nouveau DRM winsys still has relocations for other generations, and the
+current NVX relocation records remain exercised by the exact clear packet
+probe. For NVC0, the BO-reference list is the relevant input to future
+submission. A kernel submitter must still parse the method stream and prove
+each direct GPU address belongs to an appropriately referenced BO; BO
+references alone do not authorize execution.
 
 ASan/UBSan host tests cover valid streams plus malformed packet types/counts,
-truncated input, bad tokens, header/immediate relocation targets, duplicate
+truncated input, bad tokens, malformed/duplicate/unowned BO references,
+missing access coverage, header/immediate relocation targets, duplicate
 relocation words, missing/wrong BO IDs, invalid ranges/access, reserved fields,
 and overflow. `make -C src_driver check` passed with x86/x64 MinGW builds. The
-XP x64 softpipe ICD rebuilt all 621 Ninja actions; its PE subsystem/import
-audit passed and Mesa remained clean.
+XP miniport/display package pair built, and the ABI 13 hardware run
+`../test_logs/v3.0.0.2-20261111-174031.log` reports
+`[NVX_3D_STAGE] batch-preflight PASS dwords=28 relocations=2`, plus passing NVX
+3D and 2D probes. The same run reports software OpenGL, one firmware assertion
+at startup, and no MMU fault. The separate Nouveau+softpipe XP x64 Mesa build
+completed 1350 Ninja actions, passed its XP import audit, and restored Mesa
+clean.
 
-This is a structural preflight only. It does not validate allowed C797
-methods/subchannels, prove that each address method has a relocation, or submit
-commands. The miniport does not consume this batch format yet, and Mesa NVC0
-does not call the adapter. Never treat a structurally valid batch as safe to
-execute until the kernel-side allowlist and per-method relocation checks are
+This is a structural/ownership preflight only. It does not validate allowed
+C797 methods/subchannels, prove that direct addresses belong to referenced
+BOs, or submit commands. The miniport does not execute this batch format, and
+Mesa NVC0 does not call the adapter. Never treat a structurally valid batch as
+safe to execute until kernel-side method/address validation and submission are
 implemented.
 
 ## Current NVC0 integration audit (November 11, 2026)
@@ -151,8 +168,7 @@ vor, tor)` into a future NVX batch request that preserves its patch semantics.
 XP usermode can dereference these Mesa-owned arrays, but the miniport must
 still treat the resulting copied request as untrusted.
 
-There is an additional ABI mismatch that prevents a direct relocation-record
-conversion today. Nouveau relocations include `LOW`/`OR` flags and the
+The generic legacy winsys also uses Nouveau relocations with `LOW`/`OR` flags and the
 `vor`/`tor` values; the current `NVX_3D_RELOCATION` contains only BO id,
 BO-relative byte range, access, and command-word index. The existing NVX
 validator confirms that the patch word is a packet payload and the BO range
@@ -161,7 +177,10 @@ rewritten. A generic submit ABI must encode an explicit patch operation (or
 derive it from a kernel method table), validate it against the method and
 subchannel, then resolve it using the live allocation GPUVA. Copying only the
 current NVX fields would silently drop Nouveau's relocation semantics and is
-not a valid adapter.
+not a valid adapter for generations that emit these relocation records. This
+specific `LOW`/`OR` translation is not emitted by the pinned NVC0 driver path;
+NVC0 instead needs the BO-reference list and method-aware validation of its
+direct addresses.
 
 The translation is not yet implementable as a safe execution path with the
 current ABI. `Nvx3dValidateNvc0Batch()` checks packet framing and BO ownership,
