@@ -1,0 +1,114 @@
+diff --git a/src/gallium/drivers/nouveau/nouveau_vp3_video.c b/src/gallium/drivers/nouveau/nouveau_vp3_video.c
+index 5130ed6d6386..d01515f118e1 100644
+--- a/src/gallium/drivers/nouveau/nouveau_vp3_video.c
++++ b/src/gallium/drivers/nouveau/nouveau_vp3_video.c
+@@ -20,10 +20,12 @@
+  * OTHER DEALINGS IN THE SOFTWARE.
+  */
+ 
+-#include <sys/mman.h>
+ #include <sys/stat.h>
+ #include <stdio.h>
+ #include <fcntl.h>
++#ifndef O_CLOEXEC
++#define O_CLOEXEC 0
++#endif
+ 
+ #include <nvif/class.h>
+ 
+@@ -31,6 +33,7 @@
+ #include "nouveau_screen.h"
+ #include "nouveau_context.h"
+ #include "nouveau_vp3_video.h"
++#include "util/os_mman.h"
+ 
+ #include "util/u_video.h"
+ #include "util/format/u_format.h"
+@@ -351,7 +354,7 @@ nouveau_vp3_load_firmware(struct nouveau_vp3_decoder *dec,
+       default:
+          return 1;
+    }
+-   munmap(dec->fw_bo->map, dec->fw_bo->size);
++   os_munmap(dec->fw_bo->map, dec->fw_bo->size);
+    dec->fw_bo->map = NULL;
+    return 0;
+ }
+diff --git a/src/gallium/drivers/nouveau/nv50/nv84_video.c b/src/gallium/drivers/nouveau/nv50/nv84_video.c
+index a7cb4e0e7319..3040faa8c7d3 100644
+--- a/src/gallium/drivers/nouveau/nv50/nv84_video.c
++++ b/src/gallium/drivers/nouveau/nv50/nv84_video.c
+@@ -20,10 +20,12 @@
+  * OTHER DEALINGS IN THE SOFTWARE.
+  */
+ 
+-#include <sys/mman.h>
+ #include <sys/stat.h>
+ #include <sys/types.h>
+ #include <fcntl.h>
++#ifndef O_CLOEXEC
++#define O_CLOEXEC 0
++#endif
+ 
+ #include "util/format/u_format.h"
+ #include "util/u_sampler.h"
+@@ -31,6 +33,7 @@
+ #include "util/vl_zscan_data.h"
+ 
+ #include "nv50/nv84_video.h"
++#include "util/os_mman.h"
+ 
+ static int
+ nv84_copy_firmware(const char *path, void *dest, ssize_t len)
+@@ -90,7 +93,7 @@ nv84_load_firmwares(struct nouveau_device *dev, struct nv84_decoder *dec,
+    ret = nv84_copy_firmware(fw1, fw->map, size1);
+    if (fw2 && !ret)
+       ret = nv84_copy_firmware(fw2, fw->map + dec->vp_fw2_offset, size2);
+-   munmap(fw->map, fw->size);
++   os_munmap(fw->map, fw->size);
+    fw->map = NULL;
+    if (!ret)
+       return fw;
+diff --git a/src/gallium/drivers/nouveau/nv50/nv98_video_vp.c b/src/gallium/drivers/nouveau/nv50/nv98_video_vp.c
+index 33f6f758a41c..c56f52472017 100644
+--- a/src/gallium/drivers/nouveau/nv50/nv98_video_vp.c
++++ b/src/gallium/drivers/nouveau/nv50/nv98_video_vp.c
+@@ -21,7 +21,7 @@
+  */
+ 
+ #include "nv50/nv98_video.h"
+-#include <sys/mman.h>
++#include "util/os_mman.h"
+ 
+ #if NOUVEAU_VP3_DEBUG_FENCE
+ static void dump_comm_vp(struct nouveau_vp3_decoder *dec, struct comm *comm, u32 comm_seq,
+@@ -51,7 +51,7 @@ static void dump_comm_vp(struct nouveau_vp3_decoder *dec, struct comm *comm, u32
+       for (i = 0; i < comm->byte_ofs + slice_size; i += 0x10) {
+          debug_printf("%05x: %08x %08x %08x %08x\n", i, map[i/4], map[i/4+1], map[i/4+2], map[i/4+3]);
+       }
+-      munmap(inter_bo->map, inter_bo->size);
++      os_munmap(inter_bo->map, inter_bo->size);
+       inter_bo->map = NULL;
+    }
+    assert((comm->pvp_stage & 0xff) == 0xff);
+diff --git a/src/gallium/drivers/nouveau/nvc0/nvc0_video_vp.c b/src/gallium/drivers/nouveau/nvc0/nvc0_video_vp.c
+index 98dc1c937fcf..e50cdfb4e2e4 100644
+--- a/src/gallium/drivers/nouveau/nvc0/nvc0_video_vp.c
++++ b/src/gallium/drivers/nouveau/nvc0/nvc0_video_vp.c
+@@ -21,7 +21,7 @@
+  */
+ 
+ #include "nvc0/nvc0_video.h"
+-#include <sys/mman.h>
++#include "util/os_mman.h"
+ 
+ #if NOUVEAU_VP3_DEBUG_FENCE
+ static void dump_comm_vp(struct nouveau_vp3_decoder *dec, struct comm *comm, u32 comm_seq,
+@@ -51,7 +51,7 @@ static void dump_comm_vp(struct nouveau_vp3_decoder *dec, struct comm *comm, u32
+       for (i = 0; i < comm->byte_ofs + slice_size; i += 0x10) {
+          debug_printf("%05x: %08x %08x %08x %08x\n", i, map[i/4], map[i/4+1], map[i/4+2], map[i/4+3]);
+       }
+-      munmap(inter_bo->map, inter_bo->size);
++      os_munmap(inter_bo->map, inter_bo->size);
+       inter_bo->map = NULL;
+    }
+    assert((comm->pvp_stage & 0xff) == 0xff);

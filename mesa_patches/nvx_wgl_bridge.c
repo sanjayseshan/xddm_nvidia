@@ -192,6 +192,7 @@ NvxQueryBridgeStatus(struct nvx_bridge_status *status, DWORD bytes)
 }
 
 void nvx_wgl_set_hdc(HDC hdc);
+int nvx_wgl_xf86drm_fd(void);
 int nvx_wgl_nouveau_device_available(void);
 void nvx_wgl_notify_hybrid_screen_created(void);
 int nvx_wgl_nvx_adapter_create(void);

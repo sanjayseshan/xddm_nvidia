@@ -2,55 +2,43 @@
 
 Updated November 11, 2026, after full-size native clear and cube comparison.
 
-## XP `xf86drm` discovery adapter (November 11, 2026)
+## XP `xf86drm` shim and Nouveau build probe (November 11, 2026)
 
-The external `xf86drm` replacement has advanced from all-unsupported stubs to
-a process-local adapter registry. WGL registers the capability record obtained
-from the active HDC, and the shim exposes a synthetic descriptor only for that
-registered record. It now answers version/name discovery, platform-device
-metadata, Nouveau GETPARAM values, and the NVIF device NEW/INFO requests used
-to identify GA104. It does not claim a Linux Nouveau kernel version. Unknown
-commands, PRIME, GEM, channel allocation, mapping, and submission remain
-unsupported; no arbitrary ioctl or pushbuffer is forwarded.
+The external `xf86drm` replacement now registers the capability record
+returned by the active HDC and gives Mesa a process-local pseudo-descriptor.
+It answers the device/version queries Nouveau uses to identify GA104: device
+metadata, selected GETPARAMs, and NVIF device NEW/INFO. The version is reported
+as NVX transport metadata, not as a Linux Nouveau kernel version. This
+descriptor is not an OS file descriptor. Unsupported operations return
+`ENOSYS`; no generic ioctl or user pushbuffer is forwarded.
 
-`make -C src_driver check` passes, including the host shim behavior tests and
-x86/x64 MinGW compilation. A fresh Nouveau+softpipe XP cross-build configures
-and compiles hundreds of targets, then stops in the shared
-`src/nouveau/winsys/nouveau_bo.h` at its unconditional POSIX `sys/mman.h`
-include. Thus the build has not yet established that the legacy Gallium
-Nouveau winsys compiles cleanly with this shim, and no native Nouveau screen
-or hardware OpenGL result has been obtained. The Mesa submodule was restored
-clean after the probe.
+The Nouveau+softpipe XP x64 Mesa build now completes all 702 Ninja actions and
+produces `dist_full/nvxogl64.dll` plus `nvxmesa.dll`. The import audit passes
+with only GDI32, KERNEL32, msvcrt, and USER32. External patches keep the newer
+NVK-only shared winsys out of the WGL build, compile legacy source against
+XP's limited OS mapping surface, and reject DRM handle sharing. The `os_mman`
+shim deliberately returns `MAP_FAILED`; it supplies compile portability, not
+a real BO mapping. The Mesa submodule is restored clean at the pinned revision.
 
-This confirms that replacing `xf86drm` is useful for API discovery, but it is
-not a drop-in Windows DRM equivalent. The immediate build portability issue is
-the separate shared winsys mmap dependency; after that, native NVC0 screen
-creation still reaches unsupported channel/object, BO, fence, and pushbuffer
-operations. The XP port needs those operations mapped to owned NVX resources
-and explicit miniport contracts before the native screen factory can succeed.
-Do not label the current ICD as Nouveau accelerated; WGL's fallback remains
-softpipe.
+`make -C src_driver check` passes, including ASan/UBSan host tests and x86/x64
+MinGW compilation. The full real-hardware suite also passed at
+`../test_logs/v3.0.0.2-20261111-163538.log`: the 3D clear/draw/readback and
+semaphore probes passed, as did 2D and buffer round-trip checks. WGL reported
+`OpenGL Renderer: softpipe` and `[OPENGL_RESULT] SOFTWARE`. The log contains
+one startup firmware assertion and no MMU fault. This verifies package
+compatibility and existing miniport paths, not a native Nouveau `pipe_screen`
+or accelerated OpenGL draw.
 
-## XP `xf86drm` compatibility compile probe (November 11, 2026)
-
-Added an external XP compatibility header/source pair for the subset of
-`xf86drm.h` referenced by Mesa's Nouveau DRM winsys, and wired it into the
-optional `nouveau,softpipe` cross-build. Unsupported DRM discovery/command
-calls return `ENOSYS`; they do not fabricate a Linux DRM device or channel.
-Host rejection tests and x86/x64 MinGW compilation pass. The Nouveau-enabled
-Mesa build now gets past the missing `xf86drm.h` include, but still fails in
-upstream `nouveau.c` because its mmap path depends on POSIX `mmap` constants
-and mapping semantics unavailable in XP. The first compile also exposed
-32-bit `unsigned long` pointer casts in the x64 pushbuf code; an external patch
-uses `uintptr_t` for those values. Mesa's minimum-OS and pointer-width patches
-are external and the submodule is restored clean after each build.
-
-This compatibility scaffold does not route an OpenGL screen through Nouveau:
-all DRM calls still fail explicitly, and WGL continues to create a softpipe
-`pipe_screen`. To proceed, implement HDC/NVX-backed discovery and BO map
-semantics, then channel/object lifecycle and validated command submission.
-`xf86drm` API compatibility alone cannot replace Nouveau's Linux DRM kernel
-operations.
+The remaining native Nouveau boundary is substantial: channel and object
+lifecycle, GEM allocation/ownership, CPU-visible BO map/transfer, fences, and
+kernel-validated pushbuffer submission. PRIME/KMS handle import/export is
+explicitly disabled, and current NVX mmap always fails. Until those operations
+are translated into owned NVX requests with method and relocation validation,
+the native screen cannot be considered operational and WGL must continue to
+report softpipe. `xf86drm` is a Linux DRM client API; replacing its calls with
+Windows file APIs alone cannot supply the kernel objects and scheduling that
+Nouveau expects. The useful shim boundary is one documented semantic request
+at a time, mapped to the miniport ABI.
 
 ## NVX WGL screen entry (November 11, 2026)
 

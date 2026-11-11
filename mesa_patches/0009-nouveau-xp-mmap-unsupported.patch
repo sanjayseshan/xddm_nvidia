@@ -1,0 +1,46 @@
+diff --git a/src/util/os_mman.h b/src/util/os_mman.h
+index 1567ee760791..7c0b8b34bf49 100644
+--- a/src/util/os_mman.h
++++ b/src/util/os_mman.h
+@@ -42,0 +43,35 @@
++#if defined(NVX_XP_WIN32_SHIMS)
++#include <errno.h>
++#include <stdint.h>
++
++#define PROT_READ  0x1
++#define PROT_WRITE 0x2
++#define PROT_NONE  0x0
++#define MAP_SHARED 0x1
++#define MAP_PRIVATE 0x2
++#define MAP_ANONYMOUS 0x20
++#define MAP_FAILED ((void *)(intptr_t)-1)
++
++/* Nouveau's POSIX DRM map handle has no valid XP/NVX mapping equivalent.
++ * Fail closed until the BO map API is routed through owned NVX transfers. */
++static inline void *
++nvx_xp_os_mmap(void *addr, size_t length, int prot, int flags,
++               int fd, uint64_t offset)
++{
++   (void)addr; (void)length; (void)prot; (void)flags; (void)fd; (void)offset;
++   errno = ENOSYS;
++   return MAP_FAILED;
++}
++
++static inline int
++nvx_xp_os_munmap(void *addr, size_t length)
++{
++   (void)addr; (void)length;
++   errno = ENOSYS;
++   return -1;
++}
++
++#define os_mmap(addr, length, prot, flags, fd, offset) \
++   nvx_xp_os_mmap(addr, length, prot, flags, fd, offset)
++#define os_munmap(addr, length) nvx_xp_os_munmap(addr, length)
++#else
+@@ -47,0 +83 @@
++#endif
+@@ -53,0 +90 @@ extern "C" {
++#if !defined(NVX_XP_WIN32_SHIMS)
+@@ -78,0 +116 @@ static inline int os_munmap(void *addr, size_t length)
++#endif

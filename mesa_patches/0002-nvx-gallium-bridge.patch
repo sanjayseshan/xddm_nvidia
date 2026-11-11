@@ -71,10 +71,13 @@ index 100753a18bf7..7e4257a71914 100644
 +      }
 +   }
  #endif
-@@ -122,0 +138,3 @@ wgl_screen_create(HDC hDC)
+@@ -117,4 +132,6 @@
+ static struct pipe_screen *
+ wgl_screen_create(HDC hDC)
+ {
 +   nvx_wgl_set_hdc(hDC);
 +
-+
+    struct sw_winsys *winsys;
 @@ -127,3 +146,4 @@ wgl_screen_create(HDC hDC)
     const char *const drivers[] = {
        debug_get_option_gallium_driver(),

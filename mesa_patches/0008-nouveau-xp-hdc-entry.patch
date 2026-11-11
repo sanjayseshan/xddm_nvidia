@@ -1,39 +1,24 @@
 diff --git a/src/gallium/winsys/nouveau/drm/nouveau.c b/src/gallium/winsys/nouveau/drm/nouveau.c
 --- a/src/gallium/winsys/nouveau/drm/nouveau.c
 +++ b/src/gallium/winsys/nouveau/drm/nouveau.c
-@@ -71,12 +71,12 @@ nouveau_drm_new(int fd, struct nouveau_drm **pdrm)
--   drmVersionPtr ver = drmGetVersion(fd);
--   if (!ver)
+@@ -71,0 +72,4 @@ nouveau_drm_new(int fd, struct nouveau_drm **pdrm)
 +#ifdef NVX_XP_WIN32_SHIMS
 +   if (!NvxXf86DrmIsRegistered(fd))
-       goto out_err;
--
--   drm->version = (ver->version_major << 24) |
--                  (ver->version_minor << 8) |
--                   ver->version_patchlevel;
--
--   drmFreeVersion(ver);
--
--   if (drm->version < 0x01000301)
-+#else
-+   drmVersionPtr ver = drmGetVersion(fd);
-+   if (!ver)
 +      goto out_err;
-+   drm->version = (ver->version_major << 24) |
-+                  (ver->version_minor << 8) | ver->version_patchlevel;
-+   drmFreeVersion(ver);
-+   if (drm->version < 0x01000301)
-       goto out_err;
++#else
+@@ -82,0 +87 @@ nouveau_drm_new(int fd, struct nouveau_drm **pdrm)
 +#endif
 diff --git a/src/gallium/winsys/nouveau/drm/nouveau_drm_winsys.c b/src/gallium/winsys/nouveau/drm/nouveau_drm_winsys.c
 --- a/src/gallium/winsys/nouveau/drm/nouveau_drm_winsys.c
 +++ b/src/gallium/winsys/nouveau/drm/nouveau_drm_winsys.c
-@@ -88,2 +88,6 @@
--   return u_pipe_screen_lookup_or_create(os_dupfd_cloexec(fd), NULL, NULL,
--                                         nouveau_screen_create);
+@@ -85,6 +85,10 @@
+ struct pipe_screen *
+ nouveau_drm_screen_create(int fd)
+ {
 +#ifdef NVX_XP_WIN32_SHIMS
 +   return nouveau_screen_create(fd, NULL, NULL);
 +#else
-+   return u_pipe_screen_lookup_or_create(os_dupfd_cloexec(fd), NULL, NULL,
-+                                         nouveau_screen_create);
+    return u_pipe_screen_lookup_or_create(os_dupfd_cloexec(fd), NULL, NULL,
+                                          nouveau_screen_create);
 +#endif
+ }
