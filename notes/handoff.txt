@@ -2,6 +2,21 @@
 
 Updated November 11, 2026, after the XP-backed `xf86drm` BO shim and VFIO run.
 
+## Current end-to-end recheck (November 11, 2026)
+
+Rebuilt the XP x64 Nouveau+softpipe Mesa package with
+`MESON=/tmp/nvx-meson-venv/bin/meson NVX_MESA_BUILD_DIR=/tmp/nvx-mesa-nouveau-phase2c NVX_MESA_GALLIUM_DRIVERS=nouveau,softpipe JOBS=4 ./test/build_mesa_xp64.sh`.
+All 1,350 Ninja actions completed; `nvxogl64.dll` imports only GDI32,
+KERNEL32, MSVCRT, and USER32. The build script restored the Mesa submodule.
+
+Then ran the full VFIO suite with the GR channel, promotion, and submission
+probes enabled. Log: `../test_logs/v3.0.0.3-20261111-183237.log`. XP booted,
+the 3D and surface tests passed, and the x64 ICD loaded. OpenGL still reports
+`[OPENGL_RESULT] SOFTWARE`; the compatibility shim's first unsupported call
+remains `DRM_NOUVEAU_CHANNEL_ALLOC` (`ENOSYS`). The serial log records one
+startup firmware assertion and no MMU-fault entry. Thus package, boot, and
+existing miniport GPU paths are verified, but Phase 2C remains incomplete.
+
 ## Distinguish fixed-profile GPU submits from generic NVC0 batches (November 11, 2026)
 
 The capability formerly named `NVX_3D_FEATURE_SUBMIT` represented only the
