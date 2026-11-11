@@ -2,6 +2,23 @@
 
 Updated November 11, 2026, after the XP-backed `xf86drm` BO shim and VFIO run.
 
+## `xf86drm` replacement recheck (November 11, 2026)
+
+After reviewing the proposed Windows replacement boundary, the current host
+checks were rerun with `make -C src_driver check`; ASan/UBSan ABI, winsys, and
+`xf86drm` mock tests passed, and the shim compiled with both x86 and x64
+MinGW. The Nouveau+softpipe XP x64 build also completed all 702 Ninja actions,
+including Gallium Nouveau sources, and passed its XP import audit. The build
+script restored the Mesa submodule; the root worktree is clean.
+
+This confirms that the external `xf86drm` compatibility layer gets the XP
+build through the header and supported BO APIs. It does not replace the
+Nouveau winsys: WGL still does not construct a Gallium Nouveau screen, and the
+miniport's batch validator only checks framing/relocations rather than
+submitting them. Channel/object ownership and validated, fenced NVC0
+submission remain the next runtime boundaries. Do not treat these compile and
+mock results as GPU-accelerated OpenGL evidence.
+
 ## Gallium bridge GPU draw probe (November 11, 2026)
 
 Ran the VFIO suite with `NVX_MESA_GALLIUM_BRIDGE=1`; log:
