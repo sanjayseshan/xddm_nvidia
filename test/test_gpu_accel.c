@@ -3112,6 +3112,7 @@ static BOOL CALLBACK FindSecondary(HMONITOR monitor, HDC dc, LPRECT rect, LPARAM
 int main(int argc, char **argv)
 {
     InitLogging();
+    LogMsg("[CLIENT_PROCESS] pid=%lu\n", (unsigned long)GetCurrentProcessId());
 
     LogMsg("\n==================================================================\n");
     LogMsg(" NVX XP Graphics Verification Suite (2D correctness and 3D renderer audit)\n");

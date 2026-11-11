@@ -2,6 +2,19 @@
 
 Updated November 11, 2026, after the XP-backed `xf86drm` BO shim and VFIO run.
 
+## Video-port callback identity probe (November 11, 2026)
+
+Added a one-time diagnostic in the miniport's 3D capability query and logged
+the process ID in `test_gpu_accel.exe`, then ran the full VFIO suite. In
+`../test_logs/v3.0.0.3-20261111-183715.log`, the client reports PID 2024 while
+`HwStartIO` observes PID 276. The callback's current process is therefore not
+the originating OpenGL process in this path; do not bind `ClientToken` to
+`PsGetCurrentProcessId()` there. A future ownership mechanism needs a
+kernel-issued capability/session (or a different request boundary that
+preserves requestor identity) before commands can be accepted. The diagnostic
+miniport and client builds passed, the VM booted, 3D hardware tests passed, and
+OpenGL still reports software because channel allocation remains unsupported.
+
 ## Client ownership requirement for a Nouveau channel (November 11, 2026)
 
 The existing `ClientToken` is generated in user mode and supplied on each

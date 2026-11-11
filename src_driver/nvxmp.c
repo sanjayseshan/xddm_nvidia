@@ -12,6 +12,10 @@
 
 #define NV_VENDOR_ID 0x10DE
 
+/* Compare the video-port callback's process context with the user-mode NVX
+ * client token during XP channel bring-up diagnostics. */
+extern HANDLE NTAPI PsGetCurrentProcessId(VOID);
+
 /* NT kernel file APIs used by the optional boot diagnostic log. */
 typedef struct _NVX_OBJECT_ATTRIBUTES {
     ULONG Length;
@@ -1356,6 +1360,7 @@ BOOLEAN NTAPI HwVidInitialize(PVOID HwDeviceExtension) {
 }
 
 static volatile ULONG g_Nvx3dBufferLock=0;
+static volatile LONG g_Nvx3dProcessContextLogged=0;
 
 static BOOLEAN Nvx3dLockBuffers(VOID)
 {
@@ -2249,6 +2254,11 @@ BOOLEAN NTAPI HwVidStartIO(
             (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
         NVX_3D_QUERY_CAPS *caps=(NVX_3D_QUERY_CAPS *)RequestPacket->OutputBuffer;
         ULONG64 heapStart,heapEnd;
+        if(!__sync_lock_test_and_set(&g_Nvx3dProcessContextLogged,1)) {
+            LogStr("NVX [3D-CLIENT-CONTEXT]: HwStartIO process id=");
+            LogHex((ULONG64)(ULONG_PTR)PsGetCurrentProcessId());
+            LogStr("\n");
+        }
         if(!caps||RequestPacket->OutputBufferLength<sizeof(*caps)) {
             status=ERROR_INSUFFICIENT_BUFFER;break;
         }
