@@ -2,6 +2,28 @@
 
 Updated November 11, 2026, after full-size native clear and cube comparison.
 
+## Latest Nouveau WGL boundary test (November 11, 2026)
+
+The XP x64 Mesa package was rebuilt with Gallium `nouveau,softpipe` and
+booted on the RTX 3070 in `../test_logs/v3.0.0.2-20261111-165221.log`.
+WGL completed adapter discovery (`PCI=2488`, chipset `0170`, 64 MiB reported
+aperture), then the Nouveau DRM shim recorded its first unsupported call:
+`drmCommandWriteRead(DRM_NOUVEAU_CHANNEL_ALLOC)`, operation `0x02`,
+`ENOSYS`. OpenGL therefore reports softpipe and `[OPENGL_RESULT] SOFTWARE`;
+this run does not prove Nouveau acceleration. The shim now exposes a status
+counter and last unsupported call through `NvxQueryBridgeStatus`, so later
+native-winsys work can identify each next boundary. The test also passed
+`[2D_RESULT]` and `[NVX_3D_RESULT]`; the log records one firmware assertion
+and no MMU-fault line. The Mesa build/import audit and `make -C src_driver
+check` passed, and the Mesa submodule was restored clean.
+
+Next work must provide a real NVX channel/object lifecycle and submission
+contract, then map Nouveau BO creation, CPU transfers, fences, and validated
+pushbuffer relocations onto it. Do not return synthetic success for channel
+allocation: the existing escape ABI has no general Nouveau channel or raw
+pushbuffer equivalent yet. Keep the renderer classified as software until an
+actual Gallium Nouveau screen and shader-backed draw are verified.
+
 ## XP `xf86drm` shim and Nouveau build probe (November 11, 2026)
 
 The external `xf86drm` replacement now registers the capability record

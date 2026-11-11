@@ -123,6 +123,23 @@ main(void)
       assert(strcmp(query.info.chip, "GA104") == 0);
    }
 
+   {
+      struct drm_nouveau_channel_alloc channel = {0};
+      NVX_XF86DRM_STATUS status;
+      uint32_t previous_unsupported;
+      NvxXf86DrmGetStatus(&status);
+      previous_unsupported = status.UnsupportedCount;
+      assert(drmCommandWriteRead(fd, DRM_NOUVEAU_CHANNEL_ALLOC, &channel,
+                                 sizeof(channel)) == -1);
+      assert(errno == ENOSYS);
+      memset(&status, 0, sizeof(status));
+      NvxXf86DrmGetStatus(&status);
+      assert(status.UnsupportedCount == previous_unsupported + 1U);
+      assert(status.LastUnsupportedKind ==
+             NVX_XF86DRM_UNSUPPORTED_WRITE_READ);
+      assert(status.LastUnsupportedOperation == DRM_NOUVEAU_CHANNEL_ALLOC);
+   }
+
    NvxXf86DrmUnregisterDevice(fd);
    assert(!NvxXf86DrmIsRegistered(fd));
    assert(drmGetVersion(fd) == NULL && errno == ENODEV);

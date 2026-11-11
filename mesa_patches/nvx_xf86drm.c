@@ -26,7 +26,10 @@ struct nvx_drm_device_slot {
 
 static struct nvx_drm_device_slot nvx_drm_devices[NVX_DRM_DEVICE_SLOTS];
 static volatile int nvx_drm_lock;
+static NVX_XF86DRM_STATUS nvx_drm_status;
 static int nvx_drm_unsupported(void);
+static int nvx_drm_unsupported_operation(uint32_t kind,
+                                        unsigned long operation);
 static int nvx_drm_lookup(int fd, NVX_WINSYS_DEVICE *device);
 
 static int
@@ -57,7 +60,8 @@ nvx_drm_getparam(int fd, void *data, unsigned long size)
       request->value = device.caps.Chipset;
       break;
    default:
-      return nvx_drm_unsupported();
+      return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_WRITE_READ,
+                                          DRM_NOUVEAU_GETPARAM);
    }
    return 0;
 }
@@ -73,10 +77,12 @@ nvx_drm_nvif_device_new(int fd, void *data, unsigned long size)
 
    if (!nvx_drm_lookup(fd, &device) || !data ||
        size != minimum || ioctl->type != NVIF_IOCTL_V0_NEW)
-      return nvx_drm_unsupported();
+      return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_WRITE,
+                                          DRM_NOUVEAU_NVIF);
    create = (struct nvif_ioctl_new_v0 *)((uint8_t *)data + sizeof(*ioctl));
    if (create->oclass != NV_DEVICE || create->route != NVIF_IOCTL_V0_ROUTE_NVIF)
-      return nvx_drm_unsupported();
+      return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_WRITE,
+                                          DRM_NOUVEAU_NVIF);
    /* nouveau_device_new() creates a client-side descriptor. NVX owns the
     * actual channel and engine objects, so this does not bind a GPU object. */
    return 0;
@@ -94,10 +100,12 @@ nvx_drm_nvif_device_info(int fd, void *data, unsigned long size)
 
    if (!data || size != expected || !nvx_drm_lookup(fd, &device) ||
        ioctl->type != NVIF_IOCTL_V0_MTHD)
-      return nvx_drm_unsupported();
+      return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_WRITE_READ,
+                                          DRM_NOUVEAU_NVIF);
    method = (struct nvif_ioctl_mthd_v0 *)((uint8_t *)data + sizeof(*ioctl));
    if (method->method != NV_DEVICE_V0_INFO)
-      return nvx_drm_unsupported();
+      return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_WRITE_READ,
+                                          DRM_NOUVEAU_NVIF);
    info = (struct nv_device_info_v0 *)((uint8_t *)method + sizeof(*method));
    memset(info, 0, sizeof(*info));
    info->version = 0;
@@ -127,6 +135,17 @@ nvx_drm_unsupported(void)
 {
    errno = ENOSYS;
    return -1;
+}
+
+static int
+nvx_drm_unsupported_operation(uint32_t kind, unsigned long operation)
+{
+   nvx_drm_lock_acquire();
+   nvx_drm_status.UnsupportedCount++;
+   nvx_drm_status.LastUnsupportedKind = kind;
+   nvx_drm_status.LastUnsupportedOperation = (uint32_t)operation;
+   nvx_drm_lock_release();
+   return nvx_drm_unsupported();
 }
 
 static int
@@ -222,6 +241,16 @@ NvxXf86DrmIsRegistered(int fd)
 {
    NVX_WINSYS_DEVICE device;
    return nvx_drm_lookup(fd, &device);
+}
+
+void
+NvxXf86DrmGetStatus(NVX_XF86DRM_STATUS *status)
+{
+   if (!status)
+      return;
+   nvx_drm_lock_acquire();
+   *status = nvx_drm_status;
+   nvx_drm_lock_release();
 }
 
 drmVersionPtr
@@ -353,7 +382,8 @@ drmCommandWrite(int fd, unsigned long command, void *data,
 {
    if (command == DRM_NOUVEAU_NVIF)
       return nvx_drm_nvif_device_new(fd, data, size);
-   return nvx_drm_unsupported();
+   return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_WRITE,
+                                       command);
 }
 
 int
@@ -364,7 +394,8 @@ drmCommandWriteRead(int fd, unsigned long command, void *data,
       return nvx_drm_getparam(fd, data, size);
    if (command == DRM_NOUVEAU_NVIF)
       return nvx_drm_nvif_device_info(fd, data, size);
-   return nvx_drm_unsupported();
+   return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_WRITE_READ,
+                                       command);
 }
 
 int
@@ -372,54 +403,54 @@ drmCommandRead(int fd, unsigned long command, void *data,
                unsigned long size)
 {
    (void)fd;
-   (void)command;
    (void)data;
    (void)size;
-   return nvx_drm_unsupported();
+   return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_READ,
+                                       command);
 }
 
 int
 drmCommandNone(int fd, unsigned long command)
 {
    (void)fd;
-   (void)command;
-   return nvx_drm_unsupported();
+   return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_NONE,
+                                       command);
 }
 
 int
 drmIoctl(int fd, unsigned long request, void *data)
 {
    (void)fd;
-   (void)request;
    (void)data;
-   return nvx_drm_unsupported();
+   return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_IOCTL,
+                                       request);
 }
 
 int
 drmCloseBufferHandle(int fd, uint32_t handle)
 {
    (void)fd;
-   (void)handle;
-   return nvx_drm_unsupported();
+   return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_CLOSE,
+                                       handle);
 }
 
 int
 drmPrimeFDToHandle(int fd, int prime_fd, uint32_t *handle)
 {
    (void)fd;
-   (void)prime_fd;
    if (handle)
       *handle = 0;
-   return nvx_drm_unsupported();
+   return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_PRIME_TO_HANDLE,
+                                       (uint32_t)prime_fd);
 }
 
 int
 drmPrimeHandleToFD(int fd, uint32_t handle, uint32_t flags, int *prime_fd)
 {
    (void)fd;
-   (void)handle;
    (void)flags;
    if (prime_fd)
       *prime_fd = -1;
-   return nvx_drm_unsupported();
+   return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_HANDLE_TO_PRIME,
+                                       handle);
 }

@@ -143,6 +143,7 @@ struct nvx_bridge_status {
    LONG nouveau_chipset;
    LONG nouveau_aperture_low;
    LONG nouveau_aperture_high;
+   NVX_XF86DRM_STATUS xf86drm;
 };
 
 __declspec(dllexport) BOOL WINAPI
@@ -154,7 +155,7 @@ NvxQueryBridgeStatus(struct nvx_bridge_status *status, DWORD bytes)
    if (!status || bytes < sizeof(*status))
       return FALSE;
    status->size = sizeof(*status);
-   status->version = 4;
+   status->version = 5;
    status->screen_count = InterlockedCompareExchange(&nvx_bridge_screen_count, 0, 0);
    status->callback_count = InterlockedCompareExchange(&nvx_bridge_callback_count, 0, 0);
    status->gpu_batch_count = InterlockedCompareExchange(&nvx_bridge_gpu_batch_count, 0, 0);
@@ -188,6 +189,7 @@ NvxQueryBridgeStatus(struct nvx_bridge_status *status, DWORD bytes)
       &nvx_bridge_nouveau_aperture_low, 0, 0);
    status->nouveau_aperture_high = InterlockedCompareExchange(
       &nvx_bridge_nouveau_aperture_high, 0, 0);
+   NvxXf86DrmGetStatus(&status->xf86drm);
    return TRUE;
 }
 

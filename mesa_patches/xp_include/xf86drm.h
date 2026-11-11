@@ -75,12 +75,28 @@ typedef struct _drmDevice {
    } deviceinfo;
 } drmDevice, *drmDevicePtr;
 
+/* Diagnostics for DRM operations that have no Windows/NVX equivalent yet. */
+#define NVX_XF86DRM_UNSUPPORTED_WRITE       1U
+#define NVX_XF86DRM_UNSUPPORTED_WRITE_READ  2U
+#define NVX_XF86DRM_UNSUPPORTED_READ        3U
+#define NVX_XF86DRM_UNSUPPORTED_NONE        4U
+#define NVX_XF86DRM_UNSUPPORTED_IOCTL       5U
+#define NVX_XF86DRM_UNSUPPORTED_CLOSE       6U
+#define NVX_XF86DRM_UNSUPPORTED_PRIME_TO_HANDLE 7U
+#define NVX_XF86DRM_UNSUPPORTED_HANDLE_TO_PRIME 8U
+typedef struct NVX_XF86DRM_STATUS {
+   uint32_t UnsupportedCount;
+   uint32_t LastUnsupportedKind;
+   uint32_t LastUnsupportedOperation;
+} NVX_XF86DRM_STATUS;
+
 /* Register an already queried NVX adapter and obtain a process-local DRM
  * compatibility descriptor.  This is metadata transport only; it does not
  * create a Nouveau channel or authorize GPU commands. */
 int NvxXf86DrmRegisterDevice(const NVX_WINSYS_DEVICE *device);
 void NvxXf86DrmUnregisterDevice(int fd);
 int NvxXf86DrmIsRegistered(int fd);
+void NvxXf86DrmGetStatus(NVX_XF86DRM_STATUS *status);
 
 drmVersionPtr drmGetVersion(int fd);
 void drmFreeVersion(drmVersionPtr version);
