@@ -7,7 +7,7 @@
 
 /* Fixed-width ABI shared by XP x64/x86 clients and the miniport.  GPU VAs are
  * always 64-bit; no kernel pointers or RM handles cross this boundary. */
-#define NVX_3D_ABI_VERSION 13U
+#define NVX_3D_ABI_VERSION 14U
 #define NVX_3D_MAX_PUSH_DWORDS 4096U
 #define NVX_3D_MAX_BATCH_RELOCATIONS 256U
 #define NVX_3D_MAX_BATCH_BUFFERS 64U
@@ -227,12 +227,25 @@ typedef struct NVX_3D_QUERY_CAPS {
     uint32_t MaxPushDwords;
     uint32_t PageBytes;
     uint32_t MaxBufferBytes;
-    uint32_t Reserved;
+    /* Valid bit 31; bus in bits 0..7; PCI_SLOT_NUMBER in bits 8..15. */
+    uint32_t PciLocation;
     uint32_t Chipset;
     uint32_t DeviceId;
     uint64_t VramApertureBytes;
     uint64_t GartBytes;
 } NVX_3D_QUERY_CAPS;
+
+#define NVX_3D_PCI_LOCATION_VALID 0x80000000U
+#define NVX_3D_PCI_LOCATION_BUS_MASK 0x000000ffU
+#define NVX_3D_PCI_LOCATION_SLOT_SHIFT 8U
+
+static inline uint32_t
+Nvx3dPackPciLocation(uint32_t bus, uint32_t slot)
+{
+    return NVX_3D_PCI_LOCATION_VALID |
+           (bus & NVX_3D_PCI_LOCATION_BUS_MASK) |
+           ((slot & 0xffU) << NVX_3D_PCI_LOCATION_SLOT_SHIFT);
+}
 
 static inline uint32_t
 Nvx3dChipsetFromDeviceId(uint32_t deviceId)

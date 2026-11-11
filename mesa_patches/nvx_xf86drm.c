@@ -232,16 +232,6 @@ nvx_drm_strdup(const char *text)
    return copy;
 }
 
-static void
-nvx_format_hex4(char text[5], uint32_t value)
-{
-   static const char digits[] = "0123456789abcdef";
-   unsigned i;
-   for (i = 0; i < 4; i++)
-      text[i] = digits[(value >> ((3U - i) * 4U)) & 0xfU];
-   text[4] = '\0';
-}
-
 int
 NvxXf86DrmRegisterDevice(const NVX_WINSYS_DEVICE *device)
 {
@@ -253,6 +243,7 @@ NvxXf86DrmRegisterDevice(const NVX_WINSYS_DEVICE *device)
        device->caps.Size != sizeof(device->caps) ||
        device->caps.GraphicsClass != 0xc797U ||
        !device->caps.DeviceId || !device->caps.Chipset ||
+       !(device->caps.PciLocation & NVX_3D_PCI_LOCATION_VALID) ||
        !device->caps.VramApertureBytes || !device->caps.MaxBufferBytes)
       return -1;
 
@@ -478,13 +469,11 @@ drmGetDevice2(int fd, uint32_t flags, drmDevicePtr *out_device)
 {
    NVX_WINSYS_DEVICE winsys;
    drmDevicePtr device;
-   drmPlatformBusInfoPtr bus;
-   drmPlatformDeviceInfoPtr info;
-   char **compatible;
-   char device_id[5], chipset[5], fullname[128] = { 0 }, compat_name[64];
-   size_t i, length;
+   drmPciBusInfoPtr bus;
+   drmPciDeviceInfoPtr info;
 
-   if (!out_device || flags || !nvx_drm_lookup(fd, &winsys)) {
+   if (!out_device || flags || !nvx_drm_lookup(fd, &winsys) ||
+       !(winsys.caps.PciLocation & NVX_3D_PCI_LOCATION_VALID)) {
       if (out_device)
          *out_device = NULL;
       errno = ENODEV;
@@ -493,42 +482,27 @@ drmGetDevice2(int fd, uint32_t flags, drmDevicePtr *out_device)
    *out_device = NULL;
 
    device = (drmDevicePtr)calloc(1, sizeof(*device));
-   bus = (drmPlatformBusInfoPtr)calloc(1, sizeof(*bus));
-   info = (drmPlatformDeviceInfoPtr)calloc(1, sizeof(*info));
-   compatible = (char **)calloc(2, sizeof(*compatible));
-   if (!device || !bus || !info || !compatible)
+   bus = (drmPciBusInfoPtr)calloc(1, sizeof(*bus));
+   info = (drmPciDeviceInfoPtr)calloc(1, sizeof(*info));
+   if (!device || !bus || !info)
       goto fail;
 
-   nvx_format_hex4(device_id, winsys.caps.DeviceId);
-   nvx_format_hex4(chipset, winsys.caps.Chipset);
-   memcpy(fullname, "NVX HDC adapter PCI ", 20);
-   memcpy(fullname + 20, device_id, 4);
-   memcpy(fullname + 24, " chipset ", 9);
-   memcpy(fullname + 33, chipset, 5);
-   length = strlen(fullname);
-   if (length >= sizeof(bus->fullname))
-      length = sizeof(bus->fullname) - 1U;
-   memcpy(bus->fullname, fullname, length + 1U);
-
-   memcpy(compat_name, "nvx,nvidia-ga104-", 17);
-   memcpy(compat_name + 17, chipset, 5);
-   compatible[0] = nvx_drm_strdup(compat_name);
-   if (!compatible[0])
-      goto fail;
-
-   device->bustype = DRM_BUS_PLATFORM;
-   device->businfo.platform = bus;
-   device->deviceinfo.platform = info;
-   info->compatible = compatible;
+   bus->domain = 0;
+   bus->bus = (uint8_t)(winsys.caps.PciLocation &
+                        NVX_3D_PCI_LOCATION_BUS_MASK);
+   bus->dev = (uint8_t)((winsys.caps.PciLocation >>
+                         NVX_3D_PCI_LOCATION_SLOT_SHIFT) & 0x1fU);
+   bus->func = (uint8_t)((winsys.caps.PciLocation >>
+                          (NVX_3D_PCI_LOCATION_SLOT_SHIFT + 5U)) & 0x7U);
+   info->vendor_id = 0x10deU;
+   info->device_id = (uint16_t)winsys.caps.DeviceId;
+   device->bustype = DRM_BUS_PCI;
+   device->businfo.pci = bus;
+   device->deviceinfo.pci = info;
    *out_device = device;
    return 0;
 
 fail:
-   if (compatible) {
-      for (i = 0; i < 2; i++)
-         free(compatible[i]);
-   }
-   free(compatible);
    free(info);
    free(bus);
    free(device);

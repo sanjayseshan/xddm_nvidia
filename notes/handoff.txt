@@ -2,6 +2,27 @@
 
 Updated November 11, 2026, after the XP-backed `xf86drm` BO shim and VFIO run.
 
+## ABI 14 PCI identity for the Nouveau DRM shim (November 11, 2026)
+
+The XP miniport now returns its PCI bus and encoded slot in the existing
+capability record. The external `xf86drm` compatibility layer exposes this as
+`DRM_BUS_PCI` with NVIDIA vendor/device IDs; before this change it reported a
+platform device, so Nouveau skipped populating its PCI identity fields. The
+caps record remains 56 bytes, and the ABI is version 14. Driver/package version
+is 3.0.0.3.
+
+`make -C src_driver check`, `make -C src_driver full`, `make -C src_disp all`,
+and `make -C src_disp check` passed. The XP x64 Nouveau+softpipe Mesa build
+completed 1350 Ninja actions and passed its XP import audit; the Mesa submodule
+was restored clean. Real RTX 3070 test
+`../test_logs/v3.0.0.3-20261111-175309.log` reports
+`BDF=00:02.0`, `NVX_3D_RESULT PASS`, the native GR triangle/semaphore probe,
+and 2D GPU tests passing. Nouveau still stops at
+`DRM_NOUVEAU_CHANNEL_ALLOC` (`ENOSYS`), and OpenGL reports softpipe. The log
+records one startup firmware assertion and no MMU fault. PCI identity is now
+correctly represented, but this does not create a Nouveau channel or prove
+hardware-accelerated OpenGL.
+
 ## NVX batch BO references (ABI 13, current work)
 
 ABI 13 extends the bounded batch header with explicit BO reference count and

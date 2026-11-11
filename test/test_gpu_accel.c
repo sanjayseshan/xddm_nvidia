@@ -2443,12 +2443,17 @@ static void TestNvx3dSubmission(HDC hdc)
 #endif
         return;
     }
-    LogMsg("-> NVX 3D features=0x%08lX class=0x%08lX ABI=%lu PCI=%04lX chipset=0x%03lX VRAM-aperture=%llu GART=%llu\n",
+    {
+        uint32_t slot=(caps.PciLocation>>NVX_3D_PCI_LOCATION_SLOT_SHIFT)&0xffU;
+        LogMsg("-> NVX 3D features=0x%08lX class=0x%08lX ABI=%lu PCI=%04lX BDF=%02lX:%02lX.%lu chipset=0x%03lX VRAM-aperture=%llu GART=%llu\n",
         (unsigned long)caps.Features,(unsigned long)caps.GraphicsClass,
         (unsigned long)caps.Version,(unsigned long)caps.DeviceId,
+        (unsigned long)(caps.PciLocation&NVX_3D_PCI_LOCATION_BUS_MASK),
+        (unsigned long)(slot&0x1fU),(unsigned long)((slot>>5)&0x7U),
         (unsigned long)caps.Chipset,
         (unsigned long long)caps.VramApertureBytes,
         (unsigned long long)caps.GartBytes);
+    }
     if (mesaGpuBridgeProbe) {
         int bridged = (caps.Features & NVX_3D_FEATURE_CLIENT_TRIANGLE) != 0 &&
                       mesaGpuFramebufferVerified;
@@ -2464,6 +2469,7 @@ static void TestNvx3dSubmission(HDC hdc)
 #endif
     if(!(caps.Features&NVX_3D_FEATURE_USER_ALLOC)||
        !(caps.Features&NVX_3D_FEATURE_UPLOAD)||
+       !(caps.PciLocation&NVX_3D_PCI_LOCATION_VALID)||
        caps.Version!=NVX_3D_ABI_VERSION) {
         LogMsg("-> [INFO] safe 3D allocation/submit capabilities unavailable\n");
 #if defined(NVX_REQUIRE_3D_ABI) && NVX_REQUIRE_3D_ABI

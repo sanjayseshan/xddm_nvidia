@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="3.0.0.2"
+NVX_TEST_VERSION="3.0.0.3"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 NVX_TEST_FLAGS=()
 NVX_MESA_TEST_FLAGS=()
@@ -112,6 +112,12 @@ else
 fi
 make -C "$NVX_ROOT/src_disp" check
 cp "$NVX_ROOT/src_disp/nvxdisp.dll" "$NVX_ROOT/dist_full/nvxdisp.dll"
+
+# Keep the offline package INF aligned with the version used for this test
+# build.
+NVX_DRIVER_DATE="$(date +%m/%d/%Y)"
+sed -i -E "s|^DriverVer[[:space:]]*=.*|DriverVer   = $NVX_DRIVER_DATE, $NVX_TEST_VERSION|" \
+    "$NVX_ROOT/dist_full/nvx.inf"
 
 if [ "${NVX_BUILD_MESA_ICD:-0}" = "1" ]; then
     echo "==> Building the XP x64 Mesa WGL ICD (softpipe reference backend)"

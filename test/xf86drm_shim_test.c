@@ -147,6 +147,7 @@ main(void)
                           NVX_3D_FEATURE_DOWNLOAD;
    winsys.caps.DeviceId = 0x2488U;
    winsys.caps.Chipset = 0x170U;
+   winsys.caps.PciLocation = Nvx3dPackPciLocation(0x2aU, 0xabU);
    winsys.caps.VramApertureBytes = 64U * 1024U * 1024U;
    winsys.caps.MaxBufferBytes = 16U * 1024U * 1024U;
    fd = NvxXf86DrmRegisterDevice(&winsys);
@@ -207,11 +208,13 @@ main(void)
       drmFreeVersion(version);
    }
    assert(drmGetDevice2(fd, 0, &device) == 0);
-   assert(device && device->bustype == DRM_BUS_PLATFORM);
-   assert(strcmp(device->businfo.platform->fullname,
-                 "NVX HDC adapter PCI 2488 chipset 0170") == 0);
-   assert(strcmp(device->deviceinfo.platform->compatible[0],
-                 "nvx,nvidia-ga104-0170") == 0);
+   assert(device && device->bustype == DRM_BUS_PCI);
+   assert(device->businfo.pci->domain == 0 &&
+          device->businfo.pci->bus == 0x2aU &&
+          device->businfo.pci->dev == 0x0bU &&
+          device->businfo.pci->func == 0x05U);
+   assert(device->deviceinfo.pci->vendor_id == 0x10deU &&
+          device->deviceinfo.pci->device_id == 0x2488U);
    drmFreeDevice(&device);
 
    {

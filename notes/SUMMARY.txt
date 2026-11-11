@@ -1,7 +1,11 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 11, 2026 (version 3.0.0.2, bridge-enabled hardware validation)
+Updated: November 11, 2026 (version 3.0.0.3, XP PCI identity and Nouveau shim)
 
 Current Phase 2C status (verified November 11, 2026):
+- Version 3.0.0.3 hardware run: `../test_logs/v3.0.0.3-20261111-175309.log`.
+  ABI 14 reports the actual PCI location (`00:02.0`) to Nouveau's DRM shim;
+  NVX 3D and 2D probes pass. Nouveau still fails channel allocation and
+  `[OPENGL_RESULT] SOFTWARE` remains, so accelerated OpenGL is incomplete.
 - Version 3.0.0.2 full RTX 3070 run: `../test_logs/v3.0.0.2-20261111-101720.log`.
   XP package/import checks and independent GR/2D probes passed. WGL bridge status
   recorded 106 GPU batches and 104 validated NVC0-format color clears. The

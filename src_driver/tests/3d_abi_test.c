@@ -256,6 +256,8 @@ int main(void)
     uint32_t information=99;
 
     assert(sizeof(NVX_3D_QUERY_CAPS)==56);
+    assert(Nvx3dPackPciLocation(0x2aU,0xabU)==
+           (NVX_3D_PCI_LOCATION_VALID|0xab2aU));
     assert(sizeof(NVX_3D_ALLOC_BUFFER)==56);
     assert(sizeof(NVX_3D_BATCH_HEADER)==40);
     assert(sizeof(NVX_3D_RELOCATION)==40);

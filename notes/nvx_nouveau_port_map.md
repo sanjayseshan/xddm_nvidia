@@ -3,6 +3,13 @@
 Status: source/API mapping, an XP device/BO adapter, and a narrow clear-packet
 bridge; no Mesa submodule files were changed. The pinned NVC0 compiler target
 cross-builds for XP x64.
+
+ABI 14 now carries the PCI bus and slot from the miniport, and the external
+`xf86drm` shim exposes a PCI device record instead of a platform record. The
+runtime test `../test_logs/v3.0.0.3-20261111-175309.log` confirms BDF `00:02.0`
+and still identifies `DRM_NOUVEAU_CHANNEL_ALLOC` as the first unsupported
+operation. OpenGL remains softpipe; channel allocation, objects, and validated
+submission are still required for a native screen.
 The softpipe WGL bridge now constructs the NVC0-format clear packet from
 Gallium clear state and its NVX resource metadata. On RTX 3070, the XP miniport
 validated and translated 104 such clears in one 100-frame diagnostic run.
