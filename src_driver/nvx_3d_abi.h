@@ -407,7 +407,10 @@ Nvx3dNvc0AddressIsOwned(uint64_t address,
                         uint64_t clientToken)
 {
     uint32_t i,j;
-    if(!address||!pair) return address==0;
+    /* Known address methods must resolve to an owned allocation. Treat a
+     * zero GPUVA as invalid too; otherwise a null base can bypass the BO
+     * reference and access checks below. */
+    if(!address||!pair) return 0;
     for(i=0;i<referenceCount;i++) {
         NVX_3D_BUFFER_REFERENCE reference;
         memcpy(&reference,references+(uint64_t)i*sizeof(reference),

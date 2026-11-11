@@ -233,6 +233,11 @@ test_nvc0_direct_address_validation(void)
     memcpy(input+sizeof(header)+sizeof(reference),dwords,3*sizeof(uint32_t));
     assert(Nvx3dValidateNvc0Batch(input,bytes,&allocation,1,token));
 
+    dwords[2]=0;
+    memcpy(input+sizeof(header)+sizeof(reference),dwords,3*sizeof(uint32_t));
+    assert(!Nvx3dValidateNvc0Batch(input,bytes,&allocation,1,token));
+    dwords[2]=(uint32_t)allocation.GpuVa;
+
     dwords[2]=(uint32_t)(allocation.GpuVa+allocation.Bytes);
     memcpy(input+sizeof(header)+sizeof(reference),dwords,3*sizeof(uint32_t));
     assert(!Nvx3dValidateNvc0Batch(input,bytes,&allocation,1,token));
