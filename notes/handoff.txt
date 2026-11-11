@@ -2,6 +2,27 @@
 
 Updated November 11, 2026, after the XP-backed `xf86drm` BO shim and VFIO run.
 
+## Gallium bridge GPU draw probe (November 11, 2026)
+
+Ran the VFIO suite with `NVX_MESA_GALLIUM_BRIDGE=1`; log:
+`../test_logs/v3.0.0.2-20261111-172016.log`. This exercised the separate
+softpipe-to-NVX triangle bridge, not Nouveau's native screen. The simple GL
+multi-triangle test passed pixel and tiled readback checks. The cube probe
+matched the softpipe reference exactly (`reference_diff=0`) with one GPU batch;
+the no-depth comparison also passed. Thus some GL draw work can be translated
+to existing NVX high-level draw operations and verified on the GPU.
+
+This is still a limited hybrid path: `OpenGL Renderer` remains `softpipe`, and
+the 100-frame benchmark logged only 8 GPU batches before falling back. The
+longer bridge run also destabilized the shared GR channel. At fence `0x2b7`,
+the GPU did not complete a depth draw; GPGet remained `0x6e` while GPPut was
+`0x6f`. The driver marked the channel faulted, and `[NVX_3D_RESULT]` then
+failed because its capabilities were withdrawn. There was no MMU fault. This
+confirms that the present readback-heavy bridge is neither stable under
+repeated use nor a performance solution. Keep it a diagnostic path while
+investigating queue progress, and continue the distinct Nouveau channel / push
+submission work before claiming native Gallium acceleration.
+
 ## Windows-backed `xf86drm` BO compatibility (November 11, 2026)
 
 The external XP `xf86drm` shim now maps Nouveau GEM allocation/info/close,
