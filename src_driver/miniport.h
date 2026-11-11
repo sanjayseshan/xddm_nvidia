@@ -10,6 +10,19 @@
 typedef LARGE_INTEGER PHYSICAL_ADDRESS, *PPHYSICAL_ADDRESS;
 typedef LONG VP_STATUS;
 
+/* Keep the small VideoPort pool API declaration here: this project uses a
+   curated DDK surface rather than including the full video.h header. */
+typedef enum _VP_POOL_TYPE {
+    VpNonPagedPool = 0,
+    VpPagedPool = 1,
+    VpNonPagedPoolCacheAligned = 4,
+    VpPagedPoolCacheAligned = 5
+} VP_POOL_TYPE;
+PVOID NTAPI VideoPortAllocatePool(PVOID HwDeviceExtension,
+                                  VP_POOL_TYPE PoolType,
+                                  SIZE_T NumberOfBytes, ULONG Tag);
+VOID NTAPI VideoPortFreePool(PVOID HwDeviceExtension, PVOID Ptr);
+
 #ifndef NO_ERROR
 #define NO_ERROR 0
 #endif
@@ -310,6 +323,9 @@ typedef struct _VIDEO_SHARE_MEMORY {
 #define IOCTL_NVX_3D_UPLOAD_BUFFER        CTL_CODE(FILE_DEVICE_VIDEO, 0x20C, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_NVX_3D_READBACK_BUFFER      CTL_CODE(FILE_DEVICE_VIDEO, 0x20D, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define IOCTL_NVX_3D_NVC0_CLEAR           CTL_CODE(FILE_DEVICE_VIDEO, 0x20E, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_NVX_3D_DOWNLOAD_BUFFER      CTL_CODE(FILE_DEVICE_VIDEO, 0x20F, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_NVX_3D_VALIDATE_BATCH       CTL_CODE(FILE_DEVICE_VIDEO, 0x210, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#define IOCTL_NVX_3D_NVC0_NATIVE_CLEAR    CTL_CODE(FILE_DEVICE_VIDEO, 0x211, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #define NVX_UPLOAD_KIND_COPYBITS         1UL
 #define NVX_UPLOAD_KIND_BITBLT           2UL
 #define NVX_UPLOAD_KIND_TEXTOUT          3UL

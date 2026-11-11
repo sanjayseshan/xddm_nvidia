@@ -122,6 +122,12 @@ if [ -f "$NVX_PACKAGE/test_gpu_accel.exe" ]; then
     mkdir -p "$NVX_MOUNT/test_accel"
     cp -v "$NVX_PACKAGE/test_gpu_accel.exe" "$NVX_MOUNT/test_accel/test_gpu_accel.exe"
 fi
+if [ "${NVX_RAPID_3D:-0}" = "1" ]; then
+    mkdir -p "$NVX_MOUNT/test_accel"
+    : > "$NVX_MOUNT/test_accel/rapid3d.flag"
+else
+    rm -f "$NVX_MOUNT/test_accel/rapid3d.flag"
+fi
 sync
 guestunmount --retry=10 "$NVX_MOUNT"
 wait_for_release

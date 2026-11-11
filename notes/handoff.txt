@@ -2,6 +2,27 @@
 
 Updated November 11, 2026, after full-size native clear and cube comparison.
 
+## XP `xf86drm` compatibility compile probe (November 11, 2026)
+
+Added an external XP compatibility header/source pair for the subset of
+`xf86drm.h` referenced by Mesa's Nouveau DRM winsys, and wired it into the
+optional `nouveau,softpipe` cross-build. Unsupported DRM discovery/command
+calls return `ENOSYS`; they do not fabricate a Linux DRM device or channel.
+Host rejection tests and x86/x64 MinGW compilation pass. The Nouveau-enabled
+Mesa build now gets past the missing `xf86drm.h` include, but still fails in
+upstream `nouveau.c` because its mmap path depends on POSIX `mmap` constants
+and mapping semantics unavailable in XP. The first compile also exposed
+32-bit `unsigned long` pointer casts in the x64 pushbuf code; an external patch
+uses `uintptr_t` for those values. Mesa's minimum-OS and pointer-width patches
+are external and the submodule is restored clean after each build.
+
+This compatibility scaffold does not route an OpenGL screen through Nouveau:
+all DRM calls still fail explicitly, and WGL continues to create a softpipe
+`pipe_screen`. To proceed, implement HDC/NVX-backed discovery and BO map
+semantics, then channel/object lifecycle and validated command submission.
+`xf86drm` API compatibility alone cannot replace Nouveau's Linux DRM kernel
+operations.
+
 ## NVX WGL screen entry (November 11, 2026)
 
 Added an opt-in `nvx` WGL screen choice in the external Mesa patch. WGL

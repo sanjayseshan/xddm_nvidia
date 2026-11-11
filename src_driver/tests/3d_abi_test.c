@@ -3,6 +3,153 @@
 #include <stdio.h>
 #include <string.h>
 
+_Static_assert(sizeof(NVX_3D_QUERY_CAPS)==56,
+               "x86 and x64 capability ABI size must match");
+_Static_assert(sizeof(NVX_3D_BATCH_HEADER)==32,
+               "x86 and x64 batch header size must match");
+_Static_assert(sizeof(NVX_3D_RELOCATION)==40,
+               "x86 and x64 relocation size must match");
+
+static uint32_t
+build_test_batch(uint8_t *input, NVX_3D_ALLOC_BUFFER *allocation)
+{
+    NVX_3D_BATCH_HEADER header={0};
+    uint32_t dwords[6];
+    NVX_3D_RELOCATION relocs[2]={{0}};
+    uint32_t inputBytes=(uint32_t)(sizeof(header)+sizeof(dwords)+sizeof(relocs));
+
+    header.Size=sizeof(header);
+    header.Version=NVX_3D_ABI_VERSION;
+    header.DwordCount=6;
+    header.RelocationCount=2;
+    header.ClientToken=0x123400000001ULL;
+    dwords[0]=Nvx3dNvc0SeqHeader(0x0100U,2U);
+    dwords[1]=0;
+    dwords[2]=0;
+    dwords[3]=Nvx3dNvc0ImmediateHeader(0x0104U,1U);
+    dwords[4]=Nvx3dNvc0NonIncHeader(0x0108U,1U);
+    dwords[5]=0;
+
+    relocs[0].CommandWord=1;
+    relocs[0].Access=NVX_3D_RELOC_READ;
+    relocs[0].BufferId=allocation->BufferId;
+    relocs[0].BufferOffset=32;
+    relocs[0].Bytes=4;
+    relocs[1].CommandWord=5;
+    relocs[1].Access=NVX_3D_RELOC_WRITE;
+    relocs[1].BufferId=allocation->BufferId;
+    relocs[1].BufferOffset=64;
+    relocs[1].Bytes=8;
+
+    memcpy(input,&header,sizeof(header));
+    memcpy(input+sizeof(header),dwords,sizeof(dwords));
+    memcpy(input+sizeof(header)+sizeof(dwords),relocs,sizeof(relocs));
+    return inputBytes;
+}
+
+static void
+test_nvc0_batch_validator(void)
+{
+    uint8_t input[sizeof(NVX_3D_BATCH_HEADER)+6*sizeof(uint32_t)+
+                  2*sizeof(NVX_3D_RELOCATION)];
+    NVX_3D_ALLOC_BUFFER allocation={0};
+    NVX_3D_BATCH_HEADER header;
+    NVX_3D_RELOCATION reloc;
+    uint32_t dword,inputBytes;
+    uint32_t relocOffset=(uint32_t)(sizeof(header)+6*sizeof(uint32_t));
+    const uint64_t token=0x123400000001ULL;
+
+    allocation.Size=sizeof(allocation);
+    allocation.Version=NVX_3D_ABI_VERSION;
+    allocation.Bytes=4096;
+    allocation.BufferId=17;
+    allocation.GpuVa=0x23000000ULL;
+    allocation.ClientToken=token;
+    inputBytes=build_test_batch(input,&allocation);
+    assert(Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes-1,&allocation,1,token));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token+1));
+
+    inputBytes=build_test_batch(input,&allocation);
+    memcpy(&header,input,sizeof(header));
+    header.Reserved[0]=1;
+    memcpy(input,&header,sizeof(header));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    memcpy(&header,input,sizeof(header));
+    header.RelocationCount=NVX_3D_MAX_BATCH_RELOCATIONS+1U;
+    memcpy(input,&header,sizeof(header));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    dword=0;
+    memcpy(input+sizeof(header),&dword,sizeof(dword));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    dword=Nvx3dNvc0SeqHeader(0x0100U,4U);
+    memcpy(input+sizeof(header),&dword,sizeof(dword));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    dword=Nvx3dNvc0SeqHeader(0x7ffcU,2U);
+    memcpy(input+sizeof(header),&dword,sizeof(dword));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    memcpy(&reloc,input+relocOffset,sizeof(reloc));
+    reloc.CommandWord=0; /* packet header, not method payload */
+    memcpy(input+relocOffset,&reloc,sizeof(reloc));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    memcpy(&reloc,input+relocOffset,sizeof(reloc));
+    reloc.CommandWord=3; /* immediate packet has no payload */
+    memcpy(input+relocOffset,&reloc,sizeof(reloc));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    memcpy(input+relocOffset+sizeof(reloc),input+relocOffset,sizeof(reloc));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    memcpy(&reloc,input+relocOffset,sizeof(reloc));
+    reloc.BufferId++;
+    memcpy(input+relocOffset,&reloc,sizeof(reloc));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    memcpy(&reloc,input+relocOffset,sizeof(reloc));
+    reloc.BufferOffset=allocation.Bytes-2;
+    reloc.Bytes=8;
+    memcpy(input+relocOffset,&reloc,sizeof(reloc));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    memcpy(&reloc,input+relocOffset,sizeof(reloc));
+    reloc.Access=4;
+    memcpy(input+relocOffset,&reloc,sizeof(reloc));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    memcpy(&reloc,input+relocOffset,sizeof(reloc));
+    reloc.Access=0;
+    memcpy(input+relocOffset,&reloc,sizeof(reloc));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    memcpy(&reloc,input+relocOffset,sizeof(reloc));
+    reloc.Reserved[1]=1;
+    memcpy(input+relocOffset,&reloc,sizeof(reloc));
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
+    inputBytes=build_test_batch(input,&allocation);
+    allocation.ClientToken=token+1;
+    assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+}
+
 static void
 build_nvc0_clear(NVX_3D_NVC0_CLEAR *request)
 {
@@ -20,21 +167,26 @@ build_nvc0_clear(NVX_3D_NVC0_CLEAR *request)
     request->Dwords[5]=Nvx3dNvc0SeqHeader(0x0ff4U,2U);
     request->Dwords[6]=64U<<16; /* full-width scissor at x=0 */
     request->Dwords[7]=16U<<16; /* full-height scissor at y=0 */
-    request->Dwords[8]=Nvx3dNvc0SeqHeader(0x121cU,1U);
-    request->Dwords[9]=1U; /* one render target */
-    request->Dwords[10]=Nvx3dNvc0SeqHeader(0x0800U,9U);
-    request->Dwords[11]=(uint32_t)(gpuVa>>32);
-    request->Dwords[12]=(uint32_t)gpuVa;
-    request->Dwords[13]=64U;
-    request->Dwords[14]=16U;
-    request->Dwords[15]=0xcfU; /* BGRA8 UNORM */
-    request->Dwords[16]=0x10U; /* one-GOB block height */
-    request->Dwords[17]=1U; /* one layer */
-    request->Dwords[18]=65536U/4U;
-    request->Dwords[19]=0U; /* base layer */
-    request->Dwords[20]=Nvx3dNvc0ImmediateHeader(0x15d0U,0U);
-    request->Dwords[21]=Nvx3dNvc0NonIncHeader(0x19d0U,1U);
-    request->Dwords[22]=0x3cU; /* RGBA clear only */
+    request->Dwords[8]=Nvx3dNvc0SeqHeader(0x0d6cU,2U);
+    request->Dwords[9]=64U<<16; /* full-width clear rect */
+    request->Dwords[10]=16U<<16; /* full-height clear rect */
+    request->Dwords[11]=Nvx3dNvc0SeqHeader(0x10f8U,1U);
+    request->Dwords[12]=0x10U; /* use the validated full-target clear rect */
+    request->Dwords[13]=Nvx3dNvc0SeqHeader(0x121cU,1U);
+    request->Dwords[14]=1U; /* one render target */
+    request->Dwords[15]=Nvx3dNvc0SeqHeader(0x0800U,9U);
+    request->Dwords[16]=(uint32_t)(gpuVa>>32);
+    request->Dwords[17]=(uint32_t)gpuVa;
+    request->Dwords[18]=64U;
+    request->Dwords[19]=16U;
+    request->Dwords[20]=0xcfU; /* BGRA8 UNORM */
+    request->Dwords[21]=0x10U; /* one-GOB block height */
+    request->Dwords[22]=1U; /* one layer */
+    request->Dwords[23]=65536U/4U;
+    request->Dwords[24]=0U; /* base layer */
+    request->Dwords[25]=Nvx3dNvc0ImmediateHeader(0x15d0U,0U);
+    request->Dwords[26]=Nvx3dNvc0NonIncHeader(0x19d0U,1U);
+    request->Dwords[27]=0x3cU; /* RGBA clear only */
 }
 
 int main(void)
@@ -42,6 +194,7 @@ int main(void)
     NVX_3D_ALLOC_BUFFER alloc={0};
     NVX_3D_FREE_BUFFER freeRequest={0};
     NVX_3D_UPLOAD_BUFFER upload={0};
+    NVX_3D_DOWNLOAD_BUFFER download={0};
     NVX_3D_SUBMIT submit={0};
     NVX_3D_WAIT_FENCE wait={0};
     NVX_3D_READBACK readback={0};
@@ -53,15 +206,47 @@ int main(void)
     uint32_t nvc0Color=0;
     uint32_t information=99;
 
-    assert(sizeof(NVX_3D_QUERY_CAPS)==32);
+    assert(sizeof(NVX_3D_QUERY_CAPS)==56);
     assert(sizeof(NVX_3D_ALLOC_BUFFER)==56);
+    assert(sizeof(NVX_3D_BATCH_HEADER)==32);
+    assert(sizeof(NVX_3D_RELOCATION)==40);
     assert(sizeof(NVX_3D_FREE_BUFFER)==16);
     assert(sizeof(NVX_3D_UPLOAD_BUFFER)==32);
+    assert(sizeof(NVX_3D_DOWNLOAD_BUFFER)==32);
     assert(sizeof(NVX_3D_SUBMIT)==72);
     assert(sizeof(NVX_3D_WAIT_FENCE)==24);
     assert(sizeof(NVX_3D_READBACK)==32);
     assert(sizeof(NVX_3D_COLOR_SURFACE_LAYOUT)==24);
-    assert(sizeof(NVX_3D_NVC0_CLEAR)==128);
+    assert(sizeof(NVX_3D_NVC0_CLEAR)==152);
+    test_nvc0_batch_validator();
+
+    download.Size=sizeof(download);
+    download.Version=NVX_3D_ABI_VERSION;
+    download.BufferId=17;
+    download.Offset=256;
+    download.Bytes=4096;
+    assert(Nvx3dValidateDownload(&download,sizeof(download),4096,8192));
+    assert(Nvx3dValidateDownload(&download,sizeof(download),8192,8192));
+    assert(!Nvx3dValidateDownload(&download,sizeof(download),4095,8192));
+    assert(!Nvx3dValidateDownload(&download,sizeof(download),4096,4096));
+    assert(!Nvx3dValidateDownload(&download,sizeof(download)-4,4096,8192));
+    assert(!Nvx3dValidateDownload(&download,sizeof(download),4096,0));
+    download.Offset=2;
+    assert(!Nvx3dValidateDownload(&download,sizeof(download),4096,8192));
+    download.Offset=256;download.Bytes=4097;
+    assert(!Nvx3dValidateDownload(&download,sizeof(download),8192,8192));
+    download.Bytes=4094;
+    assert(!Nvx3dValidateDownload(&download,sizeof(download),4094,8192));
+    download.Bytes=4096;download.Reserved[0]=1;
+    assert(!Nvx3dValidateDownload(&download,sizeof(download),4096,8192));
+    download.Reserved[0]=0;
+    assert(Nvx3dDispatch(NVX_3D_OP_DOWNLOAD,&download,sizeof(download),
+        readbackPixels,sizeof(readbackPixels),&information,
+        0,0,0,0,0,0)==NVX_3D_STATUS_SUCCESS);
+    assert(information==download.Bytes);
+    assert(Nvx3dDispatch(NVX_3D_OP_DOWNLOAD,&download,sizeof(download),
+        readbackPixels,download.Bytes-1,&information,
+        0,0,0,0,0,0)==NVX_3D_STATUS_INVALID_PARAMETER);
     assert(Nvx3dNvc0Unorm8(0x00000000U)==0);
     assert(Nvx3dNvc0Unorm8(0x3e800000U)==64);
     assert(Nvx3dNvc0Unorm8(0x3f000000U)==128);
@@ -74,6 +259,10 @@ int main(void)
     assert(surface.Width==632&&surface.Height==453&&
            surface.PitchBytes==2560&&surface.TileMode==0x40&&
            surface.Bytes==1310720);
+    assert(Nvx3dChipsetFromDeviceId(0x2484)==0x170);
+    assert(Nvx3dChipsetFromDeviceId(0x2488)==0x170);
+    assert(Nvx3dChipsetFromDeviceId(0x249d)==0x170);
+    assert(Nvx3dChipsetFromDeviceId(0x2487)==0);
     assert(Nvx3dTuringColorPixelOffset(0,0,632,0x40)==0);
     assert(Nvx3dTuringColorPixelOffset(1,0,632,0x40)==4);
     assert(Nvx3dTuringColorPixelOffset(0,1,632,0x40)==16);
@@ -123,16 +312,19 @@ int main(void)
     REJECT_NVC0_CLEAR(3,0x3f800001U); /* component above one */
     REJECT_NVC0_CLEAR(6,(64U<<16)|1U); /* partial scissor */
     REJECT_NVC0_CLEAR(7,15U<<16); /* partial scissor */
-    REJECT_NVC0_CLEAR(9,0U); /* no target */
-    REJECT_NVC0_CLEAR(12,0x23000004U); /* unvalidated address */
-    REJECT_NVC0_CLEAR(13,63U); /* target extent mismatch */
-    REJECT_NVC0_CLEAR(15,0U); /* unsupported format */
-    REJECT_NVC0_CLEAR(16,0x20U); /* mismatched tiling */
-    REJECT_NVC0_CLEAR(17,2U); /* layered target */
-    REJECT_NVC0_CLEAR(18,65536U/8U); /* invalid layer stride */
-    REJECT_NVC0_CLEAR(19,1U); /* nonzero base layer */
-    REJECT_NVC0_CLEAR(20,Nvx3dNvc0ImmediateHeader(0x15d0U,1U));
-    REJECT_NVC0_CLEAR(22,0x3dU); /* depth/stencil or extra RT clear */
+    REJECT_NVC0_CLEAR(9,(63U<<16)); /* partial clear rectangle */
+    REJECT_NVC0_CLEAR(10,(15U<<16)); /* partial clear rectangle */
+    REJECT_NVC0_CLEAR(12,0x11U); /* unsupported clear-rectangle control */
+    REJECT_NVC0_CLEAR(14,0U); /* no target */
+    REJECT_NVC0_CLEAR(17,0x23000004U); /* unvalidated address */
+    REJECT_NVC0_CLEAR(18,63U); /* target extent mismatch */
+    REJECT_NVC0_CLEAR(20,0U); /* unsupported format */
+    REJECT_NVC0_CLEAR(21,0x20U); /* mismatched tiling */
+    REJECT_NVC0_CLEAR(22,2U); /* layered target */
+    REJECT_NVC0_CLEAR(23,65536U/8U); /* invalid layer stride */
+    REJECT_NVC0_CLEAR(24,1U); /* nonzero base layer */
+    REJECT_NVC0_CLEAR(25,Nvx3dNvc0ImmediateHeader(0x15d0U,1U));
+    REJECT_NVC0_CLEAR(27,0x3dU); /* depth/stencil or extra RT clear */
 #undef REJECT_NVC0_CLEAR
     nvc0Bad=nvc0Clear;nvc0Bad.FenceValue=1;
     assert(!Nvx3dValidateNvc0Clear(&nvc0Bad,sizeof(nvc0Bad),
@@ -156,7 +348,7 @@ int main(void)
     assert(caps.Features==(NVX_3D_FEATURE_GR_CHANNEL|
         NVX_3D_FEATURE_I2M_VERIFIED|NVX_3D_FEATURE_CLEAR_VERIFIED|
         NVX_3D_FEATURE_USER_ALLOC|NVX_3D_FEATURE_UPLOAD|
-        NVX_3D_FEATURE_SUBMIT));
+        NVX_3D_FEATURE_DOWNLOAD|NVX_3D_FEATURE_SUBMIT));
     assert(Nvx3dDispatch(NVX_3D_OP_QUERY_CAPS,NULL,0,&caps,sizeof(caps),
         &information,1,1,0,0,1,1)==NVX_3D_STATUS_SUCCESS);
     assert(information==sizeof(caps)&&caps.Features!=0);

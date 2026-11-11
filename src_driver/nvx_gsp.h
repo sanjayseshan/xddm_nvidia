@@ -514,6 +514,8 @@ BOOLEAN NvxGspSubmitUserColorTargetClear(PVOID HwDeviceExtension,
 BOOLEAN NvxGspSubmitNvc0ColorTargetClear(PVOID HwDeviceExtension,
     ULONG64 dstVa,ULONG width,ULONG height,ULONG tileMode,ULONG color,
     ULONG64 fenceValue);
+BOOLEAN NvxGspSubmitNvc0NativeClear(PVOID HwDeviceExtension,
+    const uint32_t *nvc0Dwords,ULONG64 fenceValue);
 BOOLEAN NvxGspSubmitUserColorTargetTriangles(PVOID HwDeviceExtension,
     ULONG64 dstVa,ULONG width,ULONG height,ULONG tileMode,ULONG64 vertexVa,
     ULONG vertexCount,ULONG color,ULONG64 fenceValue,BOOLEAN verifyFullTarget);
@@ -541,6 +543,8 @@ BOOLEAN NvxGspRunZf32Diagnostic(PVOID HwDeviceExtension,ULONG64 dstVa,
                                 ULONG64 fenceValue);
 BOOLEAN NvxGspReadUserSurface(PVOID HwDeviceExtension,ULONG64 srcVa,
                               PULONG output,ULONG outputPixels);
+BOOLEAN NvxGspReadUserBuffer(PVOID HwDeviceExtension,ULONG64 srcVa,
+                             PVOID output,ULONG bytes);
 BOOLEAN NvxGspReadUserColorTargetTile(PVOID HwDeviceExtension,ULONG64 srcVa,
     ULONG targetWidth,ULONG targetHeight,ULONG tileMode,ULONG tileX,ULONG tileY,
     PULONG output,ULONG outputPixels);

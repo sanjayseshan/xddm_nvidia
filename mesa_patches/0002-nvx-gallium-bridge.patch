@@ -39,40 +39,56 @@ index d91946377d9..6f07fc59186 100644
     case MESA_PRIM_POINTS:
        for (i = 0; i < nr; i++) {
 diff --git a/src/gallium/targets/wgl/wgl.c b/src/gallium/targets/wgl/wgl.c
-index 100753a18bf..482e111424c 100644
+index 100753a18bf7..7e4257a71914 100644
 --- a/src/gallium/targets/wgl/wgl.c
 +++ b/src/gallium/targets/wgl/wgl.c
-@@ -76,6 +76,10 @@ static bool use_zink = false;
-
- static const char *created_driver_name = NULL;
-
+@@ -50,0 +51 @@
++static bool use_softpipe = false;
+@@ -78,0 +80,4 @@ static const char *created_driver_name = NULL;
 +extern void nvx_wgl_set_hdc(HDC hdc);
-+extern const char *nvx_wgl_get_name(void);
-+extern const char *nvx_wgl_get_vendor(void);
++extern void nvx_wgl_notify_hybrid_screen_created(void);
++extern int nvx_wgl_nvx_adapter_create(void);
 +
- /* this must outlive later option lookups, which reuse the getenv buffer on windows */
- DEBUG_GET_ONCE_OPTION(gallium_driver, "GALLIUM_DRIVER", "")
-
-@@ -120,6 +124,8 @@ wgl_screen_create(HDC hDC)
-    struct sw_winsys *winsys;
-    UNUSED bool sw_only = debug_get_bool_option("LIBGL_ALWAYS_SOFTWARE", false);
-
+@@ -108,5 +112,15 @@ wgl_screen_create_by_name(HDC hDC, const char* driver, struct sw_winsys *winsys)
+ #ifdef GALLIUM_SOFTPIPE
+    if (strcmp(driver, "softpipe") == 0) {
+       screen = softpipe_create_screen(winsys);
++      if (screen)
++         use_softpipe = true;
+    }
++   if (strcmp(driver, "nvx") == 0 && nvx_wgl_nvx_adapter_create()) {
++      /* The NVX adapter supplies bounded operations; GL still uses softpipe. */
++      screen = softpipe_create_screen(winsys);
++      if (screen) {
++         use_softpipe = true;
++         nvx_wgl_notify_hybrid_screen_created();
++      }
++   }
+ #endif
+@@ -122,0 +138,3 @@ wgl_screen_create(HDC hDC)
 +   nvx_wgl_set_hdc(hDC);
 +
-    winsys = gdi_create_sw_winsys(gdi_sw_acquire_hdc_by_value, gdi_sw_release_hdc_by_value);
-    if (!winsys)
-       return NULL;
-@@ -148,6 +154,10 @@ wgl_screen_create(HDC hDC)
-       struct pipe_screen* screen = wgl_screen_create_by_name(hDC, drivers[i], winsys);
-       if (screen) {
-          created_driver_name = drivers[i];
-+         if (nvx_wgl_get_name())
-+            screen->get_name = (const char *(*)(struct pipe_screen *))nvx_wgl_get_name;
-+         if (nvx_wgl_get_vendor())
-+            screen->get_vendor = (const char *(*)(struct pipe_screen *))nvx_wgl_get_vendor;
-          return screen;
-       }
-       if (i == 0 && drivers[i][0] != '\0')
++
+@@ -127,3 +146,4 @@ wgl_screen_create(HDC hDC)
+    const char *const drivers[] = {
+       debug_get_option_gallium_driver(),
++      sw_only ? "" : "nvx",
+ #ifdef GALLIUM_D3D12
+@@ -205,6 +225,11 @@ wgl_present(struct pipe_screen *screen,
+ #ifdef GALLIUM_SOFTPIPE
+-   winsys = softpipe_screen(screen)->winsys,
+-   dt = softpipe_resource(res)->dt,
+-   gdi_sw_display(winsys, dt, hDC);
++   if (use_softpipe) {
++      winsys = softpipe_screen(screen)->winsys;
++      dt = softpipe_resource(res)->dt;
++      gdi_sw_display(winsys, dt, hDC);
++      return;
++   }
+ #endif
++   if (screen->flush_frontbuffer)
++      screen->flush_frontbuffer(screen, ctx, res, 0, 0, hDC, 0, NULL);
+ }
 diff --git a/src/gallium/drivers/softpipe/sp_clear.c b/src/gallium/drivers/softpipe/sp_clear.c
 --- a/src/gallium/drivers/softpipe/sp_clear.c
 +++ b/src/gallium/drivers/softpipe/sp_clear.c

@@ -25,6 +25,27 @@ Performs end-to-end integration testing:
 ./test/test_full_driver.sh
 ```
 
+For a short hardware 3D pass, run the same suite in rapid mode. It keeps the
+host checks and package audit, then boots XP and runs the bounded C797 clear
+and full-size clear matrix. This mode intentionally skips the OpenGL cube
+comparison and writes `[MESA_GPU_CUBE_RESULT] SKIPPED reason=rapid_3d_mode` to
+the guest log. Run the command without `NVX_RAPID_3D=1` to run the cube tests:
+
+```bash
+NVX_RAPID_3D=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 \
+NVX_GR_PROMOTE_PROBE=1 NVX_GR_SUBMISSION_PROBE=1 ./test/test_full_driver.sh
+```
+
+The guest test reports Kayfabe-inspired workload gates independently:
+resource allocation/release, upload/download round trip, batch and relocation
+validation, rejection of malformed packets, native submission/fence/readback
+at both 64x16 and 632x453 extents, a four-color translated-clear matrix, and
+four native full-size color cases sampled at the origin, center, and far corner.
+Require `[NVX_3D_RAPID_RESULT] PASS`; for more detail,
+inspect the `[NVX_3D_STAGE]` lines in the generated `test_logs` file. These
+tests exercise the existing NVX boundary and fixed C797 clear profile; they do
+not test a native Gallium Nouveau screen or arbitrary NVC0 batches.
+
 ### 3. `run_vfio_xp_autoretry.sh`
 Monitors and auto-retries Windows XP x64 VM bringup with RTX 3070 VFIO passthrough until active driver boot and dual-display configuration is confirmed via the serial log.
 

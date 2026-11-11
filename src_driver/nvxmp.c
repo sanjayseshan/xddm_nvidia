@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 2.0.0.8
+ * Driver Version: 3.0.0.2
  */
 
 #include "miniport.h"
@@ -1078,7 +1078,12 @@ VP_STATUS NTAPI HwVidFindAdapter(
     /* Read PCI Device ID and query Upstream OpenRM Database */
     {
         USHORT pciDev[2] = {0, 0};
+        UCHAR pciRevision = 0;
         VideoPortGetBusData(HwDeviceExtension, PCIConfiguration, 0, pciDev, 0x00, sizeof(pciDev));
+        VideoPortGetBusData(HwDeviceExtension, PCIConfiguration, 0,
+                            &pciRevision, 0x08, sizeof(pciRevision));
+        devExt->DeviceId=pciDev[1];
+        devExt->RevisionId=pciRevision;
         LogStr("NVX: PCI Vendor: 0x");
         LogHex(pciDev[0]);
         LogStr(" Device: 0x");
@@ -2258,6 +2263,12 @@ BOOLEAN NTAPI HwVidStartIO(
             engine&&engine->GspGraphicsChannelReady&&
                 engine->GspGraphicsCommandVerified&&
                 engine->GspGraphicsPixelClearVerified);
+        if(engine) {
+            caps->DeviceId=engine->DeviceId;
+            caps->Chipset=Nvx3dChipsetFromDeviceId(engine->DeviceId);
+            caps->VramApertureBytes=engine->GspVramMapBytes;
+            caps->GartBytes=0;
+        }
         if(engine&&!(caps->Features&NVX_3D_FEATURE_GR_CHANNEL)) {
             LogStr("NVX [3D-CAPS]: channel_ready=");
             LogHex(engine->GspGraphicsChannelReady);
@@ -2365,6 +2376,42 @@ BOOLEAN NTAPI HwVidStartIO(
         break;
     }
 
+    case IOCTL_NVX_3D_DOWNLOAD_BUFFER: {
+        PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
+        NVX_3D_DOWNLOAD_BUFFER download;
+        NVX_3D_USER_BUFFER_ENTRY saved;
+        PNVX_3D_USER_BUFFER_ENTRY entry;
+        ULONG headerBytes=sizeof(download);
+        if(!RequestPacket->InputBuffer||
+           RequestPacket->InputBufferLength!=headerBytes||
+           !RequestPacket->OutputBuffer||!engine||!Nvx3dLockBuffers()) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+        VideoPortMoveMemory(&download,RequestPacket->InputBuffer,headerBytes);
+        entry=Nvx3dFindBuffer(engine,download.BufferId);
+        if(!entry||entry->Busy||
+           !Nvx3dValidateDownload(&download,headerBytes,
+                RequestPacket->OutputBufferLength,entry->Bytes)) {
+            Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
+        }
+        entry->Busy=TRUE;saved=*entry;
+        Nvx3dUnlockBuffers();
+        if(NvxGspReadUserBuffer(engine,saved.GpuVa+download.Offset,
+                RequestPacket->OutputBuffer,download.Bytes)) {
+            status=NO_ERROR;
+            statusBlock->Information=download.Bytes;
+        } else {
+            status=ERROR_DEVICE_NOT_READY;
+        }
+        if(Nvx3dLockBuffers()) {
+            entry=Nvx3dFindBuffer(engine,saved.Id);
+            if(entry) entry->Busy=FALSE;
+            Nvx3dUnlockBuffers();
+        }
+        break;
+    }
+
     case IOCTL_NVX_3D_READBACK_BUFFER: {
         PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
             (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
@@ -2415,7 +2462,8 @@ BOOLEAN NTAPI HwVidStartIO(
         break;
     }
 
-    case IOCTL_NVX_3D_NVC0_CLEAR: {
+    case IOCTL_NVX_3D_NVC0_CLEAR:
+    case IOCTL_NVX_3D_NVC0_NATIVE_CLEAR: {
         PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
             (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
         NVX_3D_NVC0_CLEAR request;
@@ -2423,6 +2471,8 @@ BOOLEAN NTAPI HwVidStartIO(
         PNVX_3D_USER_BUFFER_ENTRY entry;
         ULONG64 fenceValue;
         ULONG color;
+        BOOLEAN nativeClear=(RequestPacket->IoControlCode==
+                             IOCTL_NVX_3D_NVC0_NATIVE_CLEAR);
         uint32_t parsedColor;
         if(!RequestPacket->InputBuffer||
            RequestPacket->InputBufferLength!=sizeof(request)||
@@ -2453,8 +2503,10 @@ BOOLEAN NTAPI HwVidStartIO(
         engine->Nvx3dLastFence=fenceValue;
         Nvx3dUnlockBuffers();
 
-        if(NvxGspSubmitNvc0ColorTargetClear(engine,saved.GpuVa,
-                saved.Width,saved.Height,saved.TileMode,color,fenceValue)) {
+        if((nativeClear&&NvxGspSubmitNvc0NativeClear(engine,request.Dwords,
+                                                     fenceValue))||
+           (!nativeClear&&NvxGspSubmitNvc0ColorTargetClear(engine,saved.GpuVa,
+                saved.Width,saved.Height,saved.TileMode,color,fenceValue))) {
             request.FenceValue=fenceValue;
             VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,
                                 sizeof(request));
@@ -2468,6 +2520,78 @@ BOOLEAN NTAPI HwVidStartIO(
             if(entry) entry->Busy=FALSE;
             Nvx3dUnlockBuffers();
         }
+        break;
+    }
+
+    case IOCTL_NVX_3D_VALIDATE_BATCH: {
+        PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
+        NVX_3D_BATCH_HEADER header;
+        PVOID copiedInput=NULL;
+        NVX_3D_ALLOC_BUFFER *ownedAllocations=NULL;
+        ULONG ownedCount=0,i;
+        uint32_t requiredBytes;
+        if(!RequestPacket->InputBuffer||
+           RequestPacket->InputBufferLength<sizeof(header)||
+           RequestPacket->InputBufferLength>NVX_3D_MAX_BATCH_BYTES||
+           RequestPacket->OutputBufferLength) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+        VideoPortMoveMemory(&header,RequestPacket->InputBuffer,sizeof(header));
+        if(!Nvx3dBatchRequiredBytes(&header,&requiredBytes)||
+           requiredBytes!=RequestPacket->InputBufferLength||
+           !header.ClientToken) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+
+        /* Parse only a stable kernel-owned copy of the METHOD_BUFFERED input. */
+        copiedInput=VideoPortAllocatePool(devExt,VpNonPagedPool,
+                         requiredBytes,0x4258564eUL);
+        ownedAllocations=(NVX_3D_ALLOC_BUFFER *)VideoPortAllocatePool(
+                         devExt,VpNonPagedPool,
+                         NVX_3D_MAX_BATCH_BUFFERS*sizeof(*ownedAllocations),
+                         0x4158564eUL);
+        if(!copiedInput||!ownedAllocations) {
+            status=ERROR_NOT_ENOUGH_MEMORY;goto validate_batch_done;
+        }
+        VideoPortMoveMemory(copiedInput,RequestPacket->InputBuffer,
+                            requiredBytes);
+
+        if(!engine||!Nvx3dLockBuffers()) {
+            status=ERROR_DEVICE_NOT_READY;goto validate_batch_done;
+        }
+        for(i=0;i<NVX_3D_USER_BUFFER_SLOTS;i++) {
+            NVX_3D_USER_BUFFER_ENTRY *entry=&engine->Nvx3dBuffers[i];
+            NVX_3D_ALLOC_BUFFER *allocation;
+            if(!entry->Id||entry->ClientToken!=header.ClientToken) continue;
+            if(ownedCount>=NVX_3D_MAX_BATCH_BUFFERS) break;
+            allocation=&ownedAllocations[ownedCount++];
+            VideoPortZeroMemory(allocation,sizeof(*allocation));
+            allocation->Size=sizeof(*allocation);
+            allocation->Version=NVX_3D_ABI_VERSION;
+            allocation->Usage=entry->Usage;
+            allocation->Bytes=entry->Bytes;
+            allocation->BufferId=entry->Id;
+            allocation->GpuVa=entry->GpuVa;
+            allocation->Width=entry->Width;
+            allocation->Height=entry->Height;
+            allocation->PitchBytes=entry->PitchBytes;
+            allocation->TileMode=entry->TileMode;
+            allocation->ClientToken=entry->ClientToken;
+        }
+        Nvx3dUnlockBuffers();
+
+        if(!Nvx3dValidateNvc0Batch(copiedInput,requiredBytes,
+                ownedAllocations,ownedCount,header.ClientToken)) {
+            status=ERROR_INVALID_PARAMETER;
+            goto validate_batch_done;
+        }
+        /* Validation-only: no method allowlist or GPU submission is implied. */
+        status=NO_ERROR;
+
+validate_batch_done:
+        if(ownedAllocations) VideoPortFreePool(devExt,ownedAllocations);
+        if(copiedInput) VideoPortFreePool(devExt,copiedInput);
         break;
     }
 
@@ -3036,7 +3160,7 @@ ULONG NTAPI DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 3.0.0.1 (open-gpu-kernel-modules unified v2)\n");
+    LogStr(" NVX Video Miniport Driver 3.0.0.2 (open-gpu-kernel-modules unified v2)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

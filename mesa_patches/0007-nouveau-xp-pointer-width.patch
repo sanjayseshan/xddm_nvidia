@@ -1,0 +1,34 @@
+diff --git a/src/gallium/winsys/nouveau/drm/nouveau.c b/src/gallium/winsys/nouveau/drm/nouveau.c
+--- a/src/gallium/winsys/nouveau/drm/nouveau.c
++++ b/src/gallium/winsys/nouveau/drm/nouveau.c
+@@ -1124 +1124 @@
+-      bo = (void *)(unsigned long)kref->user_priv;
++      bo = (void *)(uintptr_t)kref->user_priv;
+@@ -1174 +1174 @@
+-      req.buffers = (uint64_t)(unsigned long)krec->buffer;
++      req.buffers = (uint64_t)(uintptr_t)krec->buffer;
+@@ -1177,2 +1177,2 @@
+-      req.relocs = (uint64_t)(unsigned long)krec->reloc;
+-      req.push = (uint64_t)(unsigned long)krec->push;
++      req.relocs = (uint64_t)(uintptr_t)krec->reloc;
++      req.push = (uint64_t)(uintptr_t)krec->push;
+@@ -1203 +1203 @@
+-         bo = (void *)(unsigned long)kref->user_priv;
++         bo = (void *)(uintptr_t)kref->user_priv;
+@@ -1239 +1239 @@
+-      struct nouveau_bo *bo = (void *)(unsigned long)kref->user_priv;
++      struct nouveau_bo *bo = (void *)(uintptr_t)kref->user_priv;
+@@ -1311 +1311 @@
+-      kbo = (void *)(unsigned long)kref->user_priv;
++      kbo = (void *)(uintptr_t)kref->user_priv;
+@@ -1382 +1382 @@
+-      kref->user_priv = (unsigned long)bo;
++      kref->user_priv = (uintptr_t)bo;
+@@ -1453 +1453 @@
+-      struct nouveau_bo *bo = (void *)(unsigned long)kref->user_priv;
++      struct nouveau_bo *bo = (void *)(uintptr_t)kref->user_priv;
+@@ -1622,2 +1622,2 @@
+-            unsigned long priv = kref++->user_priv;
+-            struct nouveau_bo *bo = (void *)priv;
++            uintptr_t priv = kref++->user_priv;
++            struct nouveau_bo *bo = (void *)priv;

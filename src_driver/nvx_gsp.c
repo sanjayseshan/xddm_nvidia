@@ -3015,6 +3015,98 @@ BOOLEAN NvxGspSubmitNvc0ColorTargetClear(PVOID HwDeviceExtension,
         width,height,tileMode,NULL,NULL);
 }
 
+/* Submit the one narrowly validated NVC0 clear packet directly. The caller
+ * has already matched its target address/layout and exact 28-dword method
+ * profile against an owned BO. The kernel adds SET_OBJECT, idle, and release
+ * semaphore methods; no caller-supplied method outside that profile reaches
+ * the channel. */
+BOOLEAN NvxGspSubmitNvc0NativeClear(PVOID HwDeviceExtension,
+    const uint32_t *nvc0Dwords,ULONG64 fenceValue)
+{
+    PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    PUCHAR scratch;
+    volatile ULONG *userd,*fence;
+    volatile ULONG64 *fifo;
+    PULONG push;
+    ULONG n=0,i,put,wait;
+    ULONG64 pushVa,fenceVa;
+
+    if(!dev||!nvc0Dwords||!dev->GspInitialized||
+       !dev->GspGraphicsChannelReady||!dev->GspGraphicsCommandVerified||
+       dev->GspGraphicsChannelFaulted||dev->GspMmuFaultQueued||
+       !dev->GspDmaVirtual||!dev->GspGraphicsRunlistBase||
+       !fenceValue||fenceValue>0xffffffffULL)
+        return FALSE;
+
+    for(wait=0;wait<20000;wait++) {
+        if(!__sync_lock_test_and_set(&NvxGrUserSubmitBusy,1)) break;
+        VideoPortStallExecution(10);
+    }
+    if(wait==20000) return FALSE;
+
+    scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET;
+    userd=(volatile ULONG *)(scratch+0xb400);
+    fence=(volatile ULONG *)(scratch+0x5000);
+    fifo=(volatile ULONG64 *)(scratch+0x9000);
+    push=(PULONG)(scratch+0xf000);
+    pushVa=dev->GspScratchGpuVa+0xf000;
+    fenceVa=dev->GspScratchGpuVa+0x5000;
+    for(i=0;i<16;i++) fence[i]=0;
+    __sync_synchronize();
+
+#define NVX_NATIVE_INCR(_m,_c) \
+    (push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|((_c)<<16)|((_m)>>2))
+    NVX_NATIVE_INCR(NVC56F_SET_OBJECT,1);
+    push[n++]=0xC797U;
+    for(i=0;i<NVX_3D_NVC0_CLEAR_DWORDS;i++)
+        push[n++]=nvc0Dwords[i];
+    NVX_NATIVE_INCR(NVC797_WAIT_FOR_IDLE,1);
+    push[n++]=0;
+    NVX_NATIVE_INCR(NVC797_SET_REPORT_SEMAPHORE_A,4);
+    push[n++]=(ULONG)((fenceVa>>32)&0xffffffffU);
+    push[n++]=(ULONG)(fenceVa&0xffffffffU);
+    push[n++]=(ULONG)fenceValue;
+    push[n++]=DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_OPERATION,_RELEASE)|
+              DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_RELEASE,_AFTER_ALL_PRECEEDING_WRITES_COMPLETE)|
+              DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_PIPELINE_LOCATION,_ALL)|
+              DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_STRUCTURE_SIZE,_ONE_WORD);
+#undef NVX_NATIVE_INCR
+
+    if(n>NVX_3D_MAX_PUSH_DWORDS) {
+        __sync_lock_release(&NvxGrUserSubmitBusy);
+        return FALSE;
+    }
+    put=dev->GspGraphicsGPPut%512U;
+    fifo[put]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|
+              ((ULONG64)n<<42);
+    __sync_synchronize();
+    dev->GspGraphicsGPPut=(put+1U)%512U;
+    dev->Nvx3dLastFence=fenceValue;
+    userd[0x8c/4]=dev->GspGraphicsGPPut;
+    __sync_synchronize();
+    if(dev->Bar0Length>=0x30094)
+        VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+
+                                     0x30090),dev->GspGraphicsSubmitToken);
+    VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+
+                              dev->GspGraphicsRunlistBase+0x90),2);
+
+    for(wait=0;wait<10000;wait++) {
+        if(fence[0]==(ULONG)fenceValue) {
+            __sync_synchronize();
+            dev->Nvx3dCompletedFence=fenceValue;
+            __sync_lock_release(&NvxGrUserSubmitBusy);
+            return TRUE;
+        }
+        if(dev->GspGraphicsChannelFaulted||dev->GspMmuFaultQueued)
+            break;
+        VideoPortStallExecution(100);
+    }
+    LogStr("NVX [NVC0-NATIVE]: validated clear stream did not complete; fence=");
+    LogHex(fenceValue);LogStr(" observed=");LogHex(fence[0]);LogStr("\n");
+    __sync_lock_release(&NvxGrUserSubmitBusy);
+    return FALSE;
+}
+
 BOOLEAN NvxGspSubmitUserColorTargetTriangles(PVOID HwDeviceExtension,
     ULONG64 dstVa,ULONG width,ULONG height,ULONG tileMode,ULONG64 vertexVa,
     ULONG vertexCount,ULONG color,ULONG64 fenceValue,BOOLEAN verifyFullTarget)
@@ -3261,6 +3353,42 @@ BOOLEAN NvxGspReadUserSurface(PVOID HwDeviceExtension,ULONG64 srcVa,
                                             x,y,NVX_3D_TRIANGLE_WIDTH);
         }
     }
+    __sync_lock_release(&NvxGrUserSubmitBusy);
+    return TRUE;
+}
+
+/* Read one dword-aligned raw BO range through the CE. The 4 KiB staging
+   window is private miniport DMA memory; caller pointers are never mapped
+   into the GPU address space. Larger BO maps must be assembled in chunks. */
+BOOLEAN NvxGspReadUserBuffer(PVOID HwDeviceExtension,ULONG64 srcVa,
+                             PVOID output,ULONG bytes)
+{
+    PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    PUCHAR scratch;
+    ULONG wait;
+
+    if(!dev||!output||!bytes||bytes>NVX_3D_MAX_DOWNLOAD_BYTES||
+       (bytes&3U)||(srcVa&3ULL)||
+       !dev->GspInitialized||!dev->GspCopyVerified||
+       dev->GspChannelFaulted||dev->GspMmuFaultQueued||
+       !dev->GspDmaVirtual||!dev->GspScratchGpuVa)
+        return FALSE;
+
+    for(wait=0;wait<20000;wait++) {
+        if(!__sync_lock_test_and_set(&NvxGrUserSubmitBusy,1)) break;
+        VideoPortStallExecution(10);
+    }
+    if(wait==20000) return FALSE;
+
+    scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET+0xe000;
+    VideoPortZeroMemory(scratch,NVX_3D_MAX_DOWNLOAD_BYTES);
+    if(!NvxGspSubmitCopy2DLocked(dev,dev->GspScratchGpuVa+0xe000,
+                                 srcVa,bytes,bytes,bytes,1U)) {
+        __sync_lock_release(&NvxGrUserSubmitBusy);
+        return FALSE;
+    }
+    __sync_synchronize();
+    VideoPortMoveMemory(output,scratch,bytes);
     __sync_lock_release(&NvxGrUserSubmitBusy);
     return TRUE;
 }

@@ -19,12 +19,27 @@
 #include "softpipe/sp_state.h"
 #include "softpipe/sp_tile_cache.h"
 #include "../src_driver/nvx_3d_abi.h"
+#include "nvx_nouveau_device.h"
+#include "nvx_nouveau_screen.h"
+#include "nvx_winsys_win32.h"
 
 static HDC nvx_wgl_hdc;
+static NVX_WINSYS_DEVICE nvx_bridge_winsys;
+static NVX_NOUVEAU_DEVICE nvx_bridge_nouveau_device;
+static NVX_NOUVEAU_SCREEN nvx_bridge_nouveau_screen;
+static volatile LONG nvx_bridge_winsys_ready;
+static volatile LONG nvx_bridge_nouveau_device_ready;
+static volatile LONG nvx_bridge_nvx_adapter_ready;
+static volatile LONG nvx_bridge_nouveau_device_id;
+static volatile LONG nvx_bridge_nouveau_chipset;
+static volatile LONG nvx_bridge_nouveau_aperture_low;
+static volatile LONG nvx_bridge_nouveau_aperture_high;
 static volatile LONG nvx_bridge_trace_count;
 static volatile LONG nvx_bridge_screen_count;
+static volatile LONG nvx_bridge_screen_active;
 static volatile LONG nvx_bridge_callback_count;
 static volatile LONG nvx_bridge_gpu_batch_count;
+static volatile LONG nvx_bridge_nvc0_clear_count;
 static volatile LONG nvx_bridge_last_primitive;
 static volatile LONG nvx_bridge_last_count;
 static volatile LONG nvx_bridge_last_triangle_count;
@@ -37,17 +52,25 @@ static char nvx_bridge_last_message[96];
 static LONG nvx_bridge_depth_stage_count;
 static char nvx_bridge_depth_stages[3][96];
 static void nvx_bridge_trace(const char *message);
+static int nvx_bridge_is_enabled(void);
 static int nvx_pack_color(const float rgba[4], uint32_t *color);
+static uint64_t nvx_next_alloc_token(void);
+static int nvx_alloc(HDC hdc, const NVX_3D_ALLOC_BUFFER *request,
+                     NVX_3D_ALLOC_BUFFER *result);
 void nvx_wgl_notify_clear(struct softpipe_context *sp, unsigned buffers,
                           const union pipe_color_union *color, double depth);
 
 #define NVX_BRIDGE_TARGET_SLOTS 8
 struct nvx_bridge_target_state {
    struct softpipe_context *sp;
+   NVX_NOUVEAU_BO color_bo;
    unsigned width, height;
    NVX_3D_COLOR_SURFACE_LAYOUT color_layout;
    NVX_3D_DEPTH_SURFACE_LAYOUT depth_layout;
    uint64_t color_id, depth_id, vbo_id;
+   uint64_t color_gpu_va;
+   uint64_t color_client_token;
+   uint32_t color_bytes;
    uint32_t clear_color;
    unsigned clear_color_pending : 1;
    unsigned clear_depth_pending : 1;
@@ -81,10 +104,8 @@ nvx_wgl_notify_clear(struct softpipe_context *sp, unsigned buffers,
 {
    struct nvx_bridge_target_state *state;
    uint32_t packed;
-   char enabled[8];
    (void)depth;
-   if (!sp || !GetEnvironmentVariableA("NVX_MESA_GALLIUM_BRIDGE", enabled,
-                                       sizeof(enabled)) || enabled[0] != '1')
+   if (!sp || !nvx_bridge_is_enabled())
       return;
    state = nvx_bridge_target_state(sp, 1);
    if (!state)
@@ -104,6 +125,7 @@ struct nvx_bridge_status {
    LONG screen_count;
    LONG callback_count;
    LONG gpu_batch_count;
+   LONG nvc0_clear_count;
    LONG last_primitive;
    LONG last_count;
    LONG last_triangle_count;
@@ -114,6 +136,11 @@ struct nvx_bridge_status {
    char last_message[96];
    LONG depth_stage_count;
    char depth_stages[3][96];
+   LONG nouveau_device_ready;
+   LONG nouveau_device_id;
+   LONG nouveau_chipset;
+   LONG nouveau_aperture_low;
+   LONG nouveau_aperture_high;
 };
 
 __declspec(dllexport) BOOL WINAPI
@@ -125,10 +152,12 @@ NvxQueryBridgeStatus(struct nvx_bridge_status *status, DWORD bytes)
    if (!status || bytes < sizeof(*status))
       return FALSE;
    status->size = sizeof(*status);
-   status->version = 2;
+   status->version = 4;
    status->screen_count = InterlockedCompareExchange(&nvx_bridge_screen_count, 0, 0);
    status->callback_count = InterlockedCompareExchange(&nvx_bridge_callback_count, 0, 0);
    status->gpu_batch_count = InterlockedCompareExchange(&nvx_bridge_gpu_batch_count, 0, 0);
+   status->nvc0_clear_count = InterlockedCompareExchange(
+      &nvx_bridge_nvc0_clear_count, 0, 0);
    status->last_primitive = InterlockedCompareExchange(&nvx_bridge_last_primitive, 0, 0);
    status->last_count = InterlockedCompareExchange(&nvx_bridge_last_count, 0, 0);
    status->last_triangle_count = InterlockedCompareExchange(&nvx_bridge_last_triangle_count, 0, 0);
@@ -147,35 +176,90 @@ NvxQueryBridgeStatus(struct nvx_bridge_status *status, DWORD bytes)
       &nvx_bridge_depth_stage_count, 0, 0);
    memcpy(status->depth_stages, nvx_bridge_depth_stages,
           sizeof(status->depth_stages));
+   status->nouveau_device_ready = InterlockedCompareExchange(
+      &nvx_bridge_nouveau_device_ready, 0, 0);
+   status->nouveau_device_id = InterlockedCompareExchange(
+      &nvx_bridge_nouveau_device_id, 0, 0);
+   status->nouveau_chipset = InterlockedCompareExchange(
+      &nvx_bridge_nouveau_chipset, 0, 0);
+   status->nouveau_aperture_low = InterlockedCompareExchange(
+      &nvx_bridge_nouveau_aperture_low, 0, 0);
+   status->nouveau_aperture_high = InterlockedCompareExchange(
+      &nvx_bridge_nouveau_aperture_high, 0, 0);
    return TRUE;
 }
 
 void nvx_wgl_set_hdc(HDC hdc);
-const char *nvx_wgl_get_name(void);
-const char *nvx_wgl_get_vendor(void);
+int nvx_wgl_nouveau_device_available(void);
+void nvx_wgl_notify_hybrid_screen_created(void);
+int nvx_wgl_nvx_adapter_create(void);
 int nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
                                   const void *vertices,
                                   const uint16_t *indices, unsigned stride,
                                   unsigned primitive, unsigned count);
 
-const char *
-nvx_wgl_get_name(void)
-{
-   return "NVIDIA GeForce RTX 3070 (Ampere GA104)";
-}
-
-const char *
-nvx_wgl_get_vendor(void)
-{
-   return "NVIDIA Corporation";
-}
-
 void
 nvx_wgl_set_hdc(HDC hdc)
 {
+   LONG ready;
+   InterlockedExchange(&nvx_bridge_screen_active, 0);
    InterlockedExchangePointer((PVOID volatile *)&nvx_wgl_hdc, hdc);
+   ready = NvxWinsysInitHdc(&nvx_bridge_winsys, hdc);
+   InterlockedExchange(&nvx_bridge_winsys_ready, ready);
+   ready = ready && NvxNouveauDeviceInitFromWinsys(
+      &nvx_bridge_nouveau_device, &nvx_bridge_winsys);
+   InterlockedExchange(&nvx_bridge_nouveau_device_ready, ready);
+   if (ready) {
+      InterlockedExchange(&nvx_bridge_nouveau_device_id,
+                          (LONG)nvx_bridge_nouveau_device.device_id);
+      InterlockedExchange(&nvx_bridge_nouveau_chipset,
+                          (LONG)nvx_bridge_nouveau_device.chipset);
+      InterlockedExchange(&nvx_bridge_nouveau_aperture_low,
+                          (LONG)(uint32_t)nvx_bridge_nouveau_device.vram_aperture_bytes);
+      InterlockedExchange(&nvx_bridge_nouveau_aperture_high,
+                          (LONG)(uint32_t)(nvx_bridge_nouveau_device.vram_aperture_bytes >> 32));
+   } else {
+      InterlockedExchange(&nvx_bridge_nouveau_device_id, 0);
+      InterlockedExchange(&nvx_bridge_nouveau_chipset, 0);
+      InterlockedExchange(&nvx_bridge_nouveau_aperture_low, 0);
+      InterlockedExchange(&nvx_bridge_nouveau_aperture_high, 0);
+   }
+   nvx_bridge_trace("NVX bridge device probe completed");
+}
+
+int
+nvx_wgl_nouveau_device_available(void)
+{
+   return InterlockedCompareExchange(&nvx_bridge_nouveau_device_ready, 0, 0) != 0;
+}
+
+void
+nvx_wgl_notify_hybrid_screen_created(void)
+{
+   InterlockedExchange(&nvx_bridge_screen_active, 1);
    InterlockedIncrement(&nvx_bridge_screen_count);
-   nvx_bridge_trace("bridge active: WGL screen created");
+   nvx_bridge_trace("NVX hybrid WGL screen created; Gallium backend is softpipe");
+}
+
+int
+nvx_wgl_nvx_adapter_create(void)
+{
+   LONG ready;
+
+   if (!nvx_wgl_nouveau_device_available())
+      return 0;
+   ready = InterlockedCompareExchange(&nvx_bridge_nvx_adapter_ready, 0, 0);
+   if (!ready) {
+      uint64_t token = nvx_next_alloc_token();
+      ready = NvxNouveauScreenInit(&nvx_bridge_nouveau_screen,
+                                   &nvx_bridge_nouveau_device, token);
+      InterlockedExchange(&nvx_bridge_nvx_adapter_ready, ready);
+   }
+   if (!ready)
+      return 0;
+
+   nvx_bridge_trace("NVX adapter ready (bounded NVC0 clear; Gallium Nouveau unavailable)");
+   return 1;
 }
 
 static int
@@ -231,6 +315,19 @@ nvx_bridge_trace(const char *message)
    CloseHandle(file);
 }
 
+/* Use the bounded NVX bridge by default on the NVX WGL screen. An explicit
+ * environment value still lets tests render software references or force a
+ * diagnostic pass. */
+static int
+nvx_bridge_is_enabled(void)
+{
+   char enabled[8];
+   if (GetEnvironmentVariableA("NVX_MESA_GALLIUM_BRIDGE", enabled,
+                               sizeof(enabled)))
+      return enabled[0] == '1';
+   return InterlockedCompareExchange(&nvx_bridge_screen_active, 0, 0) != 0;
+}
+
 static int
 nvx_pack_color(const float rgba[4], uint32_t *color)
 {
@@ -252,12 +349,6 @@ static int
 nvx_upload(HDC hdc, uint64_t buffer_id, const float *vertices,
            unsigned vertex_bytes)
 {
-   struct {
-      NVX_3D_UPLOAD_BUFFER header;
-      float vertices[NVX_3D_MAX_BATCH_VERTICES * 6];
-   } request;
-
-   memset(&request, 0, sizeof(request));
    if (vertex_bytes >= 32) {
       unsigned i, count = vertex_bytes / sizeof(float);
       if (count > 8) count = 8;
@@ -267,47 +358,35 @@ nvx_upload(HDC hdc, uint64_t buffer_id, const float *vertices,
          InterlockedExchange(&nvx_bridge_last_upload_bits[i], bits);
       }
    }
-   request.header.Size = sizeof(request.header);
-   request.header.Version = NVX_3D_ABI_VERSION;
-   request.header.BufferId = buffer_id;
-   if (vertex_bytes < 72 || vertex_bytes > sizeof(request.vertices) ||
+   if (!hdc || !buffer_id || vertex_bytes < 72 || vertex_bytes > 4096 ||
        (vertex_bytes != 96 && vertex_bytes % 24))
       return 0;
-   request.header.Bytes = vertex_bytes;
-   memcpy(request.vertices, vertices, vertex_bytes);
-   return ExtEscape(hdc, NVX_ESCAPE_3D_UPLOAD,
-                    sizeof(request.header) + vertex_bytes,
-                    (LPCSTR)&request, 0, NULL) != 0;
+   return InterlockedCompareExchange(&nvx_bridge_winsys_ready, 0, 0) &&
+      NvxWinsysUploadBuffer(&nvx_bridge_winsys, buffer_id, 4096, 0,
+                            vertices, vertex_bytes);
+}
+
+static int
+nvx_alloc(HDC hdc, const NVX_3D_ALLOC_BUFFER *request,
+          NVX_3D_ALLOC_BUFFER *result)
+{
+   return hdc && InterlockedCompareExchange(&nvx_bridge_winsys_ready, 0, 0) &&
+      NvxWinsysAllocBuffer(&nvx_bridge_winsys, request, result);
 }
 
 static void
 nvx_free(HDC hdc, uint64_t buffer_id)
 {
-   NVX_3D_FREE_BUFFER request;
-
-   if (!buffer_id)
-      return;
-   request.Size = sizeof(request);
-   request.Version = NVX_3D_ABI_VERSION;
-   request.BufferId = buffer_id;
-   ExtEscape(hdc, NVX_ESCAPE_3D_FREE, sizeof(request),
-             (LPCSTR)&request, 0, NULL);
+   if (hdc && buffer_id &&
+       InterlockedCompareExchange(&nvx_bridge_winsys_ready, 0, 0))
+      NvxWinsysFreeBuffer(&nvx_bridge_winsys, buffer_id);
 }
 
 static int
 nvx_wait_fence(HDC hdc, uint64_t fence_value)
 {
-   NVX_3D_WAIT_FENCE wait, waited;
-   memset(&wait, 0, sizeof(wait));
-   wait.Size = sizeof(wait);
-   wait.Version = NVX_3D_ABI_VERSION;
-   wait.FenceValue = fence_value;
-   wait.TimeoutMs = 10000;
-   memset(&waited, 0, sizeof(waited));
-   return ExtEscape(hdc, NVX_ESCAPE_3D_WAIT, sizeof(wait),
-                    (LPCSTR)&wait, sizeof(waited), (LPSTR)&waited) != 0 &&
-          waited.Status == NVX_3D_STATUS_SUCCESS &&
-          waited.FenceValue == fence_value;
+   return hdc && InterlockedCompareExchange(&nvx_bridge_winsys_ready, 0, 0) &&
+      NvxWinsysWaitFence(&nvx_bridge_winsys, fence_value, 10000);
 }
 
 static int
@@ -481,25 +560,73 @@ nvx_clear_dynamic_depth_target(HDC hdc,
           nvx_wait_fence(hdc, submitted.FenceValue);
 }
 
+/* Feed the softpipe render-target clear through the narrow NVC0 packet ABI.
+ * The miniport validates the packet against the owned allocation and builds
+ * its trusted C797 operation. The packet includes a bounded full-target clear
+ * rectangle so results do not depend on stale state from a previous GR job. */
 static int
-nvx_clear_dynamic_target(HDC hdc, const NVX_3D_COLOR_SURFACE_LAYOUT *layout,
-                         uint64_t target_id, uint32_t color)
+nvx_clear_dynamic_target_nvc0(HDC hdc,
+                              const NVX_3D_COLOR_SURFACE_LAYOUT *layout,
+                              NVX_NOUVEAU_BO *target, uint32_t color)
 {
-   NVX_3D_SUBMIT submit, submitted;
-   memset(&submit, 0, sizeof(submit));
-   submit.Size = sizeof(submit);
-   submit.Version = NVX_3D_ABI_VERSION;
-   submit.ClientToken = nvx_next_alloc_token();
-   submit.Operation = NVX_3D_SUBMIT_CLEAR_COLOR_TARGET;
-   submit.Width = layout->Width;
-   submit.Height = layout->Height;
-   submit.Color = color;
-   submit.BufferId = target_id;
-   memset(&submitted, 0, sizeof(submitted));
-   return ExtEscape(hdc, NVX_ESCAPE_3D_SUBMIT, sizeof(submit),
-                    (LPCSTR)&submit, sizeof(submit),
-                    (LPSTR)&submitted) != 0 && submitted.FenceValue &&
-          nvx_wait_fence(hdc, submitted.FenceValue);
+   NVX_3D_COLOR_SURFACE_LAYOUT expected_layout;
+   uint32_t dwords[NVX_3D_NVC0_CLEAR_DWORDS] = {0};
+   float rgba[4];
+   uint64_t submitted_fence = 0;
+   unsigned i;
+
+   (void)hdc;
+   if (!layout || !target || !target->references ||
+       !InterlockedCompareExchange(&nvx_bridge_nvx_adapter_ready, 0, 0) ||
+       !Nvx3dComputeColorSurfaceLayout(layout->Width, layout->Height,
+                                      &expected_layout) ||
+       expected_layout.PitchBytes != layout->PitchBytes ||
+       expected_layout.TileMode != layout->TileMode ||
+       expected_layout.Bytes > target->allocation.Bytes ||
+       target->allocation.Width != layout->Width ||
+       target->allocation.Height != layout->Height ||
+       target->allocation.PitchBytes != layout->PitchBytes ||
+       target->allocation.TileMode != layout->TileMode)
+      return 0;
+
+   rgba[0] = ((color >> 16) & 0xffU) / 255.0f;
+   rgba[1] = ((color >> 8) & 0xffU) / 255.0f;
+   rgba[2] = (color & 0xffU) / 255.0f;
+   rgba[3] = ((color >> 24) & 0xffU) / 255.0f;
+   dwords[0] = Nvx3dNvc0SeqHeader(0x0d80U, 4U);
+   for (i = 0; i < 4; i++)
+      memcpy(&dwords[1 + i], &rgba[i], sizeof(rgba[i]));
+   dwords[5] = Nvx3dNvc0SeqHeader(0x0ff4U, 2U);
+   dwords[6] = layout->Width << 16;
+   dwords[7] = layout->Height << 16;
+   dwords[8] = Nvx3dNvc0SeqHeader(0x0d6cU, 2U);
+   dwords[9] = layout->Width << 16;
+   dwords[10] = layout->Height << 16;
+   dwords[11] = Nvx3dNvc0SeqHeader(0x10f8U, 1U);
+   dwords[12] = 0x10U;
+   dwords[13] = Nvx3dNvc0SeqHeader(0x121cU, 1U);
+   dwords[14] = 1U;
+   dwords[15] = Nvx3dNvc0SeqHeader(0x0800U, 9U);
+   dwords[16] = (uint32_t)(target->allocation.GpuVa >> 32);
+   dwords[17] = (uint32_t)target->allocation.GpuVa;
+   dwords[18] = layout->Width;
+   dwords[19] = layout->Height;
+   dwords[20] = 0xcfU;
+   dwords[21] = layout->TileMode;
+   dwords[22] = 1U;
+   dwords[23] = target->allocation.Bytes / 4U;
+   dwords[25] = Nvx3dNvc0ImmediateHeader(0x15d0U, 0U);
+   dwords[26] = Nvx3dNvc0NonIncHeader(0x19d0U, 1U);
+   dwords[27] = 0x3cU;
+
+   if (!NvxNouveauScreenSubmitNvc0Clear(&nvx_bridge_nouveau_screen,
+                                        target, dwords,
+                                        NVX_3D_NVC0_CLEAR_DWORDS,
+                                        &submitted_fence) ||
+       !NvxWinsysWaitFence(&nvx_bridge_winsys, submitted_fence, 10000))
+      return 0;
+   InterlockedIncrement(&nvx_bridge_nvc0_clear_count);
+   return 1;
 }
 
 static int
@@ -577,14 +704,20 @@ nvx_bridge_full_target(struct softpipe_context *sp, HDC hdc,
    }
    if (target_state->width != viewport_width ||
        target_state->height != viewport_height) {
-      if (target_state->color_id)
-         nvx_free(hdc, target_state->color_id);
+      if (target_state->color_bo.references &&
+          !NvxNouveauBoDestroy(&target_state->color_bo)) {
+         nvx_bridge_trace("full target resize blocked: color BO still in use");
+         return 0;
+      }
       if (target_state->depth_id)
          nvx_free(hdc, target_state->depth_id);
       if (target_state->vbo_id)
          nvx_free(hdc, target_state->vbo_id);
       target_state->color_id = target_state->depth_id =
          target_state->vbo_id = 0;
+      target_state->color_gpu_va = 0;
+      target_state->color_client_token = 0;
+      target_state->color_bytes = 0;
       target_state->width = viewport_width;
       target_state->height = viewport_height;
       target_state->color_layout = layout;
@@ -614,13 +747,21 @@ nvx_bridge_full_target(struct softpipe_context *sp, HDC hdc,
    target.ClientToken = nvx_next_alloc_token();
    if (!target_state->color_id) {
       stage = "color allocation";
-      if (!ExtEscape(hdc, NVX_ESCAPE_3D_ALLOC, sizeof(target), (LPCSTR)&target,
-                     sizeof(target_result), (LPSTR)&target_result))
+      if (!NvxNouveauBoCreate(&nvx_bridge_nouveau_device.winsys, &target,
+                              target.ClientToken,
+                              &target_state->color_bo))
          goto done;
+      target_result = target_state->color_bo.allocation;
       target_state->color_id = target_result.BufferId;
+      target_state->color_gpu_va = target_result.GpuVa;
+      target_state->color_client_token = target_result.ClientToken;
+      target_state->color_bytes = target_result.Bytes;
       target_state->clear_color_pending = 1;
    } else {
       target_result.BufferId = target_state->color_id;
+      target_result.GpuVa = target_state->color_gpu_va;
+      target_result.Bytes = target_state->color_bytes;
+      target_result.ClientToken = target_state->color_client_token;
    }
 
    vbo.Size = sizeof(vbo);
@@ -630,8 +771,7 @@ nvx_bridge_full_target(struct softpipe_context *sp, HDC hdc,
    if (!target_state->vbo_id) {
       vbo.ClientToken = nvx_next_alloc_token();
       stage = "vertex allocation";
-      if (!ExtEscape(hdc, NVX_ESCAPE_3D_ALLOC, sizeof(vbo), (LPCSTR)&vbo,
-                     sizeof(vbo_result), (LPSTR)&vbo_result))
+      if (!nvx_alloc(hdc, &vbo, &vbo_result))
          goto done;
       target_state->vbo_id = vbo_result.BufferId;
    } else {
@@ -649,9 +789,7 @@ nvx_bridge_full_target(struct softpipe_context *sp, HDC hdc,
       depth_target.Height = depth_layout.Height;
       depth_target.PitchBytes = depth_layout.PitchBytes;
       depth_target.ClientToken = nvx_next_alloc_token();
-      if (!ExtEscape(hdc, NVX_ESCAPE_3D_ALLOC, sizeof(depth_target),
-                     (LPCSTR)&depth_target, sizeof(depth_result),
-                     (LPSTR)&depth_result))
+      if (!nvx_alloc(hdc, &depth_target, &depth_result))
          goto done;
       target_state->depth_id = depth_result.BufferId;
       target_state->depth_layout = depth_layout;
@@ -671,8 +809,9 @@ nvx_bridge_full_target(struct softpipe_context *sp, HDC hdc,
    if (target_state->clear_color_pending) {
       stage = "color clear";
       stage_start = GetTickCount();
-      if (!nvx_clear_dynamic_target(hdc, &layout, target_state->color_id,
-                                    target_state->clear_color))
+      if (!nvx_clear_dynamic_target_nvc0(
+             hdc, &layout, &target_state->color_bo,
+             target_state->clear_color))
          goto done;
       InterlockedExchange(&nvx_bridge_last_clear_ms,
                           (LONG)(GetTickCount() - stage_start));
@@ -1050,10 +1189,8 @@ nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
    int ok = 0;
    int caps_escape;
    const char *stage = "bridge validation";
-   char enabled[8];
 
-   if (!GetEnvironmentVariableA("NVX_MESA_GALLIUM_BRIDGE", enabled,
-                                sizeof(enabled)) || enabled[0] != '1')
+   if (!nvx_bridge_is_enabled())
       return 0;
    InterlockedIncrement(&nvx_bridge_callback_count);
    if (!sp || !vertices) {
@@ -1317,9 +1454,7 @@ nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
       nvx_bridge_trace(message);
    }
    stage = "target allocation";
-   if (!ExtEscape(hdc, NVX_ESCAPE_3D_ALLOC, sizeof(target),
-                  (LPCSTR)&target, sizeof(target_result),
-                  (LPSTR)&target_result))
+   if (!nvx_alloc(hdc, &target, &target_result))
       goto done;
 
    memset(&vbo, 0, sizeof(vbo));
@@ -1330,9 +1465,7 @@ nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
    vbo.Bytes = 4096;
    vbo.ClientToken = nvx_next_alloc_token();
    stage = "vertex buffer allocation";
-   if (!ExtEscape(hdc, NVX_ESCAPE_3D_ALLOC, sizeof(vbo),
-                  (LPCSTR)&vbo, sizeof(vbo_result),
-                  (LPSTR)&vbo_result))
+   if (!nvx_alloc(hdc, &vbo, &vbo_result))
       goto done;
 
    for (tile_y = tile_start_y; tile_y < tile_end_y; tile_y += 16) {

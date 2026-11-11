@@ -12,6 +12,10 @@
 #include <string.h>
 #include <share.h>
 #include "../src_driver/nvx_3d_abi.h"
+#if defined(NVX_TEST_NOUVEAU_PUSHBUF)
+#include "../mesa_patches/nvx_nouveau_pushbuf.h"
+#include "../mesa_patches/nvx_winsys_win32.h"
+#endif
 
 #define NVX_OPENGL_GETINFO_ESCAPE 4353
 #define NVX_OPENGL_GETINFO_DRVNAME 0
@@ -45,6 +49,7 @@ static void DumpMesaBridgeTrace(void)
         LONG screenCount;
         LONG callbackCount;
         LONG gpuBatchCount;
+        LONG nvc0ClearCount;
         LONG lastPrimitive;
         LONG lastCount;
         LONG lastTriangleCount;
@@ -55,6 +60,11 @@ static void DumpMesaBridgeTrace(void)
         char lastMessage[96];
         LONG depthStageCount;
         char depthStages[3][96];
+        LONG nouveauDeviceReady;
+        LONG nouveauDeviceId;
+        LONG nouveauChipset;
+        LONG nouveauApertureLow;
+        LONG nouveauApertureHigh;
     } MESA_BRIDGE_STATUS;
     typedef BOOL (WINAPI *PFN_QUERY_BRIDGE_STATUS)(MESA_BRIDGE_STATUS *, DWORD);
     HMODULE icd = GetModuleHandleA("nvxogl64.dll");
@@ -70,11 +80,17 @@ static void DumpMesaBridgeTrace(void)
     }
     mesaGpuBridgeBatchCount = (unsigned)status.gpuBatchCount;
     mesaGpuFramebufferVerified = mesaGpuBridgeBatchCount != 0;
-    LogMsg("[MESA_BRIDGE_STATUS] screens=%ld callbacks=%ld gpu_batches=%ld version=%lu last_primitive=%ld last_count=%ld last_triangles=%ld clear_ms=%ld draw_ms=%ld readback_ms=%ld last=%s\n",
+    LogMsg("[MESA_BRIDGE_STATUS] screens=%ld callbacks=%ld gpu_batches=%ld nvc0_clears=%ld version=%lu last_primitive=%ld last_count=%ld last_triangles=%ld clear_ms=%ld draw_ms=%ld readback_ms=%ld last=%s\n",
            status.screenCount, status.callbackCount, status.gpuBatchCount,
-           (unsigned long)status.version, status.lastPrimitive,
+           status.nvc0ClearCount, (unsigned long)status.version, status.lastPrimitive,
            status.lastCount, status.lastTriangleCount, status.lastClearMs,
            status.lastDrawMs, status.lastReadbackMs, status.lastMessage);
+    LogMsg("[NVX_NOUVEAU_DEVICE] ready=%ld PCI=%04lx chipset=%04lx VRAM-aperture=%08lx%08lx\n",
+           status.nouveauDeviceReady,
+           (unsigned long)(DWORD)status.nouveauDeviceId,
+           (unsigned long)(DWORD)status.nouveauChipset,
+           (unsigned long)(DWORD)status.nouveauApertureHigh,
+           (unsigned long)(DWORD)status.nouveauApertureLow);
     LogMsg("[MESA_BRIDGE_UPLOAD_BITS] %08lx %08lx %08lx %08lx %08lx %08lx %08lx %08lx\n",
            (unsigned long)(DWORD)status.lastUploadBits[0],
            (unsigned long)(DWORD)status.lastUploadBits[1],
@@ -1742,26 +1758,47 @@ static int TestNvc0ClearEscape(HDC hdc)
     NVX_3D_COLOR_SURFACE_LAYOUT layout;
     NVX_3D_ALLOC_BUFFER alloc={0},allocated={0};
     NVX_3D_NVC0_CLEAR clear={0},submitted={0};
+    uint8_t batch[sizeof(NVX_3D_BATCH_HEADER)+
+                  NVX_3D_NVC0_CLEAR_DWORDS*sizeof(uint32_t)+
+                  2*sizeof(NVX_3D_RELOCATION)];
+    NVX_3D_BATCH_HEADER batchHeader={0};
+    NVX_3D_RELOCATION batchRelocations[2]={{0}};
     NVX_3D_WAIT_FENCE wait={0},waited={0};
     NVX_3D_READBACK readback={0};
     NVX_3D_FREE_BUFFER freeRequest={0};
     uint32_t pixels[NVX_3D_READBACK_PIXELS];
-    uint32_t expected=0xff8040ffU;
+#if defined(NVX_TEST_NOUVEAU_PUSHBUF)
+    NVX_WINSYS_DEVICE winsys={0};
+    NVX_NOUVEAU_BO pushBo={0};
+    NVX_NOUVEAU_PUSHBUF push={0};
+#endif
+    static const uint32_t clearCases[][5]={
+        {0x3f000000U,0x3e800000U,0x3f800000U,0x3f800000U,0xff8040ffU},
+        {0x3f800000U,0x00000000U,0x00000000U,0x3f800000U,0xffff0000U},
+        {0x00000000U,0x3f800000U,0x00000000U,0x3f800000U,0xff00ff00U},
+        {0x00000000U,0x00000000U,0x3f800000U,0x3f800000U,0xff0000ffU}
+    };
+    uint64_t previousFence=0;
     unsigned i;
     int ok=1,allocatedOk=0;
 
-    LogMsg("-> Testing one validated 23-dword NVC0 full-target clear packet\n");
+    LogMsg("-> Testing one validated 28-dword NVC0 full-target clear packet\n");
     if(!Nvx3dComputeColorSurfaceLayout(64,16,&layout)) return 0;
     alloc.Size=sizeof(alloc);alloc.Version=NVX_3D_ABI_VERSION;
     alloc.Usage=NVX_3D_USAGE_COLOR_TARGET;alloc.Bytes=layout.Bytes;
     alloc.Width=layout.Width;alloc.Height=layout.Height;
     alloc.PitchBytes=layout.PitchBytes;alloc.TileMode=layout.TileMode;
+    alloc.ClientToken=((uint64_t)GetCurrentProcessId()<<32)|GetTickCount();
+    if(!alloc.ClientToken) alloc.ClientToken=1;
     if(!ExtEscape(hdc,NVX_ESCAPE_3D_ALLOC,sizeof(alloc),(LPCSTR)&alloc,
                   sizeof(allocated),(LPSTR)&allocated)) {
         LogMsg("-> [FAIL] NVC0 clear target allocation failed\n");
         return 0;
     }
     allocatedOk=1;
+    LogMsg("[NVX_3D_STAGE] resource PASS buffer=%llu bytes=%lu\n",
+           (unsigned long long)allocated.BufferId,
+           (unsigned long)allocated.Bytes);
     clear.Size=sizeof(clear);clear.Version=NVX_3D_ABI_VERSION;
     clear.DwordCount=NVX_3D_NVC0_CLEAR_DWORDS;
     clear.BufferId=allocated.BufferId;
@@ -1770,51 +1807,373 @@ static int TestNvc0ClearEscape(HDC hdc)
     clear.Dwords[3]=0x3f800000U;clear.Dwords[4]=0x3f800000U;
     clear.Dwords[5]=Nvx3dNvc0SeqHeader(0x0ff4U,2U);
     clear.Dwords[6]=layout.Width<<16;clear.Dwords[7]=layout.Height<<16;
-    clear.Dwords[8]=Nvx3dNvc0SeqHeader(0x121cU,1U);clear.Dwords[9]=1U;
-    clear.Dwords[10]=Nvx3dNvc0SeqHeader(0x0800U,9U);
-    clear.Dwords[11]=(uint32_t)(allocated.GpuVa>>32);
-    clear.Dwords[12]=(uint32_t)allocated.GpuVa;
-    clear.Dwords[13]=layout.Width;clear.Dwords[14]=layout.Height;
-    clear.Dwords[15]=0xcfU;clear.Dwords[16]=layout.TileMode;
-    clear.Dwords[17]=1U;clear.Dwords[18]=allocated.Bytes/4U;
-    clear.Dwords[19]=0U;
-    clear.Dwords[20]=Nvx3dNvc0ImmediateHeader(0x15d0U,0U);
-    clear.Dwords[21]=Nvx3dNvc0NonIncHeader(0x19d0U,1U);
-    clear.Dwords[22]=0x3cU;
-    if(!ExtEscape(hdc,NVX_ESCAPE_3D_NVC0_CLEAR,sizeof(clear),
-                  (LPCSTR)&clear,sizeof(submitted),(LPSTR)&submitted)) {
-        LogMsg("-> [FAIL] miniport rejected the valid NVC0 clear packet\n");
+    clear.Dwords[8]=Nvx3dNvc0SeqHeader(0x0d6cU,2U);
+    clear.Dwords[9]=layout.Width<<16;clear.Dwords[10]=layout.Height<<16;
+    clear.Dwords[11]=Nvx3dNvc0SeqHeader(0x10f8U,1U);clear.Dwords[12]=0x10U;
+    clear.Dwords[13]=Nvx3dNvc0SeqHeader(0x121cU,1U);clear.Dwords[14]=1U;
+    clear.Dwords[15]=Nvx3dNvc0SeqHeader(0x0800U,9U);
+    clear.Dwords[16]=(uint32_t)(allocated.GpuVa>>32);
+    clear.Dwords[17]=(uint32_t)allocated.GpuVa;
+    clear.Dwords[18]=layout.Width;clear.Dwords[19]=layout.Height;
+    clear.Dwords[20]=0xcfU;clear.Dwords[21]=layout.TileMode;
+    clear.Dwords[22]=1U;clear.Dwords[23]=allocated.Bytes/4U;
+    clear.Dwords[24]=0U;
+    clear.Dwords[25]=Nvx3dNvc0ImmediateHeader(0x15d0U,0U);
+    clear.Dwords[26]=Nvx3dNvc0NonIncHeader(0x19d0U,1U);
+    clear.Dwords[27]=0x3cU;
+    batchHeader.Size=sizeof(batchHeader);
+    batchHeader.Version=NVX_3D_ABI_VERSION;
+    batchHeader.DwordCount=NVX_3D_NVC0_CLEAR_DWORDS;
+    batchHeader.RelocationCount=2;
+    batchHeader.ClientToken=allocated.ClientToken;
+    batchRelocations[0].CommandWord=16;
+    batchRelocations[0].Access=NVX_3D_RELOC_READ|NVX_3D_RELOC_WRITE;
+    batchRelocations[0].BufferId=allocated.BufferId;
+    batchRelocations[0].BufferOffset=0;
+    batchRelocations[0].Bytes=allocated.Bytes;
+    batchRelocations[1]=batchRelocations[0];
+    batchRelocations[1].CommandWord=17;
+    memcpy(batch,&batchHeader,sizeof(batchHeader));
+    memcpy(batch+sizeof(batchHeader),clear.Dwords,sizeof(clear.Dwords));
+    memcpy(batch+sizeof(batchHeader)+sizeof(clear.Dwords),
+           batchRelocations,sizeof(batchRelocations));
+#if defined(NVX_TEST_NOUVEAU_PUSHBUF)
+    if(!NvxWinsysInitHdc(&winsys,hdc)) {
+        LogMsg("-> [FAIL] Nouveau pushbuffer adapter could not query HDC caps\n");
         ok=0;
     } else {
-        wait.Size=sizeof(wait);wait.Version=NVX_3D_ABI_VERSION;
-        wait.FenceValue=submitted.FenceValue;wait.TimeoutMs=10000;
-        if(!submitted.FenceValue||
-           !ExtEscape(hdc,NVX_ESCAPE_3D_WAIT,sizeof(wait),(LPCSTR)&wait,
-                      sizeof(waited),(LPSTR)&waited)) {
-            LogMsg("-> [FAIL] NVC0 translated C797 clear fence did not signal\n");
+        pushBo.device=&winsys;
+        pushBo.allocation=allocated;
+        pushBo.references=1;
+        if(!NvxNouveauPushbufInit(&push,&winsys,allocated.ClientToken)||
+           !NvxNouveauPushbufAppend(&push,clear.Dwords,
+                                    NVX_3D_NVC0_CLEAR_DWORDS)||
+           !NvxNouveauPushbufRelocate(&push,&pushBo,16,0,allocated.Bytes,
+                                      NVX_NOUVEAU_BO_READ|
+                                      NVX_NOUVEAU_BO_WRITE)||
+           !NvxNouveauPushbufRelocate(&push,&pushBo,17,0,allocated.Bytes,
+                                      NVX_NOUVEAU_BO_READ|
+                                      NVX_NOUVEAU_BO_WRITE)||
+           !NvxNouveauPushbufValidate(&push)) {
+            LogMsg("-> [FAIL] Nouveau pushbuffer adapter/miniport preflight failed\n");
             ok=0;
         } else {
-            readback.Size=sizeof(readback);readback.Version=NVX_3D_ABI_VERSION;
-            readback.BufferId=allocated.BufferId;
-            readback.Width=layout.Width;readback.Height=layout.Height;
-            if(!ExtEscape(hdc,NVX_ESCAPE_3D_READBACK,sizeof(readback),
-                          (LPCSTR)&readback,sizeof(pixels),(LPSTR)pixels)) {
-                LogMsg("-> [FAIL] NVC0 clear target readback failed\n");
-                ok=0;
-            } else {
-                for(i=0;i<NVX_3D_READBACK_PIXELS;i++) {
-                    if(pixels[i]!=expected) {ok=0;break;}
-                }
-                if(ok)
-                    LogMsg("-> NVC0 packet translated to C797; 1024 pixels match 0x%08lX, fence=%llu\n",
-                        (unsigned long)expected,
-                        (unsigned long long)submitted.FenceValue);
-                else
-                    LogMsg("-> [FAIL] NVC0 clear pixel %u was 0x%08lX, expected 0x%08lX\n",
-                        i,(unsigned long)pixels[i],(unsigned long)expected);
-            }
+            LogMsg("-> Nouveau pushbuffer adapter serialized two owned BO relocations and passed miniport preflight\n");
+        }
+        NvxNouveauPushbufDestroy(&push);
+    }
+#else
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_VALIDATE_BATCH,sizeof(batch),
+                  (LPCSTR)&batch,0,NULL)) {
+        LogMsg("-> [FAIL] miniport rejected structurally valid NVC0 batch metadata\n");
+        ok=0;
+    } else {
+        LogMsg("-> NVC0 batch framing and BO relocations passed miniport validation\n");
+    }
+#endif
+    if(ok)
+        LogMsg("[NVX_3D_STAGE] batch-preflight PASS dwords=%u relocations=2\n",
+               (unsigned)batchHeader.DwordCount);
+    /* Fast negative cases exercise the guest parser's bounds and BO ownership
+       checks without submitting any modified command stream to the GPU. */
+    {
+        NVX_3D_BATCH_HEADER invalidHeader=batchHeader;
+        uint8_t invalidBatch[sizeof(batch)];
+        NVX_3D_NVC0_CLEAR invalidClear;
+        memcpy(invalidBatch,batch,sizeof(batch));
+        invalidHeader.Version++;
+        memcpy(invalidBatch,&invalidHeader,sizeof(invalidHeader));
+        if(ExtEscape(hdc,NVX_ESCAPE_3D_VALIDATE_BATCH,sizeof(invalidBatch),
+                     (LPCSTR)invalidBatch,0,NULL)) {
+            LogMsg("-> [FAIL] miniport accepted unsupported batch ABI version\n");
+            ok=0;
+        } else {
+            LogMsg("-> Rejected unsupported batch ABI version\n");
+        }
+        memcpy(invalidBatch,batch,sizeof(batch));
+        {
+            uint32_t invalidMethodHeader=Nvx3dNvc0SeqHeader(0x7ffcU,4U);
+            memcpy(invalidBatch+sizeof(batchHeader),&invalidMethodHeader,
+                   sizeof(invalidMethodHeader));
+        }
+        if(ExtEscape(hdc,NVX_ESCAPE_3D_VALIDATE_BATCH,sizeof(invalidBatch),
+                     (LPCSTR)invalidBatch,0,NULL)) {
+            LogMsg("-> [FAIL] miniport accepted incrementing method wrap\n");
+            ok=0;
+        } else {
+            LogMsg("-> Rejected incrementing packet that wraps its method field\n");
+        }
+        memcpy(invalidBatch,batch,sizeof(batch));
+        invalidHeader=batchHeader;
+        invalidHeader.ClientToken^=1;
+        memcpy(invalidBatch,&invalidHeader,sizeof(invalidHeader));
+        if(ExtEscape(hdc,NVX_ESCAPE_3D_VALIDATE_BATCH,sizeof(invalidBatch),
+                     (LPCSTR)invalidBatch,0,NULL)) {
+            LogMsg("-> [FAIL] miniport accepted batch with another client's token\n");
+            ok=0;
+        } else {
+            LogMsg("-> Rejected batch with another client's ownership token\n");
+        }
+        memcpy(invalidBatch,batch,sizeof(batch));
+        {
+            NVX_3D_RELOCATION invalidRelocation=batchRelocations[1];
+            invalidRelocation.BufferOffset=allocated.Bytes;
+            memcpy(invalidBatch+sizeof(batchHeader)+sizeof(clear.Dwords)+
+                   sizeof(batchRelocations[0]),&invalidRelocation,
+                   sizeof(invalidRelocation));
+        }
+        if(ExtEscape(hdc,NVX_ESCAPE_3D_VALIDATE_BATCH,sizeof(invalidBatch),
+                     (LPCSTR)invalidBatch,0,NULL)) {
+            LogMsg("-> [FAIL] miniport accepted out-of-range BO relocation\n");
+            ok=0;
+        } else {
+            LogMsg("-> Rejected out-of-range BO relocation\n");
+        }
+
+        /* Exercise the remaining relocation invariants at the guest boundary.
+           These are parser-only requests: none reaches the graphics queue. */
+        memcpy(invalidBatch,batch,sizeof(batch));
+        {
+            NVX_3D_RELOCATION invalidRelocation=batchRelocations[0];
+            invalidRelocation.Reserved[0]=1;
+            memcpy(invalidBatch+sizeof(batchHeader)+sizeof(clear.Dwords),
+                   &invalidRelocation,sizeof(invalidRelocation));
+        }
+        if(ExtEscape(hdc,NVX_ESCAPE_3D_VALIDATE_BATCH,sizeof(invalidBatch),
+                     (LPCSTR)invalidBatch,0,NULL)) {
+            LogMsg("-> [FAIL] miniport accepted nonzero relocation reserved field\n");
+            ok=0;
+        } else {
+            LogMsg("-> Rejected nonzero relocation reserved field\n");
+        }
+        memcpy(invalidBatch,batch,sizeof(batch));
+        {
+            NVX_3D_RELOCATION invalidRelocation=batchRelocations[1];
+            invalidRelocation.CommandWord=batchRelocations[0].CommandWord;
+            memcpy(invalidBatch+sizeof(batchHeader)+sizeof(clear.Dwords)+
+                   sizeof(batchRelocations[0]),&invalidRelocation,
+                   sizeof(invalidRelocation));
+        }
+        if(ExtEscape(hdc,NVX_ESCAPE_3D_VALIDATE_BATCH,sizeof(invalidBatch),
+                     (LPCSTR)invalidBatch,0,NULL)) {
+            LogMsg("-> [FAIL] miniport accepted duplicate relocation word\n");
+            ok=0;
+        } else {
+            LogMsg("-> Rejected duplicate relocation word\n");
+        }
+        memcpy(invalidBatch,batch,sizeof(batch));
+        {
+            NVX_3D_RELOCATION invalidRelocation=batchRelocations[0];
+            invalidRelocation.Access|=0x80U;
+            memcpy(invalidBatch+sizeof(batchHeader)+sizeof(clear.Dwords),
+                   &invalidRelocation,sizeof(invalidRelocation));
+        }
+        if(ExtEscape(hdc,NVX_ESCAPE_3D_VALIDATE_BATCH,sizeof(invalidBatch),
+                     (LPCSTR)invalidBatch,0,NULL)) {
+            LogMsg("-> [FAIL] miniport accepted unknown relocation access bits\n");
+            ok=0;
+        } else {
+            LogMsg("-> Rejected unknown relocation access bits\n");
+        }
+
+        /* Clear packets have their own strict method and surface checks.
+           These requests must be rejected before the GPU queue is touched. */
+        invalidClear=clear;
+        invalidClear.Dwords[0]=0;
+        if(ExtEscape(hdc,NVX_ESCAPE_3D_NVC0_CLEAR,sizeof(invalidClear),
+                     (LPCSTR)&invalidClear,sizeof(submitted),
+                     (LPSTR)&submitted)) {
+            LogMsg("-> [FAIL] miniport accepted a malformed NVC0 method header\n");
+            ok=0;
+        } else {
+            LogMsg("-> Rejected malformed NVC0 method header\n");
+        }
+        if(ExtEscape(hdc,NVX_ESCAPE_3D_NVC0_NATIVE_CLEAR,sizeof(invalidClear),
+                     (LPCSTR)&invalidClear,sizeof(submitted),
+                     (LPSTR)&submitted)) {
+            LogMsg("-> [FAIL] native path accepted a malformed NVC0 method header\n");
+            ok=0;
+        } else {
+            LogMsg("-> Native path rejected malformed NVC0 method header\n");
+        }
+        invalidClear=clear;
+        invalidClear.Dwords[1]=0xbf800000U; /* negative color component */
+        if(ExtEscape(hdc,NVX_ESCAPE_3D_NVC0_CLEAR,sizeof(invalidClear),
+                     (LPCSTR)&invalidClear,sizeof(submitted),
+                     (LPSTR)&submitted)) {
+            LogMsg("-> [FAIL] miniport accepted a negative NVC0 UNORM component\n");
+            ok=0;
+        } else {
+            LogMsg("-> Rejected out-of-range NVC0 color component\n");
+        }
+        if(ExtEscape(hdc,NVX_ESCAPE_3D_NVC0_NATIVE_CLEAR,sizeof(invalidClear),
+                     (LPCSTR)&invalidClear,sizeof(submitted),
+                     (LPSTR)&submitted)) {
+            LogMsg("-> [FAIL] native path accepted an out-of-range UNORM component\n");
+            ok=0;
+        } else {
+            LogMsg("-> Native path rejected out-of-range UNORM component\n");
+        }
+        invalidClear=clear;
+        invalidClear.Dwords[17]^=0x10000U; /* wrong target address */
+        if(ExtEscape(hdc,NVX_ESCAPE_3D_NVC0_CLEAR,sizeof(invalidClear),
+                     (LPCSTR)&invalidClear,sizeof(submitted),
+                     (LPSTR)&submitted)) {
+            LogMsg("-> [FAIL] miniport accepted an NVC0 target address outside the owned BO\n");
+            ok=0;
+        } else {
+            LogMsg("-> Rejected NVC0 target address outside the owned BO\n");
+        }
+        if(ExtEscape(hdc,NVX_ESCAPE_3D_NVC0_NATIVE_CLEAR,sizeof(invalidClear),
+                     (LPCSTR)&invalidClear,sizeof(submitted),
+                     (LPSTR)&submitted)) {
+            LogMsg("-> [FAIL] native path accepted a target address outside the owned BO\n");
+            ok=0;
+        } else {
+            LogMsg("-> Native path rejected target address outside the owned BO\n");
         }
     }
+    {
+        NVX_3D_NVC0_CLEAR nativeSubmitted={0};
+        /* Direct C797 UNORM conversion truncates the 0.5 red channel to 127;
+           the trusted semantic clear path below rounds it to 128. */
+        uint32_t expectedNative=0xff7f40ffU;
+        unsigned nativePixel;
+        wait.Size=sizeof(wait);wait.Version=NVX_3D_ABI_VERSION;
+        wait.TimeoutMs=10000;
+        readback.Size=sizeof(readback);readback.Version=NVX_3D_ABI_VERSION;
+        readback.BufferId=allocated.BufferId;
+        readback.Width=layout.Width;readback.Height=layout.Height;
+#if defined(NVX_TEST_NOUVEAU_PUSHBUF)
+        {
+            uint64_t adapterFence=0;
+            LogMsg("-> Testing Nouveau adapter submission of the validated NVC0 clear stream\n");
+            if(!NvxNouveauPushbufInit(&push,&winsys,allocated.ClientToken)||
+               !NvxNouveauPushbufAppend(&push,clear.Dwords,
+                                        NVX_3D_NVC0_CLEAR_DWORDS)||
+               !NvxNouveauPushbufRelocate(&push,&pushBo,16,0,allocated.Bytes,
+                                          NVX_NOUVEAU_BO_READ|
+                                          NVX_NOUVEAU_BO_WRITE)||
+               !NvxNouveauPushbufRelocate(&push,&pushBo,17,0,allocated.Bytes,
+                                          NVX_NOUVEAU_BO_READ|
+                                          NVX_NOUVEAU_BO_WRITE)||
+               !NvxNouveauPushbufSubmitNvc0Clear(&push,&pushBo,
+                                                  &adapterFence)) {
+                LogMsg("-> [FAIL] Nouveau adapter native clear submission failed\n");
+                ok=0;
+            } else {
+                nativeSubmitted=clear;
+                nativeSubmitted.FenceValue=adapterFence;
+                LogMsg("-> Nouveau adapter submitted bounded clear; fence=%llu\n",
+                       (unsigned long long)adapterFence);
+            }
+            NvxNouveauPushbufDestroy(&push);
+        }
+#else
+        LogMsg("-> Testing direct submission of the validated NVC0 clear stream\n");
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_NVC0_NATIVE_CLEAR,sizeof(clear),
+                      (LPCSTR)&clear,sizeof(nativeSubmitted),
+                      (LPSTR)&nativeSubmitted)) {
+            LogMsg("-> [FAIL] miniport/GPU rejected the bounded native NVC0 clear stream\n");
+            ok=0;
+        }
+#endif
+        if(ok) {
+            wait.FenceValue=nativeSubmitted.FenceValue;
+            memset(&waited,0,sizeof(waited));
+            if(!nativeSubmitted.FenceValue||
+               !ExtEscape(hdc,NVX_ESCAPE_3D_WAIT,sizeof(wait),(LPCSTR)&wait,
+                          sizeof(waited),(LPSTR)&waited)||
+               waited.FenceValue!=nativeSubmitted.FenceValue||
+               waited.Status!=NVX_3D_STATUS_SUCCESS||
+               !ExtEscape(hdc,NVX_ESCAPE_3D_READBACK,sizeof(readback),
+                          (LPCSTR)&readback,sizeof(pixels),(LPSTR)pixels)) {
+                LogMsg("-> [FAIL] native NVC0 clear fence/readback did not complete\n");
+                ok=0;
+            } else {
+                for(nativePixel=0;nativePixel<NVX_3D_READBACK_PIXELS;
+                    nativePixel++) {
+                    if(pixels[nativePixel]!=expectedNative) {
+                        LogMsg("-> [FAIL] native NVC0 clear pixel %u was 0x%08lX, expected 0x%08lX\n",
+                               nativePixel,(unsigned long)pixels[nativePixel],
+                               (unsigned long)expectedNative);
+                        ok=0;
+                        break;
+                    }
+                }
+                if(ok)
+                    LogMsg("-> Native NVC0 packet executed by GPU; 1024 pixels match 0x%08lX, fence=%llu\n",
+                           (unsigned long)expectedNative,
+                           (unsigned long long)nativeSubmitted.FenceValue);
+                if(ok)
+                    LogMsg("[NVX_3D_STAGE] native-submit-fence-readback PASS pixels=%u fence=%llu\n",
+                           (unsigned)NVX_3D_READBACK_PIXELS,
+                           (unsigned long long)nativeSubmitted.FenceValue);
+            }
+        }
+        LogMsg("[NVX_NVC0_NATIVE_CLEAR_RESULT] %s\n",ok?"PASS":"FAIL");
+    }
+    /* Repeat the real C797 clear with distinct channel patterns. This catches
+       stale target contents, channel swizzles, and fences that do not advance
+       while keeping every submitted packet on the proven clear-only path. */
+    wait.Size=sizeof(wait);wait.Version=NVX_3D_ABI_VERSION;
+    wait.TimeoutMs=10000;
+    readback.Size=sizeof(readback);readback.Version=NVX_3D_ABI_VERSION;
+    readback.BufferId=allocated.BufferId;
+    readback.Width=layout.Width;readback.Height=layout.Height;
+    for(unsigned pass=0;pass<sizeof(clearCases)/sizeof(clearCases[0]);pass++) {
+        uint32_t expected=clearCases[pass][4];
+        clear.Dwords[1]=clearCases[pass][0];
+        clear.Dwords[2]=clearCases[pass][1];
+        clear.Dwords[3]=clearCases[pass][2];
+        clear.Dwords[4]=clearCases[pass][3];
+        memset(&submitted,0,sizeof(submitted));
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_NVC0_CLEAR,sizeof(clear),
+                      (LPCSTR)&clear,sizeof(submitted),(LPSTR)&submitted)) {
+            LogMsg("-> [FAIL] NVC0 clear case %u was rejected\n",pass);
+            ok=0;
+            break;
+        }
+        if(!submitted.FenceValue||submitted.FenceValue<=previousFence) {
+            LogMsg("-> [FAIL] NVC0 clear case %u fence did not advance (%llu after %llu)\n",
+                   pass,(unsigned long long)submitted.FenceValue,
+                   (unsigned long long)previousFence);
+            ok=0;
+            break;
+        }
+        previousFence=submitted.FenceValue;
+        wait.FenceValue=submitted.FenceValue;
+        memset(&waited,0,sizeof(waited));
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_WAIT,sizeof(wait),(LPCSTR)&wait,
+                      sizeof(waited),(LPSTR)&waited) ||
+           waited.FenceValue!=submitted.FenceValue ||
+           waited.Status!=NVX_3D_STATUS_SUCCESS) {
+            LogMsg("-> [FAIL] NVC0 clear case %u fence wait failed\n",pass);
+            ok=0;
+            break;
+        }
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_READBACK,sizeof(readback),
+                      (LPCSTR)&readback,sizeof(pixels),(LPSTR)pixels)) {
+            LogMsg("-> [FAIL] NVC0 clear case %u readback failed\n",pass);
+            ok=0;
+            break;
+        }
+        for(i=0;i<NVX_3D_READBACK_PIXELS;i++) {
+            if(pixels[i]!=expected) {
+                LogMsg("-> [FAIL] NVC0 clear case %u pixel %u was 0x%08lX, expected 0x%08lX\n",
+                       pass,i,(unsigned long)pixels[i],(unsigned long)expected);
+                ok=0;
+                break;
+            }
+        }
+        if(!ok) break;
+        LogMsg("-> NVC0 clear case %u: 1024 pixels match 0x%08lX; fence=%llu\n",
+               pass,(unsigned long)expected,
+               (unsigned long long)submitted.FenceValue);
+    }
+    if(ok)
+        LogMsg("[NVX_3D_STAGE] semantic-clear-color-matrix PASS cases=%u\n",
+               (unsigned)(sizeof(clearCases)/sizeof(clearCases[0])));
     if(allocatedOk) {
         freeRequest.Size=sizeof(freeRequest);
         freeRequest.Version=NVX_3D_ABI_VERSION;
@@ -1823,9 +2182,213 @@ static int TestNvc0ClearEscape(HDC hdc)
                       (LPCSTR)&freeRequest,0,NULL)) {
             LogMsg("-> [FAIL] NVC0 clear target release failed\n");
             ok=0;
-        }
+        } else if(ok)
+            LogMsg("[NVX_3D_STAGE] resource-release PASS\n");
     }
     LogMsg("[NVX_NVC0_CLEAR_RESULT] %s\n",ok?"PASS":"FAIL");
+    return ok;
+}
+
+/* Re-run the exact whitelisted NVC0 clear against a full WGL-sized target.
+   This isolates the block-linear extent/address calculation from Mesa's draw
+   state and checks both the origin and a later aligned tile by readback. */
+static int TestNativeNvc0FullSizeClear(HDC hdc)
+{
+    static const uint32_t clearCases[][5]={
+        {0x3f800000U,0U,0x3f800000U,0x3f800000U,0xffff00ffU},
+        {0U,0U,0U,0x3f800000U,0xff000000U},
+        {0x3f800000U,0x3f800000U,0x3f800000U,0x3f800000U,0xffffffffU},
+        {0U,0x3f800000U,0x3f800000U,0x3f800000U,0xff00ffffU},
+    };
+    const uint32_t width=632U,height=453U;
+    NVX_3D_COLOR_SURFACE_LAYOUT layout;
+    NVX_3D_ALLOC_BUFFER alloc={0},allocated={0};
+    NVX_3D_NVC0_CLEAR clear={0},submitted={0};
+    NVX_3D_WAIT_FENCE wait={0},waited={0};
+    NVX_3D_DOWNLOAD_BUFFER download={0};
+    NVX_3D_FREE_BUFFER freeRequest={0};
+    const uint32_t sampleX[3]={0,width/2U,width-1U};
+    const uint32_t sampleY[3]={0,height/2U,height-1U};
+    unsigned pass;
+    int allocatedOk=0,ok=0;
+
+    if(!Nvx3dComputeColorSurfaceLayout(width,height,&layout)||
+       layout.Bytes>NVX_3D_MAX_BUFFER_BYTES) {
+        LogMsg("[NVX_3D_FULLSIZE_NATIVE_CLEAR_RESULT] FAIL layout\n");
+        return 0;
+    }
+    alloc.Size=sizeof(alloc);alloc.Version=NVX_3D_ABI_VERSION;
+    alloc.Usage=NVX_3D_USAGE_COLOR_TARGET;alloc.Bytes=layout.Bytes;
+    alloc.Width=width;alloc.Height=height;alloc.PitchBytes=layout.PitchBytes;
+    alloc.TileMode=layout.TileMode;
+    alloc.ClientToken=((uint64_t)GetCurrentProcessId()<<32)|GetTickCount();
+    if(!alloc.ClientToken) alloc.ClientToken=1;
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_ALLOC,sizeof(alloc),(LPCSTR)&alloc,
+                  sizeof(allocated),(LPSTR)&allocated)) {
+        LogMsg("[NVX_3D_FULLSIZE_NATIVE_CLEAR_RESULT] FAIL allocation\n");
+        return 0;
+    }
+    allocatedOk=1;
+
+    clear.Size=sizeof(clear);clear.Version=NVX_3D_ABI_VERSION;
+    clear.DwordCount=NVX_3D_NVC0_CLEAR_DWORDS;
+    clear.BufferId=allocated.BufferId;
+    clear.Dwords[0]=Nvx3dNvc0SeqHeader(0x0d80U,4U);
+    clear.Dwords[1]=0x3f800000U;clear.Dwords[2]=0U;
+    clear.Dwords[3]=0x3f800000U;clear.Dwords[4]=0x3f800000U;
+    clear.Dwords[5]=Nvx3dNvc0SeqHeader(0x0ff4U,2U);
+    clear.Dwords[6]=width<<16;clear.Dwords[7]=height<<16;
+    clear.Dwords[8]=Nvx3dNvc0SeqHeader(0x0d6cU,2U);
+    clear.Dwords[9]=width<<16;clear.Dwords[10]=height<<16;
+    clear.Dwords[11]=Nvx3dNvc0SeqHeader(0x10f8U,1U);clear.Dwords[12]=0x10U;
+    clear.Dwords[13]=Nvx3dNvc0SeqHeader(0x121cU,1U);clear.Dwords[14]=1U;
+    clear.Dwords[15]=Nvx3dNvc0SeqHeader(0x0800U,9U);
+    clear.Dwords[16]=(uint32_t)(allocated.GpuVa>>32);
+    clear.Dwords[17]=(uint32_t)allocated.GpuVa;
+    clear.Dwords[18]=width;clear.Dwords[19]=height;
+    clear.Dwords[20]=0xcfU;clear.Dwords[21]=layout.TileMode;
+    clear.Dwords[22]=1U;clear.Dwords[23]=allocated.Bytes/4U;
+    clear.Dwords[24]=0U;
+    clear.Dwords[25]=Nvx3dNvc0ImmediateHeader(0x15d0U,0U);
+    clear.Dwords[26]=Nvx3dNvc0NonIncHeader(0x19d0U,1U);
+    clear.Dwords[27]=0x3cU;
+    wait.Size=sizeof(wait);wait.Version=NVX_3D_ABI_VERSION;
+    wait.TimeoutMs=10000;
+    download.Size=sizeof(download);download.Version=NVX_3D_ABI_VERSION;
+    download.BufferId=allocated.BufferId;download.Bytes=sizeof(uint32_t);
+
+    LogMsg("-> Testing native NVC0 clear on %ux%u block-linear target (%lu bytes), raw BO samples\n",
+           (unsigned)width,(unsigned)height,(unsigned long)layout.Bytes);
+    wait.FenceValue=0;
+    for(pass=0;pass<sizeof(clearCases)/sizeof(clearCases[0]);pass++) {
+        unsigned point;
+        uint32_t expected=clearCases[pass][4];
+        uint32_t raw[3];
+        clear.Dwords[1]=clearCases[pass][0];
+        clear.Dwords[2]=clearCases[pass][1];
+        clear.Dwords[3]=clearCases[pass][2];
+        clear.Dwords[4]=clearCases[pass][3];
+        memset(&submitted,0,sizeof(submitted));
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_NVC0_NATIVE_CLEAR,sizeof(clear),
+                      (LPCSTR)&clear,sizeof(submitted),(LPSTR)&submitted)||
+           !submitted.FenceValue||submitted.FenceValue<=wait.FenceValue) {
+            LogMsg("[NVX_3D_FULLSIZE_NATIVE_CLEAR_RESULT] FAIL submit case=%u fence=%llu after=%llu\n",
+                   pass,(unsigned long long)submitted.FenceValue,
+                   (unsigned long long)wait.FenceValue);
+            goto done;
+        }
+        wait.FenceValue=submitted.FenceValue;
+        memset(&waited,0,sizeof(waited));
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_WAIT,sizeof(wait),(LPCSTR)&wait,
+                      sizeof(waited),(LPSTR)&waited)||
+           waited.FenceValue!=submitted.FenceValue||
+           waited.Status!=NVX_3D_STATUS_SUCCESS) {
+            LogMsg("[NVX_3D_FULLSIZE_NATIVE_CLEAR_RESULT] FAIL fence case=%u value=%llu\n",
+                   pass,(unsigned long long)submitted.FenceValue);
+            goto done;
+        }
+        for(point=0;point<3;point++) {
+            uint32_t offset=Nvx3dTuringColorPixelOffset(sampleX[point],
+                sampleY[point],width,layout.TileMode);
+            download.Offset=offset;
+            if(offset>allocated.Bytes-sizeof(uint32_t)||
+               !ExtEscape(hdc,NVX_ESCAPE_3D_DOWNLOAD,sizeof(download),
+                          (LPCSTR)&download,sizeof(uint32_t),(LPSTR)&raw[point])) {
+                LogMsg("[NVX_3D_FULLSIZE_NATIVE_CLEAR_RESULT] FAIL raw-download case=%u at %u,%u offset=%lu\n",
+                       pass,(unsigned)sampleX[point],(unsigned)sampleY[point],
+                       (unsigned long)offset);
+                goto done;
+            }
+            if(raw[point]!=expected) {
+                LogMsg("[NVX_3D_FULLSIZE_NATIVE_CLEAR_RESULT] FAIL raw-pixel case=%u at %u,%u offset=%lu got=%08lX expected=%08lX\n",
+                       pass,(unsigned)sampleX[point],(unsigned)sampleY[point],
+                       (unsigned long)offset,(unsigned long)raw[point],
+                       (unsigned long)expected);
+                goto done;
+            }
+        }
+        LogMsg("-> Full-size native clear case %u: origin/center/far-corner match 0x%08lX; fence=%llu\n",
+               pass,(unsigned long)expected,(unsigned long long)submitted.FenceValue);
+    }
+    ok=1;
+    LogMsg("[NVX_3D_STAGE] native-fullsize-extent PASS size=%ux%u cases=%u samples_per_case=3 fence=%llu\n",
+           (unsigned)width,(unsigned)height,
+           (unsigned)(sizeof(clearCases)/sizeof(clearCases[0])),
+           (unsigned long long)submitted.FenceValue);
+
+done:
+    if(allocatedOk) {
+        freeRequest.Size=sizeof(freeRequest);
+        freeRequest.Version=NVX_3D_ABI_VERSION;
+        freeRequest.BufferId=allocated.BufferId;
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_FREE,sizeof(freeRequest),
+                      (LPCSTR)&freeRequest,0,NULL))
+            ok=0;
+    }
+    LogMsg("[NVX_3D_FULLSIZE_NATIVE_CLEAR_RESULT] %s\n",ok?"PASS":"FAIL");
+    return ok;
+}
+
+static int TestNvxBufferRoundTrip(HDC hdc)
+{
+    enum { WORDS=256, OFFSET=256 };
+    struct {
+        NVX_3D_UPLOAD_BUFFER header;
+        uint32_t data[WORDS];
+    } upload;
+    NVX_3D_ALLOC_BUFFER alloc={0},allocated={0};
+    NVX_3D_DOWNLOAD_BUFFER download={0};
+    NVX_3D_FREE_BUFFER freeRequest={0};
+    uint32_t downloaded[WORDS];
+    unsigned i;
+    int ok=0,allocatedOk=0;
+
+    LogMsg("-> Testing NVX BO upload/download staging round trip\n");
+    alloc.Size=sizeof(alloc);alloc.Version=NVX_3D_ABI_VERSION;
+    alloc.Usage=1U;alloc.Bytes=4096U;
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_ALLOC,sizeof(alloc),(LPCSTR)&alloc,
+                  sizeof(allocated),(LPSTR)&allocated))
+        goto done;
+    allocatedOk=1;
+
+    memset(&upload,0,sizeof(upload));
+    upload.header.Size=sizeof(upload.header);
+    upload.header.Version=NVX_3D_ABI_VERSION;
+    upload.header.BufferId=allocated.BufferId;
+    upload.header.Offset=OFFSET;
+    upload.header.Bytes=sizeof(upload.data);
+    for(i=0;i<WORDS;i++)
+        upload.data[i]=0x6d3a5000U^(i*0x10203U);
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_UPLOAD,sizeof(upload),
+                  (LPCSTR)&upload,0,NULL))
+        goto done;
+
+    download.Size=sizeof(download);
+    download.Version=NVX_3D_ABI_VERSION;
+    download.BufferId=allocated.BufferId;
+    download.Offset=OFFSET;
+    download.Bytes=sizeof(downloaded);
+    memset(downloaded,0,sizeof(downloaded));
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_DOWNLOAD,sizeof(download),
+                  (LPCSTR)&download,sizeof(downloaded),(LPSTR)downloaded))
+        goto done;
+    ok=memcmp(upload.data,downloaded,sizeof(downloaded))==0;
+
+done:
+    if(allocatedOk) {
+        freeRequest.Size=sizeof(freeRequest);
+        freeRequest.Version=NVX_3D_ABI_VERSION;
+        freeRequest.BufferId=allocated.BufferId;
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_FREE,sizeof(freeRequest),
+                      (LPCSTR)&freeRequest,0,NULL))
+            ok=0;
+    }
+    if(ok)
+        LogMsg("[NVX_3D_STAGE] upload-download-roundtrip PASS bytes=%u offset=%u\n",
+               (unsigned)(WORDS*sizeof(uint32_t)),(unsigned)OFFSET);
+    LogMsg("[NVX_BUFFER_ROUNDTRIP_RESULT] %s words=%u bytes=%u\n",
+           ok?"PASS":"FAIL",(unsigned)WORDS,
+           (unsigned)(WORDS*sizeof(uint32_t)));
     return ok;
 }
 
@@ -1863,9 +2426,12 @@ static void TestNvx3dSubmission(HDC hdc)
 #endif
         return;
     }
-    LogMsg("-> NVX 3D features=0x%08lX class=0x%08lX ABI=%lu\n",
+    LogMsg("-> NVX 3D features=0x%08lX class=0x%08lX ABI=%lu PCI=%04lX chipset=0x%03lX VRAM-aperture=%llu GART=%llu\n",
         (unsigned long)caps.Features,(unsigned long)caps.GraphicsClass,
-        (unsigned long)caps.Version);
+        (unsigned long)caps.Version,(unsigned long)caps.DeviceId,
+        (unsigned long)caps.Chipset,
+        (unsigned long long)caps.VramApertureBytes,
+        (unsigned long long)caps.GartBytes);
     if (mesaGpuBridgeProbe) {
         int bridged = (caps.Features & NVX_3D_FEATURE_CLIENT_TRIANGLE) != 0 &&
                       mesaGpuFramebufferVerified;
@@ -2528,14 +3094,18 @@ int main(int argc, char **argv)
     LogMsg(" NVX XP Graphics Verification Suite (2D correctness and 3D renderer audit)\n");
     LogMsg("==================================================================\n");
 
-    int only2d = 0, secondary = 0;
+    int only2d = 0, secondary = 0, rapid3d = 0;
     RECT target = {0,0,0,0};
     int originX = 100, originY = 100;
     for (int arg = 1; arg < argc; ++arg) {
         if (!strcmp(argv[arg], "--2d-only")) only2d = 1;
+        if (!strcmp(argv[arg], "--3d-rapid")) rapid3d = 1;
         if (!strcmp(argv[arg], "--secondary")) secondary = 1;
         if (!strcmp(argv[arg], "--mesa-gpu-bridge")) mesaGpuBridgeProbe = 1;
     }
+    if (GetFileAttributesA("C:\\test_accel\\rapid3d.flag") !=
+        INVALID_FILE_ATTRIBUTES)
+        rapid3d = 1;
     SetEnvironmentVariableA("NVX_MESA_GALLIUM_BRIDGE",
                             mesaGpuBridgeProbe ? "1" : NULL);
 #if defined(NVX_MESA_BRIDGE_DISABLE_DEPTH) && NVX_MESA_BRIDGE_DISABLE_DEPTH
@@ -2593,7 +3163,21 @@ int main(int argc, char **argv)
     UpdateWindow(hwnd);
     HDC hdc = GetDC(hwnd);
 
+    if (rapid3d) {
+        LogMsg("[MESA_GPU_CUBE_RESULT] SKIPPED reason=rapid_3d_mode (use the full guest test to run depth and no-depth cube comparisons)\n");
+        int result=(TestNvxBufferRoundTrip(hdc)&&
+                    TestNvc0ClearEscape(hdc)&&
+                    TestNativeNvc0FullSizeClear(hdc))?0:1;
+        ReleaseDC(hwnd,hdc);
+        DestroyWindow(hwnd);
+        LogMsg("[NVX_3D_RAPID_RESULT] %s\n",result?"FAIL":"PASS");
+        CloseLogging();
+        return result;
+    }
+
     /* Run Tests */
+    if (!only2d && !TestNvxBufferRoundTrip(hdc))
+        failures++;
     Test2D(hwnd, hdc);
     LogMsg("[2D_RESULT] %s\n", failures ? "FAIL" : "PASS");
     if (!only2d) {

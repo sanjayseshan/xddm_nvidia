@@ -1,0 +1,9 @@
+diff --git a/src/nouveau/meson.build b/src/nouveau/meson.build
+--- a/src/nouveau/meson.build
++++ b/src/nouveau/meson.build
+@@ -6 +5,0 @@
+-subdir('winsys')
+@@ -6,0 +6,3 @@
++  # Gallium NVC0 uses src/gallium/winsys/nouveau/drm. The shared winsys
++  # below serves NVK and pulls in Linux DRM/mmap services that WGL does not use.
++  subdir('winsys')

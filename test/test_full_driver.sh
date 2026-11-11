@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="3.0.0.1"
+NVX_TEST_VERSION="3.0.0.2"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 NVX_TEST_FLAGS=()
 NVX_MESA_TEST_FLAGS=()
@@ -46,11 +46,23 @@ fi
 echo "==> Running host tests and building the RM-managed GR-channel probe v$NVX_TEST_VERSION (no ISO)"
 python3 "$NVX_ROOT/test/audit_ampere_vertex_shader.py"
 x86_64-w64-mingw32-gcc -O2 -Wall -Wextra -static-libgcc "${NVX_TEST_FLAGS[@]}" "${NVX_MESA_TEST_FLAGS[@]}" \
-    "$NVX_ROOT/test/test_gpu_accel.c" -lopengl32 -lgdi32 -luser32 \
+    -DNVX_TEST_NOUVEAU_PUSHBUF=1 -I"$NVX_ROOT/mesa_patches" \
+    "$NVX_ROOT/test/test_gpu_accel.c" \
+    "$NVX_ROOT/mesa_patches/nvx_winsys.c" \
+    "$NVX_ROOT/mesa_patches/nvx_winsys_win32.c" \
+    "$NVX_ROOT/mesa_patches/nvx_nouveau_bo.c" \
+    "$NVX_ROOT/mesa_patches/nvx_nouveau_pushbuf.c" \
+    -lopengl32 -lgdi32 -luser32 \
     -o "$NVX_ROOT/test/test_gpu_accel.exe"
 i686-w64-mingw32-gcc -O2 -Wall -Wextra -static-libgcc \
     -D_WIN32_WINNT=0x0502 -DWINVER=0x0502 \
-    "$NVX_ROOT/test/test_gpu_accel.c" -lopengl32 -lgdi32 -luser32 \
+    -DNVX_TEST_NOUVEAU_PUSHBUF=1 -I"$NVX_ROOT/mesa_patches" \
+    "$NVX_ROOT/test/test_gpu_accel.c" \
+    "$NVX_ROOT/mesa_patches/nvx_winsys.c" \
+    "$NVX_ROOT/mesa_patches/nvx_winsys_win32.c" \
+    "$NVX_ROOT/mesa_patches/nvx_nouveau_bo.c" \
+    "$NVX_ROOT/mesa_patches/nvx_nouveau_pushbuf.c" \
+    -lopengl32 -lgdi32 -luser32 \
     -Wl,--major-subsystem-version,5 -Wl,--minor-subsystem-version,2 \
     -o "$NVX_ROOT/test/test_gpu_accel32.exe"
 cp "$NVX_ROOT/test/test_gpu_accel.exe" "$NVX_ROOT/dist_full/test_gpu_accel.exe"
@@ -117,6 +129,9 @@ if [ -f "$NVX_ROOT/dist_full/nvxogl64.dll" ]; then
     sha256sum "$NVX_ROOT/dist_full/nvxogl64.dll"
 fi
 
+if [ "${NVX_RAPID_3D:-0}" = "1" ]; then
+    echo "==> Guest test mode: focused 3D resource transfer, batch validation, 64x16 clear, full-size color matrix, fences, and readback cases"
+fi
 echo "==> Updating the offline XP guest with dist_full"
 "$NVX_ROOT/test/update_disk_driver_user.sh" full
 
@@ -150,6 +165,8 @@ finish() {
         fi
         if grep -q '\[NVX_3D_RESULT\]' "$NVX_RUN_LOG"; then
             grep '\[NVX_3D_RESULT\]' "$NVX_RUN_LOG" | tail -1
+        elif grep -q '\[NVX_3D_RAPID_RESULT\]' "$NVX_RUN_LOG"; then
+            grep '\[NVX_3D_RAPID_RESULT\]' "$NVX_RUN_LOG" | tail -1
         else
             echo "NVX 3D RESULT: no user allocation/submission test result was recorded."
         fi

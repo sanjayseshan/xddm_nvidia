@@ -3,15 +3,23 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include <string.h>
 
 /* Fixed-width ABI shared by XP x64/x86 clients and the miniport.  GPU VAs are
  * always 64-bit; no kernel pointers or RM handles cross this boundary. */
-#define NVX_3D_ABI_VERSION 10U
+#define NVX_3D_ABI_VERSION 12U
 #define NVX_3D_MAX_PUSH_DWORDS 4096U
-#define NVX_3D_NVC0_CLEAR_DWORDS 23U
+#define NVX_3D_MAX_BATCH_RELOCATIONS 256U
+#define NVX_3D_MAX_BATCH_BUFFERS 64U
+#define NVX_3D_MAX_BATCH_BYTES \
+    (sizeof(NVX_3D_BATCH_HEADER) + \
+     NVX_3D_MAX_PUSH_DWORDS * sizeof(uint32_t) + \
+     NVX_3D_MAX_BATCH_RELOCATIONS * sizeof(NVX_3D_RELOCATION))
+#define NVX_3D_NVC0_CLEAR_DWORDS 28U
 #define NVX_3D_PAGE_BYTES 4096U
 #define NVX_3D_MAX_BUFFER_BYTES (64U * 1024U * 1024U)
 #define NVX_3D_MAX_UPLOAD_BYTES 0x0000F000U
+#define NVX_3D_MAX_DOWNLOAD_BYTES 0x00001000U
 #define NVX_3D_TRIANGLE_TARGET_BYTES 65536U
 #define NVX_3D_TRIANGLE_WIDTH 64U
 #define NVX_3D_TRIANGLE_HEIGHT 16U
@@ -30,6 +38,7 @@
 #define NVX_3D_FEATURE_TEST_TRIANGLE    0x00000020U
 #define NVX_3D_FEATURE_UPLOAD           0x00000040U
 #define NVX_3D_FEATURE_CLIENT_TRIANGLE   0x00000080U
+#define NVX_3D_FEATURE_DOWNLOAD          0x00000100U
 
 #define NVX_3D_OP_QUERY_CAPS  1U
 #define NVX_3D_OP_ALLOC       2U
@@ -37,6 +46,7 @@
 #define NVX_3D_OP_WAIT        4U
 #define NVX_3D_OP_FREE        5U
 #define NVX_3D_OP_READBACK    6U
+#define NVX_3D_OP_DOWNLOAD    7U
 #define NVX_3D_SUBMIT_CLEAR_SURFACE 1U
 #define NVX_3D_SUBMIT_TEST_TRIANGLE 2U
 #define NVX_3D_SUBMIT_DRAW_TRIANGLE 3U
@@ -89,6 +99,9 @@ Nvx3dDepthModeForOperation(uint32_t operation)
 #define NVX_ESCAPE_3D_UPLOAD      0x8006U
 #define NVX_ESCAPE_3D_READBACK    0x8007U
 #define NVX_ESCAPE_3D_NVC0_CLEAR  0x8008U
+#define NVX_ESCAPE_3D_DOWNLOAD    0x8009U
+#define NVX_ESCAPE_3D_VALIDATE_BATCH 0x800aU
+#define NVX_ESCAPE_3D_NVC0_NATIVE_CLEAR 0x800bU
 #define NVX_3D_STATUS_SUCCESS            0U
 #define NVX_3D_STATUS_INVALID_PARAMETER 87U
 #define NVX_3D_STATUS_NOT_SUPPORTED     50U
@@ -214,7 +227,24 @@ typedef struct NVX_3D_QUERY_CAPS {
     uint32_t PageBytes;
     uint32_t MaxBufferBytes;
     uint32_t Reserved;
+    uint32_t Chipset;
+    uint32_t DeviceId;
+    uint64_t VramApertureBytes;
+    uint64_t GartBytes;
 } NVX_3D_QUERY_CAPS;
+
+static inline uint32_t
+Nvx3dChipsetFromDeviceId(uint32_t deviceId)
+{
+    switch (deviceId) {
+    case 0x2484U: /* GA104 RTX 3070 */
+    case 0x2488U: /* GA104 RTX 3070 LHR */
+    case 0x249dU: /* GA104 RTX 3070 mobile */
+        return 0x170U;
+    default:
+        return 0;
+    }
+}
 
 typedef struct NVX_3D_ALLOC_BUFFER {
     uint32_t Size;
@@ -229,6 +259,186 @@ typedef struct NVX_3D_ALLOC_BUFFER {
     uint32_t TileMode;
     uint64_t ClientToken;
 } NVX_3D_ALLOC_BUFFER;
+
+/* Resource-relative address patch for a future validated NVC0 batch. This is
+ * metadata only: the miniport must verify the buffer ID, range, access, and
+ * packet-word index before resolving or submitting it. */
+typedef struct NVX_3D_RELOCATION {
+    uint32_t CommandWord;
+    uint32_t Access;
+    uint64_t BufferId;
+    uint64_t BufferOffset;
+    uint64_t Bytes;
+    uint32_t Reserved[2];
+} NVX_3D_RELOCATION;
+
+typedef struct NVX_3D_BATCH_HEADER {
+    uint32_t Size;
+    uint32_t Version;
+    uint32_t DwordCount;
+    uint32_t RelocationCount;
+    uint64_t ClientToken;
+    uint32_t Reserved[2];
+} NVX_3D_BATCH_HEADER;
+
+static inline int
+Nvx3dBatchRequiredBytes(const NVX_3D_BATCH_HEADER *header,
+                        uint32_t *requiredBytes)
+{
+    uint64_t required;
+    if(!header||!requiredBytes||header->Size!=sizeof(*header)||
+       header->Version!=NVX_3D_ABI_VERSION||!header->DwordCount||
+       header->DwordCount>NVX_3D_MAX_PUSH_DWORDS||
+       header->RelocationCount>NVX_3D_MAX_BATCH_RELOCATIONS)
+        return 0;
+    required=(uint64_t)sizeof(*header)+
+             (uint64_t)header->DwordCount*sizeof(uint32_t)+
+             (uint64_t)header->RelocationCount*sizeof(NVX_3D_RELOCATION);
+    if(required>NVX_3D_MAX_BATCH_BYTES||required>0xffffffffULL)
+        return 0;
+    *requiredBytes=(uint32_t)required;
+    return 1;
+}
+
+#define NVX_3D_RELOC_READ  0x01U
+#define NVX_3D_RELOC_WRITE 0x02U
+
+static inline int
+Nvx3dValidateRelocation(const NVX_3D_RELOCATION *relocation,
+                        uint32_t commandDwords,
+                        const NVX_3D_ALLOC_BUFFER *allocation)
+{
+    uint32_t i;
+    uint64_t address;
+
+    if(!relocation || !allocation || !commandDwords ||
+       relocation->CommandWord>=commandDwords ||
+       !(relocation->Access&(NVX_3D_RELOC_READ|NVX_3D_RELOC_WRITE)) ||
+       (relocation->Access&~(NVX_3D_RELOC_READ|NVX_3D_RELOC_WRITE)) ||
+       !relocation->BufferId || relocation->BufferId!=allocation->BufferId ||
+       !relocation->Bytes || !allocation->GpuVa ||
+       relocation->BufferOffset>allocation->Bytes ||
+       relocation->Bytes>(uint64_t)allocation->Bytes-
+                         relocation->BufferOffset ||
+       allocation->GpuVa>UINT64_MAX-relocation->BufferOffset)
+        return 0;
+
+    address=allocation->GpuVa+relocation->BufferOffset;
+    if(address>UINT64_MAX-relocation->Bytes)
+        return 0;
+    for(i=0;i<sizeof(relocation->Reserved)/sizeof(relocation->Reserved[0]);i++)
+        if(relocation->Reserved[i]) return 0;
+    return 1;
+}
+
+static inline uint32_t
+Nvx3dBatchReadDword(const uint8_t *dwords, uint32_t index)
+{
+    uint32_t value;
+    memcpy(&value, dwords + (uint64_t)index * sizeof(value), sizeof(value));
+    return value;
+}
+
+static inline int
+Nvx3dBatchWordIsPayload(const uint8_t *dwords, uint32_t dwordCount,
+                        uint32_t targetWord)
+{
+    uint32_t cursor=0;
+    while(cursor<dwordCount) {
+        uint32_t header=Nvx3dBatchReadDword(dwords,cursor);
+        uint32_t packetType=header&0xe0000000U;
+        if(packetType==0x80000000U)
+            cursor++;
+        else if(packetType==0x20000000U||packetType==0x60000000U) {
+            uint32_t count=(header>>16)&0x1fffU;
+            if(!count||count>dwordCount-cursor-1U) return 0;
+            if(targetWord>cursor&&targetWord<=cursor+count) return 1;
+            cursor+=count+1U;
+        } else return 0;
+    }
+    return 0;
+}
+
+/* Validate a copied, bounded NVC0 batch envelope before any consumer parses
+ * methods or executes work. This checks packet framing and resource-relative
+ * relocations only; a kernel execution path must additionally enforce its
+ * C797 method/subchannel allowlist and address-method relocation rules. */
+static inline int
+Nvx3dValidateNvc0Batch(const void *input, uint32_t inputBytes,
+                       const NVX_3D_ALLOC_BUFFER *ownedAllocations,
+                       uint32_t ownedAllocationCount,
+                       uint64_t expectedClientToken)
+{
+    NVX_3D_BATCH_HEADER header;
+    const uint8_t *bytes=(const uint8_t *)input;
+    const uint8_t *dwords,*relocations;
+    uint32_t requiredBytes;
+    uint32_t cursor=0,i,j;
+
+    if(!input||inputBytes<sizeof(header)||
+       ownedAllocationCount>NVX_3D_MAX_BATCH_BUFFERS||
+       (ownedAllocationCount&&!ownedAllocations)||!expectedClientToken)
+        return 0;
+    memcpy(&header,input,sizeof(header));
+    if(header.Size!=sizeof(header)||header.Version!=NVX_3D_ABI_VERSION||
+       !header.DwordCount||header.DwordCount>NVX_3D_MAX_PUSH_DWORDS||
+       header.RelocationCount>NVX_3D_MAX_BATCH_RELOCATIONS||
+       header.ClientToken!=expectedClientToken||
+       header.Reserved[0]||header.Reserved[1])
+        return 0;
+
+    if(!Nvx3dBatchRequiredBytes(&header,&requiredBytes)||
+       requiredBytes!=inputBytes) return 0;
+    dwords=bytes+sizeof(header);
+    relocations=dwords+(uint64_t)header.DwordCount*sizeof(uint32_t);
+
+    while(cursor<header.DwordCount) {
+        uint32_t packetHeader=Nvx3dBatchReadDword(dwords,cursor);
+        uint32_t packetType=packetHeader&0xe0000000U;
+        if(packetType==0x80000000U) {
+            /* Type-8 immediate methods encode their value in the header. */
+            cursor++;
+        } else if(packetType==0x20000000U||packetType==0x60000000U) {
+            uint32_t count=(packetHeader>>16)&0x1fffU;
+            uint32_t method=packetHeader&0x1fffU;
+            if(!count||count>header.DwordCount-cursor-1U)
+                return 0;
+            /* Incrementing packets must not roll the 13-bit method field
+             * into the subchannel bits. Non-incrementing packets repeatedly
+             * address one method and therefore do not advance this field. */
+            if(packetType==0x20000000U&&count>0x2000U-method)
+                return 0;
+            cursor+=count+1U;
+        } else return 0;
+    }
+
+    for(i=0;i<header.RelocationCount;i++) {
+        NVX_3D_RELOCATION relocation;
+        uint32_t matches=0;
+        memcpy(&relocation,relocations+
+               (uint64_t)i*sizeof(relocation),sizeof(relocation));
+        if(!Nvx3dBatchWordIsPayload(dwords,header.DwordCount,
+                                    relocation.CommandWord))
+            return 0;
+        for(j=0;j<i;j++) {
+            NVX_3D_RELOCATION previous;
+            memcpy(&previous,relocations+
+                   (uint64_t)j*sizeof(previous),sizeof(previous));
+            if(previous.CommandWord==relocation.CommandWord)
+                return 0;
+        }
+        for(j=0;j<ownedAllocationCount;j++) {
+            const NVX_3D_ALLOC_BUFFER *allocation=&ownedAllocations[j];
+            if(allocation->BufferId!=relocation.BufferId) continue;
+            if(++matches>1U||allocation->ClientToken!=header.ClientToken||
+               !Nvx3dValidateRelocation(&relocation,header.DwordCount,
+                                        allocation))
+                return 0;
+        }
+        if(matches!=1U) return 0;
+    }
+    return 1;
+}
 
 typedef struct NVX_3D_FREE_BUFFER {
     uint32_t Size;
@@ -246,6 +456,17 @@ typedef struct NVX_3D_UPLOAD_BUFFER {
     uint32_t Bytes;
     uint32_t Reserved[2];
 } NVX_3D_UPLOAD_BUFFER;
+
+/* Download one bounded chunk through the CE to miniport staging memory.
+ * Offsets and lengths are dword aligned; BO mapping can combine requests. */
+typedef struct NVX_3D_DOWNLOAD_BUFFER {
+    uint32_t Size;
+    uint32_t Version;
+    uint64_t BufferId;
+    uint32_t Offset;
+    uint32_t Bytes;
+    uint32_t Reserved[2];
+} NVX_3D_DOWNLOAD_BUFFER;
 
 typedef struct NVX_3D_SUBMIT {
     uint32_t Size;
@@ -286,7 +507,7 @@ typedef struct NVX_3D_READBACK {
 } NVX_3D_READBACK;
 
 /* First Nouveau/NVC0 packet bridge experiment. This accepts only the exact
- * 23-dword, single-layer, full-target color clear emitted by
+ * 28-dword, single-layer, full-target color clear emitted by
  * nvc0_clear_render_target; the miniport validates it and rebuilds the
  * corresponding C797 operation itself. It is intentionally not a general
  * pushbuffer ABI. */
@@ -367,10 +588,12 @@ Nvx3dValidateNvc0Clear(const NVX_3D_NVC0_CLEAR *request,
     d=request->Dwords;
     if(d[0]!=Nvx3dNvc0SeqHeader(0x0d80U,4U) ||
        d[5]!=Nvx3dNvc0SeqHeader(0x0ff4U,2U) ||
-       d[8]!=Nvx3dNvc0SeqHeader(0x121cU,1U) ||
-       d[10]!=Nvx3dNvc0SeqHeader(0x0800U,9U) ||
-       d[20]!=Nvx3dNvc0ImmediateHeader(0x15d0U,0U) ||
-       d[21]!=Nvx3dNvc0NonIncHeader(0x19d0U,1U) || d[22]!=0x3cU)
+       d[8]!=Nvx3dNvc0SeqHeader(0x0d6cU,2U) ||
+       d[11]!=Nvx3dNvc0SeqHeader(0x10f8U,1U) || d[12]!=0x10U ||
+       d[13]!=Nvx3dNvc0SeqHeader(0x121cU,1U) ||
+       d[15]!=Nvx3dNvc0SeqHeader(0x0800U,9U) ||
+       d[25]!=Nvx3dNvc0ImmediateHeader(0x15d0U,0U) ||
+       d[26]!=Nvx3dNvc0NonIncHeader(0x19d0U,1U) || d[27]!=0x3cU)
         return 0;
 
     if(!Nvx3dNvc0FloatIsUnorm(d[1]) ||
@@ -378,13 +601,15 @@ Nvx3dValidateNvc0Clear(const NVX_3D_NVC0_CLEAR *request,
        !Nvx3dNvc0FloatIsUnorm(d[3]) ||
        !Nvx3dNvc0FloatIsUnorm(d[4])) return 0;
     if((d[6]&0xffffU) || (d[6]>>16)!=width ||
-       (d[7]&0xffffU) || (d[7]>>16)!=height || d[9]!=1U)
+       (d[7]&0xffffU) || (d[7]>>16)!=height || d[14]!=1U)
+        return 0;
+    if(d[9]!=(width<<16) || d[10]!=(height<<16))
         return 0;
 
-    packetGpuVa=((uint64_t)d[11]<<32)|d[12];
-    if(packetGpuVa!=expectedGpuVa || d[13]!=width || d[14]!=height ||
-       d[15]!=0xcfU || d[16]!=(tileMode&0xffffU) || d[17]!=1U ||
-       d[18]!=allocatedBytes/4U || d[19]!=0U)
+    packetGpuVa=((uint64_t)d[16]<<32)|d[17];
+    if(packetGpuVa!=expectedGpuVa || d[18]!=width || d[19]!=height ||
+       d[20]!=0xcfU || d[21]!=(tileMode&0xffffU) || d[22]!=1U ||
+       d[23]!=allocatedBytes/4U || d[24]!=0U)
         return 0;
 
     color=(Nvx3dNvc0Unorm8(d[4])<<24)|
@@ -431,6 +656,8 @@ Nvx3dBuildCaps(NVX_3D_QUERY_CAPS *caps, int channelReady,
     if(clearVerified) caps->Features|=NVX_3D_FEATURE_CLEAR_VERIFIED;
     if(userAllocReady) caps->Features|=NVX_3D_FEATURE_USER_ALLOC|
         NVX_3D_FEATURE_UPLOAD;
+    if(userAllocReady&&dataWriteVerified)
+        caps->Features|=NVX_3D_FEATURE_DOWNLOAD;
     if(submitReady) caps->Features|=NVX_3D_FEATURE_SUBMIT;
 }
 
@@ -602,6 +829,24 @@ Nvx3dValidateUpload(const NVX_3D_UPLOAD_BUFFER *request,
 }
 
 static inline int
+Nvx3dValidateDownload(const NVX_3D_DOWNLOAD_BUFFER *request,
+                      uint32_t inputBytes, uint32_t outputBytes,
+                      uint32_t allocatedBytes)
+{
+    uint32_t i;
+    if(!request || inputBytes!=sizeof(*request) ||
+       request->Size!=sizeof(*request) ||
+       request->Version!=NVX_3D_ABI_VERSION || !request->BufferId ||
+       !request->Bytes || request->Bytes>NVX_3D_MAX_DOWNLOAD_BYTES ||
+       (request->Offset&3U) || (request->Bytes&3U) ||
+       outputBytes<request->Bytes || request->Offset>allocatedBytes ||
+       request->Bytes>allocatedBytes-request->Offset) return 0;
+    for(i=0;i<sizeof(request->Reserved)/sizeof(request->Reserved[0]);i++)
+        if(request->Reserved[i]) return 0;
+    return 1;
+}
+
+static inline int
 Nvx3dValidateAlloc(const NVX_3D_ALLOC_BUFFER *request)
 {
     NVX_3D_COLOR_SURFACE_LAYOUT layout;
@@ -702,6 +947,15 @@ Nvx3dDispatch(uint32_t operation, const void *input, uint32_t inputBytes,
                                   outputBytes,NVX_3D_TRIANGLE_TARGET_BYTES))
             return NVX_3D_STATUS_INVALID_PARAMETER;
         if(information) *information=NVX_3D_READBACK_BYTES;
+        return NVX_3D_STATUS_SUCCESS;
+    case NVX_3D_OP_DOWNLOAD:
+        if(!output || inputBytes!=sizeof(NVX_3D_DOWNLOAD_BUFFER) ||
+           !Nvx3dValidateDownload((const NVX_3D_DOWNLOAD_BUFFER *)input,
+                                  inputBytes,outputBytes,
+                                  NVX_3D_MAX_BUFFER_BYTES))
+            return NVX_3D_STATUS_INVALID_PARAMETER;
+        if(information)
+            *information=((const NVX_3D_DOWNLOAD_BUFFER *)input)->Bytes;
         return NVX_3D_STATUS_SUCCESS;
     default:
         return NVX_3D_STATUS_INVALID_PARAMETER;

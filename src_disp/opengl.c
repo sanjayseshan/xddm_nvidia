@@ -27,8 +27,11 @@ DrvEscape(SURFOBJ *pso,ULONG iEsc,ULONG cjIn,PVOID pvIn,
             requested==NVX_ESCAPE_3D_WAIT ||
             requested==NVX_ESCAPE_3D_FREE ||
             requested==NVX_ESCAPE_3D_UPLOAD ||
+            requested==NVX_ESCAPE_3D_DOWNLOAD ||
             requested==NVX_ESCAPE_3D_READBACK ||
-            requested==NVX_ESCAPE_3D_NVC0_CLEAR;
+            requested==NVX_ESCAPE_3D_NVC0_CLEAR ||
+            requested==NVX_ESCAPE_3D_NVC0_NATIVE_CLEAR ||
+            requested==NVX_ESCAPE_3D_VALIDATE_BATCH;
         if(requested==OPENGL_GETINFO)
             NvxDispLogEvent(0x200,iEsc,requested,returned);
         return returned;
@@ -76,6 +79,17 @@ DrvEscape(SURFOBJ *pso,ULONG iEsc,ULONG cjIn,PVOID pvIn,
            cjIn!=sizeof(upload)+upload.Bytes) return 0;
         code=IOCTL_NVX_3D_UPLOAD_BUFFER;break;
     }
+    case NVX_ESCAPE_3D_DOWNLOAD: {
+        NVX_3D_DOWNLOAD_BUFFER download;
+        if(!pvIn||cjIn!=sizeof(download)||!pvOut||
+           cjOut<sizeof(uint32_t)) return 0;
+        memcpy(&download,pvIn,sizeof(download));
+        if(download.Size!=sizeof(download)||
+           download.Version!=NVX_3D_ABI_VERSION||!download.BufferId||
+           !download.Bytes||download.Bytes>NVX_3D_MAX_DOWNLOAD_BYTES||
+           cjOut<download.Bytes) return 0;
+        code=IOCTL_NVX_3D_DOWNLOAD_BUFFER;break;
+    }
     case NVX_ESCAPE_3D_READBACK:
         if(cjIn!=sizeof(NVX_3D_READBACK)||!pvIn||!pvOut||
            cjOut<NVX_3D_READBACK_BYTES) return 0;
@@ -84,6 +98,19 @@ DrvEscape(SURFOBJ *pso,ULONG iEsc,ULONG cjIn,PVOID pvIn,
         if(cjIn!=sizeof(NVX_3D_NVC0_CLEAR)||!pvIn||!pvOut||
            cjOut<sizeof(NVX_3D_NVC0_CLEAR)) return 0;
         code=IOCTL_NVX_3D_NVC0_CLEAR;break;
+    case NVX_ESCAPE_3D_NVC0_NATIVE_CLEAR:
+        if(cjIn!=sizeof(NVX_3D_NVC0_CLEAR)||!pvIn||!pvOut||
+           cjOut<sizeof(NVX_3D_NVC0_CLEAR)) return 0;
+        code=IOCTL_NVX_3D_NVC0_NATIVE_CLEAR;break;
+    case NVX_ESCAPE_3D_VALIDATE_BATCH: {
+        NVX_3D_BATCH_HEADER header;
+        uint32_t expectedBytes;
+        if(!pvIn||cjIn<sizeof(header)||cjOut||pvOut) return 0;
+        memcpy(&header,pvIn,sizeof(header));
+        if(!Nvx3dBatchRequiredBytes(&header,&expectedBytes)||
+           expectedBytes!=cjIn) return 0;
+        code=IOCTL_NVX_3D_VALIDATE_BATCH;break;
+    }
     default:
         return 0;
     }

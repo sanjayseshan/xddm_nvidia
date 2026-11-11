@@ -1,0 +1,5 @@
+diff --git a/src/gallium/winsys/nouveau/drm/nouveau_drm_winsys.c b/src/gallium/winsys/nouveau/drm/nouveau_drm_winsys.c
+--- a/src/gallium/winsys/nouveau/drm/nouveau_drm_winsys.c
++++ b/src/gallium/winsys/nouveau/drm/nouveau_drm_winsys.c
+@@ -9 +8,0 @@
+-#include "renderonly/renderonly.h"

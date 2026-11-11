@@ -171,10 +171,16 @@ diff --git a/src/gallium/targets/wgl/meson.build b/src/gallium/targets/wgl/meson
 index 3a194b323d6..cbeefd71e56 100644
 --- a/src/gallium/targets/wgl/meson.build
 +++ b/src/gallium/targets/wgl/meson.build
-@@ -16 +16,3 @@ libgallium_wgl = shared_library(
+@@ -16 +16,9 @@ libgallium_wgl = shared_library(
 -  ['wgl.c'],
 +  ['wgl.c', '../../../../../mesa_patches/nvx_win32_xp_tick.c',
 +   '../../../../../mesa_patches/nvx_icd_trace.c',
++   '../../../../../mesa_patches/nvx_winsys.c',
++   '../../../../../mesa_patches/nvx_winsys_win32.c',
++   '../../../../../mesa_patches/nvx_nouveau_device.c',
++   '../../../../../mesa_patches/nvx_nouveau_bo.c',
++   '../../../../../mesa_patches/nvx_nouveau_pushbuf.c',
++   '../../../../../mesa_patches/nvx_nouveau_screen.c',
 +   '../../../../../mesa_patches/nvx_wgl_bridge.c'],
 diff --git a/src/util/cnd_monotonic.c b/src/util/cnd_monotonic.c
 index 71d9ac0d247..ed315258397 100644

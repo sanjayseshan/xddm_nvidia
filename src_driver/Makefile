@@ -44,6 +44,20 @@ check:
 	python3 ../test/audit_ampere_vertex_shader.py
 	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I. -o /tmp/nvx-3d-abi-test tests/3d_abi_test.c
 	ASAN_OPTIONS=detect_leaks=0 /tmp/nvx-3d-abi-test
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I. -I../mesa_patches -o /tmp/nvx-winsys-test ../mesa_patches/nvx_winsys.c ../mesa_patches/nvx_nouveau_device.c ../mesa_patches/nvx_nouveau_bo.c ../mesa_patches/nvx_nouveau_pushbuf.c ../mesa_patches/nvx_nouveau_screen.c ../test/nvx_winsys_test.c
+	ASAN_OPTIONS=detect_leaks=0 /tmp/nvx-winsys-test
+	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I../mesa_patches/xp_include -o /tmp/nvx-xf86drm-test ../mesa_patches/nvx_xf86drm.c ../test/xf86drm_shim_test.c
+	ASAN_OPTIONS=detect_leaks=0 /tmp/nvx-xf86drm-test
+	i686-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -c -I../mesa_patches/xp_include -o /tmp/nvx-xf86drm-x86.o ../mesa_patches/nvx_xf86drm.c
+	x86_64-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -c -I../mesa_patches/xp_include -o /tmp/nvx-xf86drm-x64.o ../mesa_patches/nvx_xf86drm.c
+	i686-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -c -I. -I../mesa_patches -o /tmp/nvx-nouveau-pushbuf-x86.o ../mesa_patches/nvx_nouveau_pushbuf.c
+	x86_64-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -c -I. -I../mesa_patches -o /tmp/nvx-nouveau-pushbuf-x64.o ../mesa_patches/nvx_nouveau_pushbuf.c
+	i686-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -c -I. -I../mesa_patches -o /tmp/nvx-nouveau-screen-x86.o ../mesa_patches/nvx_nouveau_screen.c
+	x86_64-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -c -I. -I../mesa_patches -o /tmp/nvx-nouveau-screen-x64.o ../mesa_patches/nvx_nouveau_screen.c
+	i686-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -c -I. -I../mesa_patches -o /tmp/nvx-nouveau-device-x86.o ../mesa_patches/nvx_nouveau_device.c
+	x86_64-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -c -I. -I../mesa_patches -o /tmp/nvx-nouveau-device-x64.o ../mesa_patches/nvx_nouveau_device.c
+	i686-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -c -I. -I../mesa_patches -o /tmp/nvx-nouveau-bo-x86.o ../mesa_patches/nvx_nouveau_bo.c
+	x86_64-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -c -I. -I../mesa_patches -o /tmp/nvx-nouveau-bo-x64.o ../mesa_patches/nvx_nouveau_bo.c
 	i686-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -c -I. -o /tmp/nvx-3d-abi-x86.o tests/3d_abi_test.c
 	x86_64-w64-mingw32-gcc -std=c11 -Wall -Wextra -Werror -c -I. -o /tmp/nvx-3d-abi-x64.o tests/3d_abi_test.c
 	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I. -o /tmp/nvx-gr-context-test tests/gr_context_test.c nvx_gr_context.c
