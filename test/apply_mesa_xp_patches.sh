@@ -9,7 +9,8 @@ $repo_root/mesa_patches/0003-nouveau-wgl-exclude-nvk-winsys.patch
 $repo_root/mesa_patches/0004-nouveau-wgl-drop-unused-renderonly.patch
 $repo_root/mesa_patches/0005-wgl-nouveau-present.patch
 $repo_root/mesa_patches/0006-nouveau-xp-xf86drm-compat.patch
-$repo_root/mesa_patches/0007-nouveau-xp-pointer-width.patch"
+$repo_root/mesa_patches/0007-nouveau-xp-pointer-width.patch
+$repo_root/mesa_patches/0008-nouveau-xp-hdc-entry.patch"
 expected_revision=cc2dcf9abdc6afc093e85d48e4cfa34eed60a01e
 
 actual_revision=$(git -C "$mesa_dir" rev-parse HEAD)

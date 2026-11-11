@@ -10,6 +10,7 @@
  */
 #include <stdint.h>
 #include <fcntl.h>
+#include "../nvx_winsys.h"
 
 /* XP's CRT does not define the POSIX close-on-exec open flag. */
 #ifndef O_CLOEXEC
@@ -33,6 +34,9 @@ typedef struct _drmVersion {
 } drmVersion, *drmVersionPtr;
 
 #define DRM_BUS_PCI 0
+#define DRM_BUS_USB 1
+#define DRM_BUS_PLATFORM 2
+#define DRM_PLATFORM_DEVICE_NAME_LEN 512
 
 typedef struct _drmPciBusInfo {
    uint16_t domain;
@@ -49,19 +53,34 @@ typedef struct _drmPciDeviceInfo {
    uint8_t revision_id;
 } drmPciDeviceInfo, *drmPciDeviceInfoPtr;
 
+typedef struct _drmPlatformBusInfo {
+   char fullname[DRM_PLATFORM_DEVICE_NAME_LEN];
+} drmPlatformBusInfo, *drmPlatformBusInfoPtr;
+
+typedef struct _drmPlatformDeviceInfo {
+   char **compatible;
+} drmPlatformDeviceInfo, *drmPlatformDeviceInfoPtr;
+
 typedef struct _drmDevice {
    char **nodes;
    int available_nodes;
    int bustype;
    union {
       drmPciBusInfoPtr pci;
-      void *other;
+      drmPlatformBusInfoPtr platform;
    } businfo;
    union {
       drmPciDeviceInfoPtr pci;
-      void *other;
+      drmPlatformDeviceInfoPtr platform;
    } deviceinfo;
 } drmDevice, *drmDevicePtr;
+
+/* Register an already queried NVX adapter and obtain a process-local DRM
+ * compatibility descriptor.  This is metadata transport only; it does not
+ * create a Nouveau channel or authorize GPU commands. */
+int NvxXf86DrmRegisterDevice(const NVX_WINSYS_DEVICE *device);
+void NvxXf86DrmUnregisterDevice(int fd);
+int NvxXf86DrmIsRegistered(int fd);
 
 drmVersionPtr drmGetVersion(int fd);
 void drmFreeVersion(drmVersionPtr version);

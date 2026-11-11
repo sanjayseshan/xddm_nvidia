@@ -2,6 +2,35 @@
 
 Updated November 11, 2026, after full-size native clear and cube comparison.
 
+## XP `xf86drm` discovery adapter (November 11, 2026)
+
+The external `xf86drm` replacement has advanced from all-unsupported stubs to
+a process-local adapter registry. WGL registers the capability record obtained
+from the active HDC, and the shim exposes a synthetic descriptor only for that
+registered record. It now answers version/name discovery, platform-device
+metadata, Nouveau GETPARAM values, and the NVIF device NEW/INFO requests used
+to identify GA104. It does not claim a Linux Nouveau kernel version. Unknown
+commands, PRIME, GEM, channel allocation, mapping, and submission remain
+unsupported; no arbitrary ioctl or pushbuffer is forwarded.
+
+`make -C src_driver check` passes, including the host shim behavior tests and
+x86/x64 MinGW compilation. A fresh Nouveau+softpipe XP cross-build configures
+and compiles hundreds of targets, then stops in the shared
+`src/nouveau/winsys/nouveau_bo.h` at its unconditional POSIX `sys/mman.h`
+include. Thus the build has not yet established that the legacy Gallium
+Nouveau winsys compiles cleanly with this shim, and no native Nouveau screen
+or hardware OpenGL result has been obtained. The Mesa submodule was restored
+clean after the probe.
+
+This confirms that replacing `xf86drm` is useful for API discovery, but it is
+not a drop-in Windows DRM equivalent. The immediate build portability issue is
+the separate shared winsys mmap dependency; after that, native NVC0 screen
+creation still reaches unsupported channel/object, BO, fence, and pushbuffer
+operations. The XP port needs those operations mapped to owned NVX resources
+and explicit miniport contracts before the native screen factory can succeed.
+Do not label the current ICD as Nouveau accelerated; WGL's fallback remains
+softpipe.
+
 ## XP `xf86drm` compatibility compile probe (November 11, 2026)
 
 Added an external XP compatibility header/source pair for the subset of

@@ -22,12 +22,14 @@
 #include "nvx_nouveau_device.h"
 #include "nvx_nouveau_screen.h"
 #include "nvx_winsys_win32.h"
+#include "xf86drm.h"
 
 static HDC nvx_wgl_hdc;
 static NVX_WINSYS_DEVICE nvx_bridge_winsys;
 static NVX_NOUVEAU_DEVICE nvx_bridge_nouveau_device;
 static NVX_NOUVEAU_SCREEN nvx_bridge_nouveau_screen;
 static volatile LONG nvx_bridge_winsys_ready;
+static volatile LONG nvx_bridge_drm_fd;
 static volatile LONG nvx_bridge_nouveau_device_ready;
 static volatile LONG nvx_bridge_nvx_adapter_ready;
 static volatile LONG nvx_bridge_nouveau_device_id;
@@ -193,6 +195,8 @@ void nvx_wgl_set_hdc(HDC hdc);
 int nvx_wgl_nouveau_device_available(void);
 void nvx_wgl_notify_hybrid_screen_created(void);
 int nvx_wgl_nvx_adapter_create(void);
+struct pipe_screen *nvx_wgl_create_native_nouveau_screen(void);
+struct pipe_screen *nouveau_drm_screen_create(int drm_fd);
 int nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
                                   const void *vertices,
                                   const uint16_t *indices, unsigned stride,
@@ -202,9 +206,20 @@ void
 nvx_wgl_set_hdc(HDC hdc)
 {
    LONG ready;
+   LONG old_fd;
    InterlockedExchange(&nvx_bridge_screen_active, 0);
+   old_fd = InterlockedExchange(&nvx_bridge_drm_fd, 0);
+   if (old_fd > 0)
+      NvxXf86DrmUnregisterDevice(old_fd);
    InterlockedExchangePointer((PVOID volatile *)&nvx_wgl_hdc, hdc);
    ready = NvxWinsysInitHdc(&nvx_bridge_winsys, hdc);
+   if (ready) {
+      int fd = NvxXf86DrmRegisterDevice(&nvx_bridge_winsys);
+      if (fd > 0)
+         InterlockedExchange(&nvx_bridge_drm_fd, fd);
+      else
+         ready = 0;
+   }
    InterlockedExchange(&nvx_bridge_winsys_ready, ready);
    ready = ready && NvxNouveauDeviceInitFromWinsys(
       &nvx_bridge_nouveau_device, &nvx_bridge_winsys);
@@ -225,6 +240,12 @@ nvx_wgl_set_hdc(HDC hdc)
       InterlockedExchange(&nvx_bridge_nouveau_aperture_high, 0);
    }
    nvx_bridge_trace("NVX bridge device probe completed");
+}
+
+int
+nvx_wgl_xf86drm_fd(void)
+{
+   return InterlockedCompareExchange(&nvx_bridge_drm_fd, 0, 0);
 }
 
 int
@@ -260,6 +281,24 @@ nvx_wgl_nvx_adapter_create(void)
 
    nvx_bridge_trace("NVX adapter ready (bounded NVC0 clear; Gallium Nouveau unavailable)");
    return 1;
+}
+
+struct pipe_screen *
+nvx_wgl_create_native_nouveau_screen(void)
+{
+   int fd = nvx_wgl_xf86drm_fd();
+   struct pipe_screen *screen;
+
+   if (fd <= 0 || !NvxXf86DrmIsRegistered(fd))
+      return NULL;
+   screen = nouveau_drm_screen_create(fd);
+   if (screen) {
+      nvx_bridge_trace("Native Nouveau Gallium pipe_screen created");
+      InterlockedIncrement(&nvx_bridge_screen_count);
+   } else {
+      nvx_bridge_trace("Native Nouveau screen creation failed; see DRM boundary");
+   }
+   return screen;
 }
 
 static int

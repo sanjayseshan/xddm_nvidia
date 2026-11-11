@@ -44,18 +44,24 @@ index 100753a18bf7..7e4257a71914 100644
 +++ b/src/gallium/targets/wgl/wgl.c
 @@ -50,0 +51 @@
 +static bool use_softpipe = false;
-@@ -78,0 +80,4 @@ static const char *created_driver_name = NULL;
+@@ -78,0 +80,5 @@ static const char *created_driver_name = NULL;
 +extern void nvx_wgl_set_hdc(HDC hdc);
 +extern void nvx_wgl_notify_hybrid_screen_created(void);
 +extern int nvx_wgl_nvx_adapter_create(void);
++extern struct pipe_screen *nvx_wgl_create_native_nouveau_screen(void);
 +
-@@ -108,5 +112,15 @@ wgl_screen_create_by_name(HDC hDC, const char* driver, struct sw_winsys *winsys)
+@@ -108,5 +112,20 @@ wgl_screen_create_by_name(HDC hDC, const char* driver, struct sw_winsys *winsys)
  #ifdef GALLIUM_SOFTPIPE
     if (strcmp(driver, "softpipe") == 0) {
        screen = softpipe_create_screen(winsys);
 +      if (screen)
 +         use_softpipe = true;
     }
++   if (strcmp(driver, "nvx") == 0) {
++      screen = nvx_wgl_create_native_nouveau_screen();
++      if (screen)
++         return screen;
++   }
 +   if (strcmp(driver, "nvx") == 0 && nvx_wgl_nvx_adapter_create()) {
 +      /* The NVX adapter supplies bounded operations; GL still uses softpipe. */
 +      screen = softpipe_create_screen(winsys);
