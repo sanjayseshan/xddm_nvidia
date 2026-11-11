@@ -10,6 +10,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "xf86drm.h"
 #include "drm-uapi/nouveau_drm.h"
 #include "nvif/class.h"
@@ -17,20 +23,63 @@
 #include "nvif/ioctl.h"
 
 #define NVX_DRM_DEVICE_SLOTS 8U
+#define NVX_DRM_BUFFER_SLOTS 64U
 #define NVX_DRM_FD_BASE 0x4e580100
+
+struct nvx_drm_bo_slot {
+   uint32_t handle;
+   NVX_NOUVEAU_BO bo;
+};
 
 struct nvx_drm_device_slot {
    int fd;
    NVX_WINSYS_DEVICE device;
+   uint64_t client_token;
+   uint32_t next_handle;
+   struct nvx_drm_bo_slot buffers[NVX_DRM_BUFFER_SLOTS];
 };
 
 static struct nvx_drm_device_slot nvx_drm_devices[NVX_DRM_DEVICE_SLOTS];
 static volatile int nvx_drm_lock;
 static NVX_XF86DRM_STATUS nvx_drm_status;
+static uint32_t nvx_drm_next_token;
 static int nvx_drm_unsupported(void);
 static int nvx_drm_unsupported_operation(uint32_t kind,
                                         unsigned long operation);
 static int nvx_drm_lookup(int fd, NVX_WINSYS_DEVICE *device);
+
+static struct nvx_drm_device_slot *
+nvx_drm_find_device_locked(int fd)
+{
+   unsigned i;
+   for (i = 0; i < NVX_DRM_DEVICE_SLOTS; i++)
+      if (nvx_drm_devices[i].fd == fd)
+         return &nvx_drm_devices[i];
+   return NULL;
+}
+
+static struct nvx_drm_bo_slot *
+nvx_drm_find_bo_locked(struct nvx_drm_device_slot *device, uint32_t handle)
+{
+   unsigned i;
+   if (!device || !handle)
+      return NULL;
+   for (i = 0; i < NVX_DRM_BUFFER_SLOTS; i++)
+      if (device->buffers[i].handle == handle)
+         return &device->buffers[i];
+   return NULL;
+}
+
+static uint64_t
+nvx_drm_client_token(uint32_t sequence)
+{
+#ifdef _WIN32
+   uint64_t process = (uint64_t)_getpid();
+#else
+   uint64_t process = (uint64_t)getpid();
+#endif
+   return (process << 32) | sequence;
+}
 
 static int
 nvx_drm_getparam(int fd, void *data, unsigned long size)
@@ -211,8 +260,14 @@ NvxXf86DrmRegisterDevice(const NVX_WINSYS_DEVICE *device)
    for (i = 0; i < NVX_DRM_DEVICE_SLOTS; i++) {
       if (nvx_drm_devices[i].fd == 0) {
          fd = NVX_DRM_FD_BASE + (int)i;
+         memset(&nvx_drm_devices[i], 0, sizeof(nvx_drm_devices[i]));
          nvx_drm_devices[i].fd = fd;
          nvx_drm_devices[i].device = *device;
+         if (++nvx_drm_next_token == 0)
+            ++nvx_drm_next_token;
+         nvx_drm_devices[i].client_token =
+            nvx_drm_client_token(nvx_drm_next_token);
+         nvx_drm_devices[i].next_handle = 1U;
          break;
       }
    }
@@ -229,6 +284,20 @@ NvxXf86DrmUnregisterDevice(int fd)
    nvx_drm_lock_acquire();
    for (i = 0; i < NVX_DRM_DEVICE_SLOTS; i++) {
       if (nvx_drm_devices[i].fd == fd) {
+         unsigned j;
+         int all_freed = 1;
+         for (j = 0; j < NVX_DRM_BUFFER_SLOTS; j++) {
+            struct nvx_drm_bo_slot *buffer = &nvx_drm_devices[i].buffers[j];
+            if (!buffer->handle)
+               continue;
+            if (!NvxNouveauBoDestroy(&buffer->bo)) {
+               all_freed = 0;
+               continue;
+            }
+            memset(buffer, 0, sizeof(*buffer));
+         }
+         if (!all_freed)
+            break;
          memset(&nvx_drm_devices[i], 0, sizeof(nvx_drm_devices[i]));
          break;
       }
@@ -251,6 +320,123 @@ NvxXf86DrmGetStatus(NVX_XF86DRM_STATUS *status)
    nvx_drm_lock_acquire();
    *status = nvx_drm_status;
    nvx_drm_lock_release();
+}
+
+static int
+nvx_drm_gem_new(struct nvx_drm_device_slot *device,
+                struct drm_nouveau_gem_new *request)
+{
+   struct nvx_drm_bo_slot *slot = NULL;
+   NVX_3D_ALLOC_BUFFER description;
+   uint64_t requested_bytes;
+   uint32_t allocated_bytes, handle;
+   unsigned i;
+
+   if (!device || !request || request->info.handle ||
+       !request->info.size ||
+       request->info.size > device->device.caps.MaxBufferBytes ||
+       request->info.size > UINT32_MAX || request->align > 0x10000U ||
+       (request->info.domain & (NOUVEAU_GEM_DOMAIN_CPU |
+                                NOUVEAU_GEM_DOMAIN_COHERENT)) ||
+       (request->info.domain &&
+        !(request->info.domain & NOUVEAU_GEM_DOMAIN_VRAM)))
+      return 0;
+
+   requested_bytes = request->info.size;
+   if (requested_bytes > UINT32_MAX - (NVX_3D_PAGE_BYTES - 1U))
+      return 0;
+   allocated_bytes = Nvx3dAlignU32((uint32_t)requested_bytes,
+                                   NVX_3D_PAGE_BYTES);
+   if (allocated_bytes > device->device.caps.MaxBufferBytes)
+      return 0;
+
+   for (i = 0; i < NVX_DRM_BUFFER_SLOTS; i++) {
+      if (!device->buffers[i].handle) {
+         slot = &device->buffers[i];
+         break;
+      }
+   }
+   if (!slot)
+      return 0;
+
+   memset(&description, 0, sizeof(description));
+   description.Size = sizeof(description);
+   description.Version = NVX_3D_ABI_VERSION;
+   description.Bytes = allocated_bytes;
+   handle = device->next_handle++;
+   if (!handle)
+      handle = device->next_handle++;
+
+   if (!NvxNouveauBoCreate(&device->device, &description,
+                           device->client_token, &slot->bo))
+      return 0;
+
+   slot->handle = handle;
+   request->info.handle = handle;
+   request->info.domain = NOUVEAU_GEM_DOMAIN_VRAM |
+                          NOUVEAU_GEM_DOMAIN_MAPPABLE;
+   request->info.size = requested_bytes;
+   request->info.offset = slot->bo.allocation.GpuVa;
+   request->info.map_handle = handle;
+   request->info.tile_flags |= NOUVEAU_GEM_TILE_NONCONTIG;
+   return 1;
+}
+
+static int
+nvx_drm_gem_info(struct nvx_drm_device_slot *device,
+                 struct drm_nouveau_gem_info *info)
+{
+   struct nvx_drm_bo_slot *slot;
+
+   if (!device || !info || !(slot = nvx_drm_find_bo_locked(device,
+                                                            info->handle)))
+      return 0;
+   info->domain = NOUVEAU_GEM_DOMAIN_VRAM | NOUVEAU_GEM_DOMAIN_MAPPABLE;
+   info->size = slot->bo.allocation.Bytes;
+   info->offset = slot->bo.allocation.GpuVa;
+   info->map_handle = slot->handle;
+   info->tile_flags |= NOUVEAU_GEM_TILE_NONCONTIG;
+   return 1;
+}
+
+void *
+NvxXf86DrmMapBuffer(int fd, uint32_t handle, uint32_t access)
+{
+   struct nvx_drm_device_slot *device;
+   struct nvx_drm_bo_slot *slot;
+   void *map = NULL;
+   int found;
+
+   nvx_drm_lock_acquire();
+   device = nvx_drm_find_device_locked(fd);
+   slot = nvx_drm_find_bo_locked(device, handle);
+   found = slot != NULL;
+   if (slot)
+      map = NvxNouveauBoMap(&slot->bo, access);
+   nvx_drm_lock_release();
+   if (!map)
+      errno = found ? EIO : ENOENT;
+   return map;
+}
+
+int
+NvxXf86DrmUnmapBuffer(int fd, uint32_t handle)
+{
+   struct nvx_drm_device_slot *device;
+   struct nvx_drm_bo_slot *slot;
+   int result = 0;
+   int found;
+
+   nvx_drm_lock_acquire();
+   device = nvx_drm_find_device_locked(fd);
+   slot = nvx_drm_find_bo_locked(device, handle);
+   found = slot != NULL;
+   if (slot)
+      result = NvxNouveauBoUnmap(&slot->bo);
+   nvx_drm_lock_release();
+   if (!result)
+      errno = found ? EIO : ENOENT;
+   return result ? 0 : -1;
 }
 
 drmVersionPtr
@@ -382,6 +568,32 @@ drmCommandWrite(int fd, unsigned long command, void *data,
 {
    if (command == DRM_NOUVEAU_NVIF)
       return nvx_drm_nvif_device_new(fd, data, size);
+   if (command == DRM_NOUVEAU_GEM_CPU_PREP) {
+      struct drm_nouveau_gem_cpu_prep *request = data;
+      struct nvx_drm_device_slot *device;
+      struct nvx_drm_bo_slot *buffer;
+      int found;
+      int ok = 0;
+
+      if (!request || size != sizeof(*request))
+         return nvx_drm_unsupported_operation(
+            NVX_XF86DRM_UNSUPPORTED_WRITE, command);
+      nvx_drm_lock_acquire();
+      device = nvx_drm_find_device_locked(fd);
+      buffer = nvx_drm_find_bo_locked(device, request->handle);
+      found = buffer != NULL;
+      if (buffer) {
+         ok = !buffer->bo.last_fence ||
+              (!(request->flags & NOUVEAU_GEM_CPU_PREP_NOWAIT) &&
+               NvxWinsysWaitFence(&device->device, buffer->bo.last_fence,
+                                  5000U));
+      }
+      nvx_drm_lock_release();
+      if (ok)
+         return 0;
+      errno = found ? EBUSY : ENOENT;
+      return -1;
+   }
    return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_WRITE,
                                        command);
 }
@@ -390,10 +602,45 @@ int
 drmCommandWriteRead(int fd, unsigned long command, void *data,
                     unsigned long size)
 {
+   struct nvx_drm_device_slot *device;
+   int ok;
+
    if (command == DRM_NOUVEAU_GETPARAM)
       return nvx_drm_getparam(fd, data, size);
    if (command == DRM_NOUVEAU_NVIF)
       return nvx_drm_nvif_device_info(fd, data, size);
+   if (command == DRM_NOUVEAU_GEM_NEW) {
+      struct drm_nouveau_gem_new *request = data;
+      int found;
+      if (!request || size != sizeof(*request))
+         return nvx_drm_unsupported_operation(
+            NVX_XF86DRM_UNSUPPORTED_WRITE_READ, command);
+      nvx_drm_lock_acquire();
+      device = nvx_drm_find_device_locked(fd);
+      found = device != NULL;
+      ok = nvx_drm_gem_new(device, request);
+      nvx_drm_lock_release();
+      if (ok)
+         return 0;
+      errno = found ? ENOMEM : ENODEV;
+      return -1;
+   }
+   if (command == DRM_NOUVEAU_GEM_INFO) {
+      struct drm_nouveau_gem_info *info = data;
+      int found;
+      if (!info || size != sizeof(*info))
+         return nvx_drm_unsupported_operation(
+            NVX_XF86DRM_UNSUPPORTED_WRITE_READ, command);
+      nvx_drm_lock_acquire();
+      device = nvx_drm_find_device_locked(fd);
+      found = device != NULL;
+      ok = nvx_drm_gem_info(device, info);
+      nvx_drm_lock_release();
+      if (ok)
+         return 0;
+      errno = found ? ENOENT : ENODEV;
+      return -1;
+   }
    return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_WRITE_READ,
                                        command);
 }
@@ -429,9 +676,23 @@ drmIoctl(int fd, unsigned long request, void *data)
 int
 drmCloseBufferHandle(int fd, uint32_t handle)
 {
-   (void)fd;
-   return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_CLOSE,
-                                       handle);
+   struct nvx_drm_device_slot *device;
+   struct nvx_drm_bo_slot *buffer;
+   int result = 0;
+   int found;
+
+   nvx_drm_lock_acquire();
+   device = nvx_drm_find_device_locked(fd);
+   buffer = nvx_drm_find_bo_locked(device, handle);
+   found = buffer != NULL;
+   if (buffer && NvxNouveauBoDestroy(&buffer->bo)) {
+      memset(buffer, 0, sizeof(*buffer));
+      result = 1;
+   }
+   nvx_drm_lock_release();
+   if (!result)
+      errno = found ? EIO : ENOENT;
+   return result ? 0 : -1;
 }
 
 int

@@ -13,7 +13,8 @@ $repo_root/mesa_patches/0007-nouveau-xp-pointer-width.patch
 $repo_root/mesa_patches/0008-nouveau-xp-hdc-entry.patch
 $repo_root/mesa_patches/0009-nouveau-xp-mmap-unsupported.patch
 $repo_root/mesa_patches/0010-nouveau-xp-disable-drm-sharing.patch
-$repo_root/mesa_patches/0011-nouveau-use-os-mman.patch"
+$repo_root/mesa_patches/0011-nouveau-use-os-mman.patch
+$repo_root/mesa_patches/0012-nouveau-xp-nvx-bo-map.patch"
 expected_revision=cc2dcf9abdc6afc093e85d48e4cfa34eed60a01e
 
 actual_revision=$(git -C "$mesa_dir" rev-parse HEAD)

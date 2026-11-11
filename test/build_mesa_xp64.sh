@@ -39,6 +39,7 @@ PY
 restore_mesa_sources() {
     rm -f "$ROOT/mesa/src/gallium/winsys/nouveau/drm/nvx_xf86drm.c"
     for patch_file in \
+        "$ROOT/mesa_patches/0012-nouveau-xp-nvx-bo-map.patch" \
         "$ROOT/mesa_patches/0011-nouveau-use-os-mman.patch" \
         "$ROOT/mesa_patches/0010-nouveau-xp-disable-drm-sharing.patch" \
         "$ROOT/mesa_patches/0009-nouveau-xp-mmap-unsupported.patch" \

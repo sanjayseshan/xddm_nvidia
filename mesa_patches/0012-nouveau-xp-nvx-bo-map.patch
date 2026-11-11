@@ -1,0 +1,51 @@
+diff --git a/src/gallium/winsys/nouveau/drm/nouveau.c b/src/gallium/winsys/nouveau/drm/nouveau.c
+--- a/src/gallium/winsys/nouveau/drm/nouveau.c
++++ b/src/gallium/winsys/nouveau/drm/nouveau.c
+@@ -737,6 +737,10 @@ nouveau_bo_del(struct nouveau_bo *bo)
+    struct nouveau_device_priv *nvdev = nouveau_device(bo->device);
+    struct nouveau_bo_priv *nvbo = nouveau_bo(bo);
+ 
++#ifdef NVX_XP_WIN32_SHIMS
++   if (bo->map)
++      NvxXf86DrmUnmapBuffer(drm->fd, bo->handle);
++#endif
+    if (nvbo->head.next) {
+       simple_mtx_lock(&nvdev->lock);
+       if (p_atomic_read(&nvbo->refcnt) == 0) {
+@@ -750,6 +754,10 @@ nouveau_bo_del(struct nouveau_bo *bo)
+       drmCloseBufferHandle(drm->fd, bo->handle);
+    }
+    if (bo->map)
++#ifdef NVX_XP_WIN32_SHIMS
++      bo->map = NULL;
++#else
+       os_munmap(bo->map, bo->size);
++#endif
+    free(nvbo);
+ }
+@@ -755,6 +764,18 @@ nouveau_bo_map(struct nouveau_bo *bo, uint32_t access, struct nouveau_client *client)
+    struct nouveau_drm *drm = nouveau_drm(&bo->device->object);
+    struct nouveau_bo_priv *nvbo = nouveau_bo(bo);
+    if (bo->map == NULL) {
++#ifdef NVX_XP_WIN32_SHIMS
++      uint32_t nvx_access = 0;
++      if (access & NOUVEAU_BO_RD)
++         nvx_access |= NVX_XF86DRM_MAP_READ;
++      if (access & NOUVEAU_BO_WR)
++         nvx_access |= NVX_XF86DRM_MAP_WRITE;
++      if (!nvx_access)
++         nvx_access = NVX_XF86DRM_MAP_READ;
++      bo->map = NvxXf86DrmMapBuffer(drm->fd, bo->handle, nvx_access);
++      if (!bo->map)
++         return -errno;
++#else
+       bo->map = os_mmap(0, bo->size, PROT_READ | PROT_WRITE, MAP_SHARED, drm->fd, nvbo->map_handle);
+       if (bo->map == MAP_FAILED) {
+          bo->map = NULL;
+@@ -762,5 +782,6 @@ nouveau_bo_map(struct nouveau_bo *bo, uint32_t access, struct nouveau_client *client)
+          return -errno;
+       }
++#endif
+    }
+    return nouveau_bo_wait(bo, access, client);
+ }

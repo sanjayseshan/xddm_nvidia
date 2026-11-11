@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "xf86drm.h"
@@ -10,16 +11,100 @@
 #include "nvif/cl0080.h"
 #include "nvif/ioctl.h"
 
+struct mock_buffer {
+   uint64_t id;
+   uint32_t bytes;
+   uint8_t *data;
+};
+
+static struct mock_buffer buffers[8];
+static uint64_t next_buffer_id = 1;
+static uint64_t next_gpu_va = 0x10000000ULL;
+
+static struct mock_buffer *
+find_buffer(uint64_t id)
+{
+   unsigned i;
+   for (i = 0; i < sizeof(buffers) / sizeof(buffers[0]); i++)
+      if (buffers[i].id == id)
+         return &buffers[i];
+   return NULL;
+}
+
 static int
 mock_escape(void *opaque, uint32_t escape, uint32_t input_bytes,
             const void *input, uint32_t output_bytes, void *output)
 {
    (void)opaque;
-   (void)escape;
-   (void)input_bytes;
-   (void)input;
-   (void)output_bytes;
-   (void)output;
+   if (escape == NVX_ESCAPE_3D_ALLOC &&
+       input_bytes == sizeof(NVX_3D_ALLOC_BUFFER) &&
+       output_bytes == sizeof(NVX_3D_ALLOC_BUFFER)) {
+      const NVX_3D_ALLOC_BUFFER *request = input;
+      NVX_3D_ALLOC_BUFFER *result = output;
+      struct mock_buffer *buffer = NULL;
+      unsigned i;
+      for (i = 0; i < sizeof(buffers) / sizeof(buffers[0]); i++) {
+         if (!buffers[i].id) {
+            buffer = &buffers[i];
+            break;
+         }
+      }
+      if (!buffer || !request || request->Bytes == 0)
+         return 0;
+      buffer->data = calloc(1, request->Bytes);
+      if (!buffer->data)
+         return 0;
+      buffer->id = next_buffer_id++;
+      buffer->bytes = request->Bytes;
+      *result = *request;
+      result->BufferId = buffer->id;
+      result->GpuVa = next_gpu_va;
+      next_gpu_va += request->Bytes;
+      return 1;
+   }
+   if (escape == NVX_ESCAPE_3D_FREE &&
+       input_bytes == sizeof(NVX_3D_FREE_BUFFER)) {
+      const NVX_3D_FREE_BUFFER *request = input;
+      struct mock_buffer *buffer = find_buffer(request->BufferId);
+      if (!buffer)
+         return 0;
+      free(buffer->data);
+      memset(buffer, 0, sizeof(*buffer));
+      return 1;
+   }
+   if (escape == NVX_ESCAPE_3D_UPLOAD && input_bytes >=
+       sizeof(NVX_3D_UPLOAD_BUFFER)) {
+      const NVX_3D_UPLOAD_BUFFER *request = input;
+      struct mock_buffer *buffer = find_buffer(request->BufferId);
+      uint32_t payload = input_bytes - sizeof(*request);
+      if (!buffer || request->Bytes != payload ||
+          request->Offset > buffer->bytes ||
+          payload > buffer->bytes - request->Offset)
+         return 0;
+      memcpy(buffer->data + request->Offset,
+             (const uint8_t *)input + sizeof(*request), payload);
+      return 1;
+   }
+   if (escape == NVX_ESCAPE_3D_DOWNLOAD &&
+       input_bytes == sizeof(NVX_3D_DOWNLOAD_BUFFER)) {
+      const NVX_3D_DOWNLOAD_BUFFER *request = input;
+      struct mock_buffer *buffer = find_buffer(request->BufferId);
+      if (!buffer || request->Bytes != output_bytes ||
+          request->Offset > buffer->bytes ||
+          output_bytes > buffer->bytes - request->Offset)
+         return 0;
+      memcpy(output, buffer->data + request->Offset, output_bytes);
+      return 1;
+   }
+   if (escape == NVX_ESCAPE_3D_WAIT &&
+       input_bytes == sizeof(NVX_3D_WAIT_FENCE) &&
+       output_bytes == sizeof(NVX_3D_WAIT_FENCE)) {
+      const NVX_3D_WAIT_FENCE *request = input;
+      NVX_3D_WAIT_FENCE *result = output;
+      *result = *request;
+      result->Status = NVX_3D_STATUS_SUCCESS;
+      return 1;
+   }
    return 0;
 }
 
@@ -43,7 +128,7 @@ main(void)
    assert(drmIoctl(1, 0, NULL) == -1);
    assert(errno == ENOSYS);
    assert(drmCloseBufferHandle(1, 1) == -1);
-   assert(errno == ENOSYS);
+   assert(errno == ENOENT);
    assert(drmPrimeFDToHandle(1, 1, &handle) == -1);
    assert(errno == ENOSYS && handle == 0);
    assert(drmPrimeHandleToFD(1, 1, 0, &prime_fd) == -1);
@@ -57,12 +142,62 @@ main(void)
    winsys.caps.Version = NVX_3D_ABI_VERSION;
    winsys.caps.Size = sizeof(winsys.caps);
    winsys.caps.GraphicsClass = 0xc797U;
+   winsys.caps.Features = NVX_3D_FEATURE_USER_ALLOC |
+                          NVX_3D_FEATURE_UPLOAD |
+                          NVX_3D_FEATURE_DOWNLOAD;
    winsys.caps.DeviceId = 0x2488U;
    winsys.caps.Chipset = 0x170U;
    winsys.caps.VramApertureBytes = 64U * 1024U * 1024U;
    winsys.caps.MaxBufferBytes = 16U * 1024U * 1024U;
    fd = NvxXf86DrmRegisterDevice(&winsys);
    assert(fd > 0 && NvxXf86DrmIsRegistered(fd));
+
+   {
+      struct drm_nouveau_gem_new create = {0};
+      struct drm_nouveau_gem_info info = {0};
+      struct drm_nouveau_gem_cpu_prep prep = {0};
+      uint32_t *map;
+      create.info.size = 4096;
+      create.info.domain = NOUVEAU_GEM_DOMAIN_GART;
+      assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_NEW, &create,
+                                 sizeof(create)) == -1);
+      create.info.domain = NOUVEAU_GEM_DOMAIN_VRAM |
+                           NOUVEAU_GEM_DOMAIN_GART;
+      assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_NEW, &create,
+                                 sizeof(create)) == 0);
+      assert(create.info.handle != 0 && create.info.offset == 0x10000000ULL);
+      assert(create.info.domain & NOUVEAU_GEM_DOMAIN_MAPPABLE);
+      info.handle = create.info.handle;
+      assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_INFO, &info,
+                                 sizeof(info)) == 0);
+      assert(info.size == 4096 && info.offset == create.info.offset);
+      map = NvxXf86DrmMapBuffer(fd, create.info.handle,
+                                NVX_XF86DRM_MAP_READ |
+                                NVX_XF86DRM_MAP_WRITE);
+      assert(map != NULL && map[0] == 0);
+      map[0] = 0x12345678U;
+      assert(NvxXf86DrmUnmapBuffer(fd, create.info.handle) == 0);
+      map = NvxXf86DrmMapBuffer(fd, create.info.handle,
+                                NVX_XF86DRM_MAP_READ);
+      assert(map != NULL && map[0] == 0x12345678U);
+      assert(NvxXf86DrmUnmapBuffer(fd, create.info.handle) == 0);
+      prep.handle = create.info.handle;
+      prep.flags = NOUVEAU_GEM_CPU_PREP_NOWAIT;
+      assert(drmCommandWrite(fd, DRM_NOUVEAU_GEM_CPU_PREP, &prep,
+                             sizeof(prep)) == 0);
+      assert(drmCloseBufferHandle(fd, create.info.handle) == 0);
+      assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_INFO, &info,
+                                 sizeof(info)) == -1);
+      assert(errno == ENOENT);
+   }
+
+   {
+      struct drm_nouveau_gem_new create = {0};
+      create.info.size = 8192;
+      create.info.domain = NOUVEAU_GEM_DOMAIN_VRAM;
+      assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_NEW, &create,
+                                 sizeof(create)) == 0);
+   }
 
    {
       drmVersionPtr version = drmGetVersion(fd);
@@ -142,6 +277,7 @@ main(void)
 
    NvxXf86DrmUnregisterDevice(fd);
    assert(!NvxXf86DrmIsRegistered(fd));
+   assert(find_buffer(2) == NULL);
    assert(drmGetVersion(fd) == NULL && errno == ENODEV);
    return 0;
 }

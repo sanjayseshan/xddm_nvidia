@@ -4,13 +4,15 @@
 /*
  * Minimal libdrm API surface used by Mesa's Nouveau DRM winsys.
  *
- * This is a compile-time XP replacement, not a Linux DRM implementation.
- * The matching nvx_xf86drm.c deliberately reports unsupported operations
- * until an operation-specific NVX transport is connected.
+ * This is a Windows XP compatibility surface, not a Linux DRM implementation.
+ * The matching nvx_xf86drm.c maps supported version/device queries and GEM
+ * buffer operations onto the NVX miniport ABI; channel allocation, submission,
+ * PRIME, and generic ioctls remain unsupported without equivalent NVX calls.
  */
 #include <stdint.h>
 #include <fcntl.h>
 #include "../nvx_winsys.h"
+#include "../nvx_nouveau_bo.h"
 
 /* XP's CRT does not define the POSIX close-on-exec open flag. */
 #ifndef O_CLOEXEC
@@ -84,6 +86,8 @@ typedef struct _drmDevice {
 #define NVX_XF86DRM_UNSUPPORTED_CLOSE       6U
 #define NVX_XF86DRM_UNSUPPORTED_PRIME_TO_HANDLE 7U
 #define NVX_XF86DRM_UNSUPPORTED_HANDLE_TO_PRIME 8U
+#define NVX_XF86DRM_MAP_READ  0x00000001U
+#define NVX_XF86DRM_MAP_WRITE 0x00000002U
 typedef struct NVX_XF86DRM_STATUS {
    uint32_t UnsupportedCount;
    uint32_t LastUnsupportedKind;
@@ -97,6 +101,8 @@ int NvxXf86DrmRegisterDevice(const NVX_WINSYS_DEVICE *device);
 void NvxXf86DrmUnregisterDevice(int fd);
 int NvxXf86DrmIsRegistered(int fd);
 void NvxXf86DrmGetStatus(NVX_XF86DRM_STATUS *status);
+void *NvxXf86DrmMapBuffer(int fd, uint32_t handle, uint32_t access);
+int NvxXf86DrmUnmapBuffer(int fd, uint32_t handle);
 
 drmVersionPtr drmGetVersion(int fd);
 void drmFreeVersion(drmVersionPtr version);

@@ -1,6 +1,33 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 11, 2026, after full-size native clear and cube comparison.
+Updated November 11, 2026, after the XP-backed `xf86drm` BO shim and VFIO run.
+
+## Windows-backed `xf86drm` BO compatibility (November 11, 2026)
+
+The external XP `xf86drm` shim now maps Nouveau GEM allocation/info/close,
+CPU_PREP waits, and BO map/unmap onto the existing NVX allocation, bounded
+download/upload, fence, and free escapes. `nouveau_bo_map()` and deletion use
+these adapters on XP, with no Linux `mmap` dependency. Mixed VRAM/GART
+preference requests are served from the supported NVX VRAM aperture; GART-only
+requests remain unsupported. Unsupported channel allocation, generic ioctls,
+PRIME, and pushbuffer submission still return an error instead of simulated
+success.
+
+Host coverage now checks allocation metadata, invalid placement, round-trip
+mapping, CPU prep, close, and unregister cleanup. `make -C src_driver check`
+passes with ASan/UBSan and both x86 and x64 MinGW compilation. The external
+Mesa patch set applies cleanly, the final Nouveau+softpipe XP x64 Mesa build
+completed 702 Ninja actions, and the package import audit passed for XP. The Mesa
+submodule was restored clean at the pinned revision.
+
+The full VFIO suite completed at
+`../test_logs/v3.0.0.2-20261111-171240.log`. XP booted on retry 4; the NVX 3D
+triangle/readback/semaphore probe and 2D copy/fill checks passed. OpenGL still
+reported `[OPENGL_RESULT] SOFTWARE`, and the shim diagnostic confirms the next
+Nouveau boundary is `DRM_NOUVEAU_CHANNEL_ALLOC` (`ENOSYS`). This run validates
+the package and existing hardware paths; the new GEM mapping path is not yet
+reached by Nouveau startup. Continue with a real channel/object lifecycle and
+validated submission ABI before expecting Gallium Nouveau to create a screen.
 
 ## Latest Nouveau WGL boundary test (November 11, 2026)
 
