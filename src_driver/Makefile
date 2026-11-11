@@ -42,6 +42,7 @@ clean:
 .PHONY: check
 check:
 	python3 ../test/audit_ampere_vertex_shader.py
+	python3 ../test/generate_nvc0_address_pairs.py ../mesa nvx_nvc0_address_pairs.h --check
 	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I. -o /tmp/nvx-3d-abi-test tests/3d_abi_test.c
 	ASAN_OPTIONS=detect_leaks=0 /tmp/nvx-3d-abi-test
 	$(HOSTCC) -std=c11 -Wall -Wextra -Werror -fsanitize=address,undefined -g -I. -I../mesa_patches -o /tmp/nvx-winsys-test ../mesa_patches/nvx_winsys.c ../mesa_patches/nvx_nouveau_device.c ../mesa_patches/nvx_nouveau_bo.c ../mesa_patches/nvx_nouveau_pushbuf.c ../mesa_patches/nvx_nouveau_screen.c ../test/nvx_winsys_test.c

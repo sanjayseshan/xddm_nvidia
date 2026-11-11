@@ -2,6 +2,36 @@
 
 Updated November 11, 2026, after the XP-backed `xf86drm` BO shim and VFIO run.
 
+## Windows replacement for `xf86drm` (November 11, 2026)
+
+Yes: Mesa's libdrm calls can be adapted to Windows interfaces, and this tree
+already has the first part of that adapter in `mesa_patches/nvx_xf86drm.c` and
+`mesa_patches/xp_include/xf86drm.h`. On XP the transport is the display driver's
+`ExtEscape` path (`nvx_winsys_win32.c`), not a POSIX file descriptor. The shim
+uses a process-local compatibility token where Mesa expects an `fd`, and
+translates calls into versioned NVX escape requests.
+
+The working mappings are device/version discovery to NVX capability and PCI
+identity queries; Nouveau GEM allocation/info/close to NVX buffer allocation,
+metadata, and free; CPU_PREP to NVX fence waits; and BO map/unmap to bounded
+download/upload operations with a CPU shadow copy. These are operation-specific
+translations, not implementations of Linux DRM. The original libdrm header has
+many unrelated APIs; the XP header intentionally declares only the subset
+needed by Mesa's Nouveau DRM winsys.
+
+There is no Windows API call that directly provides DRM channel allocation,
+NVIF object creation, relocatable GEM push submission, PRIME sharing, or DRM
+ioctls. Those need matching miniport-owned NVX operations and explicit lifetime,
+validation, and synchronization rules. In particular, pretending the current
+private GSP channel is a DRM channel or returning success from `GEM_PUSHBUF`
+would not make Mesa's submission contract work. `ExtEscape` can carry a new
+versioned interface, but the kernel side still has to implement it.
+
+The NVC0 batch preflight is being strengthened independently: it now checks
+known direct GPU address method pairs against referenced client-owned buffers.
+It remains validation-only; it does not submit batches, and a complete
+C797 method allowlist is still required before the kernel may execute them.
+
 ## ABI 14 PCI identity for the Nouveau DRM shim (November 11, 2026)
 
 The XP miniport now returns its PCI bus and encoded slot in the existing

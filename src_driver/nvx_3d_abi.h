@@ -331,6 +331,9 @@ Nvx3dBatchRequiredBytes(const NVX_3D_BATCH_HEADER *header,
 #define NVX_3D_RELOC_READ  0x01U
 #define NVX_3D_RELOC_WRITE 0x02U
 
+/* Generated metadata is maintained outside the Mesa submodule. */
+#include "nvx_nvc0_address_pairs.h"
+
 static inline int
 Nvx3dValidateRelocation(const NVX_3D_RELOCATION *relocation,
                         uint32_t commandDwords,
@@ -368,6 +371,124 @@ Nvx3dBatchReadDword(const uint8_t *dwords, uint32_t index)
 }
 
 static inline int
+Nvx3dNvc0AddressMethodKind(uint32_t subchannel, uint32_t method,
+                           uint32_t *pairIndex, uint32_t *arrayIndex)
+{
+    uint32_t i;
+    for(i=0;i<NVX_3D_NVC0_ADDRESS_PAIR_COUNT;i++) {
+        const NVX_3D_NVC0_ADDRESS_PAIR *pair=&Nvx3dNvc0AddressPairs[i];
+        uint32_t element;
+        if(pair->Subchannel!=subchannel) continue;
+        for(element=0;element<pair->IndexCount;element++) {
+            uint32_t high=pair->HighMethod+element*pair->IndexStride;
+            uint32_t low=pair->LowMethod+element*pair->IndexStride;
+            if(method==high) {
+                if(pairIndex) *pairIndex=i;
+                if(arrayIndex) *arrayIndex=element;
+                return 1;
+            }
+            if(method==low) {
+                if(pairIndex) *pairIndex=i;
+                if(arrayIndex) *arrayIndex=element;
+                return 2;
+            }
+        }
+    }
+    return 0;
+}
+
+static inline int
+Nvx3dNvc0AddressIsOwned(uint64_t address,
+                        const NVX_3D_NVC0_ADDRESS_PAIR *pair,
+                        const uint8_t *references,
+                        uint32_t referenceCount,
+                        const NVX_3D_ALLOC_BUFFER *ownedAllocations,
+                        uint32_t ownedAllocationCount,
+                        uint64_t clientToken)
+{
+    uint32_t i,j;
+    if(!address||!pair) return address==0;
+    for(i=0;i<referenceCount;i++) {
+        NVX_3D_BUFFER_REFERENCE reference;
+        memcpy(&reference,references+(uint64_t)i*sizeof(reference),
+               sizeof(reference));
+        if((reference.Access&pair->Access)!=pair->Access) continue;
+        for(j=0;j<ownedAllocationCount;j++) {
+            const NVX_3D_ALLOC_BUFFER *allocation=&ownedAllocations[j];
+            uint64_t end;
+            if(allocation->BufferId!=reference.BufferId||
+               allocation->ClientToken!=clientToken||!allocation->GpuVa||
+               !allocation->Bytes||allocation->GpuVa>UINT64_MAX-allocation->Bytes)
+                continue;
+            end=allocation->GpuVa+allocation->Bytes;
+            if(address>=allocation->GpuVa&&address<end) return 1;
+        }
+    }
+    return 0;
+}
+
+/* Each known direct address pair must be written together in one incrementing
+ * packet. This prevents a low half from combining with stale high state from
+ * an earlier batch. The resulting GPUVA must be covered by a referenced,
+ * client-owned BO with access compatible with the method's engine role. */
+static inline int
+Nvx3dValidateNvc0AddressMethods(const uint8_t *dwords,
+                               uint32_t dwordCount,
+                               const uint8_t *references,
+                               uint32_t referenceCount,
+                               const NVX_3D_ALLOC_BUFFER *ownedAllocations,
+                               uint32_t ownedAllocationCount,
+                               uint64_t clientToken)
+{
+    uint32_t cursor=0;
+    while(cursor<dwordCount) {
+        uint32_t header=Nvx3dBatchReadDword(dwords,cursor);
+        uint32_t packetType=header&0xe0000000U;
+        uint32_t subchannel=(header>>13)&7U;
+        if(packetType==0x80000000U) {
+            uint32_t method=(header&0x1fffU)<<2;
+            if(Nvx3dNvc0AddressMethodKind(subchannel,method,NULL,NULL))
+                return 0;
+            cursor++;
+        } else {
+            uint32_t count=(header>>16)&0x1fffU;
+            uint32_t method=(header&0x1fffU)<<2;
+            uint32_t i;
+            for(i=0;i<count;i++) {
+                uint32_t currentMethod=packetType==0x20000000U?
+                    method+i*4U:method;
+                uint32_t pairIndex,arrayIndex;
+                int kind=Nvx3dNvc0AddressMethodKind(subchannel,currentMethod,
+                                                   &pairIndex,&arrayIndex);
+                if(kind==2) return 0;
+                if(kind==1) {
+                    const NVX_3D_NVC0_ADDRESS_PAIR *pair=
+                        &Nvx3dNvc0AddressPairs[pairIndex];
+                    uint32_t high,low,expectedLow;
+                    uint64_t address;
+                    if(packetType!=0x20000000U||i+1U>=count)
+                        return 0;
+                    expectedLow=pair->LowMethod+arrayIndex*pair->IndexStride;
+                    if(currentMethod>0x1ffbU||currentMethod+4U!=expectedLow)
+                        return 0;
+                    high=Nvx3dBatchReadDword(dwords,cursor+1U+i);
+                    low=Nvx3dBatchReadDword(dwords,cursor+2U+i);
+                    if(high>0xffU) return 0;
+                    address=((uint64_t)high<<32)|low;
+                    if(!Nvx3dNvc0AddressIsOwned(address,pair,references,
+                            referenceCount,ownedAllocations,
+                            ownedAllocationCount,clientToken))
+                        return 0;
+                    i++;
+                }
+            }
+            cursor+=count+1U;
+        }
+    }
+    return 1;
+}
+
+static inline int
 Nvx3dBatchWordIsPayload(const uint8_t *dwords, uint32_t dwordCount,
                         uint32_t targetWord)
 {
@@ -387,11 +508,9 @@ Nvx3dBatchWordIsPayload(const uint8_t *dwords, uint32_t dwordCount,
     return 0;
 }
 
-/* Validate a copied, bounded NVC0 batch envelope before any consumer parses
- * methods or executes work. This checks packet framing, client-owned BO
- * references and resource-relative relocations only; a kernel execution path
- * must additionally enforce its C797 method/subchannel allowlist and verify
- * that every GPU address in the stream belongs to a referenced BO. */
+/* Validate packet framing, client-owned BO references, known direct address
+ * pairs, and resource-relative relocations. This still does not enforce a
+ * complete C797 method/subchannel allowlist or authorize command execution. */
 static inline int
 Nvx3dValidateNvc0Batch(const void *input, uint32_t inputBytes,
                        const NVX_3D_ALLOC_BUFFER *ownedAllocations,
@@ -468,6 +587,11 @@ Nvx3dValidateNvc0Batch(const void *input, uint32_t inputBytes,
             cursor+=count+1U;
         } else return 0;
     }
+
+    if(!Nvx3dValidateNvc0AddressMethods(dwords,header.DwordCount,
+            references,header.BufferReferenceCount,ownedAllocations,
+            ownedAllocationCount,header.ClientToken))
+        return 0;
 
     for(i=0;i<header.RelocationCount;i++) {
         NVX_3D_RELOCATION relocation;

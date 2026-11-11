@@ -200,6 +200,72 @@ test_nvc0_batch_validator(void)
 }
 
 static void
+test_nvc0_direct_address_validation(void)
+{
+    uint8_t input[sizeof(NVX_3D_BATCH_HEADER)+
+                  sizeof(NVX_3D_BUFFER_REFERENCE)+4*sizeof(uint32_t)];
+    NVX_3D_BATCH_HEADER header={0};
+    NVX_3D_BUFFER_REFERENCE reference={0};
+    NVX_3D_ALLOC_BUFFER allocation={0};
+    uint32_t dwords[4]={0};
+    uint32_t bytes;
+    const uint64_t token=0x123400000001ULL;
+
+    allocation.Size=sizeof(allocation);
+    allocation.Version=NVX_3D_ABI_VERSION;
+    allocation.Bytes=4096;
+    allocation.BufferId=17;
+    allocation.GpuVa=0x23000000ULL;
+    allocation.ClientToken=token;
+    reference.BufferId=allocation.BufferId;
+    reference.Access=NVX_3D_RELOC_READ|NVX_3D_RELOC_WRITE;
+    header.Size=sizeof(header);
+    header.Version=NVX_3D_ABI_VERSION;
+    header.DwordCount=3;
+    header.BufferReferenceCount=1;
+    header.ClientToken=token;
+    dwords[0]=Nvx3dNvc0SeqHeader(0x0800U,2U);
+    dwords[1]=(uint32_t)(allocation.GpuVa>>32);
+    dwords[2]=(uint32_t)allocation.GpuVa;
+    bytes=(uint32_t)(sizeof(header)+sizeof(reference)+3*sizeof(uint32_t));
+    memcpy(input,&header,sizeof(header));
+    memcpy(input+sizeof(header),&reference,sizeof(reference));
+    memcpy(input+sizeof(header)+sizeof(reference),dwords,3*sizeof(uint32_t));
+    assert(Nvx3dValidateNvc0Batch(input,bytes,&allocation,1,token));
+
+    dwords[2]=(uint32_t)(allocation.GpuVa+allocation.Bytes);
+    memcpy(input+sizeof(header)+sizeof(reference),dwords,3*sizeof(uint32_t));
+    assert(!Nvx3dValidateNvc0Batch(input,bytes,&allocation,1,token));
+
+    dwords[2]=(uint32_t)allocation.GpuVa;
+    reference.Access=NVX_3D_RELOC_READ;
+    memcpy(input+sizeof(header),&reference,sizeof(reference));
+    memcpy(input+sizeof(header)+sizeof(reference),dwords,3*sizeof(uint32_t));
+    assert(!Nvx3dValidateNvc0Batch(input,bytes,&allocation,1,token));
+
+    reference.Access=NVX_3D_RELOC_READ|NVX_3D_RELOC_WRITE;
+    header.DwordCount=4;
+    dwords[0]=Nvx3dNvc0SeqHeader(0x0800U,1U);
+    dwords[1]=(uint32_t)(allocation.GpuVa>>32);
+    dwords[2]=Nvx3dNvc0SeqHeader(0x0804U,1U);
+    dwords[3]=(uint32_t)allocation.GpuVa;
+    bytes=(uint32_t)(sizeof(header)+sizeof(reference)+4*sizeof(uint32_t));
+    memcpy(input,&header,sizeof(header));
+    memcpy(input+sizeof(header),&reference,sizeof(reference));
+    memcpy(input+sizeof(header)+sizeof(reference),dwords,4*sizeof(uint32_t));
+    assert(!Nvx3dValidateNvc0Batch(input,bytes,&allocation,1,token));
+
+    header.DwordCount=3;
+    dwords[0]=Nvx3dNvc0NonIncHeader(0x0800U,2U);
+    dwords[1]=(uint32_t)(allocation.GpuVa>>32);
+    dwords[2]=(uint32_t)allocation.GpuVa;
+    bytes=(uint32_t)(sizeof(header)+sizeof(reference)+3*sizeof(uint32_t));
+    memcpy(input,&header,sizeof(header));
+    memcpy(input+sizeof(header)+sizeof(reference),dwords,3*sizeof(uint32_t));
+    assert(!Nvx3dValidateNvc0Batch(input,bytes,&allocation,1,token));
+}
+
+static void
 build_nvc0_clear(NVX_3D_NVC0_CLEAR *request)
 {
     const uint64_t gpuVa=0x23000000ULL;
@@ -270,6 +336,7 @@ int main(void)
     assert(sizeof(NVX_3D_COLOR_SURFACE_LAYOUT)==24);
     assert(sizeof(NVX_3D_NVC0_CLEAR)==152);
     test_nvc0_batch_validator();
+    test_nvc0_direct_address_validation();
 
     download.Size=sizeof(download);
     download.Version=NVX_3D_ABI_VERSION;
