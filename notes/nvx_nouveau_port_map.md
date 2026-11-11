@@ -145,11 +145,23 @@ softpipe bridge or bypass the miniport validator with raw user pushbuffers.
 BO references, relocations, and push ranges. Each push range identifies a BO
 index plus a byte offset and length into its mapped CPU shadow. This gives the
 XP compatibility code a concrete copy-in boundary: validate all counts and
-indices, gather each range into a bounded dword stream, translate every
+indices, gather each range into a bounded dword stream, and translate each
 relocation from `(reloc_bo_index, reloc_bo_offset, bo_index, flags, data,
-vor, tor)` to an NVX BO-id/offset/access record, then submit one copied NVX
-batch request. XP usermode can dereference these Mesa-owned arrays, but the
-miniport must still treat the resulting copied request as untrusted.
+vor, tor)` into a future NVX batch request that preserves its patch semantics.
+XP usermode can dereference these Mesa-owned arrays, but the miniport must
+still treat the resulting copied request as untrusted.
+
+There is an additional ABI mismatch that prevents a direct relocation-record
+conversion today. Nouveau relocations include `LOW`/`OR` flags and the
+`vor`/`tor` values; the current `NVX_3D_RELOCATION` contains only BO id,
+BO-relative byte range, access, and command-word index. The existing NVX
+validator confirms that the patch word is a packet payload and the BO range
+belongs to the client, but it does not express whether or how that word is
+rewritten. A generic submit ABI must encode an explicit patch operation (or
+derive it from a kernel method table), validate it against the method and
+subchannel, then resolve it using the live allocation GPUVA. Copying only the
+current NVX fields would silently drop Nouveau's relocation semantics and is
+not a valid adapter.
 
 The translation is not yet implementable as a safe execution path with the
 current ABI. `Nvx3dValidateNvc0Batch()` checks packet framing and BO ownership,
