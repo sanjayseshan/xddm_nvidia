@@ -19,16 +19,16 @@ Verified SHA-256 values:
 NVIDIA-Linux-x86_64-535.113.01-no-compat32.run
 705ea3e47f31d49109f9d48e8057bcffaec0cfae70f62b7636a1d4e1d8cd4e78
 
-dist_full/gsp_ga104.bin
+../dist_full/gsp_ga104.bin
 e30231ec0d317021770e16c81ae2c0553f728d0344248827582f78132c9447d4
 
-src_driver/bootloader_535_113_01.bin
+../src_driver/bootloader_535_113_01.bin
 076d2a0675131ad8a8de215c611ce4271289adcc03e2cf39995f9b29079e2136
 
-src_driver/booter_load_535_113_01.bin
+../src_driver/booter_load_535_113_01.bin
 3ab46bf4c70d72e8fc89d98e6bdc9b83a61954a586629d26b8b5653a620237e0
 
-src_driver/booter_unload_535_113_01.bin
+../src_driver/booter_unload_535_113_01.bin
 09240c83595856a0fe70d2ab3ec7325455cd8adfc48ec7b47f6fced1e5431beb
 ```
 

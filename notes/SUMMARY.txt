@@ -1,16 +1,22 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 10, 2026 (safe-path boot after app-sized draw rejection diagnosis)
+Updated: November 11, 2026 (version 3.0.0.2, bridge-enabled hardware validation)
 
-Current Phase 2C status (verified November 10, 2026):
-- Latest safe-path full RTX 3070 run:
-  `test_logs/v3.0.0.1-20261110-145245.log`. Host tests, XP import/subsystem
-  audits, Mesa ICD build, bounded GPU probes, 2D operations, dual-head checks,
-  and clean guest shutdown passed. Firmware assertion count stayed at its
-  startup value of one, with no MMU or GR fault. The post-animation bridge
-  trace shows 103 callbacks and no new GPU batches because Antigravity's
-  632x453 viewport exceeds the guarded 64-tile limit. Result remains
-  `SOFTWARE_3D_ONLY`.
-- The one-large-draw experiment (`test_logs/v3.0.0.1-20261110-144802.log`) was
+Current Phase 2C status (verified November 11, 2026):
+- Version 3.0.0.2 full RTX 3070 run: `../test_logs/v3.0.0.2-20261111-101720.log`.
+  XP package/import checks and independent GR/2D probes passed. WGL bridge status
+  recorded 106 GPU batches and 104 validated NVC0-format color clears. The
+  632x453 full-target check passed, and the no-depth cube matched the software
+  reference (`reference_diff=0`). The depth-enabled cube still failed pixel
+  comparison (`reference_diff=11876`), so the suite correctly reported
+  `[OPENGL_RESULT] FAIL`. Firmware assertion count was one at startup; no MMU
+  fault was logged.
+- General OpenGL still uses Mesa softpipe, with an opt-in bridge for limited
+  draws. This is not a native NVC0 Gallium driver or full hardware ICD path.
+- Project-specific Mesa changes and XP shims remain outside the clean Mesa
+  submodule. All non-README project notes are now in `notes/`.
+
+Historical Phase 2C notes (November 10 and earlier):
+- The one-large-draw experiment (`../test_logs/v3.0.0.1-20261110-144802.log`) was
   reverted after repeated synchronous per-tile work grew assertions from one
   to five and faulted GR. Reusable application-sized targets and batched
   submission are required before retrying that workload.
@@ -18,29 +24,29 @@ Current Phase 2C status (verified November 10, 2026):
   and initialization failures are resolved. Antigravity initializes and
   renders, but through Mesa softpipe.
 - The Mesa submodule is pinned and XP compatibility changes live in the external
-  `mesa_patches/` directory. The x64 ICD/front-end imports and PE subsystem pass
+  `../mesa_patches/` directory. The x64 ICD/front-end imports and PE subsystem pass
   audits against the XP guest; the reported `qsort_s`/`GetTickCount64` imports
   are absent from the current package.
 - XP system WGL now initializes the ICD after the legacy XP metadata was aligned
   to interface `Version=2` and driver `DriverVersion=0x00010000` in both the
   display escape and registry. The trace in
-  `test_logs/v3.0.0.1-20261110-020644.log` records `DrvValidateVersion`,
+  `../test_logs/v3.0.0.1-20261110-020644.log` records `DrvValidateVersion`,
   `DrvSetCallbackProcs`, pixel-format callbacks, and `DrvSetContext`. The normal
   `wglCreateContext`/`wglMakeCurrent` path rendered 100 frames and read back
   center pixel `255,0,0` with `GL_NO_ERROR`. It reports Mesa `softpipe`, so
   rasterization remains CPU-based; this fixed ICD dispatch, not GPU acceleration.
 - Mesa's `DrvCreateContext` now initializes its screen lazily. The direct probe
-  in `test_logs/v3.0.0.1-20261110-015903.log` succeeded without explicit screen
+  in `../test_logs/v3.0.0.1-20261110-015903.log` succeeded without explicit screen
   initialization or an ICD `DrvSetPixelFormat` call. Before correcting the XP
   metadata, the `0x425` pixel format descriptor did not make WGL enter Mesa;
-  see `test_logs/v3.0.0.1-20261110-020217.log`.
+  see `../test_logs/v3.0.0.1-20261110-020217.log`.
 - The latest hardware test adds `NVX_3D_SUBMIT_DRAW_TRIANGLE`: XP uploaded a
   changed 3-vertex array to a separate GPU allocation and asked the miniport to
   rasterize it with kernel-owned C797 methods/shader state. The GPU readback
   partition was 288 drawn pixels and 736 white background pixels; fence 6
   completed, then the miniport advertised the verified client-triangle
   capability, confirmed by a follow-up caps query. Its log is
-  `test_logs/v3.0.0.1-20261110-023854.log`. The same run
+  `../test_logs/v3.0.0.1-20261110-023854.log`. The same run
   verified a 256-byte arbitrary upload with zero GPU readback mismatches and
   passed XP package audits and 2D checks. Startup firmware assertions remain
   at one; no MMU fault was reported.
@@ -49,14 +55,14 @@ Current Phase 2C status (verified November 10, 2026):
   (`NVX_MESA_APPLOCAL=1`). The full XP
   test rendered 100 cube frames, read back center pixel `255,0,0`, and reported
   no GL error. It reports `Mesa / softpipe` and is CPU rendering, not RTX
-  acceleration (`test_logs/v3.0.0.1-20261109-234722.log`). System32 remains
+  acceleration (`../test_logs/v3.0.0.1-20261109-234722.log`). System32 remains
   untouched.
 - The shared CE copy path enables multi-line DMA, and white clear/prefill
   verify all 1,024 pixels of the 64x16 target. The bounded triangle now uses
   three vertices with `TRIANGLES`; the prior four-vertex strip described a
   rectangle. The November 10 hardware run reports `[NVX_3D_RESULT] PASS`, with
   512 green RGB pixels and 512 white pixels and a completed fence; the boot
-  probe also verifies the triangle (`test_logs/v3.0.0.1-20261110-010419.log`).
+  probe also verifies the triangle (`../test_logs/v3.0.0.1-20261110-010419.log`).
   Shader green has zero alpha, which
   the verifier accounts for. Startup firmware assertion count is one; no MMU
   fault was reported. This validates the fixed kernel diagnostic, not general
@@ -65,7 +71,7 @@ Current Phase 2C status (verified November 10, 2026):
 - The Mesa-to-GPU bridge is now proven for a restricted color workload through
   the system XP WGL ICD. `DrvSetContext(HDC, ...)` supplies the current app HDC
   to the external Gallium bridge, resolving the earlier caps-escape failure.
-  `test_logs/v3.0.0.1-20261110-080311.log` shows the softpipe vbuf callback
+  `../test_logs/v3.0.0.1-20261110-080311.log` shows the softpipe vbuf callback
   submitting nine 64x16 tiles to C797. Fenced GPU readback verified 6,384
   green, 528 red, and 2,304 background pixels. `[MESA_TO_GPU_RESULT] PASS`
   confirms those pixels came from the GPU. The normal renderer still identifies
@@ -80,7 +86,7 @@ Current Phase 2C status (verified November 10, 2026):
 - The cube probe initially reported a false GPU pass because its local batch
   counter was reset while the ICD status counter was cumulative. The harness
   now compares the ICD count before and after the cube draw. Corrected run
-  `test_logs/v3.0.0.1-20261110-080658.log` reports `MESA_GPU_CUBE_RESULT FAIL`
+  `../test_logs/v3.0.0.1-20261110-080658.log` reports `MESA_GPU_CUBE_RESULT FAIL`
   with zero new batches after the depth fault, so the cube remains CPU-rendered.
 - Phase 2C remains incomplete: the external bridge supports only bounded
   flat-color triangles/quads and a small cube probe. Mesa continues to render
@@ -94,7 +100,7 @@ Current Phase 2C status (verified November 10, 2026):
   draw/pixel/fence path is verified on XP.
 
 Latest concrete references: `PHASE2C_MESA_EVALUATION.md`, `handoff.txt`, and
-`test_logs/v3.0.0.1-20261110-023854.log`.
+`../test_logs/v3.0.0.1-20261110-023854.log`.
 
 Hardware OpenGL roadmap — November 8, 2026:
 - Use the Mesa-backed architecture from the NullMoth macOS project as a model:
@@ -180,45 +186,45 @@ Hardware OpenGL roadmap — November 8, 2026:
 - v2.0.0.10 built and booted; RM rejected the error context-DMA with
   NV_ERR_INVALID_LIMIT because its inclusive limit is relative to the supplied
   offset. CE copy and both display heads passed, then the script sent ACPI
-  powerdown. Evidence: `test_logs/v2.0.0.10-20261109-115721.log`.
+  powerdown. Evidence: `../test_logs/v2.0.0.10-20261109-115721.log`.
 - v2.0.0.11 corrected that relative limit and allocated the context-DMA, but
   channel allocation returned NV_ERR_INVALID_ARGUMENT. The pinned OpenRM GSP
   path requires instance/RAMFC/USERD/method-buffer descriptors in the raw RPC,
   unlike NVK's host-RM API call. v2.0.0.12 restores those descriptors while
   retaining the error-DMA and USERD handles. Evidence:
-  `test_logs/v2.0.0.11-20261109-120007.log`.
+  `../test_logs/v2.0.0.11-20261109-120007.log`.
 - v2.0.0.12 allocated the channel and GR object and scheduled the channel, but
   context lookup still returned NV_ERR_INVALID_OBJECT and GR GP_GET remained
   zero. Both heads and the CE roundtrip passed, and XP received ACPI powerdown.
-  Evidence: `test_logs/v2.0.0.12-20261109-120339.log`.
+  Evidence: `../test_logs/v2.0.0.12-20261109-120339.log`.
 - v2.0.0.13 tests whether an explicit graphics TSG/context-share establishes
   the context that the bare-channel path lacked. TSG, context-share, channel,
   and graphics object allocations plus bind/schedule succeeded, but
   GET_CTX_BUFFER_INFO still returned 0x31 and GP_GET remained zero. Inspection
   then found the USERD write offset mismatch fixed in v2.0.0.14. Evidence:
-  `test_logs/v2.0.0.13-20261109-120717.log`.
+  `../test_logs/v2.0.0.13-20261109-120717.log`.
 - v2.0.0.14 corrected the USERD pointer. The guarded SET_OBJECT advanced
   GP_GET and was consumed with no RC fault; context-buffer lookup remains
   0x31, so this validates command fetch/object binding only, not a draw.
   Both heads and CE copy passed and XP received ACPI powerdown. OpenGL remains
   GDI Generic 1.1 and D3D9 returns 0x8876086A. Evidence:
-  `test_logs/v2.0.0.14-20261109-121042.log`.
+  `../test_logs/v2.0.0.14-20261109-121042.log`.
 - v2.0.0.15 confirmed SET_OBJECT + WAIT_FOR_IDLE were consumed with no RC
   fault. This still verifies command/object method dispatch, not rendering.
   Context-info query remains NV_ERR_INVALID_OBJECT; OpenGL is still GDI Generic
   1.1 and D3D9 remains 0x8876086A. CE copy, both displays and ACPI shutdown
-  passed. Evidence: `test_logs/v2.0.0.15-20261109-121445.log`.
+  passed. Evidence: `../test_logs/v2.0.0.15-20261109-121445.log`.
 - v2.0.0.16 allocated KERNEL_GRAPHICS_CONTEXT (class 0x90) successfully, but
   the channel's context-buffer query remains 0x31 and no rendering context is
   exposed. Both display heads and CE copy passed and XP received ACPI
   powerdown. OpenGL remains GDI Generic 1.1; D3D9 returns 0x8876086A. Evidence:
-  `test_logs/v2.0.0.16-20261109-121831.log`.
+  `../test_logs/v2.0.0.16-20261109-121831.log`.
 - v2.0.0.17 set internalFlags to ADMIN | CTXDMA error notifier | NONE ECC.
   Channel allocation, GP_GET, SET_OBJECT, and WAIT_FOR_IDLE remain successful;
   GET_CTX_BUFFER_INFO still returns 0x31. Both display heads and CE copy
   passed, and XP received ACPI powerdown. OpenGL remains GDI Generic 1.1 and
   D3D9 returns 0x8876086A. Evidence:
-  `test_logs/v2.0.0.17-20261109-122131.log`.
+  `../test_logs/v2.0.0.17-20261109-122131.log`.
 - v2.0.0.18 repeated GET_CTX_BUFFER_INFO after the GR FIFO advanced, testing
   whether context memory was simply created lazily. It still
   returned NV_ERR_INVALID_OBJECT (0x31). NVIDIA OpenRM source shows this status
@@ -229,7 +235,7 @@ Hardware OpenGL roadmap — November 8, 2026:
   split-RM stack. Both displays and CE copy
   passed; XP received ACPI powerdown. OpenGL remains GDI Generic 1.1 and D3D9
   returns 0x8876086A. Evidence:
-  `test_logs/v2.0.0.18-20261109-122758.log`.
+  `../test_logs/v2.0.0.18-20261109-122758.log`.
 - v2.0.0.19 successfully queried physical RM's static GR buffer requirements:
   main 0xFB000/0x1000 alignment, patch 0x5000/0x1000, bundle 0x3000/0x100,
   global pagepool 0x20000/0x100, attribute 0x851200/0x1000, RTV 0x80000/0x100,
@@ -241,7 +247,7 @@ Hardware OpenGL roadmap — November 8, 2026:
   too strong: it verifies FIFO progress only. Host tests passed, both display
   heads were active/locked, the CE roundtrip passed, and XP shut down through
   ACPI. OpenGL remains GDI Generic and D3D9 returns 0x8876086A. Evidence:
-  `test_logs/v2.0.0.19-20261109-123748.log`.
+  `../test_logs/v2.0.0.19-20261109-123748.log`.
 - v2.0.0.20 queried RM's PDB properties and static GR info, confirming that
   this GA104 needs 64 per-subcontext headers. Its proposed layout therefore
   grows the main context from 0xFB000 to 0x13B000 and fits eleven separate
@@ -253,7 +259,7 @@ Hardware OpenGL roadmap — November 8, 2026:
   also built with existing pointer-cast warnings. Both display links and the
   CE roundtrip passed, and XP received ACPI powerdown. OpenGL remains GDI
   Generic; D3D9 returns 0x8876086A. Evidence:
-  `test_logs/v2.0.0.20-20261109-124259.log`.
+  `../test_logs/v2.0.0.20-20261109-124259.log`.
 - v2.0.0.21 adds a probe-only, 12MB noncached common-buffer allocation below
   4GB and builds privileged coherent 4KB GPU PTEs at VA 0x10200000 before
   installing the page directory. The candidate 0xB54000-byte layout fits.
@@ -264,7 +270,7 @@ Hardware OpenGL roadmap — November 8, 2026:
   shut down via ACPI. Those checks do not access the new mapping: a dedicated
   guarded GPU read/write test and RM buffer promotion are still required.
   OpenGL remains GDI Generic; D3D9 returns 0x8876086A. Evidence:
-  `test_logs/v2.0.0.21-20261109-124651.log`.
+  `../test_logs/v2.0.0.21-20261109-124651.log`.
 - v2.0.0.22 added a guarded CE read/write test at both ends of every 2MB
   section of the new mapping. The first GPU read timed out: GP_GET advanced
   from 1 to 2 but the completion fence remained at the previous value. The CE
@@ -272,13 +278,13 @@ Hardware OpenGL roadmap — November 8, 2026:
   fell back. The test does not establish whether the fault was privilege,
   translation, or another channel issue; inspect MMU/channel fault state before
   changing the mapping. XP received ACPI powerdown. Host tests passed. Evidence:
-  `test_logs/v2.0.0.22-20261109-124902.log`.
+  `../test_logs/v2.0.0.22-20261109-124902.log`.
 - v2.0.0.23 repeated the first mapping read with CE fault diagnostics. GSP
   sent asynchronous event 0x1005 (MMU_FAULT_QUEUED), which the miniport's RPC
   reader did not recognize or consume, preventing the MMU fault-info reply
   from being read. Thus the fault address/type are not yet known. The CE
   timed out and native scanout fell back; XP received ACPI powerdown. Host
-  tests passed. Evidence: `test_logs/v2.0.0.23-20261109-125121.log`.
+  tests passed. Evidence: `../test_logs/v2.0.0.23-20261109-125121.log`.
 - v2.0.0.24 drains the 0x1005 notification, records the unhandled MMU fault,
   disables accelerated queues, and permits diagnostic/teardown RPCs to proceed.
   There is still no UVM fault handler. The CE reports fault address 0x10200000
@@ -287,14 +293,14 @@ Hardware OpenGL roadmap — November 8, 2026:
   state was 0xE and native scanout fell back. Host tests cover an event preceding
   an RM reply. The runner attempted ACPI shutdown but eventually issued QEMU
   quit because the guest did not exit. Evidence:
-  `test_logs/v2.0.0.24-20261109-125517.log`.
+  `../test_logs/v2.0.0.24-20261109-125517.log`.
 - v2.0.0.25 keeps the protected mapping at 0x10200000 and adds a probe-only,
   nonprivileged alias at 0x10E00000. The CE completed guarded read/write
   tests at both ends of each of the six 2MB alias page tables; CPU comparisons
   matched. This verifies the backing and alias only, not the protected mapping
   or GR execution. Both display links, CE smoke test, host tests and ACPI
   shutdown passed. OpenGL remains GDI Generic; D3D9 returns 0x8876086A.
-  Evidence: `test_logs/v2.0.0.25-20261109-125756.log`.
+  Evidence: `../test_logs/v2.0.0.25-20261109-125756.log`.
 - v2.0.0.26 adds an opt-in, isolated MAIN physical-initialization request via
   NVIDIA's GPU_PROMOTE_CTX control, using the alias-verified backing and the
   externally owned VA-space form (bInitialize and bNonmapped). GSP-RM replied
@@ -302,7 +308,7 @@ Hardware OpenGL roadmap — November 8, 2026:
   that a usable context exists. No GR methods were submitted. Host tests,
   bounded alias read/write tests, CE smoke test, both display links, and ACPI
   shutdown passed. OpenGL remains GDI Generic and D3D9 returns 0x8876086A.
-  Evidence: `test_logs/v2.0.0.26-20261109-130044.log`.
+  Evidence: `../test_logs/v2.0.0.26-20261109-130044.log`.
 - v2.0.0.27 extends the opt-in probe to initialize the seven applicable
   physical buffers and issue a separate VA-only GPU_PROMOTE_CTX request for
   all eleven layout entries, following the external-VASpace flow in OpenRM.
@@ -310,7 +316,7 @@ Hardware OpenGL roadmap — November 8, 2026:
   the replies alone do not prove context setup or engine execution. No GR
   methods were submitted. Alias read/write, CE smoke, both display links,
   host tests, and ACPI shutdown passed. OpenGL remains GDI Generic; D3D9
-  returns 0x8876086A. Evidence: `test_logs/v2.0.0.27-20261109-130322.log`.
+  returns 0x8876086A. Evidence: `../test_logs/v2.0.0.27-20261109-130322.log`.
 - v2.0.0.28 enabled an isolated GR semaphore-release probe after physical and
   VA promotion. GET_CTX_BUFFER_INFO now succeeds and reports seven buffers,
   including the 0x13B000 MAIN buffer: promotion established visible RM buffer
@@ -321,26 +327,26 @@ Hardware OpenGL roadmap — November 8, 2026:
   scanout and attempted to unschedule GR. Host tests passed. The runner tried
   ACPI powerdown, then issued QEMU quit when XP did not exit. No 3D draw or
   hardware OpenGL has been demonstrated. Evidence:
-  `test_logs/v2.0.0.28-20261109-130721.log`.
+  `../test_logs/v2.0.0.28-20261109-130721.log`.
 - v2.0.0.29 repeated the isolated submission with unprivileged context PTEs;
   the seven context descriptors were still reported, but GP_GET advanced and
   the GR fence stayed zero, followed by the same queued MMU notification and
   two firmware assertions. Thus removing the PTE privilege bit did not fix
   this GR failure. This opt-in diagnostic is not a production protection
   configuration. Host tests passed and the runner attempted ACPI shutdown.
-  Evidence: `test_logs/v2.0.0.29-20261109-131017.log`.
+  Evidence: `../test_logs/v2.0.0.29-20261109-131017.log`.
 - v2.0.0.30 queried GSP fault-buffer requirements: non-replayable buffer
   0x120C20 bytes, replayable 0x31000 bytes, both with zero metadata. GR
   promotion and the isolated CE alias test passed, both display links were
   active and locked, and XP completed the test session after ACPI powerdown.
   GR submission remained disabled; hardware OpenGL is not yet available.
-  Evidence: `test_logs/v2.0.0.30-20261109-131220.log`.
+  Evidence: `../test_logs/v2.0.0.30-20261109-131220.log`.
 - v2.0.0.32 registered a manual non-replayable shadow queue through the
   NVIDIA internal GMMU control. Registration returned NV_OK, but the queue
   remained empty (GET=PUT=0) after the GR MMU-fault event. The miniport has no
   UVM mapping/handler, so the fault still disabled acceleration and scanout
   verification failed in that run; the runner tried ACPI then quit QEMU.
-  Evidence: `test_logs/v2.0.0.32-20261109-132458.log`.
+  Evidence: `../test_logs/v2.0.0.32-20261109-132458.log`.
 - v2.0.0.33-36 followed NVIDIA's Linux `nvGpuOpsInitFaultInfo` sequence:
   query GPU class list, allocate its advertised fault-buffer resource, then
   register non-replayable faults. GA104 advertises `0xC369`, but direct GSP-RM
@@ -351,37 +357,37 @@ Hardware OpenGL roadmap — November 8, 2026:
   fault reporting cannot be established. The latest test kept both display
   heads active/locked and GPU copy verified, and completed ACPI shutdown; it
   did not verify hardware OpenGL. Evidence:
-  `test_logs/v2.0.0.36-20261109-133604.log`.
+  `../test_logs/v2.0.0.36-20261109-133604.log`.
 - v2.0.0.37-38 isolated C369 allocation parameters and parent: the C369
   object allocates successfully with a zero-byte parameter block and the GPU
   subdevice as parent. NVIDIA's `GET_SIZE` reports the replayable hardware
   ring (0x31000), distinct from the 0x120C20 non-replayable shadow size.
-  Evidence: `test_logs/v2.0.0.38-20261109-133929.log`.
+  Evidence: `../test_logs/v2.0.0.38-20261109-133929.log`.
 - v2.0.0.39 sent the Linux NVC369 non-replay registration command as a GSP
   RPC. It timed out and subsequent GSP controls stopped responding, so this
   is not a valid direct-GSP path. The test completed ACPI powerdown, but display
   verification was unavailable. Evidence:
-  `test_logs/v2.0.0.39-20261109-134028.log`.
+  `../test_logs/v2.0.0.39-20261109-134028.log`.
 - v2.0.0.40 combines the working C369 object with the accepted internal GMMU
   shadow-buffer registration. Both controls return NV_OK, but the queue is
   still empty after the GR fault (GET=PUT=0). The fault still disables queues
   and the display path; the runner attempted ACPI powerdown. This narrows the
   remaining issue to how Linux's client queue is mapped/attached or to the
   underlying GR fault source. Evidence:
-  `test_logs/v2.0.0.40-20261109-134249.log`.
+  `../test_logs/v2.0.0.40-20261109-134249.log`.
 - v2.0.0.41 changed the shadow-buffer common allocation to cached memory to
   match NVIDIA RM. The queue remained empty; this did not resolve the GR fault.
   v2.0.0.42 queried B069 READ_GET/READ_PUT after a fault; GSP-RM returned
   NV_ERR_NOT_SUPPORTED (0x56) for both. Evidence:
-  `test_logs/v2.0.0.41-20261109-134429.log` and
-  `test_logs/v2.0.0.42-20261109-134616.log`.
+  `../test_logs/v2.0.0.41-20261109-134429.log` and
+  `../test_logs/v2.0.0.42-20261109-134616.log`.
 - v2.0.0.43 queried B069 GET_REGISTER_MAPPINGS. Unlike READ_GET/READ_PUT,
   GSP-RM accepted the query and returned non-replay GET/PUT register offsets
   0x4183008/0x418300C, and replayable offsets 0x4183028/0x418302C. This makes
   a bounded BAR0 read possible for the next probe. The GR submission still
   causes a firmware/MMU fault, disables accelerated queues, and leaves display
   hardware verification unavailable. The VM completed ACPI powerdown.
-  Evidence: `test_logs/v2.0.0.43-20261109-135317.log`.
+  Evidence: `../test_logs/v2.0.0.43-20261109-135317.log`.
 - v2.0.0.44 bounds the returned mapping addresses against BAR0 before reading.
   The GSP returned 0x04183008/0x0418300C, but this device exposes only a 16 MiB
   BAR0, so those returned pointers cannot be dereferenced as BAR0 offsets. The
@@ -389,43 +395,43 @@ Hardware OpenGL roadmap — November 8, 2026:
   display-hardware verification; the VM completed ACPI shutdown. Next, probe
   only documented physical MMU fault registers using OpenRM's
   `NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET` plus the register offsets.
-  Evidence: `test_logs/v2.0.0.44-20261109-135622.log`.
+  Evidence: `../test_logs/v2.0.0.44-20261109-135622.log`.
 - v2.0.0.45 read the documented Turing/Ampere physical virtual-function
   registers directly at `NV_VIRTUAL_FUNCTION_FULL_PHYS_OFFSET` plus the
   per-buffer offsets. Non-replay GET=PUT=1 and replay GET=PUT=0, while the
   client shadow queue remains empty. The GSP MMU notification therefore still
   does not yield a packet to XP. Evidence:
-  `test_logs/v2.0.0.45-20261109-140130.log`.
+  `../test_logs/v2.0.0.45-20261109-140130.log`.
 - v2.0.0.46 split the queue structure and packet pages into separate cached
   common buffers, matching NVIDIA RM's allocation layout. The queue stayed
   empty and the GR submission still faulted. Teardown now frees both buffers
   with the same cache setting used at allocation. Evidence:
-  `test_logs/v2.0.0.46-20261109-140625.log`.
+  `../test_logs/v2.0.0.46-20261109-140625.log`.
 - v2.0.0.47 changed the GR report semaphore from the deliberately
   unprivileged CE test alias to the privileged GR context VA. The same MMU
   notification, empty shadow queue, and two new firmware assertions remained;
   the fence did not complete. This rules out that address alias as the sole
   cause. The VM completed ACPI powerdown. Evidence:
-  `test_logs/v2.0.0.47-20261109-141020.log`.
+  `../test_logs/v2.0.0.47-20261109-141020.log`.
 - v2.0.0.48 reduced the pushbuffer to SET_OBJECT alone. PBDMA fetched it,
   CHRAM slot 2 became 0xC6 (the GR channel was resident), and there was no
   MMU-queued notification or new GSP assertion. The report fence remained
   untouched as expected. This isolates the fault to a later GR method in the
   v47 sequence. The VM completed the test suite and ACPI powerdown; no display
   hardware verification was recorded. Evidence:
-  `test_logs/v2.0.0.48-20261109-141252.log`.
+  `../test_logs/v2.0.0.48-20261109-141252.log`.
 - v2.0.0.49 added the side-effect-free WAIT_FOR_IDLE method after SET_OBJECT.
   PBDMA fetched both methods and GR remained resident in CHRAM slot 2, with no
   new MMU notification or firmware assertion. Thus the fault is isolated to
   the report-semaphore method/address path. This is still only command-fetch
   evidence: no GR completion fence, draw, or hardware OpenGL has succeeded.
-  Evidence: `test_logs/v2.0.0.49-20261109-141432.log`.
+  Evidence: `../test_logs/v2.0.0.49-20261109-141432.log`.
 - v2.0.0.50 restored the report-semaphore method but targeted the naturally
   aligned first word of the same promoted GR context allocation (v47 had used
   a word at +4). The command was fetched, but the fence stayed zero and the
   run queued an MMU notification plus two firmware assertions. Alignment alone
   is not the cause. The test completed ACPI powerdown; display hardware was
-  not verified. Evidence: `test_logs/v2.0.0.50-20261109-141950.log`.
+  not verified. Evidence: `../test_logs/v2.0.0.50-20261109-141950.log`.
 - v2.0.0.51 kept the legacy C797 report-semaphore sequence but pointed it at
   an aligned word in the shared scratch VA already used by the working CE
   path. The fence still did not change; an MMU notification and two GSP
@@ -433,7 +439,7 @@ Hardware OpenGL roadmap — November 8, 2026:
   backing. The pinned C797 header also defines the newer A/B/C/D report method
   family at 0x1B00–0x1B0C, which v52 will test separately. ACPI powerdown
   completed; no display verification was recorded. Evidence:
-  `test_logs/v2.0.0.51-20261109-142218.log`.
+  `../test_logs/v2.0.0.51-20261109-142218.log`.
 - v2.0.0.52 switched to C797's newer A/B/C/D report-semaphore methods and
   removed the MMU notification, but the GR fence remained zero and two GSP
   assertions were reported. Mesa NVK's command documentation shows A receives
@@ -442,25 +448,25 @@ Hardware OpenGL roadmap — November 8, 2026:
   links remained active in the log, and the test recorded CE copy completion
   plus 2D solid-fill submissions. Those results do not establish a successful
   GR draw or hardware OpenGL. Evidence:
-  `test_logs/v2.0.0.52-20261109-142442.log`.
+  `../test_logs/v2.0.0.52-20261109-142442.log`.
 - v2.0.0.53 corrected the A/B/C/D address encoding to raw low 32 bits, matching
   Mesa NVK's documented packet example. The fence remained zero and two GSP
   assertions remained, but no MMU notification occurred. Both display heads
   remained active in the log; the test again recorded CE completion and 2D
   fill submissions, not a successful GR draw. ACPI powerdown completed.
-  Evidence: `test_logs/v2.0.0.53-20261109-142644.log`.
+  Evidence: `../test_logs/v2.0.0.53-20261109-142644.log`.
 - v2.0.0.54 added C797 MME `METHOD_TRACK_WITH_FILTER` before the report
   semaphore, following Mesa NVK's sanity sequence. The fence still stayed zero
   and the same two GSP assertions occurred, without an MMU notification. The
   VM shut down through ACPI; CE completion and 2D solid-fill submissions were
   logged. This does not confirm GR rendering. Evidence:
-  `test_logs/v2.0.0.54-20261109-142826.log`.
+  `../test_logs/v2.0.0.54-20261109-142826.log`.
 - v2.0.0.55 kept the Mesa-style MME mode and A/B/C semaphore setup but omitted
   the side-effecting D release method. Two assertions still occurred and the
   fence stayed zero, showing that the assertion starts during A/B/C setup, not
   at the release. No MMU notification was logged; the VM completed ACPI
   powerdown and retained the existing 2D/copy results. Evidence:
-  `test_logs/v2.0.0.55-20261109-142959.log`.
+  `../test_logs/v2.0.0.55-20261109-142959.log`.
 - v2.0.0.56 submitted only C797 semaphore method A (upper address) after the
   known-good SET_OBJECT/WAIT_FOR_IDLE pair. The same two assertions appeared;
   method A alone is sufficient to trigger them. The fence stayed zero, no MMU
@@ -468,7 +474,7 @@ Hardware OpenGL roadmap — November 8, 2026:
   the boundary to C797 report-semaphore method dispatch, but the GSP shared-data
   callback exposes only an assertion count. Next, query OpenRM's NOCAT journal
   for the assertion source instead of guessing at further packet changes.
-  Evidence: `test_logs/v2.0.0.56-20261109-143219.log`.
+  Evidence: `../test_logs/v2.0.0.56-20261109-143219.log`.
 - v2.0.0.58 successfully queried OpenRM's NOCAT journal after the method-A
   assertion. It returned a GR engine record (`source=GR`, error `0xB`), a
   generic exception record, and an assertion record whose firmware-relative
@@ -476,7 +482,7 @@ Hardware OpenGL roadmap — November 8, 2026:
   line-number field and rendered its call-stack diagnostic as bytes; v59 will
   log the complete 64-bit error code, load base, and stack words. The tested
   VM reached XP on retry 2 and then completed ACPI powerdown. Evidence:
-  `test_logs/v2.0.0.58-20261109-143819.log`.
+  `../test_logs/v2.0.0.58-20261109-143819.log`.
 - v2.0.0.59 expanded the NOCAT output. The assertion has a 64-bit code
   `0x00000000015BD50C` (line number zero, load base zero, no captured stack).
   The journal also reports a GR engine record with code `0xB` and a generic
@@ -485,13 +491,13 @@ Hardware OpenGL roadmap — November 8, 2026:
   below 4 GB, v60 will omit semaphore method A and test B/C/D directly. The
   VM completed ACPI powerdown; both heads remained active and CE/2D fill
   submissions were logged. Evidence:
-  `test_logs/v2.0.0.59-20261109-144043.log`.
+  `../test_logs/v2.0.0.59-20261109-144043.log`.
 - v2.0.0.60 omitted method A and issued B/C/D using the default zero upper
   address. It produced the same assertion address and GR engine error as v56,
   so method A is not the root cause. Both display heads remained active, the
   CE copy-completion result passed, and 2D fill submissions were logged; GR
   execution remained unverified. The test completed ACPI powerdown. Evidence:
-  `test_logs/v2.0.0.60-20261109-144328.log`.
+  `../test_logs/v2.0.0.60-20261109-144328.log`.
 - v2.0.0.61 identified the root cause of the firmware assertion in v50-v60:
   in NVIDIA Host/PBDMA DMA format (`NVC56F_DMA_INCR_ADDRESS` bits 11:0), method
   addresses are dword-addressed (`method_byte_offset >> 2`), as documented in
@@ -508,7 +514,7 @@ Hardware OpenGL roadmap — November 8, 2026:
   executed the pushbuffer, wrote back all 16 dwords into coherent scratch memory with an
   exact match, and released the completion semaphore with intact memory guards and zero
   firmware assertions or MMU faults (`GR RESULT: graphics pipeline data write and semaphore completed successfully!`).
-  Evidence: `test_logs/v2.0.0.62-20261109-152545.log`.
+  Evidence: `../test_logs/v2.0.0.62-20261109-152545.log`.
 - v2.0.0.63 extended the real-hardware GR probe with an RM-promoted block-linear
   A8R8G8B8 color target, surface clip/clear state, `CLEAR_SURFACE`, and a C797
   completion semaphore. The RTX 3070 completed I2M writes and the clear; the
@@ -518,7 +524,7 @@ Hardware OpenGL roadmap — November 8, 2026:
   command execution, memory writes, and a surface-clear operation, not triangle
   rasterization, rendered-pixel readback, OpenGL, or an ICD. The probe is still
   initialization-time diagnostic code, not a user-mode submission interface.
-  Evidence: `test_logs/v2.0.0.63-20261109-174147.log`.
+  Evidence: `../test_logs/v2.0.0.63-20261109-174147.log`.
 
 ### XP x64 hardware OpenGL: next implementation stage
 - Build a minimal GR draw/readback path before integrating Mesa: initialize a
@@ -555,7 +561,7 @@ Hardware OpenGL roadmap — November 8, 2026:
   count remained one and there was no queued MMU fault. The refreshed test
   binary reported GDI Generic / OpenGL 1.1 and `[OPENGL_RESULT] SOFTWARE`.
   Allocation, user submission, and fence wait remain unsupported; Phase 2A is
-  incomplete. Evidence: `test_logs/v2.0.0.64-20261109-184530.log`.
+  incomplete. Evidence: `../test_logs/v2.0.0.64-20261109-184530.log`.
 - v2.0.0.65 fills the ABI's max push dword and max allocation size fields and
   updates the test runner to rebuild/deploy the current x64 diagnostic, then
   print its OpenGL renderer classification. Host ABI tests validate these caps.
@@ -567,21 +573,21 @@ Hardware OpenGL roadmap — November 8, 2026:
   ABI cross-compiles and GSP/CE mocks. The full rootless RTX 3070 run reports
   caps `0x1F`, allocates buffer id 2 at `0x22E20000`, submits fence 2, observes
   completion, frees the allocation, and prints `[NVX_3D_RESULT] PASS` in
-  `test_logs/v2.0.0.66-20261109-191100.log`. The in-kernel GR clear/semaphore
+  `../test_logs/v2.0.0.66-20261109-191100.log`. The in-kernel GR clear/semaphore
   probe also succeeds; the log records one startup firmware assertion and no
   queued MMU fault. OpenGL remains `[OPENGL_RESULT] SOFTWARE`; this is the
   miniport resource/submission foundation, not an ICD or triangle renderer.
   Phase 2B is next: hardware triangle draw plus rendered-pixel readback.
 - v2.0.0.67 extends the isolated GR probe to copy the complete 4KB block-linear
   clear target through the verified CE path and verify all 1024 words. The
-  rootless hardware run `test_logs/v2.0.0.67-20261109-192403.log` confirms the
+  rootless hardware run `../test_logs/v2.0.0.67-20261109-192403.log` confirms the
   target readback, the Phase 2A ABI `[NVX_3D_RESULT] PASS`, and unchanged dual-head
   display verification; OpenGL still reports SOFTWARE. The test runner now
   recognizes the readback log marker. This verifies clear-surface pixel memory,
   not triangle rasterization. Triangle shaders are the remaining Phase 2B gate.
 - v3.0.0.1 carries the completed Phase 2A ABI and readback implementation onto
   master. Commit `f4a15f0` completes the Phase 2B hardware triangle diagnostic:
-  the run `test_logs/v3.0.0.1-20261109-195815.log` reads back 960 black triangle
+  the run `../test_logs/v3.0.0.1-20261109-195815.log` reads back 960 black triangle
   pixels against 64 white background pixels, with the semaphore complete and
   display/2D checks passing. The run reports one startup firmware assertion;
   no new assertion or MMU fault was reported for the draw. `[OPENGL_RESULT]
@@ -589,8 +595,8 @@ Hardware OpenGL roadmap — November 8, 2026:
   than a user-mode OpenGL draw path.
 - Phase 2C update (November 9, 2026): Mesa is pinned at
   `cc2dcf9abdc6afc093e85d48e4cfa34eed60a01e`; customizations live in
-  `mesa_patches/0001-xp-win32-shims.patch`, applied by
-  `test/apply_mesa_xp_patches.sh`, keeping the submodule itself pristine. The
+  `../mesa_patches/0001-xp-win32-shims.patch`, applied by
+  `../test/apply_mesa_xp_patches.sh`, keeping the submodule itself pristine. The
   XP-targeted Windows x64 `softpipe` WGL build completed all 876 targets. The
   resulting DLL imports only GDI32, KERNEL32, msvcrt, and USER32, and Wine
   loaded it and resolved the required ICD entry points. This proves XP-era
@@ -624,8 +630,8 @@ port/adaptation. See NullMoth's [driver overview](https://github.com/nullmoth/nv
   passed; the XP VM booted, verified CE copy and both display links, and
   shut down after ACPI powerdown. No shadow buffer has been registered yet;
   the large RPC was tested on the host, not sent to GSP in this run.
-  Evidence: `test_logs/v2.0.0.31-20261109-131549.log`.
-- Latest confirmed XP log before v2.0.0.11: `test_logs/v2.0.0.9-20261109-114617.log`.
+  Evidence: `../test_logs/v2.0.0.31-20261109-131549.log`.
+- Latest confirmed XP log before v2.0.0.11: `../test_logs/v2.0.0.9-20261109-114617.log`.
   GSP-RM init, verified CE copy, and active/locked dual heads passed. The
   direct GR channel allocated and fetched SET_OBJECT, then faulted with
   ROBUST_CHANNEL_PBDMA_ERROR (0x20); GET_CTX_BUFFER_INFO returned
@@ -638,11 +644,11 @@ port/adaptation. See NullMoth's [driver overview](https://github.com/nullmoth/nv
   Microsoft GDI Generic 1.1 and D3D9 returns 0x8876086A. The 2D test reports
   PASS but its printed readback has black=0xFFFFFF and white=0x000000, so its
   pixel verification is contradictory and should not be counted as confirmed.
-  Evidence: `test_logs/v2.0.0.8-20261109-112424.log`.
-- Evidence: `test_logs/v2.0.0.3-20261108-223756.log` verifies both heads and CE
-  remained active with the GR TSG path. `test_logs/v2.0.0.4-20261108-224047.log`
+  Evidence: `../test_logs/v2.0.0.8-20261109-112424.log`.
+- Evidence: `../test_logs/v2.0.0.3-20261108-223756.log` verifies both heads and CE
+  remained active with the GR TSG path. `../test_logs/v2.0.0.4-20261108-224047.log`
   reproduces the GR fault; RM's optional context-buffer-size control returns
-  NV_ERR_INVALID_OBJECT. `test_logs/v2.0.0.4-20261108-225022.log` ends before
+  NV_ERR_INVALID_OBJECT. `../test_logs/v2.0.0.4-20261108-225022.log` ends before
   display verification after an oversized context-buffer-info request; that
   request was removed because the XP RPC encoder supports at most 4016 bytes.
   v2.0.0.6 adds multi-element GSP-RPC encoding (up to the existing 16-element
@@ -653,13 +659,13 @@ port/adaptation. See NullMoth's [driver overview](https://github.com/nullmoth/nv
   produced no XP serial output. The unresolved task is to learn whether GSP-RM
   creates/initializes the GR context, then use RM's supported path to make its
   context valid before submitting engine methods.
-- `NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 ./test/test_full_driver.sh` now
+- `NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 ./../test/test_full_driver.sh` now
   installs/builds the probe and uses the XP x64 VFIO autoretry launcher. The
   launcher recognizes `[TEST_COMPLETE]` and sends ACPI powerdown.
 
 XP x86 graphics audit and performance — November 8, 2026:
 - Compared against the user-identified last x64 log,
-  test_logs/xp_v2_20261108-161607.log, and saved x64 guest test_accel.log.
+  ../test_logs/xp_v2_20261108-161607.log, and saved x64 guest test_accel.log.
   They report Microsoft GDI Generic / OpenGL 1.1, not hardware 3D. The saved
   guest file also records D3D9 device creation failure 0x8876086A.
 - Corrected test_gpu_accel.c: fixed reversed black/white sample coordinates,
@@ -684,9 +690,9 @@ XP x86 graphics audit and performance — November 8, 2026:
   suites pass. Software OpenGL rendered/presented 100 frames (869.6 FPS in
   this short test), no GL errors. D3D9 still fails with 0x8876086A. These are
   single-run GDI/application timings, not pure CE bandwidth or hardware 3D.
-  Evidence: test_logs/xp32-graphics-row-compare.log (vm_serial.log target).
+  Evidence: ../test_logs/xp32-graphics-row-compare.log (vm_serial.log target).
 - One-time test deployment and post-shutdown collection are provided by
-  test/deploy_xp32_graphics_tests.sh and test/collect_xp32_graphics_results.sh.
+  ../test/deploy_xp32_graphics_tests.sh and ../test/collect_xp32_graphics_results.sh.
   vm_serial.log points to each active audit log; collected file logs include
   wglgears renderer/FPS and exit codes. Existing driver/VM serial logging is
   used; no COM1 code was added to gears.
@@ -709,7 +715,7 @@ XP x86 investigation — November 8, 2026:
 - The primary MAP_VIDEO_MEMORY path now commits x86 native scanout after
   mapping, rejects failed commits, and avoids issuing VBE mode ID zero for
   modes generated without BIOS enumeration.
-- test_logs/xp32-native-commit.log verifies both heads active and link-locked,
+- ../test_logs/xp32-native-commit.log verifies both heads active and link-locked,
   completed display notifiers, primary 1920x1080/pitch7680, secondary
   2560x1440/pitch10240, and desktop GPU uploads. The user subsequently
   confirmed "both monitors good": correct appearance on both displays in the
@@ -733,7 +739,7 @@ v2.0.0.3 XP 32-BIT BRINGUP & UPSTREAM ADVANCEMENTS:
 
 CONFIRMED v2.0.0.2 UPSTREAM INTEGRATION RESULTS:
 - Integrated NVIDIA's official `open-gpu-kernel-modules` (tracking 535.113.01) as a git submodule.
-- Created `src_driver/include/nvx_nvidia_open_shim.h` utilizing official NVIDIA SDK headers
+- Created `../src_driver/include/nvx_nvidia_open_shim.h` utilizing official NVIDIA SDK headers
   (`clc57e.h`, `cla06f.h`, `clc36f.h`, `ctrl0073.h`, `ctrl0080.h`, `ctrl2080.h`, `ctrl5070system.h`)
   and published swref headers (`dev_gsp.h`, `dev_falcon_v4.h`, `dev_disp.h`, `dev_sec_pri.h`, `dev_riscv_pri.h`).
 - Completed 3-step bringup transitioning GPU init to upstream NVIDIA OpenRM:
@@ -742,7 +748,7 @@ CONFIRMED v2.0.0.2 UPSTREAM INTEGRATION RESULTS:
   * Step 3: Upstream GSP booter sequence and BIT/Falcon table parser with RSA-3K BCRT30 structures.
 - Tested and verified each step on bare-metal RTX 3070 VFIO in Windows XP x64 with clean ACPI soft shutdowns (`system_powerdown`).
 - Eliminated raw magic numbers and hardcoded control hex constants in `nvx_gsp.c` and `nvx_vbios.c`.
-- Generated `src_driver/include/nvx_gpu_table.h` from official upstream `g_nv_name_released.h`
+- Generated `../src_driver/include/nvx_gpu_table.h` from official upstream `g_nv_name_released.h`
   supporting 216 modern NVIDIA GPUs with authentic PCI Device ID and device name lookup.
 - Implemented dynamic EDID detailed timing and resolution generation on both primary and secondary
   heads, replacing hardcoded resolution lists.
@@ -943,7 +949,7 @@ the user confirmed the desktop appears normal during the physical v165 test.
 GDI drawing is still mostly software-rendered on the CPU.
 
 Current confirmed 2D path: v166 batches full-width, tightly packed PATCOPY
-rows into fewer CE submissions. The log `test_logs/v166-20261103-170750.log`
+rows into fewer CE submissions. The log `../test_logs/v166-20261103-170750.log`
 shows both heads active at 1920x1080 and 2560x1440, 378 GPU fill submissions,
 and a full-screen 14.7 MB fill completed as one submission. The user reports
 correct resolution with slight desktop artifacts remaining. Batching is
@@ -951,7 +957,7 @@ exercised; its performance benefit has not been measured.
 
 The v167 experiment added same-PDEV 32-bit GPU `CopyBits` with fallbacks for
 clipped, translated, and unsafe overlapping copies. The log
-`test_logs/v167-20261103-171423.log` reached native 1920x1080 and 2560x1440
+`../test_logs/v167-20261103-171423.log` reached native 1920x1080 and 2560x1440
 output and recorded 10,000 GPU copy submissions. The user saw orange
 rectangles while dragging windows, so v167 is not accepted as a clean desktop
 build.
@@ -963,7 +969,7 @@ spans to the active framebuffer, and falls back to GDI for smaller, overlapping,
 clipped, or translated operations. It snapshots source pixels so the GDI
 fallback retains the original source if submission fails. A host GSP test
 checks emitted pitches, line size, and count. The display miniport and host
-test suite build successfully. The user-run log `test_logs/v168-20261103-172522.log`
+test suite build successfully. The user-run log `../test_logs/v168-20261103-172522.log`
 shows GSP RM INIT_DONE, both heads active and four-lane link-locked at
 1920x1080 and 2560x1440, and successful GPU solid-fill activity. It contains no
 GPU CopyBits submissions, so this run did not exercise the new copy path. The
@@ -1095,14 +1101,14 @@ checksums are in FIRMWARE_PROVENANCE.md.
 
 ### v2.0.0 Architecture & Test Consolidation
 1. **Root Directory Cleanup & Test Directory Consolidation**:
-   - All test runners, disk image updaters, and host VFIO management scripts have been moved to `test/`:
-     - `test/run_all_tests.sh`: Unified runner for unit tests and 64-bit / 32-bit builds.
-     - `test/test_full_driver.sh`: End-to-end integration and verification harness.
-     - `test/run_vfio_xp_autoretry.sh` / `test/run_vfio_win98_autoretry.sh`: Auto-retry VM runners with serial monitoring.
-     - `test/run_vfio_vm.sh` / `test/run_vfio_vm_win98.sh`: VFIO passthrough QEMU scripts.
-     - `test/update_disk_driver_user.sh` / `test/update_win98_driver.sh` / `test/update_xp_driver.sh`: Disk updaters.
-     - `test/setup-vfio.sh` / `test/switch-gpu.sh` / `test/dynamic_vfio_switch.sh` / `test/capture_vbios.sh`: Host VFIO tools.
-     - `test/reset_test_gpu.sh`: PCI subordinate bridge reset utility.
+   - All test runners, disk image updaters, and host VFIO management scripts have been moved to `../test/`:
+     - `../test/run_all_tests.sh`: Unified runner for unit tests and 64-bit / 32-bit builds.
+     - `../test/test_full_driver.sh`: End-to-end integration and verification harness.
+     - `../test/run_vfio_xp_autoretry.sh` / `../test/run_vfio_win98_autoretry.sh`: Auto-retry VM runners with serial monitoring.
+     - `../test/run_vfio_vm.sh` / `../test/run_vfio_vm_win98.sh`: VFIO passthrough QEMU scripts.
+     - `../test/update_disk_driver_user.sh` / `../test/update_win98_driver.sh` / `../test/update_xp_driver.sh`: Disk updaters.
+     - `../test/setup-vfio.sh` / `../test/switch-gpu.sh` / `../test/dynamic_vfio_switch.sh` / `../test/capture_vbios.sh`: Host VFIO tools.
+     - `../test/reset_test_gpu.sh`: PCI subordinate bridge reset utility.
    - The root directory now contains only core repository assets and build trees.
 
 2. **Windows 98 SE VM Failure Analysis & Fixes**:
@@ -1113,7 +1119,7 @@ checksums are in FIRMWARE_PROVENANCE.md.
 
 3. **OpenRM Integration & `nvx_gsp.c` Modularization**:
    - Upstream `open-gpu-kernel-modules` relies on a monolithic 1M-line Linux kernel framework that cannot be linked into 16-bit/32-bit Windows 98 VxDs or Windows XP XDDM miniports without an OS adaptation layer.
-   - `src_driver/nvx_openrm_shim.c` and official OpenRM headers (`msgq.c`, `gsp_fw_wpr_meta.h`, `nvtypes.h`) provide hardware register access, doorbell notifications, and Falcon booter execution.
+   - `../src_driver/nvx_openrm_shim.c` and official OpenRM headers (`msgq.c`, `gsp_fw_wpr_meta.h`, `nvtypes.h`) provide hardware register access, doorbell notifications, and Falcon booter execution.
    - Refactoring roadmap for `nvx_gsp.c`: separate monolithic RPC and channel code into clean logical modules (`nvx_ce.c` for 2D Copy Engine acceleration, `nvx_disp_rpc.c` for display scanout, and `nvx_gsp.c` for core bootstrap) using official upstream SDK data structures.
 
 Phase 2C hardware bridge update (November 10, 2026): the system XP WGL ICD now
@@ -1122,7 +1128,7 @@ callback into the NVX miniport. The miniport clears a target once, submits
 preserve-target C797 draws with kernel-owned shader/method state, and fences
 each draw. Mesa reads back the target through CE, copies GPU pixels into the
 softpipe color tile, and skips software rasterization for the intercepted
-batch. RTX 3070 run `test_logs/v3.0.0.1-20261110-035522.log` reports
+batch. RTX 3070 run `../test_logs/v3.0.0.1-20261110-035522.log` reports
 `[MESA_TO_GPU_RESULT] PASS` and `[MESA_GPU_PIXEL_RESULT] PASS` with 156 green,
 156 red, and 712 black pixels from two `GL_QUADS`. The fixed triangle
 diagnostic, 2D, dual-head display, and XP import checks passed; firmware
@@ -1132,13 +1138,13 @@ This remains a restricted draw path. Mesa reports `softpipe`; the normal cube
 and depth-tested draws remain on the CPU, as do clears and unsupported state.
 The GPU target is 64x16, colors must be flat within each triangle, and the
 kernel still supplies a fixed shader. Mesa customizations remain external in
-`mesa_patches/`, with the submodule clean at its pinned revision after builds.
+`../mesa_patches/`, with the submodule clean at its pinned revision after builds.
 Continue toward normal viewport sizes, depth/state and shader support, and
 GPU-backed presentation before considering Phase 2C complete.
 
 
 Latest Phase 2C verification (November 10, 2026):
-`test_logs/v3.0.0.1-20261110-041843.log` verifies the two-quad Mesa bridge, a
+`../test_logs/v3.0.0.1-20261110-041843.log` verifies the two-quad Mesa bridge, a
 bounded project cube batch, and subsequent fixed/client-triangle C797 readback.
 A stale red texel from the cube was eliminated by invalidating the shared
 shader texture cache between texel updates. `[NVX_3D_RESULT] PASS`; the overall
@@ -1148,7 +1154,7 @@ checks pass; startup assertions remain one and there are no MMU faults.
 
 
 Latest Phase 2C hardware verification (November 10, 2026):
-`test_logs/v3.0.0.1-20261110-043538.log` verifies a 576x16 Mesa draw rendered
+`../test_logs/v3.0.0.1-20261110-043538.log` verifies a 576x16 Mesa draw rendered
 across nine 64x16 GPU tiles, including clipped triangles crossing tile edges.
 GPU readback found 6,384 green pixels across all tiles, 528 red pixels in the
 last tile, and 2,304 black pixels. The bounded cube probe submits a GPU batch;
@@ -1161,7 +1167,7 @@ assertion and no MMU faults. Mesa remains clean at its pinned revision.
 Latest Phase 2C depth investigation (November 10, 2026): the XP x64 Mesa
 27.0.0-devel build succeeds with the external patches and
 `min-windows-version=5`; XP x64 import/subsystem audits pass, and the Mesa
-submodule is clean. Run `test_logs/v3.0.0.1-20261110-062947.log` passes the
+submodule is clean. Run `../test_logs/v3.0.0.1-20261110-062947.log` passes the
 nine-tile Mesa color bridge, fixed C797 triangle, 2D, and dual-head checks.
 Depth CE roundtrip has zero mismatches, while depth-tested C797 submission
 raises `3D-Z KIND Violation`. Direct 64 KB PTE mapping plus both tested
@@ -1173,7 +1179,7 @@ Phase 2C is incomplete. The next investigation is the zeta read/compare
 surface state and GPU PTE mapping.
 
 Depth shader finding (November 10, 2026): the latest hardware run
-`test_logs/v3.0.0.1-20261110-091657.log` no longer reports a zeta kind
+`../test_logs/v3.0.0.1-20261110-091657.log` no longer reports a zeta kind
 violation after using a float-1.0 ZF32 clear (`0x3f800000`). The fixed kernel
 shader's red triangle changes color pixels, but the nearer green and farther
 blue triangles write no matching color pixels, and
@@ -1196,8 +1202,8 @@ clear fix is retained, but full depth-tested rendering and general Phase 2C
 remain incomplete. Mesa's pinned submodule remains unmodified.
 
 Follow-up (November 10, 2026): added
-`test/audit_ampere_vertex_shader.py` and made it part of
-`src_driver/Makefile`'s `check` target and the full hardware test preflight.
+`../test/audit_ampere_vertex_shader.py` and made it part of
+`../src_driver/Makefile`'s `check` target and the full hardware test preflight.
 It validates the pinned upstream shader instruction words and reports that
 the current bounded shader has no clip-Z output. The audit and
 `make -C src_driver check` pass; this is a diagnostic gate, not a depth fix.
@@ -1208,13 +1214,13 @@ triangles, general Mesa draws, XP imports, display, and 2D behavior. Do not
 claim Phase 2C complete until general OpenGL draws use the GPU path and pass
 those hardware checks.
 
-Follow-up run `test_logs/v3.0.0.1-20261110-063441.log` was previously
+Follow-up run `../test_logs/v3.0.0.1-20261110-063441.log` was previously
 described as adding UVM's `ATOMIC_DISABLE` attribute. That interpretation was
 wrong: its PTE `0x00000038002E4001` sets bit 35, which the VER2 video PTE
 layout assigns to the peer ID, while `ATOMIC_DISABLE` is bit 7. The actual PTE
 correction is tested in `081227.log` below.
 
-Depth PTE address experiment `test_logs/v3.0.0.1-20261110-064222.log` encoded
+Depth PTE address experiment `../test_logs/v3.0.0.1-20261110-064222.log` encoded
 only the zeta leaf with `offset >> 8`, following UVM's VER2 video address
 construction. It still faults with `3D-Z KIND Violation` on multiple GPCs,
 times out the depth fence, and ends FAIL; the Mesa depth bridge pixels are not
@@ -1224,19 +1230,19 @@ differs from the existing VRAM leaf address convention. UVM's generic PTE kind
 and the driver's zeta PTE kind remain a point to investigate, not a confirmed
 root cause. Full depth-tested OpenGL remains incomplete.
 
-Run `test_logs/v3.0.0.1-20261110-070254.log` now applies strict Mesa bridge
+Run `../test_logs/v3.0.0.1-20261110-070254.log` now applies strict Mesa bridge
 verification and an ICD WGL-screen startup marker. The system WGL context says
 Mesa/softpipe, but no bridge trace file or startup marker is produced. The
 expected color pattern is therefore software output, and strict color, depth,
 cube, and overall OpenGL checks fail. The depth diagnostic still raises
-`3D-Z KIND Violation`. XP import/subsystem audit passes; `mesa/` remains clean.
+`3D-Z KIND Violation`. XP import/subsystem audit passes; `../mesa/` remains clean.
 The depth PTE KIND was moved to documented bits 63:56 (logged entry
 `0x03000008002E4001`), but that hardware-correct field placement alone did not
 resolve the zeta fault. First establish that XP WGL initializes the patched
 Gallium screen and reaches the softpipe vbuf callback.
 
 Latest zeta PTE test (November 10, 2026):
-`test_logs/v3.0.0.1-20261110-081227.log` encodes a video-aperture VER2 leaf
+`../test_logs/v3.0.0.1-20261110-081227.log` encodes a video-aperture VER2 leaf
 with peer ID zero and `ATOMIC_DISABLE` at bit 7, matching NVIDIA UVM's
 `make_pte_turing` implementation. Logged depth PTEs are
 `0x03000000002E5081` and `0x03000000002E7081`. The nine-tile GPU color
@@ -1250,7 +1256,7 @@ and target configuration.
 Depth/viewport follow-up (November 10, 2026): the corrected Mesa bridge
 tile-local XY input preserves the nine-tile color readback. The normal Mesa
 Z24X8 allocation maps to C797 X8Z24 and PTE kind 3, but
-`test_logs/v3.0.0.1-20261110-102041.log` still raises `3D-Z KIND Violation`
+`../test_logs/v3.0.0.1-20261110-102041.log` still raises `3D-Z KIND Violation`
 and times out the fence; assertions rise from one to three. The ZF32 diagnostic
 uses generic-memory PTE kind 6 and avoids that exception (`102438.log`); the
 red triangle draws, but covered depth values read as zero, so nearer green is
@@ -1262,7 +1268,7 @@ clip-Z output and ZF32 readback; general shaders/state, depth-tested OpenGL,
 and GPU presentation remain incomplete.
 
 
-Cube evidence clarification: `test_logs/v3.0.0.1-20261110-103146.log` reports
+Cube evidence clarification: `../test_logs/v3.0.0.1-20261110-103146.log` reports
 `MESA_GPU_CUBE_RESULT PASS colored_pixels=46 new_gpu_batches=1` for the
 bounded 64x16 cube probe with depth testing disabled. The bridge's successful
 batch path waits for GPU fences and copies the GPU readback into softpipe's
@@ -1271,7 +1277,7 @@ not prove the full-size, depth-tested 100-frame cube is accelerated;
 `[OPENGL_RESULT]` remains FAIL because overlapping depth triangles still fail.
 
 Latest viewport/input-validation iteration (November 10, 2026):
-`test_logs/v3.0.0.1-20261110-105101.log` proves the Mesa bridge's NDC/viewport
+`../test_logs/v3.0.0.1-20261110-105101.log` proves the Mesa bridge's NDC/viewport
 path works for its supported color batches after the miniport's uploaded XY
 validation was widened to a signed, bounded +/-1/8 range. Nine-tile readback
 passes (6,384 green, 528 red, 2,304 background), the bounded cube probe passes
@@ -1283,7 +1289,7 @@ remains FAIL. The viewport experiment restores color coverage and does not
 resolve clip-Z/depth storage. Next isolate the ZF32 output/readback path, then
 implement general shader/state translation and presentation.
 
-Raw Z follow-up (November 10, 2026): `test_logs/v3.0.0.1-20261110-105650.log`
+Raw Z follow-up (November 10, 2026): `../test_logs/v3.0.0.1-20261110-105650.log`
 shows all 1,024 raw words copied from the ZF32 target are zero after each
 depth draw; none match 1.0, 0.25, or 0.75. `nvdisasm` confirms the generated
 vertex shader variant decodes as `ALD.64 R12, a[0x88]` followed by
@@ -1292,7 +1298,7 @@ the hardware target contains only zeros. The immediate blocker is mapping the
 vertex Z/W input and clip-position output (or the C797 zeta state) correctly.
 
 Depth raw-word follow-up (November 10, 2026): the rerun
-`test_logs/v3.0.0.1-20261110-105650.log` records exactly 1,024 raw zero words
+`../test_logs/v3.0.0.1-20261110-105650.log` records exactly 1,024 raw zero words
 after each depth draw, with no 1.0, 0.25, or 0.75 words. This rules out the
 color-GOB pixel decoder as the sole explanation. `nvdisasm` confirms the
 project-owned shader variant contains `ALD.64 R12, a[0x88]` and

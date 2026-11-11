@@ -1,0 +1,652 @@
+# Phase 2C handoff: Windows XP x64 OpenGL on GA104
+
+Updated November 11, 2026, after full-size native clear and cube comparison.
+
+## NVX WGL screen entry (November 11, 2026)
+
+Added an opt-in `nvx` WGL screen choice in the external Mesa patch. WGL
+selects it only when the active HDC reports the expected NVC0 NVX adapter,
+then creates a valid softpipe Gallium screen and uses the existing NVX bridge
+for its bounded operations. The bridge status counter now increments only
+after this factory successfully returns a screen. The full VFIO run
+`../test_logs/v3.0.0.2-20261111-144953.log` reports `screens=1`, adapter
+`ready=1 PCI=2488 chipset=0170`, and completes the 100-frame cube without
+errors. OpenGL correctly remains `[OPENGL_RESULT] SOFTWARE`: the Gallium
+screen is still softpipe, and this run had zero bridge callbacks/batches
+because the opt-in diagnostic bridge was disabled. The run also passed the
+NVC0 native clear, GR triangle/semaphore, and 2D fill checks; it logged one
+startup firmware assertion and no MMU fault.
+
+The XP x64 Mesa build/import audit passed with only GDI32, KERNEL32, msvcrt,
+and USER32 imports. The Mesa submodule was restored clean at the pinned
+revision. This is a WGL entry for the NVX hybrid path, not Mesa's Nouveau
+Gallium `pipe_screen` and not general hardware-accelerated OpenGL. Next work
+is still the Nouveau device/channel/object and BO/pushbuffer boundary needed
+before a native NVC0 screen can initialize and submit shader draws.
+
+## Bounded Nouveau-style submit integration (November 11, 2026)
+
+Added `NvxNouveauPushbufSubmitNvc0Clear()` to the external adapter. It accepts
+only the exact 28-dword full-target C797 clear profile, requires the two
+address relocations at words 16 and 17 to reference the same live,
+client-owned color BO over its complete allocation, resolves the address from
+that BO, and invokes the miniport's existing `NVX_ESCAPE_3D_NVC0_NATIVE_CLEAR`
+contract. The miniport still performs the method/layout/ownership validation
+and authors its own queue wrapper and completion semaphore. The adapter
+returns and records the completed fence. This is a bounded profile submit,
+not a general Nouveau pushbuffer kick; other NVC0 packets remain unsupported.
+
+Added host coverage for successful relocation resolution, submit ordering,
+fence propagation, and malformed-stream rejection. `make -C src_driver check`
+passed, including ASan/UBSan host tests and x86/x64 MinGW adapter builds. The
+full XP/VFIO suite passed with the guest test routed through this adapter:
+`../test_logs/v3.0.0.2-20261111-142700.log`. It reports adapter submission at
+fence 2, all 1,024 pixel readbacks correct, and
+`[NVX_NVC0_NATIVE_CLEAR_RESULT] PASS`; the GR triangle draw/readback/semaphore
+and 2D GPU checks also passed. The run reported one startup firmware assertion
+and no MMU fault. WGL still reports `softpipe` / `[OPENGL_RESULT] SOFTWARE`.
+
+No native Nouveau Gallium `pipe_screen` was added. The `nvx` WGL entry above
+returns a softpipe screen and is only a hybrid diagnostic bridge. A native
+Nouveau screen requires more than this submit entry point: upstream
+`nvc0_screen_create()` initializes a Nouveau device, channel,
+SW/M2MF/copy/2D/3D objects, fence BO mapping, and emits initialization methods
+through Nouveau pushbuf. The XP adapter currently supplies NVX device query,
+staged BO operations, structural preflight, and this one kernel-validated
+clear profile. It has no safe object/channel lifecycle or general validated
+submission contract for NVC0 initialization and shader draws. Returning a
+fake Nouveau `pipe_screen` would let WGL report a screen that cannot create or
+execute a Gallium context. Keep the native Nouveau route disabled until an
+NVX-backed Nouveau device/channel/object and method-allowlisted submit layer
+exists, then verify an NVC0 shader draw on hardware.
+
+## Status
+
+Phase 2C remains incomplete. Windows XP x64 loads the Mesa ICD, but general OpenGL still renders through softpipe plus the custom diagnostic bridge; a native Nouveau Gallium screen has not been created. The full-size 632x453 NVC0 clear now verifies origin, center, and bottom-right pixels after adding explicit clear-rectangle state to the strict 28-dword packet. Latest full hardware log: `../test_logs/v3.0.0.2-20261111-133213.log`; the cube matches the software reference (`reference_diff=0`) and depth ordering passes, but a separate depth-enabled 6-vertex diagnostic draw stalls at GPGet `0xA0`/GPPut `0xA1` and marks the channel faulted (`mmu_faulted=0`). Latest rapid hardware run: `../test_logs/v3.0.0.2-20261111-133802.log`. It passed upload/download, batch validation, bounded 64x16 clear, four semantic color clears, resource release, and four native full-size color cases, each sampling origin/center/far-corner after its fence (`cases=4 samples_per_case=3`, final fence 18). `[NVX_3D_RAPID_RESULT] PASS`; one startup firmware assertion and no MMU fault. The full-size native clear test covers packet execution and tiled addressing, not native Gallium shader rendering.
+
+Follow-up rapid-test work on November 11 adds per-stage markers and three
+guest-side rejection cases for nonzero relocation reserved fields, duplicate
+relocation words, and unknown access bits. Host ABI tests also cover zero
+relocation access and a nonzero reserved field. The real-hardware run
+`../test_logs/v3.0.0.2-20261111-131418.log` passed the allocation, batch
+preflight, native C797 submit/fence/readback, four-color semantic clear matrix,
+and release stages; all 1024 native-clear pixels matched and the fence reached
+2. The GR green-triangle pixel readback and semaphore also passed. One startup
+firmware assertion was reported and no MMU fault was logged. The first QEMU
+launch hit a KVM emulation error; auto-retry attempt 2 booted and completed
+cleanly. A separate full OpenGL run
+(`../test_logs/v3.0.0.2-20261111-130821.log`) had `reference_diff=6436` and
+depth fallback because the 23-dword packet inherited stale clear-rectangle
+state. The corrected packet explicitly sets the full-surface clear rectangle
+and control; the later run above passes both depth and cube comparisons. This
+still is not a native Gallium NVC0 screen or shader-backed OpenGL.
+
+Rapid mode now includes the owned BO upload/download staging round trip before
+the clear suite, so one boot covers the resource transfer gate needed by BO
+mapping. Its November 11 run `../test_logs/v3.0.0.2-20261111-131916.log`
+passed a 1024-byte round trip at offset 256, then passed every native and
+translated clear stage and the independent GR triangle pixel/fence probe.
+XP import/subsystem audit, host ABI tests, and x86/x64 test builds passed;
+there was one startup firmware assertion and no MMU fault. This remains a
+boundary test, not a Mesa NVC0 screen test.
+
+Rapid 3D coverage now includes wrong ABI version, foreign ownership token, out-of-range BO relocation, malformed NVC0 method header, negative UNORM component, and mismatched target address rejection. The native clear escape submits only the exact 28-dword validated packet, including explicit target-sized clear rectangle/control; the kernel appends its own idle and semaphore methods. The generic batch validation escape remains preflight-only; the Nouveau-style adapter has a separate submit function restricted to this one clear profile.
+
+ABI 12 now reports PCI device ID, mapped VRAM aperture, and GART size. The RTX 3070 guest reports PCI `2488`, chipset `0x170` (GA104), a 64 MiB mapped aperture, and no GART. WGL now initializes `nvx_nouveau_device` from the active HDC's NVX escape path and logs the result; the latest guest run reports `ready=1`. `nvx_nouveau_bo.[ch]` remains linked and host-tested but is not yet wired into Nouveau resource creation. The device adapter and bounded pushbuffer preflight are live OS-boundary connections, not an active Nouveau screen.
+
+The device adapter names the 64 MiB field `vram_aperture_bytes`; it is the current GPUVA mapping aperture, not physical VRAM capacity, and must not be copied into Nouveau's `vram_size`. Adapter tests now reject missing download support, which BO mapping requires. `make -C src_driver check` passed with ASan/UBSan and x86/x64 MinGW builds. The softpipe XP x64 Mesa package rebuilt successfully afterward with imports limited to GDI32, KERNEL32, msvcrt, and USER32. The Mesa submodule remains clean.
+
+The latest broader Mesa/bridge package run is `../test_logs/v3.0.0.2-20261111-114618.log`; the more recent focused 3D run is `../test_logs/v3.0.0.2-20261111-123521.log`. The XP import/subsystem audit and guest boot/shutdown passed. The 1024-byte buffer roundtrip passed, and WGL's HDC-backed Nouveau device adapter reported `ready=1 PCI=2488 chipset=0170 VRAM-aperture=0000000004000000`. WGL still selected the softpipe bridge: 106 callbacks/batches, 104 NVC0 clears, 100 frames completed, and the no-depth cube matched; the depth-enabled cube differed by 11876 pixels. The separate `[NVX_NVC0_CLEAR_RESULT]` and `[NVX_3D_RESULT]` probes passed, with one startup firmware assertion. This confirms HDC-to-NVX device discovery, not a native Nouveau screen or NVC0-generated OpenGL rendering. At this point the `nvx_nouveau_pushbuf.[ch]` adapter had preflight only; the newer bounded-clear submit checkpoint is recorded above.
+
+The active direction is now explicitly the Nouveau NVC0 Gallium port. Do not spend further effort extending `nvx_wgl_bridge.c`; retain it only for regression diagnostics while porting the legacy Gallium Nouveau device/context/BO/pushbuffer services to the XP NVX boundary. The most recent full hardware run is `../test_logs/v3.0.0.2-20261111-110052.log`: the XP package/import audit passed, `NVX_BUFFER_ROUNDTRIP_RESULT` and `NVX_NVC0_CLEAR_RESULT` passed, and `[NVX_3D_RESULT]` passed. OpenGL remains `[OPENGL_RESULT] FAIL`: the opt-in bridge used 106 software callbacks and 106 custom GPU batches, the no-depth cube matched, and the depth-enabled cube differed by 11876 pixels. This run provides no evidence that Nouveau is active.
+
+ABI 11 now adds a bounded, owned-buffer download operation (up to 4 KiB per call) implemented through the miniport's CE read path. The round-trip test now runs before the OpenGL workload and passed for 256 dwords / 1024 bytes. This is an initial BO staging primitive for NVX; it does not provide CPU mapping, resource layout/placement, arbitrary submissions, or a Nouveau winsys. `make -C src_driver check`, `make -C src_driver full`, and `make -C src_disp all` passed before the hardware run. The Mesa submodule remains clean at `cc2dcf9abdc6afc093e85d48e4cfa34eed60a01e`.
+
+The rapid hardware test now applies four native full-size color clears to the 632x453 tiled target and samples origin/center/far-corner after every fence. The opt-in bridge builds the same 28-dword NVC0-style packet from Mesa's Gallium softpipe color-clear state and owned NVX render-target metadata. Explicit target-sized clear-rectangle state fixed the previous full-target cube mismatch. General GL still goes through softpipe callbacks and the bridge's custom C797 draw path; this is not an NVC0 Gallium winsys or shader-backed GL path.
+
+### Nouveau Gallium build feasibility check (November 11, 2026)
+
+Tried configuring the XP x64 Mesa build with
+`NVX_MESA_GALLIUM_DRIVERS=nouveau,softpipe`. Meson accepts the driver list and
+starts a 1265-action build, but the Nouveau DRM winsys fails at
+`src/gallium/winsys/nouveau/drm/nouveau.c` because the XP cross target has no
+`xf86drm.h`. The stock screen factory also calls `drmGetVersion`, opens the
+Linux DRM screen path, then relies on DRM channel/object/GEM/pushbuf ioctls;
+the Nouveau winsys uses these across channel creation, BO placement/mapping,
+fences, and command submission. The existing NVX device/BO adapters do not
+replace that contract, and pushbuf is validation-only. The next aligned step
+is to port the Nouveau winsys contract to NVX (or create a minimal Mesa
+`nouveau_device`/screen entry point over it), not to add a Linux libdrm runtime
+to XP. A user-mode `xf86drm.h` shim alone would only move the failure to
+missing DRM behavior. As a follow-up, built the isolated target
+`src/gallium/drivers/nouveau/codegen/libnouveau_codegen.a` from the same XP
+cross file: all 27 NVC0 codegen objects compiled and linked with
+`_WIN32_WINNT=0x0502` and `WINVER=0x0502`. This confirms the NVC0 shader backend
+is reusable in the XP compiler environment, but does not validate full DLL
+minimum-OS metadata or runtime execution. Meson regenerated once after the
+source-patch trap and reset the `min-windows-version` option to 8; future
+isolated builds should use the patched Meson option while preserving the XP
+cross-file defines. The build script's trap restored the Mesa submodule;
+`git -C mesa status --short` was empty after the experiments.
+
+The first package run after this change, `../test_logs/v3.0.0.1-20261111-100956.log`, did not enable the opt-in bridge: WGL recorded zero callbacks and zero GPU batches. It revalidated package imports, XP boot, and independent hardware probes. The bridge-enabled no-depth run, `../test_logs/v3.0.0.1-20261111-101138.log`, recorded 106 callbacks and 106 GPU batches. Its 632x453 full-target readback passed, and the no-depth cube exactly matched the software reference (`reference_diff=0`). The depth-enabled cube still differed (`reference_diff=11876`), so the overall OpenGL diagnostic reported FAIL. The independent NVC0 escape probe also passed at fence 871; its 1024 pixel readback matched `0xFF8040FF`. The follow-up `../test_logs/v3.0.0.1-20261111-101432.log` added explicit instrumentation and recorded 104 validated NVC0 clears across 106 GPU batches, with the full-target and no-depth reference checks passing. The versioned `../test_logs/v3.0.0.2-20261111-101720.log` repeated these results under version 3.0.0.2. In both runs the depth-enabled cube still differed by 11876 pixels. Firmware assertion count remained one at startup; no MMU fault was logged.
+
+The source/package version and current versioned hardware log are `3.0.0.2` (`../test_logs/v3.0.0.2-20261111-101720.log`).
+
+The XP miniport now accepts one tightly bounded NVC0 color-clear packet through a new escape. It verifies the full method sequence, full-target scissor, one color target, the packet's GPU address against its owned resource handle, target layout/extent, format, layer, sample mode, and UNORM clear values. It then rebuilds a trusted C797 clear submission in kernel mode. The new hardware test passed on November 11: all 1024 pixels read back as `0xFF8040FF`, fence 2 completed, and no packet validation failure occurred. This proves a small NVC0-to-XP command translation slice; it does not mean NVC0's Gallium driver or arbitrary NVC0 batches run on XP.
+
+The same run (`../test_logs/v3.0.0.1-20261111-095704.log`) completed the XP x64 package/import audit, GR triangle probe, 3D surface probes, and NVC0 clear. The WGL cube path still reported `gpu_batches=0` for 100 frames and `[OPENGL_RESULT] RENDERED`; it did not use the new NVC0 clear path. Initial firmware assertion count was one, with no MMU fault reported. Treat general OpenGL hardware acceleration as unproven.
+
+The earlier depth-mode interpretations need correction. The driver programmed `SET_ZT_SELECT=0` before binding Zeta and did not select one target afterward. Thus the earlier mode-2 run `221802.log` (21.3 FPS) was effectively depth-off, and mode 2 in `222824.log` (15.4 FPS) did not actually attach a Zeta target. Likewise mode 3 in `223018.log` did not test depth comparison against a selected target. Those runs do not isolate depth comparison or prove attached-target stability.
+
+Nouveau/NVK C797 state code binds Zeta address/format/tiling, sets `SET_ZT_SELECT` to 1, then sets size. The driver ordering was corrected to select one target after binding; `SET_ZT_SIZE_A` was also changed from logical width to pitch-in-pixels (NVC0/NVK's row-stride convention). The order passed a bounded 64x16 depth probe, but full-size depth-enabled rendering remains unvalidated due to the later stall and image mismatch.
+
+The bounded 64x16 selected-Zeta depth test passed (`MESA_GPU_DEPTH_RESULT`, four GPU batches, expected green pixel). A pooled-depth allocation bug that returned reused depth storage as busy was fixed in `../src_driver/nvxmp.c`. Full-size standalone selected-Zeta probes have since passed: one draw, 100 repeated draws, varied color/vertex uploads, and in the latest run 600 varied draws including the captured failing WGL vertex batch. The 600-draw run (`231355.log`) crossed the 512-entry GPFIFO wrap and reached fence 1272. This verifies the allocation fix and these standalone submission patterns; it does not reproduce WGL's exact resource layout/state sequence.
+
+The latest WGL run (`231921.log`, diagnostic mode 3: compare enabled, depth writes disabled) passed the bounded depth probe but reproduced the cube mismatch exactly: `reference_diff=11876`, same color counts as mode 2. The no-depth cube still matches (`reference_diff=0`). Since compare is disabled in mode 2 and enabled in mode 3 without changing the cube pixels, depth comparison/occlusion is not the cause of the observed cube mismatch. The divergence is in the shared depth-target/depth-shader path or associated vertex layout/state. This makes the depth shader and its vertex format the next cube-specific bisection target.
+
+That run's animated WGL path completed 70 frames with 70 GPU batches, then timed out at GPGet `0x1F2`/GPPut `0x1F3`, expected fence `0x28C`, with all method checkpoints zero. It switched to software fallback for the last 30 frames; the run failed OpenGL validation. No MMU fault is recorded; firmware assertion count was one at initialization and the final count is not established. Earlier run `231355.log` stalled after 10 GPU batches at GPGet `0x13C`/GPPut `0x13D`; stalls remain intermittent.
+
+Run `223445.log` used overlapping checkpoint slots in an attempted diagnostic; do not use its checkpoint values to infer method progress. The overlap was removed. In the clean `223941.log`, PBDMA INTR0/INTR1 are zero and GP_GET remained one entry behind GP_PUT; this provides no PBDMA fault code and suggests the queue stopped consuming an entry, but does not identify why. The log's first pushbuffer methods are SET_OBJECT C797 followed by a report-semaphore setup. The independent bounded triangle/semaphore probe passed in the same boot as the normal timeout, while the later `NVX_3D_RESULT` failed after the channel was faulted.
+
+The preceding normal depth-enabled run, `../test_logs/v3.0.0.1-20261110-221130.log`, submitted 94 GPU batches before a full-size depth-enabled draw timed out. USERD GPGet remained at ring entry `0x52` with GPPut `0x53`; the entry points to the shared pushbuffer beginning with `SET_OBJECT C797` and the first report-semaphore checkpoint. No checkpoint completed for the failed operation. The WGL workload completed 100 frames in 8.27 seconds (12.1 FPS mixed with software fallback); after the timeout, the GR channel was marked faulted and the later `[NVX_3D_RESULT]` probe failed. Firmware assertions increased from one to three during subsequent RM activity; no MMU fault was reported. The independent bounded GR triangle/semaphore probe passed earlier in the same run. The false “successful draw missed checkpoint” warning is gone in this build. The exact command causing the stalled queue is still unknown.
+
+The prior `220522.log` had false warnings because its success check included `fence[6]`, a slot no command writes. This check and its stale timeout label were removed from source and verified absent in `221130.log`.
+
+Runs `215310.log`, `215530.log`, `215720.log`, `215857.log`, `220027.log`, and `220522.log` also completed the VM run but hit the same class of C797 timeout during a 632x453 depth-enabled draw. Some runs kept the assertion count at one; `221130.log` later counted two additional firmware assertions during RM activity after the GR channel fault. The depth-off control in `221802.log` completed the workload without a timeout but failed expected image validation. Checkpoint bisection has shown intermittent success and failure across the earliest C797 setup. An actually selected Zeta target passes at 64x16 but the full-size mode-2 workload later times out even with depth ../test/write off. Earlier mode-2/mode-3 tests left target count zero and cannot isolate depth state. Corrected Zeta selection ordering and pitch-derived size are now in source but have not passed sustained full-size validation. Earlier `213805.log` and `214433.log` completed all 100 cube frames on hardware, but that success is intermittent and `214433.log` later timed out in a separate diagnostic.
+
+The current Mesa integration is a prototype hook into softpipe, not a Gallium hardware driver. The Mesa submodule remains clean; keep XP-specific patches and shims under `../mesa_patches/`.
+
+## Kayfabe architecture reference (November 11, 2026)
+
+Reviewed `https://github.com/reindertpelsma/kayfabe/tree/master` and added
+`notes/kayfabe_analysis.md`. Kayfabe is a QEMU-emulated NVIDIA device that
+runs the stock guest NVIDIA driver and services GPU work through the host
+NVIDIA driver. It is not an XP miniport or a reusable Gallium NVC0 winsys, and
+its documented Windows evidence is for Windows 11 rather than XP.
+
+It may be useful as a pathway oracle: its device/channel/workload gates and
+available traces can suggest which initialization, resource, submission, and
+completion stages a working NVIDIA path must cover. Treat those as hypotheses
+and compare equivalent workload stages, not raw command bytes: Kayfabe's
+stock-driver/emulated-device interface is different from Mesa NVC0 on XP.
+Build an operation matrix, then confirm each relevant stage with a bounded
+NVX hardware probe. Never blindly replay captured commands; the XP miniport
+must retain owned resources and validated NVC0 submissions. See
+`notes/kayfabe_analysis.md` for the detailed architecture comparison and
+proposed test use.
+
+`notes/kayfabe_analysis.md` now includes a stage matrix mapping Kayfabe's
+device, channel, memory, submission, completion, pixel, and display planes to
+XP evidence, gaps, and next gates. It distinguishes adapter identity and
+bounded C797 probes from the still-missing Gallium context, general validated
+NVC0 batch path, shader-backed WGL screen, and GPU-owned presentation. This is
+an implementation/test ordering aid; it does not imply Kayfabe protocol
+compatibility.
+
+The existing `test/nvx_winsys_test.c` is now the first executable host-side
+testbench for that boundary. Its mock supports concurrent BO allocations with
+independent storage; it checks handle/address uniqueness, content isolation,
+fence ordering, and that failed waits prevent mapping or final destruction.
+`make -C src_driver check` passed with ASan/UBSan and x86/x64 adapter
+cross-compiles. This covers the current NVX/BO contract only; a mock test for
+packet validation and relocations should be added with the validated NVC0
+batch ABI.
+
+The XP Mesa build driver requests Meson's Windows-version value `5`, matching
+the external patch that lowers Mesa's option minimum to XP; the cross file sets
+`_WIN32_WINNT` and `WINVER` to `0x0502`. Meson 1.12.1 is installed in
+`/tmp/nvx-meson-venv` (no system package install was needed). Using it,
+`NVX_MESA_GALLIUM_DRIVERS=softpipe ./test/build_mesa_xp64.sh` completed and
+produced `dist_full/nvxogl64.dll` and `dist_full/nvxmesa.dll`. The DLL imports
+are limited to GDI32, KERNEL32, msvcrt, and USER32, and the PE subsystem version
+is 5.2. The Nouveau-enabled build configured and compiled the NVC0 compiler,
+Gallium, and most Nouveau sources, then stopped at
+`src/gallium/winsys/nouveau/drm/nouveau.c` because `<xf86drm.h>` is unavailable.
+Full log: `../test_logs/mesa-nouveau-xp64-20261111.log`. The build trap restored
+the external patches; `git -C mesa status --short` is empty.
+
+## Performance and architecture
+
+The current bridge CPU-rasterizes general OpenGL through Mesa softpipe, recognizes a limited class of flat-color triangle batches, submits those batches to C797, waits synchronously for fences, then reads tiled GPU pixels back to update the software framebuffer. A 12-triangle cube frame commonly spends about 31–78 ms in draw submission/waits and 15–47 ms in readback. The earlier depth-off diagnostic reached 21.3 FPS. Its depth modes did not actually select a Zeta target, so do not treat them as depth-attached performance. These are prototype-bridge measurements, not native-Gallium performance. The 63 FPS run in `212323.log` had `gpu_batches=0` and was software-only.
+
+Substantial speedup requires batching work, reducing or removing tiled readback, rendering into GPU-owned resources, asynchronous submission, and an efficient presentation path. The current bridge waits for each draw and copies pixels back after it; that serializes CPU and GPU and makes each frame pay for submission, synchronization, and readback. The experiment removing `NVC797_WAIT_FOR_IDLE` from runtime draws stalled sooner and was reverted, so asynchronous execution needs explicit in-flight resource and fence ownership rather than simply deleting the wait. Temporary report-semaphore checkpoints now bracket early common state, viewport clip setup, color-target binding, depth/state setup, draw completion, and idle completion. They add command work and should be removed after the targeted method bisection.
+
+The CE copy/fill/upload wrappers now serialize shared scratch access against GR submissions. The user-triangle path holds that lock across target prefill, vertex staging, GR submission, and readback, using locked CE helpers for nested calls. Host/mock checks, the XP x64 miniport build, package audit, and real-hardware boot pass with this change. It did not eliminate the intermittent GR stall.
+
+## Recommended plan for full OpenGL acceleration with reasonable performance
+
+The recommended route is a feasibility-first port of Mesa's Nouveau NVC0 Gallium backend for GA104. Reuse its generation-specific state and shader compiler/codegen where the pinned Mesa revision permits; do not assume its Linux DRM winsys, build system, or synchronization layer can run on XP. First inventory those dependencies and build the reusable compiler pieces with the project's XP toolchain. If NVC0's screen/context and command submission are too coupled to libdrm/Linux, retain its reusable compiler and hardware definitions while writing the smaller NVX Gallium screen/context and XP winsys around the existing miniport. This avoids both extremes: attempting to port Linux kernel interfaces wholesale and writing a new shader compiler from scratch. Keep every Mesa change as reviewed patch files under `../mesa_patches/`; do not modify the Mesa submodule checkout directly.
+
+## NullMoth-inspired port strategy for XP
+
+Adopt NullMoth's architectural principle: keep Mesa/NVIDIA's real GPU backend and replace the operating-system service boundary. Do not try to link its macOS code or Linux DRM winsys into this XP driver. NullMoth's documented stack is Apple's OpenGL-to-Metal path, its Metal plugin and Metal-shader translator, Mesa NVK/NAK, and NVIDIA's open kernel modules with an XNU OS layer in place of Linux's. Its OpenGL support comes through Apple's GL-on-Metal interface. That is a useful example of backend reuse plus an OS port, not a ready-made XP OpenGL driver.
+
+For this project, use the native Mesa OpenGL/Gallium route first: make Mesa WGL create an NVX Gallium `pipe_screen`/`pipe_context`, and port the Nouveau NVC0 backend's GA104 shader compilation, state emission, and resource/layout logic as far as dependencies permit. Replace Nouveau's Linux DRM/libdrm winsys boundary with an XP winsys that calls the existing miniport through a small, versioned, validated ABI. That ABI should expose resource handles and mappings, GPU virtual-address ownership, uploads, batched command submission, fences, and presentation; it must not expose arbitrary user pushbuffers. Keep XP DDI/ICD integration and compatibility changes in patch files under `../mesa_patches/`, with the Mesa submodule pinned and clean.
+
+The present `nvx_wgl_bridge.c` is not that port: it hooks softpipe after software processing, filters constant-color triangles/quads, repacks a custom vertex format, submits custom C797 work, waits synchronously, and reads the result back. It is useful evidence that the miniport can execute bounded GPU commands, but it is not a substitute for the NVC0 Gallium backend. Retire it from the normal rendering path as the native screen gains capabilities; keep only small isolated probes for kernel/command regression coverage.
+
+Do not choose NVK plus Zink solely because NullMoth uses NVK. That stack targets Vulkan/Metal on macOS and adds an OpenGL-to-Vulkan route; XP has neither Apple's Metal interface nor a ready Linux DRM Vulkan winsys. Reconsider NVK/Zink only if the pinned Mesa revision and XP WGL integration make the reused NAK compiler/backend materially easier to adapt than NVC0. The success criterion is high reuse of GPU-specific code and a narrow, explicit OS shim boundary, not a literal 99-percent source-count promise; quantify reusable files and remaining Linux dependencies in the feasibility audit before committing to the port direction.
+
+Implementation gates for this approach:
+
+1. **Backend map:** record the Mesa submodule commit (`cc2dcf9abdc6afc093e85d48e4cfa34eed60a01e` at this handoff), locate NVC0 screen/context, compiler, resource, and winsys dependencies, and classify each as reusable, shimmed, or replaced. Preserve the Mesa submodule; carry all deltas as ordered patch files.
+2. **XP winsys contract:** specify resource ownership, GPUVA, memory visibility, command batching, fence semantics, reset/error handling, and present. Keep bounds/lifetimes validated in the miniport; make the user/kernel structures x64-safe and versioned.
+3. **Native screen bring-up:** register NVX with Mesa WGL and prove screen/context lifecycle without softpipe callbacks. Report only caps whose implementation exists.
+4. **Resources and first draw:** support persistent buffers and GPU render/depth targets, upload/map, clear/copy, a compiled vertex/fragment shader, triangle draw, fences, and bounded readback comparison. This gate must execute the NVC0-derived shader path, not the custom softpipe triangle bridge.
+5. **Presentation and useful GL:** render the frame into GPU-owned images and present with one GPU copy/blit to an XP-displayable surface; then add target-app-required depth/stencil, textures, blending, and state. Keep CPU readback out of normal frames.
+6. **XP and performance acceptance:** audit DLL imports/CRT/ABI on the XP image and run the target workload for 1,000 frames at 632x453: correct reference output, all supported frames on GPU, no fallback/freeze/channel timeout, no new firmware assertions/MMU faults, and at least 30 FPS with frame-time percentiles recorded.
+
+A fixed-width `NVX_3D_RELOCATION` record and shared field validator were added
+to the common ABI, along with BO-side relocation construction. They retain the
+owned BufferId, offset, span, access bits, and command word; validation rejects
+wrong IDs, invalid ranges/access, bad word indexes, nonzero reserved fields, and
+GPUVA overflow. Host tests pass under ASan/UBSan, and x86/x64 MinGW builds pass.
+The adapter source linked into the XP ICD in a 621-action build; the XP
+subsystem/import audit passed and Mesa remained clean. This is metadata and
+validation groundwork only: no kernel batch escape consumes these records yet,
+and Mesa NVC0 does not call the adapter.
+
+### Current NVC0 integration audit (November 11, 2026)
+
+The XP Nouveau device and BO adapters are not called by Mesa NVC0 yet. HDC
+discovery currently runs only through the optional diagnostic bridge. Source
+audit of `nouveau_drm_screen_create()` and `nvc0_screen_create()` confirms
+that screen creation first requires DRM device/client replacement, then a
+channel, pushbuffer, mapped fence BO, engine class objects, and validated
+initialization command submission. NVC0 emits commands during initialization,
+before a Gallium screen can be returned. The present miniport has one
+kernel-owned channel and only fixed semantic command operations.
+
+The common ABI now defines a bounded batch header and fixed-width
+`NVX_3D_RELOCATION` records. `Nvx3dValidateNvc0Batch()` checks exact byte
+lengths, the 4096-dword/256-relocation limits, type-2/type-6 packet framing,
+type-8 immediate headers, payload-only relocation positions, duplicate words,
+client token and owned BO identity, access bits, ranges, reserved fields, and
+GPUVA overflow. `NvxNouveauBoBuildRelocation()` creates a resource-relative
+record from a live BO. Malformed-packet and relocation host tests pass under
+ASan/UBSan; `make -C src_driver check` also compiles the ABI/adapter for x86 and
+x64 MinGW.
+
+The XP x64 softpipe ICD build completed all 621 Ninja actions with the adapter
+sources linked into `nvxogl64.dll`; the PE subsystem/import audit passed (5.2;
+GDI32, KERNEL32, msvcrt, USER32), and the Mesa submodule returned clean. The
+structural validator is called by the miniport's explicit preflight escape,
+but does not enforce a C797 method/subchannel allowlist or authorize general
+execution. The newer submit function invokes only the separate exact-clear
+escape, which validates and rebuilds that profile in kernel mode. Mesa NVC0
+still does not call the adapter. The next implementation gate is a genuine
+NVX-backed Nouveau device/client/channel/object lifecycle and a
+method-allowlisted submission contract for NVC0 initialization and shader
+draws. Keep NVC0's Mesa state/compiler path; do not mistake the existing BO
+adapter or softpipe bridge for a Gallium Nouveau screen.
+
+### XP Nouveau build boundary check (November 11, 2026)
+
+Meson 1.12.1 is available in `/tmp/nvx-meson-venv`. The standard XP x64
+softpipe Mesa package now builds successfully; its DLL import set is GDI32,
+KERNEL32, msvcrt, and USER32, with PE subsystem version 5.2. This verifies the
+XP package build configuration and baseline renderer build, not hardware
+acceleration.
+
+With `NVX_MESA_GALLIUM_DRIVERS=nouveau,softpipe`, Mesa 27.0.0-devel configures
+for Windows x64 and compiles the NVC0 compiler, Gallium, softpipe, and most
+Nouveau sources. The build stops at
+`src/gallium/winsys/nouveau/drm/nouveau.c:7` because `<xf86drm.h>` is unavailable.
+Full log: `../test_logs/mesa-nouveau-xp64-20261111.log`. The command line places
+XP `_WIN32_WINNT`/`WINVER` definitions after Mesa's generated Windows 10
+definitions, so the XP target values win. No Nouveau ICD was produced.
+
+The latest repeat built all 869 softpipe XP x64 targets with Meson 1.12.1; the package still imports only GDI32, KERNEL32, msvcrt, and USER32 and reports PE subsystem 5.2. `git -C mesa status --short` was empty after the build. This is a baseline package check, not a hardware acceleration test.
+
+The XP cross file receives `mesa_patches/xp_include` from a generated
+build-directory cross file. The compile-only `sys/ioccom.h` shim supplies ioctl
+request-number macros; it does not implement Windows device I/O. External
+patches `0001` through `0004` are reversed by the build trap, and the Mesa
+gitlink checkout is clean after both successful and failed builds. The failure
+is the Linux libdrm device/API boundary, not the NVC0 compiler or a missing
+header to emulate. Replace the legacy Gallium Nouveau DRM device/BO/channel/
+pushbuffer operations with an XP NVX winsys and a validated miniport ABI.
+
+Source inventory confirms the broader port boundary includes DRM device/version
+and GETPARAM/NVIF/VM_INIT setup, channel/class/object operations, GEM_PUSHBUF,
+GEM_NEW/INFO, VM_BIND, CPU_PREP, `mmap`, PRIME import/export, and BO
+wait/lifetime management. WGL still does not link or select `driver_nouveau`.
+These are implementation gates; the softpipe build and compilation of NVC0
+sources do not mean Nouveau runs on XP.
+
+The main performance change is architectural: make the Gallium driver own persistent GPU buffers and render targets, submit multiple draws asynchronously, and present GPU-owned images. The current softpipe bridge synchronously waits for each draw and reads block-linear pixels back to CPU memory, which caps throughput and causes visible pauses. Do not put a CPU readback or idle wait in the per-draw path. Wait only when the CPU maps a resource, reads results, or needs a completed present. On XP XDDM, begin with one GPU blit into a displayable surface at swap time; investigate direct flip only if the display miniport supports it reliably.
+
+Recommended sequence for a complete driver that can reach reasonable interactive performance:
+
+1. **Continue the NVC0 XP port from the proven compiler milestone.** NVC0 codegen now builds for XP x64. Replace the DRM winsys boundary with a Windows adapter around the project miniport; enumerate the BO/bufctx/pushbuf/fence APIs NVC0 consumes and isolate which helpers can remain source-identical. Keep the custom softpipe bridge as fallback/probe until native-screen correctness is demonstrated.
+2. **Define a safe, efficient user/kernel contract.** Add persistent GPU resource handles, bounds and usage validation, explicit GPU VA ownership, batched command submission, asynchronous fence completion, and resource retirement/reset rules. Upload command and vertex data through reusable rings. Avoid an escape/kernel transition per draw; submit a frame's draws in a few batches and keep multiple frames/resources in flight where safe.
+3. **Stabilize the existing hardware contract in parallel.** Isolate the current C797 depth/stall failure with clean, non-busy resources; fix the depth-enabled reference mismatch; remove temporary checkpoints once the first failing method is identified. Retain small proven clear, draw, fence, and readback probes as independent regression tests. Trace Antigravity's GL calls and extensions so the first useful subset is explicit.
+4. **Build a real Gallium screen/context and GPU-owned resources.** Register the NVX driver in the pinned Mesa build and route WGL context creation to it. Implement lifecycle, truthful caps, buffers, textures, render/depth surfaces, map/transfer, clear/copy, and fences. Ensure ordinary draws no longer pass through softpipe. Keep softpipe available as a deliberate fallback for unsupported contexts/features.
+5. **Bring up a shader-backed pipeline and presentation.** Reuse NVC0 lowering/codegen if compatible with the pinned Mesa IR; otherwise choose the shader IR already supported there. Implement vertex/fragment compilation, linkage, constants, vertex/index uploads, viewport, rasterization, and a triangle reference test. Render into persistent GPU targets and copy/blit once at swap to an XP-displayable surface. Do not read tiled targets back to the CPU in the normal frame path.
+6. **Expand by measured application demand, then optimize.** Add depth/stencil, textures/samplers, blending, common primitive modes, and relevant state changes from the API trace. Cache shaders and state objects, deduplicate unchanged state, batch uploads/draws, retire resources asynchronously, and instrument CPU submit, GPU time, waits, and present separately. Advertise only tested features; unsupported behavior should fall back or fail clearly rather than silently misrender.
+7. **Enforce XP compatibility throughout.** Audit every DLL import, CRT dependency, calling convention, x64 structure boundary, and synchronization primitive against the installed XP x64 image. Put compatibility shims and Mesa deltas in `../mesa_patches/`, with package import/subsystem auditing on each integration step.
+
+Use an explicit performance acceptance gate rather than treating a working cube as sufficient: sustain at least 30 FPS at 632x453 for 1,000 animated frames in the target workload, with every supported frame rendered on hardware, correct reference output, no software fallback, freeze, or channel timeout, and no new firmware assertions or MMU faults. Record a software baseline separately and report average FPS plus frame-time percentiles so a fast average cannot hide freezes. This is a proposed target, not an achieved result; the current bridge is around 12–16 FPS mixed/accelerated in recent depth-enabled runs, intermittently drops into software, and spends about 31–78 ms in draw submission/waits plus 15–47 ms in readback.
+
+## What it would take to convert this into a Gallium driver
+
+This is a multi-stage driver project, not a small change to the current callback. The current hook observes softpipe after software processing and forwards a narrow subset of its results. A real Gallium driver must own the Gallium interfaces and execute rendering on the GPU without using softpipe as the renderer or copying every result back into its tiles.
+
+1. **Add a real Gallium driver and WGL integration.** Implement a GA104 `pipe_screen` and `pipe_context`, register them in the pinned Mesa build, and make the XP WGL loader create this screen directly. Provide capability queries, context creation/destruction, state objects, resource/surface/view objects, queries, fences, flush, and synchronization. Preserve Mesa customizations as reviewed patch files in `../mesa_patches/`; do not edit the Mesa submodule in place.
+2. **Build GPU resource management.** Define resource creation, destruction, reference counting, map/unmap, transfer and staging paths, CPU/GPU visibility, layouts and tiling, render-target allocation, and residency rules. Add robust bounds and lifetime validation. Start with a small supported set of formats and dimensions, then grow it based on tested needs.
+3. **Translate Gallium state and draw calls.** Implement clear, copy, `draw_vbo`, flush, and the state needed by the first target applications: framebuffer bindings, viewport/scissor, vertex elements and buffers, primitive topology, rasterizer, blend, depth/stencil, and constants. Convert Gallium vertex/index data into GPU resources and submit batches; remove extraction of post-softpipe constant-color triangles.
+4. **Provide a real shader path.** Choose and pin a Mesa IR path (likely NIR for new driver work, subject to compatibility with the XP-era Mesa revision), then implement shader lowering, compilation to the supported NVIDIA GPU instruction format, register allocation, linkage and input/output mapping, constant upload, validation, and shader caching. The prototype’s fixed-function/flat-color clear path cannot run general OpenGL shaders. Start with a small explicitly advertised shader subset and reject unsupported features cleanly.
+5. **Evolve the kernel ABI and miniport scheduling.** Replace the one-operation bounded draw interface with validated resource handles and batched context submissions, GPU virtual-address management, asynchronous fences, queue ownership, and safe job/resource lifetimes. Define reset/error handling and synchronization contracts between user mode and the miniport. Keep validation and ownership in the driver; do not expose arbitrary unchecked user pushbuffers.
+6. **Make rendering and presentation GPU-owned.** Render into GPU color/depth surfaces, implement the required resolve/copy path, and connect WGL swap/present to displayable allocations or an efficient copy. Avoid GPU-to-CPU readback for every draw. Add swap interval behavior only after basic correct presentation works.
+7. **Keep the whole stack XP-compatible.** Pin a Mesa revision that can be built for Windows XP x64, audit the ICD and dependencies for unsupported imports, CRT calls, synchronization APIs, and compiler-runtime assumptions, and maintain required compatibility shims externally in `../mesa_patches/`. Validate exports, calling conventions, structure sizes, and x64 ABI at every user/kernel boundary.
+
+Suggested staged acceptance gates:
+
+- **G0 — contract:** document supported GPU/OS/Mesa revision, resource model, user/kernel ABI, and the first feature subset.
+- **G1 — screen/context:** load a genuine NVX Gallium screen in XP and pass capability/context creation and teardown checks without softpipe callbacks.
+- **G2 — resources and synchronization:** allocate/map/upload resources, clear and copy a GPU surface, wait on fences, and verify contents with bounded readback tests.
+- **G3 — first GPU draw:** submit vertex buffers and a minimal compiled shader to render a triangle; compare pixels against software reference and confirm the GPU path is used.
+- **G4 — useful OpenGL subset:** add depth/stencil, textures/samplers, blending, common primitive types, and state changes required by the target application; add conformance and regression coverage for each advertised capability.
+- **G5 — presentation and performance:** present GPU-owned render targets without per-draw readback, run sustained animated workloads, and measure throughput and stalls. Use the 1,000-frame, 30-FPS target above as the initial performance gate.
+
+Every hardware gate should record whether frames actually used the GPU, compare output with a reference, and require no new firmware assertions, MMU faults, or unexpected channel timeouts. Do not advertise a Gallium capability before its behavior is implemented and tested. Exact shader formats, command methods, resource tiling, and XP-compatible Mesa revision still need research and hardware validation before implementation estimates can be reliable.
+
+## Verified behavior and current issues
+
+- XP x64 package build and import/subsystem audit pass.
+- Hardware triangle/semaphore, tiled target clear/readback, 2D fill, and cube rendering have passed in recent runs. Some runs completed all 100 cube frames on GPU with `reference_diff=0`.
+- Cube performance is about 12–16 FPS in accelerated runs because of synchronous submissions and readback; mixed runs include software fallback frames.
+- Intermittent C797 stalls remain in the full-size WGL workload. Older depth-mode controls did not enable Zeta target count and cannot be used to infer depth behavior. With selection moved after binding, normal mode 5 (`223659.log`), selected-target mode 2 with select after size (`223941.log`), and selected-target mode 2 in the NVC0 select-before-size order (`224208.log`) timed out and fell back. The latter kept firmware assertions at one and had no MMU fault. PBDMA interrupt registers were zero; GP_GET stopped one entry behind GP_PUT. The exact fault is unresolved.
+- Latest run `231921.log`: host tests, XP package build/import audit, VM boot, and bounded selected-Zeta depth test passed. In depth mode 3 (depth compare on, writes off), the cube failed with the same `reference_diff=11876` and pixel counts as mode 2 (compare/write off); the no-depth cube passed with `reference_diff=0`. This isolates the cube mismatch away from depth comparison itself and toward the attached-target/depth-shader/vertex-layout path. The animated path stalled at GPGet `0x1F2`/GPPut `0x1F3`, expected fence `0x28C`, after 70 GPU batches; 30 frames fell back to software and OpenGL validation failed. No MMU fault was reported; firmware assertion count is known only at initialization (one).
+- A healthy-channel ZF32 depth clear/readback passed previously, but the known depth-tested triangle path has not been proven. ZF32 failures after a channel timeout are not independent evidence because the allocation remains busy.
+- The 1024-entry GPFIFO experiment did not fix the stall and was reverted. Current ring is 512 entries with 64 KB scratch.
+- No commit has been made for the current Phase 2C work. Keep the Mesa submodule clean.
+
+Latest full hardware command:
+
+```sh
+PATH=/tmp/nvx-tools-venv/bin:$PATH NVX_AUTO_RETRY=1 NVX_BUILD_MESA_ICD=0 NVX_MESA_GALLIUM_BRIDGE=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROBE=1 NVX_GR_SUBMISSION_PROBE=1 ./../test/test_full_driver.sh
+```
+
+Depth-path isolation command (diagnostic only; its output intentionally fails depth/pixel equivalence):
+
+```sh
+PATH=/tmp/nvx-tools-venv/bin:$PATH NVX_AUTO_RETRY=1 NVX_BUILD_MESA_ICD=1 NVX_MESA_GALLIUM_BRIDGE=1 NVX_MESA_DISABLE_DEPTH=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROBE=1 NVX_GR_SUBMISSION_PROBE=1 ./../test/test_full_driver.sh
+```
+
+## Next work
+
+1. Preserve the rapid 3D suite as the short hardware gate; it now covers BO upload/download, malformed packet rejection, four semantic clears, and four native 632x453 color clears with three distant samples per fence. Keep its passed log `../test_logs/v3.0.0.2-20261111-133802.log` as the baseline while changing channel code.
+2. Resolve the remaining standalone depth diagnostic stall. The depth-enabled Mesa cube itself now matches the reference (`reference_diff=0`) in `../test_logs/v3.0.0.2-20261111-133213.log`; afterward, a separate six-vertex depth-mode-5 C797 submission times out before its first report-semaphore checkpoint. GPFIFO remains at GPGet `0xA0`, GPPut `0xA1`; PBDMA interrupt fields are zero where readable. Compare that pushbuffer and channel scheduling with the preceding successful submissions, then add a fresh-channel/repeated-submit test to distinguish bad state from queue reuse. Do not call the cube mismatch unresolved.
+3. Continue the NVC0 XP winsys integration using the dependency map above. `NVX_MESA_GALLIUM_DRIVERS=nouveau,softpipe` configures, but cross-compilation stops at missing `<xf86drm.h>` in Mesa's Linux DRM winsys. A header shim alone is insufficient: screen startup requires client/device, channel/object, BO placement/map, pushbuffer submit, and fence services. Build the `nouveau_device`/screen lifecycle over a versioned NVX boundary, then connect BO mapping, validated object state, batched submission, and fences. Keep the native-clear packet and softpipe bridge as diagnostic gates, not as evidence of a native screen.
+
+### Direction decision: prioritize Nouveau NVC0
+
+The `mesa_patches/nvx_winsys.[ch]` helper and Win32 adapter now centralize the existing caps/alloc/free/chunked-upload/fence Escape calls used by the bridge. Host mock coverage, MinGW object compilation, and bridge hardware integration passed, but this API still lacks Nouveau's BO mapping/transfers, placements, contexts/objects, relocations, and generic command submission. The latest `../test_logs/v3.0.0.2-20261111-104149.log` records bridge operation (106 callbacks, 106 GPU batches, 104 validated clears), a matching no-depth cube, failing depth/overall OpenGL diagnostics, and one startup firmware assertion. This is not Nouveau runtime evidence.
+
+
+The latest Nouveau cross-build uses external patches 0003 and 0004: it excludes NVK's shared Linux winsys when Vulkan Nouveau is disabled and removes an unused `renderonly` include from Gallium WGL. The XP build advanced past Gallium/softpipe compilation and reached Gallium Nouveau's legacy `src/gallium/winsys/nouveau/drm/nouveau.c`, then stopped at `<xf86drm.h>`. This produced no ICD or Nouveau runtime. The build trap restored Mesa sources; the Mesa submodule is clean. NVK's shared winsys is separate and should not be presented as the NVC0 Gallium dependency. The next task is replacing the legacy Gallium DRM winsys services with an XP device/channel/object/pushbuffer contract, then adding WGL selection. Source inspection shows `nouveau_screen_init()` creates the FIFO channel, client, pushbuffer, and memory managers before `nvc0_screen_create()` allocates the fence BO, binds engine classes, and emits initialization state. Therefore the standalone `mesa_patches/nvx_nouveau_bo.[ch]` adapter is insufficient to bootstrap a screen by itself. It wraps NVX allocation, shadow mapping, bounded read/write transfers, and last-fence lifetime; mocked ASan/UBSan tests plus x86/x64 MinGW object builds pass. It is not wired into Mesa's `nouveau.c`, and it does not solve validated pushbuffer relocation/submission or WGL screen creation. Debug the intermittent softpipe bridge stall after this native path is set up.
+
+
+The long-term implementation should be Mesa Nouveau's existing NVC0 Gallium driver, with XP-specific device, resource, submission, synchronization, WGL selection, and presentation services kept in `mesa_patches/` and the miniport. This is more maintainable than expanding the softpipe callback bridge into a parallel renderer: Mesa continues to own GL state translation, shaders, and NVC0 command generation. The current hardware log is still from the softpipe/custom NVX bridge and must not be described as Nouveau acceleration.
+
+Treat the bridge as diagnostic/prototype code. Do not spend the next implementation cycle adding more GL features or performance tweaks to it. The next Nouveau milestone is a real XP `nouveau_device`/screen bootstrap and BO allocation/map/fence contract, followed by channel/pushbuffer submission with kernel validation. The current miniport's one channel, opaque allocations, chunk uploads, and semantic clear/draw escapes are not yet a substitute for Nouveau's channel, BO, relocation, and generic submission APIs. Do not pass arbitrary application pushbuffers to the kernel. First land a bounded NVC0-generated clear through Gallium, then a shader-backed draw; add WGL GPU-target presentation after those gates.
+
+## NVC0 approach attempt (November 11, 2026)
+
+NullMoth's documented path is specifically Apple's OpenGL-on-Metal for OpenGL apps, then its Metal plugin, an AIR-to-SPIR-V translator, Mesa NVK/NAK, and NVIDIA's open kernel modules with an XNU OS layer. It does not use Nouveau Gallium's NVC0 OpenGL driver. The transferable idea is preserving Mesa's GPU backend while implementing the host OS interface around it. A literal XP analogue through Zink/NVK would require a Vulkan frontend/backend integration and an XP NVK winsys; our NVC0 Gallium route instead targets OpenGL directly and still follows the backend-plus-OS-boundary principle. See NullMoth's [architecture notes](https://github.com/nullmoth/nvidia-macos-driver/blob/main/docs/HOW-IT-WORKS.md) and [Mesa patch/build instructions](https://github.com/nullmoth/nvidia-macos-driver/blob/main/docs/HOW-IT-WORKS.md#7-building).
+
+The pinned NVC0 codegen target builds for XP x64. A first NVC0 packet bridge was implemented and hardware-tested at ABI version 10: exactly one `nvc0_clear_render_target` style full-target RGBA8 clear was validated by the miniport and translated into a kernel-built C797 clear. The current ABI has since advanced to version 12. Host tests reject malformed packet headers, altered methods, unowned addresses, partial scissors, unsupported format/layout/layer/sample mode, invalid UNORM values, and nonzero reserved/fence fields. The exact API-to-driver mapping and remaining device/BO/object/pushbuffer/fence gaps are recorded in [`nvx_nouveau_port_map.md`](nvx_nouveau_port_map.md).
+
+Do not try to solve this by adding only `sys/ioccom.h` or forwarding arbitrary pushbuffers. The pinned `../mesa/src/gallium/targets/wgl/wgl.c` does not select Nouveau in its screen factory and has no Nouveau presentation case. The next gate is an XP winsys/device boundary plus an external WGL factory/present patch, then a genuine Gallium/NVC0 callback using resource IDs and layout metadata from that winsys. The current manually constructed clear packet tests the exact wire format but does not originate from NVC0 runtime code. Both the complete NVC0 winsys route and a custom NVX Gallium driver reusing NVC0 codegen require substantial work; neither is a direct link to the existing bridge.
+
+## Relevant files
+
+- `handoff.txt`: current status, issues, and Gallium port roadmap.
+- `../mesa_patches/nvx_wgl_bridge.c`: softpipe-specific prototype bridge, synchronous submits, tiled readback, fallback, counters, and timing.
+- `../mesa_patches/0002-nvx-gallium-bridge.patch`: Mesa hooks into softpipe/WGL; keep customizations outside the submodule.
+- `../mesa_patches/0001-xp-win32-shims.patch` and other files in `../mesa_patches/`: XP compatibility changes.
+- `../src_driver/nvx_gsp.c`, `../src_driver/nvx_gsp.h`: C797 commands, fences, scratch layout, depth operations, and timeout diagnostics.
+- `../src_driver/nvx_3d_abi.h`, `../src_driver/nvxmp.c`: user/kernel ABI, allocation validation, and dispatch.
+- `../src_driver/nvx_ce.c`: copy/fill operations.
+- `../test/test_gpu_accel.c`: XP probes, ZF32 diagnostics, and 100-frame cube benchmark.
+- `../test/test_full_driver.sh`: host/package checks, XP image update, VFIO boot, and serial log capture.
+- `../test/build_mesa_xp64.sh`: XP Mesa build; `NVX_MESA_GALLIUM_DRIVERS` selects Gallium drivers for isolated port/build experiments.
+- `nvx_nouveau_port_map.md`: source/API map from NVC0 to the current XP ABI, successful compiler-build evidence, and the next safe winsys gate.
+- ``NVX_MESA_DISABLE_DEPTH=1` and `NVX_MESA_DEPTH_MODE=2|3` in `../test/test_full_driver.sh`, `../test/test_gpu_accel.c`, and `../mesa_patches/nvx_wgl_bridge.c`: opt-in depth-path diagnostics. Mode 2 binds depth with ../test/write disabled; mode 3 tests depth without writes. Both intentionally fail normal image validation. Do not use them for correctness acceptance.
+- `../test_logs/v3.0.0.1-20261110-220027.log`: historical run; 70 ten-frame intervals completed with 10 GPU batches each before a full-size depth-enabled draw timeout. Remaining frames used software fallback; all report checkpoints were zero and firmware assertions stayed at one.
+- `../test_logs/v3.0.0.1-20261110-220522.log`: 65 GPU batches submitted before a full-size depth-enabled draw timed out at ring entry 0x1A7 (GPGet 0x1A7, GPPut 0x1A8), before the first post-`SET_OBJECT` report marker. Its success-check warnings were false positives because `fence[6]` was never emitted.
+- `../test_logs/v3.0.0.1-20261110-221130.log`: host and XP package audits passed; the VM booted and shut down cleanly. The independent bounded GR triangle/semaphore test passed. The full-size WGL path later stalled at GPGet 0x52/GPPut 0x53 after 94 GPU batches, completed 100 frames at 12.1 FPS with software fallback, faulted the channel, and caused the later `NVX_3D_RESULT` check to fail. Firmware assertion count rose from one to three during later RM activity; no MMU fault. No false checkpoint warnings appeared.
+- `../test_logs/v3.0.0.1-20261110-224208.log`: selected-Zeta mode-2 run after placing `SET_ZT_SELECT=1` after array pitch and before size (matching NVC0/NVK order) and using pitch/4 for size A. It timed out after 60 frames at GPGet 0x1B2/GPPut 0x1B3; the remaining 40 frames used software fallback. `[OPENGL_RESULT] FAIL`; initial firmware assertion count remained one and no MMU fault was seen. This rules out ordering and width alone as sufficient fixes.
+- `../test_logs/v3.0.0.1-20261110-225236.log`: host tests, XP package import/subsystem audits, and offline image update passed. The full-size selected-Zeta preflight was rejected because a pooled depth buffer was busy (`busy=1`, error 203), revealing the pooled-allocation `Busy` bug fixed in the following change.
+- `../test_logs/v3.0.0.1-20261110-225721.log`: host tests and XP package audit passed; the single 632x453 selected-Zeta probe passed at fence 2 after the pool fix. The mode-2 WGL path still stalled after 70 GPU batches around frame 60, then used software fallback; the depth cube failed reference comparison and the no-depth cube passed. No MMU fault was reported.
+- `../test_logs/v3.0.0.1-20261110-230058.log`: host tests and XP package audit passed (VM required one auto-retry). The selected-Zeta probe passed 100 same-resource full-size draws, fences 2 through 200. This rules out a failure from simple repeated mode-2 depth attachment alone. The subsequent WGL path stalled around frame 48 at GPGet 0x29/GPPut 0x2A after about 48 GPU batches; 100 frames completed in 6.99 s (14.3 FPS mixed) with software fallback and `[OPENGL_RESULT] FAIL`. Depth cube comparison failed (`reference_diff=11876`); no-depth comparison passed (`reference_diff=0`). No MMU fault was reported; firmware assertion count was logged as one at initialization, with no final query.
+- `../test_logs/v3.0.0.1-20261110-231355.log`: host tests and XP package audit passed. The selected-Zeta diagnostic passed 600 varied full-size draws through fence 1272, including the captured WGL vertex batch and crossing the 512-entry GPFIFO wrap. WGL then stalled at GPGet `0x13C`/GPPut `0x13D` on expected fence `0x55E`, after 10 accelerated batches; report checkpoints and PBDMA interrupt bits were zero, with no MMU fault. Frames after the stall used software fallback; 100 frames took 3.83 s (26.1 FPS mixed) and `[OPENGL_RESULT] FAIL`. Depth cube comparison failed (`reference_diff=11876`); no-depth cube passed (`reference_diff=0`); bounded depth probe passed. WGL used color/vertex/depth VAs `0x22E10000`/`0x22F50000`/`0x22F60000`, while the standalone probe used `0x231F0000`/`0x23340000`/`0x22F60000`. Firmware assertion count was one at initialization; final count is unverified.
+- `../test_logs/v3.0.0.1-20261110-231921.log`: host tests and XP package audit passed; VM booted. Mode-3 (depth compare on, writes off) cube output exactly matched the failing mode-2 result (`reference_diff=11876`, identical pixel counts), while no-depth matched (`reference_diff=0`). Bounded depth probe passed. The animated path stalled after 70 GPU batches at GPGet `0x1F2`/GPPut `0x1F3`, expected fence `0x28C`, then used software fallback for 30 frames and failed OpenGL validation. No MMU fault was reported; only initial firmware assertion count (one) is known.
+- `../test_logs/v3.0.0.1-20261111-095704.log`: host tests and XP package/import audits passed; the manually constructed, fixed-size NVC0 clear packet passed kernel validation, translated to a trusted C797 clear, and read back 1024/1024 pixels as `0xFF8040FF` at fence 2. Existing 3D and GR probes passed. General WGL rendered 100 frames with `gpu_batches=0`, so it did not use NVC0 or prove GL acceleration; initial firmware assertion count was one and no MMU fault was reported.
+- `../test_logs/v3.0.0.1-20261110-223941.log`: selected-Zeta mode-2 test with Zeta width programmed as pitch/4. GPU completed 80 frames, then timed out at GPGet 0x26/GPPut 0x27; the remaining frames fell back. `[OPENGL_RESULT] FAIL`; firmware assertions stayed at one, no MMU fault. PBDMA interrupt registers were zero. Together with the bounded pass, this shows the full workload is unstable; it does not prove that target selection alone causes the failure or identify the failing method.
+- `../test_logs/v3.0.0.1-20261110-223808.log`: selected-Zeta mode-2 test before changing Zeta size width to pitch/4; it also timed out near frame 80. The earlier `221802`, `222824`, and `223018` depth controls used `SET_ZT_SELECT=0` and are not valid tests of an attached depth target.
+- `../test_logs/v3.0.0.1-20261110-223659.log`: normal mode-5 test after moving target selection after Zeta binding but before the pitch-width correction. It timed out after 2 GPU batches in the 70–80 frame interval; 100 frames completed at 11.8 FPS mixed, `[OPENGL_RESULT] RENDERED` (renderer classification only), no new firmware assertion/MMU fault. A later `[NVX_3D_RESULT]` failed after the GR channel fault.
+- `../test_logs/v3.0.0.1-20261110-223018.log`: mode-3 diagnostic before Zeta target selection was fixed. It did not test depth comparison against a selected target and must not be used to isolate depth-test behavior.
+- `../test_logs/v3.0.0.1-20261110-221802.log`: built and audited the opt-in depth-off diagnostic ICD. The 632x453 WGL workload completed 100 frames with 106 GPU batches at 21.3 FPS, no timeout, and no firmware assertion increase. Only four depth events were logged from setup probes. `[OPENGL_RESULT] FAIL` is expected in this diagnostic because depth was intentionally disabled; it does not validate normal output. A later 3D ABI diagnostic reported a still-busy depth allocation, which needs separate cleanup investigation.
+- `../test_logs/v3.0.0.1-20261110-215857.log`: checkpoint bisection run; timeout before viewport/fixed-state checkpoints.
+- `../test_logs/v3.0.0.1-20261110-215720.log`: checkpoint validation run; successful draws passed markers before a later draw timeout near frame 80.
+
+## Rapid 3D miniport validation test (November 11, 2026)
+
+A focused test path is now available. `test/test_gpu_accel.c --3d-rapid` creates a small NVC0 clear packet, calls the display escape that forwards to the miniport's validation-only batch parser, checks expected rejection for an unsupported ABI version, a foreign client token, and an out-of-range BO relocation, then submits the separately kernel-built C797 clear, waits its fence, and verifies all 1024 readback pixels. This batch escape parses framing and resource-relative relocation metadata only; it is not a generic submission path or a Nouveau pushbuffer executor.
+
+To request the rapid guest test through the existing real-hardware harness, run:
+
+```sh
+NVX_RAPID_3D=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROBE=1 NVX_GR_SUBMISSION_PROBE=1 ./test/test_full_driver.sh
+```
+
+The update step stages `C:\\test_accel\\rapid3d.flag`; the guest test executable also accepts `--3d-rapid` when launched manually. The run `test_logs/v3.0.0.2-20261111-123521.log` passed host tests, XP import/subsystem audits, the positive batch validation, all three negative validation cases, C797 clear/fence, and pixel readback (`0xFF8040FF`, fence 2). GR channel/context/semaphore and triangle readback probes also passed. The first attempt without GR probe flags correctly rejected the clear at submission because the graphics user channel was not ready; its batch validator cases still passed. The no-probe log is `test_logs/v3.0.0.2-20261111-123354.log`.
+
+`NVX_RAPID_3D=1` selects the focused test entrypoint, but this guest image also launched its existing broader Antigravity test flow later in the same boot. The rapid result is logged before that flow; therefore the wrapper can still collect additional unrelated diagnostics after the focused case. Do not mistake batch validation success alone for arbitrary command submission safety, Nouveau Gallium integration, or OpenGL acceleration.
+
+The November 11 13:38 rapid-mode log intentionally does not run the depth/no-depth OpenGL cube comparisons: `test_gpu_accel.c` returns after the rapid resource and clear cases, before `TestOpenGL`. The prior full-mode log at 13:32 contains `[MESA_GPU_CUBE_RESULT] PASS ... reference_diff=0` and `[MESA_GPU_CUBE_NODEPTH] PASS`. Rapid mode now emits `[MESA_GPU_CUBE_RESULT] SKIPPED reason=rapid_3d_mode` explicitly so future logs show why cube results are absent. Run `test/test_full_driver.sh` without `NVX_RAPID_3D=1` to exercise the cube again.
+
+## WGL Nouveau presentation groundwork (November 11, 2026)
+
+External patch `mesa_patches/0005-wgl-nouveau-present.patch` makes WGL link
+`driver_nouveau` when that Gallium driver is configured. It also tracks the
+softpipe screen explicitly: softpipe continues to use its GDI display target,
+while any non-softpipe screen uses `pipe_screen::flush_frontbuffer` instead of
+being cast to `softpipe_screen`/`softpipe_resource`. The new patch is included
+in `test/apply_mesa_xp_patches.sh` and is reversed by the XP Mesa build trap;
+no Mesa submodule edits remain after a build.
+
+Verification: a clean XP x64 softpipe configuration completed all 969 Ninja
+actions and produced `dist_full/nvxogl64.dll` and `dist_full/nvxmesa.dll`. The
+ICD import audit reported only GDI32, KERNEL32, msvcrt, and USER32. `git -C
+mesa status --short` was empty after the build. This checks that existing WGL
+software presentation still builds and links. It does not exercise the new
+hardware `flush_frontbuffer` branch or create a Nouveau screen.
+
+WGL still has no HDC-based native Nouveau Gallium screen factory. Its HDC-
+backed NVX query is called by the hybrid `nvx` entry; Mesa's
+`nouveau_drm_screen_create` still takes a DRM file descriptor. More
+importantly, NVC0 screen initialization still needs
+a Nouveau channel/object/pushbuffer interface that the current miniport ABI
+does not provide. Do not set `GALLIUM_DRIVER=nouveau` or report Nouveau active
+until that factory and the NVX-backed winsys are implemented and a shader draw
+is verified on XP hardware. The full Nouveau cross-build remains blocked at
+the legacy DRM include/API boundary (`xf86drm.h` and subsequent device/channel
+calls), while the default softpipe package remains the known working baseline.
+
+## WGL renderer identity and native Nouveau selection checkpoint (November 11, 2026)
+
+Removed the WGL screen-name/vendor override that labeled every Gallium screen
+as an RTX 3070, including softpipe. The matching unused string functions were
+removed from `mesa_patches/nvx_wgl_bridge.c`. The change is carried outside the
+Mesa submodule by updating `mesa_patches/0002-nvx-gallium-bridge.patch`; the
+WGL presentation changes are consolidated there, while
+`0005-wgl-nouveau-present.patch` now contains only the Nouveau link dependency.
+A fresh default XP x64 Mesa package build completed all 969 Ninja actions. The
+resulting DLL imports only GDI32, KERNEL32, msvcrt, and USER32. This verifies
+the patch/build arrangement and XP import baseline, not Nouveau acceleration.
+
+WGL still does not select a Nouveau screen. Its factory creates a GDI
+`sw_winsys` and chooses among software drivers; adding `driver_nouveau` to the
+link dependencies only links symbols. Gallium's public Nouveau screen factory
+is `nouveau_drm_screen_create(int drmFD)`, which enters the Linux DRM/libdrm
+winsys. The XP `ExtEscape` wrappers currently expose NVX caps, buffer staging,
+fence waits, and structural batch validation, but do not implement the
+`nouveau_device`/client/channel/object, BO placement/mapping, pushbuffer
+relocation/submission, and fence operations used by `nvc0_screen_create()`.
+Thus merely adding a `nouveau` driver string or substituting an HDC for an fd
+would be incorrect. The real WGL integration point must be a new NVX-backed
+screen factory, after the miniport provides a kernel-owned Nouveau-compatible
+channel/object lifecycle and validated BO-referenced submission contract.
+
+The current WGL name now comes from the selected Gallium screen. A runtime
+Nouveau claim must be based on the actual Nouveau screen and a shader-backed
+GPU draw, not adapter query data or the earlier softpipe bridge diagnostics.
+
+## Renderer identity regression run (November 11, 2026)
+
+After removing the WGL renderer/vendor override, ran the full real-hardware
+suite with the requested GR probes:
+`NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROBE=1 NVX_GR_SUBMISSION_PROBE=1 ./test/test_full_driver.sh`.
+The fresh XP package/import audit passed (all binaries report XP subsystem
+5.2); host ABI, mock winsys, and x86/x64 MinGW checks passed. Guest log:
+`../test_logs/v3.0.0.2-20261111-141100.log`. WGL now reports
+`OpenGL Renderer: softpipe` and `[OPENGL_RESULT] SOFTWARE`, so the driver no
+longer misidentifies software rendering as RTX 3070 acceleration. The
+independent `[NVX_3D_RESULT] PASS` and `[NVX_NVC0_CLEAR_RESULT] PASS` hardware
+probes still pass; the kernel reported one firmware assertion at startup and
+no MMU fault. The run also reports two owned-BO relocations passed miniport
+preflight. This is explicitly validation-only: no NVC0 batch was submitted by
+that adapter, and no native Nouveau WGL screen was created.
+
+## Native C797 queue mechanics and requirements before generalizing (November 11, 2026)
+
+Source inspection of `src_driver/nvx_gsp.c:NvxGspSubmitNvc0NativeClear()`
+confirms that its successful hardware execution path is tightly scoped: it
+holds the global `NvxGrUserSubmitBusy` lock; clears the kernel scratch fence;
+constructs a GPFIFO entry over kernel-owned scratch push memory; prepends a
+kernel-authored `SET_OBJECT` binding to C797; copies exactly the already
+validated 28-dword clear method profile; appends `WAIT_FOR_IDLE` and a
+kernel-authored release semaphore; rings the user channel doorbell; and waits
+for the exact fence while checking channel/MMU fault state. User data cannot
+choose a GPFIFO address, fence address, SET_OBJECT class, or trailing methods.
+
+This helper cannot safely be generalized by replacing its fixed-size copy
+with the current batch validator. `Nvx3dValidateNvc0Batch()` only checks packet
+framing, BO ownership/relocation metadata and bounds. Before queueing a Mesa
+NVC0 stream, the miniport still needs a GPU-method/subchannel allowlist, method
+specific payload validation, mandatory relocation checks for every address
+method, safe relocation patching against live owned allocations, in-flight BO
+pinning through the completion fence, and a context/state policy for multiple
+WGL contexts sharing the one kernel-owned GPFIFO. NVC0 screen initialization
+also emits SW, M2MF, copy, 2D and 3D object bindings; the current exact clear
+path supports only its kernel-owned C797 binding. These requirements are now
+the implementation gate for replacing the fixed clear submitter with bounded
+submission. Do not wire Mesa's pushbuf kick to this helper until the checks and
+buffer lifetimes are enforced in kernel mode.
+
+## NVC0 batch method-range guard and XP verification (November 11, 2026)
+
+Tightened `Nvx3dValidateNvc0Batch()` so incrementing type-6 packets are
+rejected if their method sequence would overflow the 13-bit method field into
+the subchannel bits. Non-incrementing packets retain repeated-method behavior.
+Added host ABI and guest `ExtEscape` rejection cases at method `0x7ffc` with a
+four-word incrementing packet. This only strengthens preflight validation; it
+does not enable submission or replace the required execution allowlist.
+
+`make -C src_driver check` passed, including ASan/UBSan ABI and winsys tests
+and x86/x64 MinGW compilation. The full suite then booted XP successfully on
+VFIO at retry attempt 3 after two attempts with no serial activity. Log:
+`../test_logs/v3.0.0.2-20261111-141715.log`. The guest explicitly reported
+`Rejected incrementing packet that wraps its method field`; NVC0 clear and 3D
+probes passed, WGL accurately reported softpipe (`[OPENGL_RESULT] SOFTWARE`),
+and the run reported one startup firmware assertion with no MMU-fault entry.
+Mesa submodule remains clean; changes are in the shared ABI/miniport/test and
+external patch tree.
+
+## NVX screen BO lifetime and depth-mode comparison (November 11, 2026)
+
+The NVX-side WGL bridge now keeps an owned `NVX_NOUVEAU_BO` for each target
+state and passes that object into `NvxNouveauScreenSubmitNvc0Clear()`. The
+screen's clear path builds relocations against the live allocation rather
+than a temporary fake BO. This improves BO lifetime and relocation ownership
+for the existing narrow clear path. It does not make the object a Gallium
+`pipe_screen`: `mesa_patches/0002-nvx-gallium-bridge.patch` still invokes
+`softpipe_create_screen(winsys)` after probing the NVX device, so Mesa
+correctly reports `OpenGL Renderer: softpipe`.
+
+The full host, mock, x86/x64 MinGW, XP package build/import audit, and hardware
+suite passed through boot and clean shutdown for each run. The baseline run
+`../test_logs/v3.0.0.2-20261111-151500.log` verified the live-BO change in
+the guest: the no-depth cube matched the software reference (`reference_diff=0`,
+GPU batches observed), but the depth-tested cube failed (`reference_diff=11876`).
+The same depth-tested mismatch reproduced with `NVX_MESA_DEPTH_MODE=2` in
+`../test_logs/v3.0.0.2-20261111-151728.log` and mode 3 in
+`../test_logs/v3.0.0.2-20261111-151844.log`. Both comparison runs still reported
+softpipe and `[OPENGL_RESULT] FAIL`; the isolated no-depth cube passed. These
+are diagnostic bridge results, not a full OpenGL hardware renderer.
+
+The baseline run retained `[NVX_3D_RESULT] PASS` and
+`[NVX_NVC0_NATIVE_CLEAR_RESULT] PASS`. The mode 2 and mode 3 diagnostic runs
+instead stalled their later zeta-mode probe on the shared C797 queue and ended
+with `[NVX_3D_RESULT] FAIL`; their logs show a semaphore timeout and stuck
+GPGet/GPPut. Do not use those depth modes in routine hardware runs unless the
+test is changed to isolate or reset the queue after the probe. Each boot
+reported one firmware assertion at startup. The logs contain no MMU-fault
+entry. Do not describe the current `NVX_NOUVEAU_SCREEN` as a Gallium Nouveau
+screen: it owns the NVX device, pushbuf builder, and the specific clear
+submission only.
+
+The next real Nouveau integration boundary is not WGL's driver-name list.
+`driver_nouveau` is now linked into the WGL target, but its
+`nouveau_drm_screen_create(fd)` factory enters Linux DRM and libdrm. NVC0 screen
+creation then calls `nouveau_screen_init()` and requires Nouveau device/client,
+channel/object, BO placement/map/ref, pushbuf/relocation, and fence semantics.
+The XP `ExtEscape` ABI does not provide those interfaces today. Keep the
+renderer label truthful; do not report Nouveau or hardware OpenGL until WGL
+returns a genuine Nouveau `pipe_screen` and an NVC0 shader draw is verified.
+
+## Direct Nouveau WGL build probe (November 11, 2026)
+
+Attempted an XP x64 Mesa build with Nouveau enabled:
+`MESON=/tmp/nvx-meson-venv/bin/meson NVX_MESA_BUILD_DIR=/tmp/nvx-mesa-nouveau-wgl NVX_MESA_GALLIUM_DRIVERS=nouveau,softpipe JOBS=4 ./test/build_mesa_xp64.sh`.
+All five external Mesa patches applied and Mesa configuration succeeded. The
+Nouveau headers and NVC0 codegen compiled, but the build stopped at
+`src/gallium/winsys/nouveau/drm/nouveau.c` because XP has no `xf86drm.h`.
+The Mesa patch script restored the submodule afterward; `git -C mesa status`
+is clean. This is stronger evidence than the earlier configuration-only
+probe: compiling the Nouveau Gallium driver needs an XP implementation of its
+libdrm/Nouveau DRM boundary, not a WGL driver-name change.
+
+Do not add a fake `xf86drm.h` that makes DRM calls compile but return dummy
+handles. The replacement must translate the Nouveau device, channel/object,
+BO, pushbuffer/relocation and fence operations to owned NVX resources and
+validated miniport requests. WGL can then call that XP screen factory and
+return its actual `nvc0_screen_create()` result. Until then, the current
+`nvx` hook remains a softpipe-backed diagnostic bridge and the renderer must
+continue to say softpipe.
+
+## Depth-enabled animation stall follow-up (November 11, 2026)
+
+A later normal-depth bridge run
+`../test_logs/v3.0.0.2-20261111-152042.log` matched the depth-tested cube
+reference, but the subsequent 100-frame depth-enabled animation stalled the
+C797 queue at fence `0x2ac`; caps then reported `channel_faulted=1`, and the
+suite ended `[NVX_3D_RESULT] FAIL`. The guest reported no MMU fault. The
+`151500` run used `NVX_MESA_DISABLE_DEPTH=1`, passed the no-depth cube and the
+later `[NVX_3D_RESULT] PASS`. So a correct depth-tested still frame does not
+establish stable repeated submission. Use depth disabled for safe bridge
+bring-up runs until the animation queue stall is fixed; inspect the per-frame
+depth stream and fence timeout before claiming stable acceleration.
+
+After the diagnostic stalls, reran the guarded no-depth configuration with
+`NVX_MESA_DISABLE_DEPTH=1` in
+`../test_logs/v3.0.0.2-20261111-152224.log`. The first VM attempt had no serial
+activity; retry 2 booted and shut down cleanly. Native clear and later 3D
+semaphore probes passed, with one startup firmware assertion and no MMU-fault
+entry. The depth-enabled cube comparison still failed while the dedicated
+no-depth comparison passed. This supports keeping the bridge's experimental
+depth submission disabled while investigating the persistent-depth path.
