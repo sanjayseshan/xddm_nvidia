@@ -5,6 +5,15 @@ submodule files were changed. The pinned NVC0 compiler target cross-builds
 for XP x64. A manually constructed packet matching NVC0's clear sequence
 passed the miniport and RTX 3070 test, but no runtime NVC0 callback emits it.
 
+NullMoth's documented Mac stack uses Apple's OpenGL-on-Metal frontend, a
+Metal-to-SPIR-V translator, Mesa NVK/NAK, and NVIDIA's open kernel modules
+ported to XNU; it does not run Nouveau Gallium NVC0. Its reusable principle is
+keeping Mesa's backend while supplying the target OS boundary. The current XP
+NVC0/Gallium experiment applies that principle to Mesa's OpenGL-capable
+Gallium/NVC0 path. A more literal Metal-style layering would be GL-over-Zink
+over-Vulkan/NVK and would require an XP NVK winsys. Source: NullMoth's
+[HOW-IT-WORKS.md](https://github.com/nullmoth/nvidia-macos-driver/blob/main/docs/HOW-IT-WORKS.md).
+
 ## What already maps
 
 | NVC0 expectation | NVX state today | Port consequence |
@@ -15,6 +24,25 @@ passed the miniport and RTX 3070 test, but no runtime NVC0 callback emits it.
 | Host-to-GPU upload | `NVX_3D_UPLOAD_BUFFER` copies bounded chunks through the CE | Can provide initial staging uploads. NVC0 also writes mapped GART buffers directly, which needs a CPU-visible allocation/map contract. |
 | Fence wait | `NVX_3D_WAIT_FENCE` waits for NVX's internal submission fence | Can back Gallium flush fences after lifetime and multi-context semantics are defined. |
 | Simple GPU operations | `NVX_3D_SUBMIT` accepts a closed set of driver-built clear and triangle requests | Useful for probes only; it is not a generic NVC0 command submission path. |
+
+## Implemented narrow clear bridge
+
+`NVX_ESCAPE_3D_NVC0_CLEAR` / `IOCTL_NVX_3D_NVC0_CLEAR` is ABI v10. The
+miniport accepts exactly 23 dwords and checks each NVC0 packet header and
+payload, the target's opaque ID and exact GPU VA, allocation extent/layout,
+single-layer RGBA8 format, full-surface scissor, zero-sample mode, color-only
+clear mask, and UNORM float range. It converts the four float color values to
+packed AARRGGBB, then calls a miniport-owned C797 clear builder; it never
+submits the user packet words. `test/test_gpu_accel.c` constructs the matching
+packet, waits for the returned fence, and reads back all 1024 pixels.
+
+Evidence: `make -C src_driver check` passed including malformed-packet host
+tests and x86/x64 ABI compilation; `make -C src_driver full` and
+`make -C src_disp all` built the XP packages. The full real-hardware run
+`test_logs/v3.0.0.1-20261111-095704.log` reports
+`[NVX_NVC0_CLEAR_RESULT] PASS`, exact 1024/1024 pixel match to `0xFF8040FF`,
+fence 2, and no MMU fault. This is protocol and hardware evidence for one
+operation; the packet was assembled by the test, not emitted by NVC0 Gallium.
 
 ## NVC0 calls that do not have an XP equivalent yet
 
