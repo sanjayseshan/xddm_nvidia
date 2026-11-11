@@ -19,6 +19,23 @@ if [ "${NVX_GR_SUBMISSION_PROBE:-0}" = "1" ]; then
 fi
 if [ "${NVX_MESA_GALLIUM_BRIDGE:-0}" = "1" ]; then
     NVX_MESA_TEST_FLAGS+=("-DNVX_MESA_GALLIUM_BRIDGE_PROBE=1" "-DNVX_MESA_ZF32_DIAGNOSTIC=1")
+    if [ "${NVX_MESA_DISABLE_DEPTH:-0}" = "1" ]; then
+        NVX_MESA_TEST_FLAGS+=("-DNVX_MESA_BRIDGE_DISABLE_DEPTH=1")
+    fi
+    case "${NVX_MESA_DEPTH_MODE:-}" in
+        "") ;;
+        2|3)
+            if [ "${NVX_MESA_DISABLE_DEPTH:-0}" = "1" ]; then
+                echo "Choose either NVX_MESA_DISABLE_DEPTH or NVX_MESA_DEPTH_MODE." >&2
+                exit 1
+            fi
+            NVX_MESA_TEST_FLAGS+=("-DNVX_MESA_DEPTH_MODE_OVERRIDE=${NVX_MESA_DEPTH_MODE}")
+            ;;
+        *)
+            echo "NVX_MESA_DEPTH_MODE must be 2 (zeta attach only) or 3 (depth test without writes)." >&2
+            exit 1
+            ;;
+    esac
 fi
 
 mkdir -p "$NVX_ARCHIVE"

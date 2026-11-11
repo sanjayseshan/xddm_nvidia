@@ -20,7 +20,15 @@ DrvEscape(SURFOBJ *pso,ULONG iEsc,ULONG cjIn,PVOID pvIn,
         ULONG requested;
         if(!pvIn||cjIn<sizeof(requested)) return 0;
         memcpy(&requested,pvIn,sizeof(requested));
-        returned=requested==OPENGL_GETINFO?1:0;
+        returned=requested==OPENGL_GETINFO ||
+            requested==NVX_ESCAPE_3D_QUERY_CAPS ||
+            requested==NVX_ESCAPE_3D_ALLOC ||
+            requested==NVX_ESCAPE_3D_SUBMIT ||
+            requested==NVX_ESCAPE_3D_WAIT ||
+            requested==NVX_ESCAPE_3D_FREE ||
+            requested==NVX_ESCAPE_3D_UPLOAD ||
+            requested==NVX_ESCAPE_3D_READBACK ||
+            requested==NVX_ESCAPE_3D_NVC0_CLEAR;
         if(requested==OPENGL_GETINFO)
             NvxDispLogEvent(0x200,iEsc,requested,returned);
         return returned;
@@ -72,6 +80,10 @@ DrvEscape(SURFOBJ *pso,ULONG iEsc,ULONG cjIn,PVOID pvIn,
         if(cjIn!=sizeof(NVX_3D_READBACK)||!pvIn||!pvOut||
            cjOut<NVX_3D_READBACK_BYTES) return 0;
         code=IOCTL_NVX_3D_READBACK_BUFFER;break;
+    case NVX_ESCAPE_3D_NVC0_CLEAR:
+        if(cjIn!=sizeof(NVX_3D_NVC0_CLEAR)||!pvIn||!pvOut||
+           cjOut<sizeof(NVX_3D_NVC0_CLEAR)) return 0;
+        code=IOCTL_NVX_3D_NVC0_CLEAR;break;
     default:
         return 0;
     }

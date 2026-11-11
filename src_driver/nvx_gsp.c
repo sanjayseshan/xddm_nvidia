@@ -411,6 +411,27 @@ BOOLEAN NvxGspSetDepthPageKind(PVOID HwDeviceExtension,ULONG64 gpuVa,
     return TRUE;
 }
 
+BOOLEAN NvxGspSetDepthRangeKind(PVOID HwDeviceExtension,ULONG64 gpuVa,
+                                ULONG bytes,ULONG kind,BOOLEAN map)
+{
+    ULONG offset,done=0;
+    if(!bytes||(gpuVa&0xffffULL)||(bytes&0xffffU)) return FALSE;
+    for(offset=0;offset<bytes;offset+=0x10000U) {
+        if(!NvxGspSetDepthPageKind(HwDeviceExtension,gpuVa+offset,kind,map)) {
+            if(map) {
+                while(done) {
+                    done-=0x10000U;
+                    (void)NvxGspSetDepthPageKind(HwDeviceExtension,
+                        gpuVa+done,0U,FALSE);
+                }
+            }
+            return FALSE;
+        }
+        done+=0x10000U;
+    }
+    return TRUE;
+}
+
 #if NVX_ENABLE_GR_CHANNEL_PROBE
 static VOID NvxGspDumpNocatJournal(PNVX_DEVICE_EXTENSION dev)
 {
@@ -1054,7 +1075,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     NV_CTXSHARE_ALLOCATION_PARAMETERS ctxShare={0};
     ULONG bindEngine=NV2080_ENGINE_TYPE_GRAPHICS;
     UCHAR schedEnable[2]={1,0};
-    ULONG64 scratchPhys,instPhys,userdPhys,methodPhys,fifoGpuVa,scratchEnd;
+    ULONG64 scratchPhys,instPhys,userdPhys,ramfcPhys,methodPhys,fifoGpuVa,scratchEnd;
     NV0080_CTRL_GPU_GET_CLASSLIST_V2_PARAMS supportedClasses={0};
     ULONG classEngineId=0,faultBufferClass=0;
     NV906F_CTRL_GET_CLASS_ENGINEID_PARAMS classEngineParams={0};
@@ -1104,6 +1125,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     scratchPhys=(ULONG64)dev->GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET;
     instPhys=scratchPhys+0xa000;
     userdPhys=scratchPhys+0xb400;
+    ramfcPhys=scratchPhys+0xb000;
     methodPhys=scratchPhys+0xc000;
     fifoGpuVa=dev->GspScratchGpuVa+0x9000;
     scratchEnd=scratchPhys+GSP_SCRATCH_SIZE;
@@ -1167,7 +1189,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     LogStr("NVX [GR]: RM error notifier context-DMA allocated.\n");
 
     chan.gpFifoOffset=fifoGpuVa;
-    chan.gpFifoEntries=256;
+    chan.gpFifoEntries=512;
     chan.flags=0x00200220; /* privileged, fixed USERD page, index 2 */
     /* Use NVK's explicit graphics TSG + synchronized context-share form.
        The previous bare-channel form allocated but GSP-RM never associated
@@ -1214,7 +1236,10 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     chan.userdMem.size=0x200;
     chan.userdMem.addressSpace=1;
     chan.userdMem.cacheAttrib=0;
-    chan.ramfcMem.base=instPhys;
+    /* RM creates separate descriptors for instance and RAMFC backing. Keep
+       them disjoint; aliasing RAMFC over the instance block can corrupt saved
+       channel pointers after context switches under sustained submissions. */
+    chan.ramfcMem.base=ramfcPhys;
     chan.ramfcMem.size=0x200;
     chan.ramfcMem.addressSpace=1;
     chan.ramfcMem.cacheAttrib=0;
@@ -1513,8 +1538,10 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     fifo=(volatile ULONG64 *)(scratch+0x9000);
     push=(PULONG)(scratch+0xf000);
     pushVa=dev->GspScratchGpuVa+0xf000;
-    grFence=(volatile ULONG *)(scratch+0xb500);
-    grFenceVa=dev->GspScratchGpuVa+0xb500;
+    /* Keep the semaphore outside USERD: the RM-defined 512-byte USERD block
+       occupies scratch +0xb400..+0xb5ff. */
+    grFence=(volatile ULONG *)(scratch+0x5000);
+    grFenceVa=dev->GspScratchGpuVa+0x5000;
     grData=(volatile ULONG *)(scratch+0xb600);
     grDataVa=dev->GspScratchGpuVa+0xb600;
     /* The spare final scratch page is a CE readback destination after the
@@ -1958,7 +1985,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
             LogHex(instanceLo);LogStr("\n");
         }
         {
-            PULONG ramfc=(PULONG)(scratch+0xa000);
+            PULONG ramfc=(PULONG)(scratch+0xb000);
             LogStr("NVX [GR]: RAMFC userdLo=");LogHex(ramfc[0x8/4]);
             LogStr(" userdHi=");LogHex(ramfc[0xc/4]);
             LogStr(" gpBaseLo=");LogHex(ramfc[0x48/4]);
@@ -2025,18 +2052,24 @@ static VOID NvxGspAppendUserTriangle(PNVX_DEVICE_EXTENSION dev,PUCHAR scratch,
         0,0x3f800000U,0x3f000000U,0x3f800000U, 0x3f000000U,0x3f800000U,0,0x3f800000U,
         0x3f800000U,0,0x3f000000U,0x3f800000U, 0x3f000000U,0x3f800000U,0,0x3f800000U
     };
-    static const ULONG uniforms[8]={64,16,1,1,0,0,0,0};
+    ULONG uniforms[8]={64,16,1,1,0,0,0,0};
+    if(targetWidth>64U||targetHeight>16U) {
+        uniforms[0]=1;
+        uniforms[1]=1;
+    }
     /* Keep depth VS code at a distinct GPU VA from the color VS. Scratch
        +0x1000 is otherwise unused and mapped by the same verified 64KB leaf. */
     ULONG64 shaderVa=dev->GspScratchGpuVa+(depthShader?0x1000:0x8000);
     ULONG64 resourceVa=dev->GspScratchGpuVa+0x8000;
     ULONG64 cbVa=resourceVa+0x600;
-    ULONG64 vertexVa=dev->GspScratchGpuVa+0xa000;
+    /* +0xa000 is the RM-owned channel instance block. Keep submitted vertex
+       data below the diagnostic readback area and the fence word. */
+    ULONG64 vertexVa=dev->GspScratchGpuVa+0x6000;
     ULONG64 textureVa=resourceVa+0x900;
     ULONG64 bindlessVa=resourceVa+0xa00;
     ULONG64 textureDataVa=dev->GspScratchGpuVa+0x7000;
     PULONG cb=(PULONG)(scratch+0x8600);
-    PULONG vertex=(PULONG)(scratch+0xa000);
+    PULONG vertex=(PULONG)(scratch+0x6000);
     PULONG texture=(PULONG)(scratch+0x8900);
     PULONG bindless=(PULONG)(scratch+0x8a00);
     ULONG n=*count,i;
@@ -2047,12 +2080,19 @@ static VOID NvxGspAppendUserTriangle(PNVX_DEVICE_EXTENSION dev,PUCHAR scratch,
     VideoPortMoveMemory(cb,(PVOID)uniforms,sizeof(uniforms));
     if(uploadedVertices)
         VideoPortMoveMemory(vertex,scratch+0xb800,
-                            depthShader?96U:vertexCount*24U);
+                            depthShader?vertexCount*32U:vertexCount*24U);
     else if(depthShader)
         VideoPortMoveMemory(vertex,(PVOID)depthVertices,sizeof(depthVertices));
     else
         VideoPortMoveMemory(vertex,(PVOID)vertices,sizeof(vertices));
     if(depthShader) {
+        LogStr("NVX [3D-DEPTH]: upload source XY=");
+        LogHex(((PULONG)(scratch+0xb800))[0]);
+        LogHex(((PULONG)(scratch+0xb800))[1]);
+        LogStr(" generic XY=");
+        LogHex(((PULONG)(scratch+0xb800))[4]);
+        LogHex(((PULONG)(scratch+0xb800))[5]);
+        LogStr("\n");
         /* Preserve the required POSITION_W declaration. Add POSITION_Z to
            the baseline XYW mask, yielding the valid XYZW mask 0xf000. */
         ((PULONG)(scratch+0x1000))[13]|=(1U<<14);
@@ -2075,6 +2115,9 @@ static VOID NvxGspAppendUserTriangle(PNVX_DEVICE_EXTENSION dev,PUCHAR scratch,
         LogHex(((PULONG)(scratch+0x1000))[0]);
         LogHex(((PULONG)(scratch+0x1000))[1]);
         LogStr(" appended AST64 clip ZW from R8/R9");
+        LogStr(" vertex XY=");LogHex(((PULONG)vertex)[0]);
+        LogHex(((PULONG)vertex)[1]);LogStr(" generic XY=");
+        LogHex(((PULONG)vertex)[4]);LogHex(((PULONG)vertex)[5]);
         LogStr(" vertex position ZW=");LogHex(((PULONG)vertex)[2]);
         LogHex(((PULONG)vertex)[3]);LogStr(" generic ZW=");
         LogHex(((PULONG)vertex)[4]);LogHex(((PULONG)vertex)[5]);
@@ -2106,13 +2149,11 @@ static VOID NvxGspAppendUserTriangle(PNVX_DEVICE_EXTENSION dev,PUCHAR scratch,
     push[n++]=13;push[n++]=4;
     NVX_TRI_INCR(NVC797_SET_PIPELINE_PROGRAM_ADDRESS_A(5),2);
     push[n++]=(ULONG)(shaderVa>>32);push[n++]=(ULONG)(shaderVa+0x300);
-    if(depthShader) {
-        NVX_TRI_INCR(NVC797_INVALIDATE_SHADER_CACHES,1);
-        push[n++]=DRF_DEF(C797,_INVALIDATE_SHADER_CACHES,_INSTRUCTION,_TRUE)|
-                  DRF_DEF(C797,_INVALIDATE_SHADER_CACHES,_DATA,_TRUE)|
-                  DRF_DEF(C797,_INVALIDATE_SHADER_CACHES,_CONSTANT,_TRUE)|
-                  DRF_DEF(C797,_INVALIDATE_SHADER_CACHES,_FLUSH_DATA,_TRUE);
-    }
+    NVX_TRI_INCR(NVC797_INVALIDATE_SHADER_CACHES,1);
+    push[n++]=DRF_DEF(C797,_INVALIDATE_SHADER_CACHES,_INSTRUCTION,_TRUE)|
+              DRF_DEF(C797,_INVALIDATE_SHADER_CACHES,_DATA,_TRUE)|
+              DRF_DEF(C797,_INVALIDATE_SHADER_CACHES,_CONSTANT,_TRUE)|
+              DRF_DEF(C797,_INVALIDATE_SHADER_CACHES,_FLUSH_DATA,_TRUE);
     NVX_TRI_INCR(NVC797_BIND_GROUP_CONSTANT_BUFFER(0),1);
     push[n++]=DRF_DEF(C797,_BIND_GROUP_CONSTANT_BUFFER,_VALID,_FALSE)|
               DRF_NUM(C797,_BIND_GROUP_CONSTANT_BUFFER,_SHADER_SLOT,1);
@@ -2175,11 +2216,11 @@ static VOID NvxGspAppendUserTriangle(PNVX_DEVICE_EXTENSION dev,PUCHAR scratch,
               DRF_DEF(C797,_SET_VERTEX_STREAM_A_FORMAT,_ENABLE,_TRUE);
     push[n++]=(ULONG)(vertexVa>>32);push[n++]=(ULONG)vertexVa;
     NVX_TRI_INCR(NVC797_SET_VERTEX_STREAM_SIZE_A(1),2);
-    push[n++]=0;push[n++]=depthShader?96U:vertexCount*24U;
+    push[n++]=0;push[n++]=depthShader?vertexCount*32U:vertexCount*24U;
     NVX_TRI_INCR(NVC797_OGL_SET_CULL,1);push[n++]=NVC797_OGL_SET_CULL_ENABLE_FALSE;
     NVX_TRI_INCR(NVC797_BEGIN,1);push[n++]=NVC797_BEGIN_OP_TRIANGLES;
     NVX_TRI_INCR(NVC797_SET_VERTEX_ARRAY_START,2);
-    push[n++]=0;push[n++]=depthShader?3U:vertexCount;
+    push[n++]=0;push[n++]=vertexCount;
     NVX_TRI_INCR(NVC797_END,1);push[n++]=0;
 #undef NVX_TRI_INCR
     *count=n;
@@ -2188,7 +2229,8 @@ static VOID NvxGspAppendUserTriangle(PNVX_DEVICE_EXTENSION dev,PUCHAR scratch,
 
 static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
     ULONG64 depthVa,ULONG color,ULONG64 fenceValue,BOOLEAN drawTriangle,
-    BOOLEAN preserveTarget,ULONG depthMode,ULONG depthFormat,ULONG64 vertexVa,
+    BOOLEAN preserveTarget,ULONG depthMode,ULONG depthFormat,
+    ULONG depthPitchBytes,ULONG64 vertexVa,
     ULONG vertexCount,ULONG triangleColor,ULONG targetWidth,
     ULONG targetHeight,ULONG targetTileMode,
     ULONG *greenPixels,ULONG *whitePixels)
@@ -2199,6 +2241,7 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
     volatile ULONG64 *fifo;
     PULONG push;
     ULONG n=0,i,put,wait;
+    ULONG gpGetSnapshot,gpPutSnapshot;
     ULONG64 pushVa,fenceVa;
     if(greenPixels) *greenPixels=0;
     if(whitePixels) *whitePixels=0;
@@ -2211,12 +2254,25 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
        targetHeight>NVX_3D_MAX_SURFACE_DIMENSION||
        (targetTileMode&~0x70U)||
        depthMode>5U||depthFormat>NVX_3D_ZT_FORMAT_ZF32||
+       (depthMode&&depthPitchBytes&&
+        ((depthPitchBytes&63U)||depthPitchBytes<targetWidth*4U))||
        (depthMode&&((depthVa&0xffffULL)||depthVa<dev->GspVramGpuVa||
         depthVa>=dev->GspVramGpuVa+dev->GspVramMapBytes))||
        (!drawTriangle&&vertexVa)||(vertexVa&3ULL)||
        !fenceValue||fenceValue>0xffffffffULL||
        (dstVa&0xffffULL)||!dev->GspDmaVirtual||!dev->GspGraphicsRunlistBase) {
         if(drawTriangle) LogStr("NVX [3D-TRI]: rejected by channel/state validation.\n");
+        return FALSE;
+    }
+    /* The CE target prefill, uploaded vertex staging and GR draw share this
+       scratch allocation. Hold the cross-engine lock across the whole
+       operation so a concurrent copy/fill/upload cannot reuse those bytes. */
+    for(wait=0;wait<20000;wait++) {
+        if(!__sync_lock_test_and_set(&NvxGrUserSubmitBusy,1)) break;
+        VideoPortStallExecution(10);
+    }
+    if(wait==20000) {
+        if(drawTriangle) LogStr("NVX [3D-TRI]: shared scratch lock timeout.\n");
         return FALSE;
     }
     /* Keep the rasterizer diagnostic independent of C797 CLEAR_SURFACE,
@@ -2228,14 +2284,16 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
         ULONG whitePixels=0,rawWhiteWords=0;
         for(i=0;i<1024;i++) prefillReadback[i]=0xffffffffU;
         __sync_synchronize();
-        if(!NvxGspSubmitCopy2D(dev,dstVa,dev->GspScratchGpuVa+0xe000,
+        if(!NvxGspSubmitCopy2DLocked(dev,dstVa,dev->GspScratchGpuVa+0xe000,
                                256,256,256,16)) {
-            LogStr("NVX [3D-TRI]: CE target prefill copy failed.\n");return FALSE;
+            LogStr("NVX [3D-TRI]: CE target prefill copy failed.\n");
+            __sync_lock_release(&NvxGrUserSubmitBusy);return FALSE;
         }
         VideoPortZeroMemory((PVOID)prefillReadback,4096);
-        if(!NvxGspSubmitCopy2D(dev,dev->GspScratchGpuVa+0xe000,
+        if(!NvxGspSubmitCopy2DLocked(dev,dev->GspScratchGpuVa+0xe000,
                                dstVa,256,256,256,16)) {
-            LogStr("NVX [3D-TRI]: CE target prefill readback failed.\n");return FALSE;
+            LogStr("NVX [3D-TRI]: CE target prefill readback failed.\n");
+            __sync_lock_release(&NvxGrUserSubmitBusy);return FALSE;
         }
         for(i=0;i<1024;i++) {
             ULONG x=i%64U,y=i/64U;
@@ -2247,28 +2305,28 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
         LogStr(" logical_white_pixels=");LogHex(whitePixels);LogStr("/0x400\n");
     }
 #if !NVX_ENABLE_GR_SUBMISSION_PROBE
-    if(drawTriangle) {LogStr("NVX [3D-TRI]: submission probe is not built in.\n");return FALSE;}
+    if(drawTriangle) {
+        LogStr("NVX [3D-TRI]: submission probe is not built in.\n");
+        __sync_lock_release(&NvxGrUserSubmitBusy);return FALSE;
+    }
 #endif
-    for(wait=0;wait<20000;wait++) {
-        if(!__sync_lock_test_and_set(&NvxGrUserSubmitBusy,1)) break;
-        VideoPortStallExecution(10);
-    }
-    if(wait==20000) {
-        if(drawTriangle) LogStr("NVX [3D-TRI]: submit lock timeout.\n");
-        return FALSE;
-    }
     scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET;
     if(drawTriangle&&vertexVa) {
         /* Accept only uploaded vertex bytes; all GR methods, shaders and
            semaphore addresses remain constructed by this kernel driver. */
-        ULONG vertexBytes=depthMode?96U:vertexCount*24U;
-        if(!NvxGspSubmitCopy2D(dev,dev->GspScratchGpuVa+0xb800,vertexVa,
+        ULONG vertexBytes=depthMode?vertexCount*32U:vertexCount*24U;
+        if(!NvxGspSubmitCopy2DLocked(dev,dev->GspScratchGpuVa+0xb800,vertexVa,
                                vertexBytes,vertexBytes,vertexBytes,1)) {
+            if(depthMode==5U) {
+                LogStr("NVX [3D-DEPTH]: vertex CE copy failed.");
+                LogStr(" src=");LogHex(vertexVa);LogStr(" bytes=");
+                LogHex(vertexBytes);LogStr(" fence=");LogHex(fenceValue);LogStr("\n");
+            }
             __sync_lock_release(&NvxGrUserSubmitBusy);
             return FALSE;
         }
         __sync_synchronize();
-        for(i=0;i<(depthMode?24U:vertexCount*6U);i++) {
+        for(i=0;i<(depthMode?vertexCount*8U:vertexCount*6U);i++) {
             ULONG component=((volatile ULONG *)(scratch+0xb800))[i];
             ULONG componentInVertex=i%(depthMode?8U:6U);
             BOOLEAN positionXY=(componentInVertex<2U);
@@ -2287,25 +2345,65 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
         }
     }
     userd=(volatile ULONG *)(scratch+0xb400);
-    fence=(volatile ULONG *)(scratch+0xb500);
+    fence=(volatile ULONG *)(scratch+0x5000);
     fifo=(volatile ULONG64 *)(scratch+0x9000);
     push=(PULONG)(scratch+0xf000);
     pushVa=dev->GspScratchGpuVa+0xf000;
-    fenceVa=dev->GspScratchGpuVa+0xb500;
-    fence[0]=0;__sync_synchronize();
+    fenceVa=dev->GspScratchGpuVa+0x5000;
+    fence[0]=0;fence[1]=0;fence[2]=0;fence[3]=0;
+    fence[4]=0;fence[5]=0;fence[6]=0;fence[7]=0;
+    fence[8]=0;fence[9]=0;fence[10]=0;fence[11]=0;
+    fence[12]=0;fence[13]=0;fence[14]=0;fence[15]=0;
+    __sync_synchronize();
 #define NVX_GR_INCR(_m,_c) (push[n++]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|((_c)<<16)|((_m)>>2))
+#define NVX_GR_CHECKPOINT(_offset) do { \
+    if(drawTriangle) { \
+        NVX_GR_INCR(NVC797_SET_REPORT_SEMAPHORE_A,4); \
+        push[n++]=(ULONG)((fenceVa+(_offset))>>32); \
+        push[n++]=(ULONG)(fenceVa+(_offset)); \
+        push[n++]=(ULONG)fenceValue; \
+        push[n++]=DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_OPERATION,_RELEASE)| \
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_RELEASE,_AFTER_ALL_PRECEEDING_WRITES_COMPLETE)| \
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_PIPELINE_LOCATION,_ALL)| \
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_STRUCTURE_SIZE,_ONE_WORD); \
+    } \
+} while(0)
     NVX_GR_INCR(NVC56F_SET_OBJECT,1);push[n++]=0xC797;
+    NVX_GR_CHECKPOINT(40);
     NVX_GR_INCR(NVC797_SET_COLOR_TARGET_FORMAT(0),1);
     push[n++]=NVC797_SET_COLOR_TARGET_FORMAT_V_DISABLED;
+    NVX_GR_CHECKPOINT(44);
     NVX_GR_INCR(NVC797_SET_ZT_SELECT,1);push[n++]=0;
+    NVX_GR_CHECKPOINT(48);
     NVX_GR_INCR(NVC797_SET_POINT_CENTER_MODE,1);
     push[n++]=NVC797_SET_POINT_CENTER_MODE_V_OGL;
+    NVX_GR_CHECKPOINT(52);
     NVX_GR_INCR(NVC797_SET_SAMPLER_BINDING,1);
     push[n++]=NVC797_SET_SAMPLER_BINDING_V_VIA_HEADER_BINDING;
+    NVX_GR_CHECKPOINT(56);
     NVX_GR_INCR(NVC797_SET_VIEWPORT_SCALE_OFFSET,1);push[n++]=0;
+    NVX_GR_CHECKPOINT(60);
     for(i=0;i<16;i++) {
         NVX_GR_INCR(NVC797_SET_VIEWPORT_CLIP_HORIZONTAL(i),2);
         push[n++]=(32768U<<16);push[n++]=(32768U<<16);
+        if(i==7U&&drawTriangle) {
+            NVX_GR_INCR(NVC797_SET_REPORT_SEMAPHORE_A,4);
+            push[n++]=(ULONG)((fenceVa+32)>>32);push[n++]=(ULONG)(fenceVa+32);
+            push[n++]=(ULONG)fenceValue;
+            push[n++]=DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_OPERATION,_RELEASE)|
+                      DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_RELEASE,_AFTER_ALL_PRECEEDING_WRITES_COMPLETE)|
+                      DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_PIPELINE_LOCATION,_ALL)|
+                      DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_STRUCTURE_SIZE,_ONE_WORD);
+        }
+    }
+    if(drawTriangle) {
+        NVX_GR_INCR(NVC797_SET_REPORT_SEMAPHORE_A,4);
+        push[n++]=(ULONG)((fenceVa+28)>>32);push[n++]=(ULONG)(fenceVa+28);
+        push[n++]=(ULONG)fenceValue;
+        push[n++]=DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_OPERATION,_RELEASE)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_RELEASE,_AFTER_ALL_PRECEEDING_WRITES_COMPLETE)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_PIPELINE_LOCATION,_ALL)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_STRUCTURE_SIZE,_ONE_WORD);
     }
     NVX_GR_INCR(NVC797_SET_PROVOKING_VERTEX,1);
     push[n++]=NVC797_SET_PROVOKING_VERTEX_V_LAST;
@@ -2321,6 +2419,15 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
     push[n++]=NVC797_SET_BLEND_COLOR_DEST_COEFF_V_OGL_ZERO;
     NVX_GR_INCR(NVC797_SET_LINE_WIDTH_FLOAT,1);push[n++]=0x3f800000U;
     NVX_GR_INCR(NVC797_SET_LINE_MULTISAMPLE_OVERRIDE,1);push[n++]=0;
+    if(drawTriangle) {
+        NVX_GR_INCR(NVC797_SET_REPORT_SEMAPHORE_A,4);
+        push[n++]=(ULONG)((fenceVa+24)>>32);push[n++]=(ULONG)(fenceVa+24);
+        push[n++]=(ULONG)fenceValue;
+        push[n++]=DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_OPERATION,_RELEASE)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_RELEASE,_AFTER_ALL_PRECEEDING_WRITES_COMPLETE)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_PIPELINE_LOCATION,_ALL)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_STRUCTURE_SIZE,_ONE_WORD);
+    }
     NVX_GR_INCR(NVC797_SET_WINDOW_ORIGIN,1);
     push[n++]=DRF_DEF(C797,_SET_WINDOW_ORIGIN,_MODE,_UPPER_LEFT)|
               DRF_DEF(C797,_SET_WINDOW_ORIGIN,_FLIP_Y,_TRUE);
@@ -2347,14 +2454,45 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
     NVX_GR_INCR(NVC797_SET_GO_IDLE_TIMEOUT,1);push[n++]=0x800;
     NVX_GR_INCR(NVC797_SET_SPH_VERSION,2);
     push[n++]=(4U)|(4U<<16);push[n++]=(4U)|(4U<<16);
+    /* Probe completion of common state separately from target binding. */
+    if(drawTriangle) {
+        NVX_GR_INCR(NVC797_SET_REPORT_SEMAPHORE_A,4);
+        push[n++]=(ULONG)((fenceVa+20)>>32);push[n++]=(ULONG)(fenceVa+20);
+        push[n++]=(ULONG)fenceValue;
+        push[n++]=DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_OPERATION,_RELEASE)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_RELEASE,_AFTER_ALL_PRECEEDING_WRITES_COMPLETE)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_PIPELINE_LOCATION,_ALL)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_STRUCTURE_SIZE,_ONE_WORD);
+    }
     NVX_GR_INCR(NVC797_SET_CT_SELECT,1);push[n++]=1;
     NVX_GR_INCR(NVC797_SET_COLOR_TARGET_A(0),6);
     push[n++]=(ULONG)(dstVa>>32);push[n++]=(ULONG)dstVa;
     push[n++]=targetWidth;push[n++]=targetHeight;
     push[n++]=NVC797_SET_COLOR_TARGET_FORMAT_V_A8R8G8B8;
     push[n++]=targetTileMode;
+    /* Separate a rejected color-target binding from later clipping/state. */
+    if(drawTriangle) {
+        NVX_GR_INCR(NVC797_SET_REPORT_SEMAPHORE_A,4);
+        push[n++]=(ULONG)((fenceVa+16)>>32);push[n++]=(ULONG)(fenceVa+16);
+        push[n++]=(ULONG)fenceValue;
+        push[n++]=DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_OPERATION,_RELEASE)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_RELEASE,_AFTER_ALL_PRECEEDING_WRITES_COMPLETE)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_PIPELINE_LOCATION,_ALL)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_STRUCTURE_SIZE,_ONE_WORD);
+    }
     NVX_GR_INCR(NVC797_SET_SURFACE_CLIP_HORIZONTAL,2);
     push[n++]=(targetWidth<<16);push[n++]=(targetHeight<<16);
+    /* Checkpoint after common state and color target binding, before zeta
+       state is applied. */
+    if(drawTriangle) {
+        NVX_GR_INCR(NVC797_SET_REPORT_SEMAPHORE_A,4);
+        push[n++]=(ULONG)((fenceVa+12)>>32);push[n++]=(ULONG)(fenceVa+12);
+        push[n++]=(ULONG)fenceValue;
+        push[n++]=DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_OPERATION,_RELEASE)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_RELEASE,_AFTER_ALL_PRECEEDING_WRITES_COMPLETE)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_PIPELINE_LOCATION,_ALL)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_STRUCTURE_SIZE,_ONE_WORD);
+    }
     if(depthMode) {
         NVX_GR_INCR(NVC797_SET_ZT_A,2);
         push[n++]=(ULONG)(depthVa>>32);push[n++]=(ULONG)depthVa;
@@ -2373,10 +2511,18 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
         LogStr(" zcull=disabled\n");
         /* NVK requires zeta tiling y_log2 == 0 on Maxwell and later. */
         NVX_GR_INCR(NVC797_SET_ZT_BLOCK_SIZE,1);push[n++]=0;
-        NVX_GR_INCR(NVC797_SET_ZT_ARRAY_PITCH,1);push[n++]=1024;
+        {
+            ULONG depthPitch=depthPitchBytes?depthPitchBytes:256U;
+            ULONG depthRows=(targetHeight+7U)&~7U;
+            NVX_GR_INCR(NVC797_SET_ZT_ARRAY_PITCH,1);
+            push[n++]=(depthPitch*depthRows)/4U;
+        }
+        /* Match NVC0/NVK: bind address/format/tiling, select the target,
+           then program its stride-based extent. */
         NVX_GR_INCR(NVC797_SET_ZT_SELECT,1);push[n++]=1;
         NVX_GR_INCR(NVC797_SET_ZT_SIZE_A,3);
-        push[n++]=64;push[n++]=16;push[n++]=1;
+        push[n++]=(depthPitchBytes?depthPitchBytes:256U)/4U;
+        push[n++]=targetHeight;push[n++]=1;
         NVX_GR_INCR(NVC797_SET_ZT_LAYER,1);push[n++]=0;
         /* NVK explicitly disables sparse zeta addressing on Maxwell and
            later. Set the same state instead of relying on class defaults. */
@@ -2404,7 +2550,7 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
     if(depthMode==1) {
         NVX_GR_INCR(NVC797_SET_Z_CLEAR_VALUE,1);push[n++]=0x3f800000U;
         NVX_GR_INCR(NVC797_SET_CLEAR_RECT_HORIZONTAL,2);
-        push[n++]=(64U<<16);push[n++]=(16U<<16);
+        push[n++]=(targetWidth<<16);push[n++]=(targetHeight<<16);
         NVX_GR_INCR(NVC797_CLEAR_SURFACE,1);
         push[n++]=NVC797_CLEAR_SURFACE_Z_ENABLE_TRUE;
     } else if(!drawTriangle) {
@@ -2434,12 +2580,31 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
            GPU VA. Invalidate cached texel data after changing its color. */
         NVX_GR_INCR(NVC797_INVALIDATE_TEXTURE_DATA_CACHE,1);
         push[n++]=NVC797_INVALIDATE_TEXTURE_DATA_CACHE_LINES_ALL;
+        /* Checkpoint after target/depth/shader resource state setup, before
+           the vertex shader and rasterizer methods are appended. */
+        NVX_GR_INCR(NVC797_SET_REPORT_SEMAPHORE_A,4);
+        push[n++]=(ULONG)((fenceVa+8)>>32);push[n++]=(ULONG)(fenceVa+8);
+        push[n++]=(ULONG)fenceValue;
+        push[n++]=DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_OPERATION,_RELEASE)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_RELEASE,_AFTER_ALL_PRECEEDING_WRITES_COMPLETE)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_PIPELINE_LOCATION,_ALL)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_STRUCTURE_SIZE,_ONE_WORD);
         NvxGspAppendUserTriangle(dev,scratch,push,&n,vertexVa!=0,
                                  depthMode!=0,
                                  depthMode!=0||preserveTarget,
                                  vertexCount,targetWidth,targetHeight);
     }
 #endif
+    /* Diagnostic checkpoint: mark completion of the draw before idle wait. */
+    if(drawTriangle) {
+        NVX_GR_INCR(NVC797_SET_REPORT_SEMAPHORE_A,4);
+        push[n++]=(ULONG)((fenceVa+4)>>32);push[n++]=(ULONG)(fenceVa+4);
+        push[n++]=(ULONG)fenceValue;
+        push[n++]=DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_OPERATION,_RELEASE)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_RELEASE,_AFTER_ALL_PRECEEDING_WRITES_COMPLETE)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_PIPELINE_LOCATION,_ALL)|
+                  DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_STRUCTURE_SIZE,_ONE_WORD);
+    }
     NVX_GR_INCR(NVC797_WAIT_FOR_IDLE,1);push[n++]=0;
     NVX_GR_INCR(NVC797_SET_REPORT_SEMAPHORE_A,4);
     push[n++]=(ULONG)(fenceVa>>32);push[n++]=(ULONG)fenceVa;
@@ -2448,10 +2613,13 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
               DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_RELEASE,_AFTER_ALL_PRECEEDING_WRITES_COMPLETE)|
               DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_PIPELINE_LOCATION,_ALL)|
               DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_STRUCTURE_SIZE,_ONE_WORD);
+#undef NVX_GR_CHECKPOINT
 #undef NVX_GR_INCR
     if(n>4096U) {
         __sync_lock_release(&NvxGrUserSubmitBusy);return FALSE;
     }
+    /* The RM channel was allocated with gpFifoEntries=512. USERD pointers
+       must wrap at that allocation's entry count. */
     put=dev->GspGraphicsGPPut%512;
     fifo[put]=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|((ULONG64)n<<42);
     __sync_synchronize();
@@ -2464,17 +2632,43 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
     VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+
         dev->GspGraphicsRunlistBase+0x90),2);
     dev->Nvx3dLastFence=fenceValue;
-    for(wait=0;wait<100000;wait++) {
+    /* A valid GPGet is always an index in the RM-allocated graphics ring.
+       Treat an out-of-range value as a channel fault immediately; waiting
+       through the generic 10-second fence budget otherwise freezes WGL after
+       the USERD state is already unusable. Keep a one-second bound for a
+       valid but genuinely slow submission. */
+    for(wait=0;wait<10000;wait++) {
         if(fence[0]==(ULONG)fenceValue) {
             __sync_synchronize();dev->Nvx3dCompletedFence=fenceValue;
-            if(drawTriangle&&depthMode) {
+            if(drawTriangle&&
+               (fence[1]!=(ULONG)fenceValue||fence[2]!=(ULONG)fenceValue||
+                fence[3]!=(ULONG)fenceValue||fence[4]!=(ULONG)fenceValue||
+                fence[5]!=(ULONG)fenceValue||
+                fence[7]!=(ULONG)fenceValue||fence[8]!=(ULONG)fenceValue||
+                fence[10]!=(ULONG)fenceValue||
+                fence[11]!=(ULONG)fenceValue||fence[12]!=(ULONG)fenceValue||
+                fence[13]!=(ULONG)fenceValue||fence[14]!=(ULONG)fenceValue||
+                fence[15]!=(ULONG)fenceValue)) {
+                LogStr("NVX [3D-GR]: successful draw missed checkpoint(s) value=");
+                LogHex(fenceValue);LogStr(" markers=");
+                LogHex(fence[15]);LogStr(",");LogHex(fence[14]);
+                LogStr(",");LogHex(fence[13]);LogStr(",");LogHex(fence[12]);
+                LogStr(",");LogHex(fence[11]);LogStr(",");LogHex(fence[10]);
+                LogStr(",");
+                LogHex(fence[8]);
+                LogStr(",");LogHex(fence[7]);
+                LogStr(",");LogHex(fence[5]);LogStr(",");LogHex(fence[4]);
+                LogStr(",");LogHex(fence[3]);LogStr(",");LogHex(fence[2]);
+                LogStr(",");LogHex(fence[1]);LogStr("\n");
+            }
+            if(drawTriangle&&depthMode&&targetWidth==64U&&targetHeight==16U) {
                 volatile ULONG *colorReadback=(volatile ULONG *)(scratch+0xe000);
                 volatile ULONG *depthReadback=(volatile ULONG *)(scratch+0x6000);
                 ULONG matching=0,white=0,depthWrite=0;
                 ULONG rawOne=0,rawZero=0,rawQuarter=0,rawHalf=0;
                 ULONG rawThreeQuarter=0;
                 ULONG depthMin=0xffffffffU,depthMax=0,firstDepth=0;
-                if(NvxGspSubmitCopy2D(dev,dev->GspScratchGpuVa+0xe000,
+                if(NvxGspSubmitCopy2DLocked(dev,dev->GspScratchGpuVa+0xe000,
                                       dstVa,256,256,256,16)) {
                     for(i=0;i<NVX_3D_READBACK_PIXELS;i++) {
                         ULONG pixel=NvxGspReadBlockLinearPixel(
@@ -2484,7 +2678,7 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
                         if(pixel==0xffffffffU) white++;
                     }
                 }
-                if(NvxGspSubmitCopy2D(dev,dev->GspScratchGpuVa+0x6000,
+                if(NvxGspSubmitCopy2DLocked(dev,dev->GspScratchGpuVa+0x6000,
                                       depthVa,256,256,256,16)) {
                     for(i=0;i<NVX_3D_READBACK_PIXELS;i++) {
                         ULONG raw=depthReadback[i];
@@ -2532,7 +2726,7 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
                 ULONG firstOther=0,firstOtherIndex=0xffffffffU;
                 ULONG drawnMinX=64,drawnMinY=16,drawnMaxX=0,drawnMaxY=0;
                 VideoPortZeroMemory((PVOID)readback,4096);
-                if(!NvxGspSubmitCopy2D(dev,dev->GspScratchGpuVa+0xe000,
+                if(!NvxGspSubmitCopy2DLocked(dev,dev->GspScratchGpuVa+0xe000,
                                        dstVa,256,256,256,16)) {
                     LogStr("NVX [3D-TRI]: CE target readback submission failed.\n");
                     __sync_lock_release(&NvxGrUserSubmitBusy);return FALSE;
@@ -2591,7 +2785,7 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
                 ULONG matches=0,black=0,other=0,expected=color;
                 if(targetWidth==64U&&targetHeight==16U) {
                     VideoPortZeroMemory((PVOID)readback,4096);
-                    if(!NvxGspSubmitCopy2D(dev,dev->GspScratchGpuVa+0xe000,
+                    if(!NvxGspSubmitCopy2DLocked(dev,dev->GspScratchGpuVa+0xe000,
                                            dstVa,256,256,256,16)) {
                         LogStr("NVX [3D-CLEAR]: CE target readback submission failed.\n");
                         __sync_lock_release(&NvxGrUserSubmitBusy);return FALSE;
@@ -2635,7 +2829,7 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
                         offset=NvxGspBlockLinearPixelOffsetEx(
                             x,y,targetWidth,targetTileMode);
                         VideoPortZeroMemory((PVOID)readback,4);
-                        if(!NvxGspSubmitCopy2D(dev,
+                        if(!NvxGspSubmitCopy2DLocked(dev,
                                 dev->GspScratchGpuVa+0xe000,
                                 dstVa+offset,4,4,4,1)) {
                             LogStr("NVX [3D-SURFACE]: sample readback failed.\n");
@@ -2659,13 +2853,93 @@ static BOOLEAN NvxGspSubmitUserOperation(PVOID HwDeviceExtension,ULONG64 dstVa,
             }
             __sync_lock_release(&NvxGrUserSubmitBusy);return TRUE;
         }
+        if(userd[0x88/4]>=512U) {
+            LogStr("NVX [3D-GR]: invalid USERD GPGet during fence wait=");
+            LogHex(userd[0x88/4]);LogStr(" GPPut=");
+            LogHex(userd[0x8c/4]);LogStr("\n");
+            break;
+        }
         VideoPortStallExecution(100);
     }
-    if(drawTriangle) {
-        LogStr("NVX [3D-TRI]: GR semaphore timeout fence=");LogHex(fence[0]);
-        LogStr(" expected=");LogHex(fenceValue);LogStr(" GPGet=");LogHex(userd[0x88/4]);
-        LogStr(" GPPut=");LogHex(userd[0x8c/4]);LogStr("\n");
+    {
+        volatile ULONG64 *grFifo=(volatile ULONG64 *)(scratch+0x9000);
+        ULONG64 entry,entryPushVa;
+        ULONG entryWords,entryIndex,submittedIndex;
+        /* Capture the hardware-side PBDMA state while the channel is known to
+           be stalled; USERD alone cannot distinguish a bad pointer from a
+           command/method fault. This helper only reads BAR0 registers. */
+        NvxGspLogPbdmaFault(dev);
+        gpGetSnapshot=userd[0x88/4];
+        gpPutSnapshot=userd[0x8c/4];
+        LogStr("NVX [3D-GR]: semaphore timeout fence=");LogHex(fence[0]);
+        LogStr(" bind_checkpoint=");LogHex(fence[10]);
+        LogStr(" format_checkpoint=");LogHex(fence[11]);
+        LogStr(" zselect_checkpoint=");LogHex(fence[12]);
+        LogStr(" point_checkpoint=");LogHex(fence[13]);
+        LogStr(" sampler_checkpoint=");LogHex(fence[14]);
+        LogStr(" viewport_scale_checkpoint=");LogHex(fence[15]);
+        LogStr(" viewport_mid_checkpoint=");LogHex(fence[8]);
+        LogStr(" viewport_checkpoint=");LogHex(fence[7]);
+        LogStr(" pretarget_checkpoint=");LogHex(fence[5]);
+        LogStr(" target_checkpoint=");LogHex(fence[4]);
+        LogStr(" color_checkpoint=");LogHex(fence[3]);
+        LogStr(" state_checkpoint=");LogHex(fence[2]);
+        LogStr(" draw_checkpoint=");LogHex(fence[1]);
+        LogStr(" expected=");LogHex(fenceValue);LogStr(" GPGet=");LogHex(gpGetSnapshot);
+        LogStr(" GPPut=");LogHex(gpPutSnapshot);LogStr("\n");
+        entryIndex=gpGetSnapshot%512U;
+        submittedIndex=(gpPutSnapshot+511U)%512U;
+        entry=grFifo[entryIndex];
+        entryPushVa=((entry&0xffffffffULL)&~3ULL)|(((entry>>32)&0xffULL)<<32);
+        entryWords=(ULONG)((entry>>42)&0x3fffffULL);
+        LogStr("NVX [3D-GR]: stalled GPFIFO index=");LogHex(entryIndex);
+        LogStr(" entry=");LogHex(entry);LogStr(" pushVA=");LogHex(entryPushVa);
+        LogStr(" words=");LogHex(entryWords);
+        if(entryPushVa>=dev->GspScratchGpuVa&&
+           entryPushVa+entryWords*4ULL<=dev->GspScratchGpuVa+GSP_SCRATCH_SIZE) {
+            PULONG stuckPush=(PULONG)(scratch+(entryPushVa-dev->GspScratchGpuVa));
+            LogStr(" firstMethods=");
+            for(i=0;i<entryWords&&i<8;i++) {LogHex(stuckPush[i]);LogStr(" ");}
+        }
+        LogStr("\n");
+        entry=grFifo[submittedIndex];
+        entryPushVa=((entry&0xffffffffULL)&~3ULL)|(((entry>>32)&0xffULL)<<32);
+        entryWords=(ULONG)((entry>>42)&0x3fffffULL);
+        LogStr("NVX [3D-GR]: submitted GPFIFO index=");LogHex(submittedIndex);
+        LogStr(" entry=");LogHex(entry);LogStr(" pushVA=");LogHex(entryPushVa);
+        LogStr(" words=");LogHex(entryWords);
+        if(entryPushVa>=dev->GspScratchGpuVa&&
+           entryPushVa+entryWords*4ULL<=dev->GspScratchGpuVa+GSP_SCRATCH_SIZE&&
+           entryWords>=16U) {
+            PULONG stuckPush=(PULONG)(scratch+(entryPushVa-dev->GspScratchGpuVa));
+            LogStr(" tailMethods=");
+            for(i=entryWords-16U;i<entryWords;i++) {
+                LogHex(stuckPush[i]);LogStr(" ");
+            }
+            LogStr("\nNVX [3D-GR]: pending pushbuffer=");
+            for(i=0;i<entryWords;i++) {LogHex(stuckPush[i]);LogStr(" ");}
+        }
+        LogStr("\n");
+        if(drawTriangle&&depthMode&&vertexCount<=NVX_3D_MAX_BATCH_VERTICES) {
+            PULONG source=(PULONG)(scratch+0xb800);
+            PULONG copied=(PULONG)(scratch+0x6000);
+            LogStr("NVX [3D-GR]: depth vertices count=");LogHex(vertexCount);
+            LogStr(" source=");
+            for(i=0;i<vertexCount*8U;i++) {LogHex(source[i]);LogStr(" ");}
+            LogStr(" copied=");
+            for(i=0;i<vertexCount*8U;i++) {LogHex(copied[i]);LogStr(" ");}
+            LogStr("\n");
+        }
     }
+    LogStr("NVX [3D-SUBMIT]: semaphore timeout draw=");LogHex(drawTriangle);
+    LogStr(" preserve=");LogHex(preserveTarget);
+    LogStr(" depthMode=");LogHex(depthMode);
+    LogStr(" target=");LogHex(targetWidth);LogStr("x");LogHex(targetHeight);
+    LogStr(" tileMode=");LogHex(targetTileMode);
+    LogStr(" color=");LogHex(triangleColor);
+    LogStr(" fence=");LogHex(fence[0]);LogStr(" expected=");LogHex(fenceValue);
+    LogStr(" GPGet=");LogHex(userd[0x88/4]);
+    LogStr(" GPPut=");LogHex(userd[0x8c/4]);LogStr("\n");
     if(depthMode) {
         LogStr("NVX [3D-DEPTH]: semaphore timeout depthMode=");LogHex(depthMode);
         LogStr(" fence=");LogHex(fence[0]);LogStr(" expected=");LogHex(fenceValue);
@@ -2683,16 +2957,62 @@ BOOLEAN NvxGspSubmitUserClear(PVOID HwDeviceExtension,ULONG64 dstVa,
 {
     return NvxGspSubmitUserOperation(HwDeviceExtension,dstVa,0,color,
                                      fenceValue,FALSE,FALSE,0,NVX_3D_ZT_FORMAT_Z24S8,
-                                     0,0,0,64U,16U,0,NULL,matchingPixels);
+                                     0,0,0,0,64U,16U,0,NULL,matchingPixels);
 }
 
 BOOLEAN NvxGspSubmitUserColorTargetClear(PVOID HwDeviceExtension,
     ULONG64 dstVa,ULONG width,ULONG height,ULONG tileMode,ULONG color,
     ULONG64 fenceValue,ULONG *matchingSamples)
 {
+    PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    NVX_3D_COLOR_SURFACE_LAYOUT layout;
+    ULONG offset=0,wait;
+    if(matchingSamples) *matchingSamples=0;
+    if(!dev||!dstVa||(dstVa&0xffffULL)||!fenceValue||
+       fenceValue>0xffffffffULL||
+       !Nvx3dComputeColorSurfaceLayout(width,height,&layout)||
+       layout.TileMode!=tileMode) return FALSE;
+
+    /* A uniform pixel value is invariant under the target's block-linear
+       swizzle. Fill the complete padded allocation through the verified CE
+       path instead of invoking C797 CLEAR_SURFACE on every glClear. Besides
+       avoiding repeated large rasterizer clears, this removes the five
+       per-clear sample readbacks previously used to validate that method. */
+    for(wait=0;wait<20000;wait++) {
+        if(!__sync_lock_test_and_set(&NvxGrUserSubmitBusy,1)) break;
+        VideoPortStallExecution(10);
+    }
+    if(wait==20000) return FALSE;
+    while(offset<layout.Bytes) {
+        ULONG chunk=layout.Bytes-offset;
+        if(chunk>0x01000000U) chunk=0x01000000U;
+        chunk&=~3U;
+        if(!chunk||!NvxGspSubmitFillLocked(dev,dstVa+offset,color,chunk)) {
+            __sync_lock_release(&NvxGrUserSubmitBusy);
+            return FALSE;
+        }
+        offset+=chunk;
+    }
+    dev->Nvx3dCompletedFence=fenceValue;
+    __sync_synchronize();
+    __sync_lock_release(&NvxGrUserSubmitBusy);
+    return TRUE;
+}
+
+/* Translate the narrowly validated Nouveau/NVC0 clear packet into the
+   miniport-owned C797 command stream. The user packet is never submitted to
+   the hardware GPFIFO. */
+BOOLEAN NvxGspSubmitNvc0ColorTargetClear(PVOID HwDeviceExtension,
+    ULONG64 dstVa,ULONG width,ULONG height,ULONG tileMode,ULONG color,
+    ULONG64 fenceValue)
+{
+    NVX_3D_COLOR_SURFACE_LAYOUT layout;
+    if(!Nvx3dComputeColorSurfaceLayout(width,height,&layout) ||
+       layout.TileMode!=tileMode || layout.Bytes>NVX_3D_MAX_BUFFER_BYTES)
+        return FALSE;
     return NvxGspSubmitUserOperation(HwDeviceExtension,dstVa,0,color,
-        fenceValue,FALSE,FALSE,0,NVX_3D_ZT_FORMAT_Z24S8,
-        0,0,0,width,height,tileMode,NULL,matchingSamples);
+        fenceValue,FALSE,FALSE,0,NVX_3D_ZT_FORMAT_Z24S8,0,0,0,0,
+        width,height,tileMode,NULL,NULL);
 }
 
 BOOLEAN NvxGspSubmitUserColorTargetTriangles(PVOID HwDeviceExtension,
@@ -2708,7 +3028,7 @@ BOOLEAN NvxGspSubmitUserColorTargetTriangles(PVOID HwDeviceExtension,
     if(!vertexVa||vertexCount<3U||vertexCount>NVX_3D_MAX_BATCH_VERTICES||
        vertexCount%3U) return FALSE;
     if(!NvxGspSubmitUserOperation(HwDeviceExtension,dstVa,0,0,
-        fenceValue,TRUE,TRUE,0,NVX_3D_ZT_FORMAT_Z24S8,vertexVa,
+        fenceValue,TRUE,TRUE,0,NVX_3D_ZT_FORMAT_Z24S8,0,vertexVa,
         vertexCount,color,width,height,tileMode,NULL,NULL)) return FALSE;
     if(!verifyFullTarget) return TRUE;
     if(!dev||!dev->GspDmaVirtual) return FALSE;
@@ -2740,13 +3060,46 @@ BOOLEAN NvxGspSubmitUserColorTargetTriangles(PVOID HwDeviceExtension,
     return TRUE;
 }
 
+BOOLEAN NvxGspSubmitUserColorTargetDepthClear(PVOID HwDeviceExtension,
+    ULONG64 depthVa,ULONG bytes,ULONG64 fenceValue)
+{
+    PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    ULONG offset=0;
+    if(!dev||!depthVa||(depthVa&0xffffULL)||!bytes||(bytes&3U)||
+       !fenceValue||fenceValue>0xffffffffULL) return FALSE;
+    while(offset<bytes) {
+        ULONG chunk=bytes-offset;
+        if(chunk>0x01000000U) chunk=0x01000000U;
+        chunk&=~3U;
+        if(!chunk||!NvxGspSubmitFill(dev,depthVa+offset,0x3f800000U,chunk))
+            return FALSE;
+        offset+=chunk;
+    }
+    dev->Nvx3dCompletedFence=fenceValue;
+    __sync_synchronize();
+    return TRUE;
+}
+
+BOOLEAN NvxGspSubmitUserColorTargetDepthTriangles(PVOID HwDeviceExtension,
+    ULONG64 dstVa,ULONG width,ULONG height,ULONG tileMode,ULONG64 depthVa,
+    ULONG depthPitchBytes,ULONG64 vertexVa,ULONG vertexCount,ULONG color,
+    ULONG depthMode,ULONG64 fenceValue)
+{
+    if(!vertexVa||vertexCount<3U||vertexCount>NVX_3D_MAX_BATCH_VERTICES||
+       vertexCount%3U||!depthVa||!depthPitchBytes||
+       (depthMode!=2U&&depthMode!=3U&&depthMode!=5U)) return FALSE;
+    return NvxGspSubmitUserOperation(HwDeviceExtension,dstVa,depthVa,0,
+        fenceValue,TRUE,TRUE,depthMode,NVX_3D_ZT_FORMAT_ZF32,depthPitchBytes,
+        vertexVa,vertexCount,color,width,height,tileMode,NULL,NULL);
+}
+
 BOOLEAN NvxGspSubmitUserTriangle(PVOID HwDeviceExtension,ULONG64 dstVa,
                                  ULONG64 fenceValue,ULONG *greenPixels,
                                  ULONG *whitePixels)
 {
     return NvxGspSubmitUserOperation(HwDeviceExtension,dstVa,0,0,fenceValue,
                                      TRUE,FALSE,0,NVX_3D_ZT_FORMAT_Z24S8,
-                                     0,3U,0xff00ff00U,64U,16U,0,
+                                     0,0,3U,0xff00ff00U,64U,16U,0,
                                      greenPixels,whitePixels);
 }
 
@@ -2760,7 +3113,7 @@ BOOLEAN NvxGspSubmitUserTriangleBuffer(PVOID HwDeviceExtension,ULONG64 dstVa,
 {
     if(!vertexVa) return FALSE;
     return NvxGspSubmitUserOperation(HwDeviceExtension,dstVa,depthVa,0,fenceValue,
-                                     TRUE,preserveTarget,depthTest?5:0,depthFormat,
+                                     TRUE,preserveTarget,depthTest?5:0,depthFormat,0,
                                      vertexVa,depthTest?3U:vertexCount,color,
                                      64U,16U,0,drawPixels,whitePixels);
 }
@@ -2789,15 +3142,19 @@ BOOLEAN NvxGspSubmitUserDepthClear(PVOID HwDeviceExtension,ULONG64 depthVa,
     for(i=0;i<NVX_3D_READBACK_PIXELS;i++)
         depthInit[i]=zf32?0x3f800000U:0xffffffffU;
     __sync_synchronize();
-    if(!NvxGspSubmitCopy2D(dev,
+    if(!NvxGspSubmitCopy2DLocked(dev,
             depthVa,
             dev->GspScratchGpuVa+0xe000,256,256,256,16)) {
+        LogStr("NVX [3D-DEPTH]: clear upload CE copy failed.");
+        LogStr(" depth=");LogHex(depthVa);LogStr(" fence=");LogHex(fenceValue);LogStr("\n");
         __sync_lock_release(&NvxGrUserSubmitBusy);
         return FALSE;
     }
     VideoPortZeroMemory((PVOID)depthReadback,4096);
-    if(!NvxGspSubmitCopy2D(dev,dev->GspScratchGpuVa+0x6000,
+    if(!NvxGspSubmitCopy2DLocked(dev,dev->GspScratchGpuVa+0x6000,
             depthVa,256,256,256,16)) {
+        LogStr("NVX [3D-DEPTH]: clear readback CE copy failed.");
+        LogStr(" depth=");LogHex(depthVa);LogStr(" fence=");LogHex(fenceValue);LogStr("\n");
         __sync_lock_release(&NvxGrUserSubmitBusy);
         return FALSE;
     }
@@ -2832,7 +3189,7 @@ BOOLEAN NvxGspRunZf32Diagnostic(PVOID HwDeviceExtension,ULONG64 dstVa,
         return FALSE;
     }
     if(!NvxGspSubmitUserOperation(HwDeviceExtension,dstVa,depthVa,0,
-        fenceValue,TRUE,TRUE,5,NVX_3D_ZT_FORMAT_ZF32,vertexVa,
+        fenceValue,TRUE,TRUE,5,NVX_3D_ZT_FORMAT_ZF32,0,vertexVa,
         3U,0xff00ff00U,64U,16U,0,&drawn,&white)) return FALSE;
     {
         PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
@@ -2891,7 +3248,7 @@ BOOLEAN NvxGspReadUserSurface(PVOID HwDeviceExtension,ULONG64 srcVa,
     scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET;
     readback=(volatile ULONG *)(scratch+0xe000);
     VideoPortZeroMemory((PVOID)readback,NVX_3D_READBACK_BYTES);
-    if(!NvxGspSubmitCopy2D(dev,dev->GspScratchGpuVa+0xe000,srcVa,
+    if(!NvxGspSubmitCopy2DLocked(dev,dev->GspScratchGpuVa+0xe000,srcVa,
                            256,256,256,16)) {
         __sync_lock_release(&NvxGrUserSubmitBusy);
         return FALSE;

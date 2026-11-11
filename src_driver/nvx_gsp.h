@@ -305,6 +305,7 @@ typedef struct _NVX_3D_USER_BUFFER_ENTRY {
     ULONG64 Id;
     ULONG64 GpuVa;
     ULONG64 DepthGpuVa;
+    ULONG64 ClientToken;
     ULONG Bytes;
     ULONG Usage;
     ULONG Width;
@@ -441,6 +442,8 @@ typedef struct _NVX_DEVICE_EXTENSION {
     BOOLEAN GspGraphicsUserAllocReady;
     BOOLEAN GspGraphicsUserSubmitReady;
     ULONG64 Nvx3dNextBufferId;
+    ULONG64 Nvx3dLastSubmitToken;
+    ULONG Nvx3dLastSubmitReply[18];
     ULONG64 Nvx3dLastFence;
     ULONG64 Nvx3dCompletedFence;
     NVX_3D_USER_BUFFER_ENTRY Nvx3dBuffers[NVX_3D_USER_BUFFER_SLOTS];
@@ -491,18 +494,35 @@ BOOLEAN NvxGspDiscoverScanout(PVOID HwDeviceExtension,ULONG modeIndex);
 BOOLEAN NvxGspSubmitCopy(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,ULONG bytes);
 BOOLEAN NvxGspSubmitCopy2D(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG64 srcVa,
                            ULONG srcPitch,ULONG dstPitch,ULONG bytesPerLine,ULONG lineCount);
+/* Internal variants for callers that already own NvxGrUserSubmitBusy. */
+BOOLEAN NvxGspSubmitCopy2DLocked(PVOID HwDeviceExtension,ULONG64 dstVa,
+                                 ULONG64 srcVa,ULONG srcPitch,ULONG dstPitch,
+                                 ULONG bytesPerLine,ULONG lineCount);
 BOOLEAN NvxGspSetDepthPageKind(PVOID HwDeviceExtension,ULONG64 gpuVa,
                                ULONG kind,BOOLEAN map);
+BOOLEAN NvxGspSetDepthRangeKind(PVOID HwDeviceExtension,ULONG64 gpuVa,
+                                ULONG bytes,ULONG kind,BOOLEAN map);
 BOOLEAN NvxGspSubmitFill(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG bytes);
+BOOLEAN NvxGspSubmitFillLocked(PVOID HwDeviceExtension,ULONG64 dstVa,
+                               ULONG color,ULONG bytes);
 BOOLEAN NvxGspSubmitUserClear(PVOID HwDeviceExtension,ULONG64 dstVa,
                               ULONG color,ULONG64 fenceValue,
                               ULONG *matchingPixels);
 BOOLEAN NvxGspSubmitUserColorTargetClear(PVOID HwDeviceExtension,
     ULONG64 dstVa,ULONG width,ULONG height,ULONG tileMode,ULONG color,
     ULONG64 fenceValue,ULONG *matchingSamples);
+BOOLEAN NvxGspSubmitNvc0ColorTargetClear(PVOID HwDeviceExtension,
+    ULONG64 dstVa,ULONG width,ULONG height,ULONG tileMode,ULONG color,
+    ULONG64 fenceValue);
 BOOLEAN NvxGspSubmitUserColorTargetTriangles(PVOID HwDeviceExtension,
     ULONG64 dstVa,ULONG width,ULONG height,ULONG tileMode,ULONG64 vertexVa,
     ULONG vertexCount,ULONG color,ULONG64 fenceValue,BOOLEAN verifyFullTarget);
+BOOLEAN NvxGspSubmitUserColorTargetDepthClear(PVOID HwDeviceExtension,
+    ULONG64 depthVa,ULONG bytes,ULONG64 fenceValue);
+BOOLEAN NvxGspSubmitUserColorTargetDepthTriangles(PVOID HwDeviceExtension,
+    ULONG64 dstVa,ULONG width,ULONG height,ULONG tileMode,ULONG64 depthVa,
+    ULONG depthPitchBytes,ULONG64 vertexVa,ULONG vertexCount,ULONG color,
+    ULONG depthMode,ULONG64 fenceValue);
 BOOLEAN NvxGspSubmitUserTriangle(PVOID HwDeviceExtension,ULONG64 dstVa,
                                  ULONG64 fenceValue,ULONG *greenPixels,
                                  ULONG *whitePixels);

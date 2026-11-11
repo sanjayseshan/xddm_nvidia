@@ -1416,13 +1416,12 @@ static PNVX_3D_USER_BUFFER_ENTRY Nvx3dFindBuffer(PNVX_DEVICE_EXTENSION engine,
 static BOOLEAN Nvx3dFillBuffer(PNVX_DEVICE_EXTENSION engine,ULONG64 gpuVa,
                                ULONG bytes,ULONG usage)
 {
-    ULONG offset=0;
+    ULONG offset=0,depthEnd=bytes;
     BOOLEAN depth=(usage&NVX_3D_USAGE_DEPTH_TARGET)!=0;
     while(offset<bytes) {
         ULONG chunk=bytes-offset;
-        if(depth&&offset>=NVX_3D_DEPTH_TARGET_OFFSET&&
-           offset<NVX_3D_DEPTH_TARGET_OFFSET+NVX_3D_DEPTH_TARGET_BYTES) {
-            offset=NVX_3D_DEPTH_TARGET_OFFSET+NVX_3D_DEPTH_TARGET_BYTES;
+        if(depth&&offset>=NVX_3D_DEPTH_TARGET_OFFSET&&offset<depthEnd) {
+            offset=depthEnd;
             continue;
         }
         if(chunk>0x01000000U) chunk=0x01000000U;
@@ -1443,10 +1442,55 @@ static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
     ULONG64 start,end,candidate;
     if(!engine||!request||!Nvx3dValidateAlloc(request)||
        !engine->GspCopyVerified||engine->GspChannelFaulted||
-       !Nvx3dHeapBounds(engine,&start,&end)||!Nvx3dLockBuffers()) return FALSE;
+       !Nvx3dHeapBounds(engine,&start,&end)||!Nvx3dLockBuffers()) {
+        LogStr("NVX [3D-ALLOC]: request rejected before heap scan.\n");
+        return FALSE;
+    }
+    if(request->ClientToken) {
+        for(i=0;i<NVX_3D_USER_BUFFER_SLOTS;i++) {
+            NVX_3D_USER_BUFFER_ENTRY *entry=&engine->Nvx3dBuffers[i];
+            if(entry->Id&&entry->ClientToken==request->ClientToken) {
+                if(entry->Bytes!=request->Bytes||entry->Usage!=request->Usage||
+                   entry->Width!=request->Width||entry->Height!=request->Height||
+                   entry->PitchBytes!=request->PitchBytes||
+                   entry->TileMode!=request->TileMode) {
+                    Nvx3dUnlockBuffers();return FALSE;
+                }
+                request->BufferId=entry->Id;request->GpuVa=entry->GpuVa;
+                LogStr("NVX [3D-ALLOC]: replay token=");
+                LogHex(request->ClientToken);LogStr(" id=");
+                LogHex(request->BufferId);LogStr("\n");
+                Nvx3dUnlockBuffers();return TRUE;
+            }
+        }
+    }
+    if(request->Usage&NVX_3D_USAGE_DEPTH_TARGET) {
+        for(i=0;i<NVX_3D_USER_BUFFER_SLOTS;i++) {
+            NVX_3D_USER_BUFFER_ENTRY *entry=&engine->Nvx3dBuffers[i];
+            if(entry->Id&&!entry->Busy&&
+               (entry->Usage&NVX_3D_USAGE_DEPTH_TARGET)&&
+               entry->Bytes==request->Bytes&&entry->Usage==request->Usage&&
+               entry->Width==request->Width&&entry->Height==request->Height&&
+               entry->PitchBytes==request->PitchBytes&&
+               entry->TileMode==request->TileMode) {
+                /* A pooled depth allocation is already initialized and idle.
+                   Busy protects an in-progress kernel operation; returning it
+                   busy would make the caller's first submit fail validation. */
+                entry->ClientToken=request->ClientToken;
+                request->BufferId=entry->Id;request->GpuVa=entry->GpuVa;
+                LogStr("NVX [3D-ALLOC]: reused depth pool id=");
+                LogHex(entry->Id);LogStr(" va=");LogHex(entry->GpuVa);
+                LogStr("\n");
+                Nvx3dUnlockBuffers();return TRUE;
+            }
+        }
+    }
     for(i=0;i<NVX_3D_USER_BUFFER_SLOTS;i++)
         if(!engine->Nvx3dBuffers[i].Id) {slot=i;break;}
-    if(slot==NVX_3D_USER_BUFFER_SLOTS) {Nvx3dUnlockBuffers();return FALSE;}
+    if(slot==NVX_3D_USER_BUFFER_SLOTS) {
+        LogStr("NVX [3D-ALLOC]: user buffer table is full.\n");
+        Nvx3dUnlockBuffers();return FALSE;
+    }
     /* The GPU VRAM mapping uses 64 KiB leaf PTEs. A depth target may change
        the PTE kind for its entire leaf, so keep its buffer 64 KiB aligned and
        reserve the depth page without sharing that leaf with the color target. */
@@ -1454,6 +1498,9 @@ static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
     for(;;) {
         BOOLEAN moved=FALSE;
         if(candidate>end||request->Bytes>end-candidate) {
+            LogStr("NVX [3D-ALLOC]: VRAM heap exhausted bytes=");
+            LogHex(request->Bytes);LogStr(" candidate=");LogHex(candidate);
+            LogStr(" end=");LogHex(end);LogStr("\n");
             Nvx3dUnlockBuffers();return FALSE;
         }
         for(i=0;i<NVX_3D_USER_BUFFER_SLOTS;i++) {
@@ -1472,6 +1519,9 @@ static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
     if(request->Usage&NVX_3D_USAGE_DEPTH_TARGET)
         candidate=(candidate+0xffffULL)&~0xffffULL;
     if(candidate>end||request->Bytes>end-candidate) {
+        LogStr("NVX [3D-ALLOC]: aligned VRAM range exhausted bytes=");
+        LogHex(request->Bytes);LogStr(" candidate=");LogHex(candidate);
+        LogStr(" end=");LogHex(end);LogStr("\n");
         Nvx3dUnlockBuffers();return FALSE;
     }
     engine->Nvx3dNextBufferId++;
@@ -1481,6 +1531,7 @@ static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
     engine->Nvx3dBuffers[slot].DepthGpuVa=
         (request->Usage&NVX_3D_USAGE_DEPTH_TARGET)?
         engine->GspVramGpuVa+candidate+NVX_3D_DEPTH_TARGET_OFFSET:0;
+    engine->Nvx3dBuffers[slot].ClientToken=request->ClientToken;
     engine->Nvx3dBuffers[slot].Bytes=request->Bytes;
     engine->Nvx3dBuffers[slot].Usage=request->Usage;
     engine->Nvx3dBuffers[slot].Width=request->Width;
@@ -1493,13 +1544,15 @@ static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
     Nvx3dUnlockBuffers();
     if((request->Usage&NVX_3D_USAGE_DEPTH_TARGET) &&
        (request->Bytes<NVX_3D_DEPTH_TARGET_TOTAL_BYTES ||
-        !NvxGspSetDepthPageKind(engine,
+        !NvxGspSetDepthRangeKind(engine,
             request->GpuVa+NVX_3D_DEPTH_TARGET_OFFSET,
+            request->Bytes-NVX_3D_DEPTH_TARGET_OFFSET,
             (request->Usage&NVX_3D_USAGE_DEPTH_ZF32)?6U:
             (request->Usage&NVX_3D_USAGE_DEPTH_S8Z24)?3U:5U,TRUE))) {
         if(engine->Nvx3dBuffers[slot].DepthGpuVa)
-            (void)NvxGspSetDepthPageKind(engine,
-                request->GpuVa+NVX_3D_DEPTH_TARGET_OFFSET,0U,FALSE);
+            (void)NvxGspSetDepthRangeKind(engine,
+                request->GpuVa+NVX_3D_DEPTH_TARGET_OFFSET,
+                request->Bytes-NVX_3D_DEPTH_TARGET_OFFSET,0U,FALSE);
         if(Nvx3dLockBuffers()) {
             PNVX_3D_USER_BUFFER_ENTRY entry=Nvx3dFindBuffer(engine,request->BufferId);
             if(entry) VideoPortZeroMemory(entry,sizeof(*entry));
@@ -1509,9 +1562,12 @@ static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
         return FALSE;
     }
     if(!Nvx3dFillBuffer(engine,request->GpuVa,request->Bytes,request->Usage)) {
+        LogStr("NVX [3D-ALLOC]: initial clear/fill failed id=");
+        LogHex(request->BufferId);LogStr("\n");
         if(request->Usage&NVX_3D_USAGE_DEPTH_TARGET)
-            (void)NvxGspSetDepthPageKind(engine,
-                request->GpuVa+NVX_3D_DEPTH_TARGET_OFFSET,0U,FALSE);
+            (void)NvxGspSetDepthRangeKind(engine,
+                request->GpuVa+NVX_3D_DEPTH_TARGET_OFFSET,
+                request->Bytes-NVX_3D_DEPTH_TARGET_OFFSET,0U,FALSE);
         if(Nvx3dLockBuffers()) {
             PNVX_3D_USER_BUFFER_ENTRY entry=Nvx3dFindBuffer(engine,request->BufferId);
             if(entry) VideoPortZeroMemory(entry,sizeof(*entry));
@@ -1526,6 +1582,10 @@ static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
         Nvx3dUnlockBuffers();
     }
     engine->GspGraphicsUserAllocReady=TRUE;
+    LogStr("NVX [3D-ALLOC]: committed id=");LogHex(request->BufferId);
+    LogStr(" slot=");LogHex(slot);LogStr(" engine=");LogHex((ULONG64)engine);
+    LogStr(" va=");LogHex(request->GpuVa);LogStr(" usage=");
+    LogHex(request->Usage);LogStr("\n");
     return TRUE;
 }
 
@@ -1535,9 +1595,41 @@ static BOOLEAN Nvx3dFreeBuffer(PNVX_DEVICE_EXTENSION engine,ULONG64 id)
     PNVX_3D_USER_BUFFER_ENTRY entry;
     if(!engine||!id||!Nvx3dLockBuffers()) return FALSE;
     entry=Nvx3dFindBuffer(engine,id);
-    if(!entry||entry->Busy) {Nvx3dUnlockBuffers();return FALSE;}
+    if(!entry) {
+        /* ExtEscape can be replayed by the dual-head display path after the
+           first identical free already released the monotonically unique ID. */
+        Nvx3dUnlockBuffers();return TRUE;
+    }
+    if(entry->Usage&NVX_3D_USAGE_DEPTH_TARGET) {
+        if(!entry->Busy) {
+            Nvx3dUnlockBuffers();return TRUE;
+        }
+        saved=*entry;Nvx3dUnlockBuffers();
+        if(!Nvx3dLockBuffers()) return FALSE;
+        entry=Nvx3dFindBuffer(engine,id);
+        if(entry&&entry->Busy&&entry->GpuVa==saved.GpuVa)
+            entry->Busy=FALSE;
+        Nvx3dUnlockBuffers();
+        LogStr("NVX [3D-FREE]: retained depth pool id=");LogHex(id);
+        LogStr(" va=");LogHex(saved.GpuVa);LogStr("\n");
+        return TRUE;
+    }
+    if(entry->Busy) {
+        LogStr("NVX [3D-FREE]: missing or busy id=");LogHex(id);
+        LogStr(" engine=");LogHex((ULONG64)engine);
+        LogStr(" missing=");LogHex(entry?0U:1U);
+        LogStr(" busy=");LogHex(entry?entry->Busy:0U);LogStr("\n");
+        Nvx3dUnlockBuffers();return FALSE;
+    }
     entry->Busy=TRUE;saved=*entry;Nvx3dUnlockBuffers();
+    LogStr("NVX [3D-FREE]: found id=");LogHex(id);
+    LogStr(" engine=");LogHex((ULONG64)engine);
+    LogStr(" va=");LogHex(saved.GpuVa);LogStr(" usage=");
+    LogHex(saved.Usage);LogStr("\n");
     if(!Nvx3dFillBuffer(engine,saved.GpuVa,saved.Bytes,saved.Usage)) {
+        LogStr("NVX [3D-FREE]: fill failed id=");LogHex(id);
+        LogStr(" usage=");LogHex(saved.Usage);LogStr(" bytes=");
+        LogHex(saved.Bytes);LogStr("\n");
         if(Nvx3dLockBuffers()) {
             entry=Nvx3dFindBuffer(engine,id);
             if(entry) entry->Busy=FALSE;
@@ -1546,8 +1638,9 @@ static BOOLEAN Nvx3dFreeBuffer(PNVX_DEVICE_EXTENSION engine,ULONG64 id)
         return FALSE;
     }
             if((saved.Usage&NVX_3D_USAGE_DEPTH_TARGET) &&
-       !NvxGspSetDepthPageKind(engine,
-           saved.GpuVa+NVX_3D_DEPTH_TARGET_OFFSET,0U,FALSE)) {
+       !NvxGspSetDepthRangeKind(engine,
+           saved.GpuVa+NVX_3D_DEPTH_TARGET_OFFSET,
+           saved.Bytes-NVX_3D_DEPTH_TARGET_OFFSET,0U,FALSE)) {
         if(Nvx3dLockBuffers()) {
             entry=Nvx3dFindBuffer(engine,id);
             if(entry) entry->Busy=FALSE;
@@ -1555,10 +1648,20 @@ static BOOLEAN Nvx3dFreeBuffer(PNVX_DEVICE_EXTENSION engine,ULONG64 id)
         }
         return FALSE;
     }
-    if(!Nvx3dLockBuffers()) return FALSE;
+    if(!Nvx3dLockBuffers()) {
+        LogStr("NVX [3D-FREE]: final lock failed id=");LogHex(id);LogStr("\n");
+        return FALSE;
+    }
     entry=Nvx3dFindBuffer(engine,id);
     if(entry&&entry->Busy&&entry->GpuVa==saved.GpuVa)
         VideoPortZeroMemory(entry,sizeof(*entry));
+    else {
+        LogStr("NVX [3D-FREE]: ownership changed id=");LogHex(id);
+        LogStr(" found=");LogHex(entry?1U:0U);
+        LogStr(" busy=");LogHex(entry?entry->Busy:0U);
+        LogStr(" va=");LogHex(entry?entry->GpuVa:0U);
+        LogStr(" expected=");LogHex(saved.GpuVa);LogStr("\n");
+    }
     Nvx3dUnlockBuffers();
     return TRUE;
 }
@@ -2189,6 +2292,13 @@ BOOLEAN NTAPI HwVidStartIO(
         if(!Nvx3dAllocateBuffer(engine,&request)) {
             status=engine&&engine->GspCopyVerified?ERROR_NOT_ENOUGH_MEMORY:
                                                     ERROR_NOT_SUPPORTED;
+            LogStr("NVX [3D-ALLOC]: failed usage=");LogHex(request.Usage);
+            LogStr(" bytes=");LogHex(request.Bytes);
+            LogStr(" width=");LogHex(request.Width);
+            LogStr(" height=");LogHex(request.Height);
+            LogStr(" copy_verified=");LogHex(engine&&engine->GspCopyVerified);
+            LogStr(" channel_faulted=");LogHex(engine&&engine->GspChannelFaulted);
+            LogStr("\n");
             break;
         }
         VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,sizeof(request));
@@ -2206,7 +2316,11 @@ BOOLEAN NTAPI HwVidStartIO(
         }
         VideoPortMoveMemory(&request,RequestPacket->InputBuffer,sizeof(request));
         if(!Nvx3dValidateFree(&request)) {status=ERROR_INVALID_PARAMETER;break;}
-        status=Nvx3dFreeBuffer(engine,request.BufferId)?NO_ERROR:ERROR_NOT_FOUND;
+        if(Nvx3dFreeBuffer(engine,request.BufferId)) status=NO_ERROR;
+        else {
+            LogStr("NVX [3D-FREE]: failed buffer id=");LogHex(request.BufferId);
+            LogStr("\n");status=ERROR_NOT_FOUND;
+        }
         break;
     }
 
@@ -2301,13 +2415,69 @@ BOOLEAN NTAPI HwVidStartIO(
         break;
     }
 
+    case IOCTL_NVX_3D_NVC0_CLEAR: {
+        PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
+        NVX_3D_NVC0_CLEAR request;
+        NVX_3D_USER_BUFFER_ENTRY saved;
+        PNVX_3D_USER_BUFFER_ENTRY entry;
+        ULONG64 fenceValue;
+        ULONG color;
+        uint32_t parsedColor;
+        if(!RequestPacket->InputBuffer||
+           RequestPacket->InputBufferLength!=sizeof(request)||
+           !RequestPacket->OutputBuffer||
+           RequestPacket->OutputBufferLength<sizeof(request)) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+        VideoPortMoveMemory(&request,RequestPacket->InputBuffer,sizeof(request));
+        if(!engine||!Nvx3dLockBuffers()) {
+            status=ERROR_DEVICE_NOT_READY;break;
+        }
+        entry=Nvx3dFindBuffer(engine,request.BufferId);
+        if(!entry||entry->Busy||
+           !(entry->Usage&NVX_3D_USAGE_COLOR_TARGET)||
+           (entry->Usage&NVX_3D_USAGE_DEPTH_TARGET)||
+           !Nvx3dValidateNvc0Clear(&request,sizeof(request),
+                entry->GpuVa,entry->Bytes,entry->Width,entry->Height,
+                entry->PitchBytes,entry->TileMode,&parsedColor)) {
+            Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
+        }
+        color=(ULONG)parsedColor;
+        entry->Busy=TRUE;saved=*entry;
+        fenceValue=engine->Nvx3dLastFence+1U;
+        if(!fenceValue||fenceValue>0xffffffffULL) {
+            entry->Busy=FALSE;Nvx3dUnlockBuffers();
+            status=ERROR_DEVICE_NOT_READY;break;
+        }
+        engine->Nvx3dLastFence=fenceValue;
+        Nvx3dUnlockBuffers();
+
+        if(NvxGspSubmitNvc0ColorTargetClear(engine,saved.GpuVa,
+                saved.Width,saved.Height,saved.TileMode,color,fenceValue)) {
+            request.FenceValue=fenceValue;
+            VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,
+                                sizeof(request));
+            statusBlock->Information=sizeof(request);status=NO_ERROR;
+            engine->GspGraphicsUserSubmitReady=TRUE;
+        } else {
+            status=ERROR_DEVICE_NOT_READY;
+        }
+        if(Nvx3dLockBuffers()) {
+            entry=Nvx3dFindBuffer(engine,saved.Id);
+            if(entry) entry->Busy=FALSE;
+            Nvx3dUnlockBuffers();
+        }
+        break;
+    }
+
     case IOCTL_NVX_3D_SUBMIT: {
         PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
             (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
         NVX_3D_SUBMIT request;
-        NVX_3D_USER_BUFFER_ENTRY saved={0},vertexSaved={0};
-        PNVX_3D_USER_BUFFER_ENTRY entry,vertexEntry=NULL;
-        ULONG64 fenceValue,vertexBufferId;
+        NVX_3D_USER_BUFFER_ENTRY saved={0},vertexSaved={0},depthSaved={0};
+        PNVX_3D_USER_BUFFER_ENTRY entry,vertexEntry=NULL,depthEntry=NULL;
+        ULONG64 fenceValue,vertexBufferId,depthBufferId;
         if(!RequestPacket->InputBuffer||
            RequestPacket->InputBufferLength!=sizeof(request)||
            !RequestPacket->OutputBuffer||
@@ -2317,12 +2487,71 @@ BOOLEAN NTAPI HwVidStartIO(
         VideoPortMoveMemory(&request,RequestPacket->InputBuffer,sizeof(request));
         if(!Nvx3dValidateSubmit(&request,sizeof(request),NVX_3D_MAX_BUFFER_BYTES)||
            !engine||!Nvx3dLockBuffers()) {
+            if(Nvx3dIsDynamicDepthDraw(request.Operation)) {
+                LogStr("NVX [3D-DYNAMIC]: request/lock rejected op=");
+                LogHex(request.Operation);LogStr(" width=");LogHex(request.Width);
+                LogStr(" height=");LogHex(request.Height);
+                LogStr(" colorId=");LogHex(request.BufferId);
+                LogStr(" vertexCount=");LogHex(request.Reserved[0]);
+                LogStr(" vertexId=");LogHex(Nvx3dSubmitVertexBufferId(&request));
+                LogStr(" tileMode=");LogHex(request.Reserved[3]);
+                LogStr(" depthId=");
+                LogHex(((ULONG64)request.Reserved[5]<<32)|request.Reserved[4]);
+                LogStr(" inputBytes=");LogHex(RequestPacket->InputBufferLength);
+                LogStr(" validate=");LogHex(Nvx3dValidateSubmit(&request,
+                    sizeof(request),NVX_3D_MAX_BUFFER_BYTES));LogStr("\n");
+            }
+            if(request.Operation==NVX_3D_SUBMIT_CLEAR_DEPTH||
+               request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH) {
+                LogStr("NVX [3D-DEPTH]: submit structure/lock rejected.");
+                LogStr(" op=");LogHex(request.Operation);
+                LogStr(" size=");LogHex(request.Size);
+                LogStr(" version=");LogHex(request.Version);
+                LogStr(" target=");LogHex(request.BufferId);
+                LogStr(" dimensions=");LogHex(request.Width);LogStr("x");
+                LogHex(request.Height);LogStr(" bytes=");
+                LogHex(RequestPacket->InputBufferLength);LogStr("\n");
+            }
             status=ERROR_INVALID_PARAMETER;break;
         }
+        if(request.ClientToken&&
+           request.ClientToken==engine->Nvx3dLastSubmitToken) {
+            NVX_3D_SUBMIT replay;
+            VideoPortMoveMemory(&replay,engine->Nvx3dLastSubmitReply,
+                                sizeof(replay));
+            Nvx3dUnlockBuffers();
+            VideoPortMoveMemory(RequestPacket->OutputBuffer,&replay,
+                                sizeof(replay));
+            statusBlock->Information=sizeof(replay);status=NO_ERROR;
+            LogStr("NVX [3D-SUBMIT]: replay token=");
+            LogHex(request.ClientToken);LogStr(" fence=");
+            LogHex(replay.FenceValue);LogStr("\n");
+            break;
+        }
         vertexBufferId=Nvx3dSubmitVertexBufferId(&request);
+        depthBufferId=Nvx3dIsDynamicDepthDraw(request.Operation)?
+            (((ULONG64)request.Reserved[5]<<32)|request.Reserved[4]):0;
         entry=Nvx3dFindBuffer(engine,request.BufferId);
         if(!entry||entry->Busy||entry->Bytes<
            Nvx3dRequiredSubmitBytes(request.Operation)) {
+            if(Nvx3dIsDynamicDepthDraw(request.Operation)) {
+                LogStr("NVX [3D-DYNAMIC]: color buffer rejected id=");
+                LogHex(request.BufferId);LogStr(" found=");LogHex(entry!=NULL);
+                LogStr(" busy=");LogHex(entry?entry->Busy:0);
+                LogStr(" bytes=");LogHex(entry?entry->Bytes:0);
+                LogStr(" usage=");LogHex(entry?entry->Usage:0);LogStr("\n");
+            }
+            if(request.Operation==NVX_3D_SUBMIT_CLEAR_DEPTH||
+               request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH) {
+                LogStr("NVX [3D-DEPTH]: target buffer rejected.");
+                LogStr(" op=");LogHex(request.Operation);
+                LogStr(" id=");LogHex(request.BufferId);
+                LogStr(" found=");LogHex(entry!=NULL);
+                LogStr(" busy=");LogHex(entry?entry->Busy:0);
+                LogStr(" bytes=");LogHex(entry?entry->Bytes:0);
+                LogStr(" required=");
+                LogHex(Nvx3dRequiredSubmitBytes(request.Operation));LogStr("\n");
+            }
             Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
         }
         if(request.Operation==NVX_3D_SUBMIT_CLEAR_COLOR_TARGET &&
@@ -2331,11 +2560,29 @@ BOOLEAN NTAPI HwVidStartIO(
             entry->TileMode>0x70U || !entry->PitchBytes)) {
             Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
         }
+        if(request.Operation==NVX_3D_SUBMIT_CLEAR_COLOR_TARGET_DEPTH &&
+           (!(entry->Usage&NVX_3D_USAGE_DEPTH_TARGET) ||
+            !(entry->Usage&NVX_3D_USAGE_DEPTH_ZF32) ||
+            request.Width!=entry->Width || request.Height!=entry->Height ||
+            entry->Bytes<=NVX_3D_DEPTH_TARGET_OFFSET)) {
+            Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
+        }
         if((request.Operation==NVX_3D_SUBMIT_DRAW_COLOR_TARGET ||
-            request.Operation==NVX_3D_SUBMIT_VERIFY_COLOR_TARGET_DRAW) &&
+            request.Operation==NVX_3D_SUBMIT_VERIFY_COLOR_TARGET_DRAW ||
+            Nvx3dIsDynamicDepthDraw(request.Operation)) &&
            (!(entry->Usage&NVX_3D_USAGE_COLOR_TARGET) ||
             request.Width!=entry->Width || request.Height!=entry->Height ||
             request.Reserved[3]!=entry->TileMode || !entry->PitchBytes)) {
+            if(Nvx3dIsDynamicDepthDraw(request.Operation)) {
+                LogStr("NVX [3D-DYNAMIC]: color metadata rejected id=");
+                LogHex(entry->Id);LogStr(" req=");LogHex(request.Width);
+                LogStr("x");LogHex(request.Height);LogStr(" tile=");
+                LogHex(request.Reserved[3]);LogStr(" entry=");
+                LogHex(entry->Width);LogStr("x");LogHex(entry->Height);
+                LogStr(" tile=");LogHex(entry->TileMode);
+                LogStr(" pitch=");LogHex(entry->PitchBytes);
+                LogStr(" usage=");LogHex(entry->Usage);LogStr("\n");
+            }
             Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
         }
         entry->Busy=TRUE;saved=*entry;
@@ -2344,24 +2591,68 @@ BOOLEAN NTAPI HwVidStartIO(
            request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH||
            request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLES||
            request.Operation==NVX_3D_SUBMIT_DRAW_COLOR_TARGET||
-           request.Operation==NVX_3D_SUBMIT_VERIFY_COLOR_TARGET_DRAW) {
+           request.Operation==NVX_3D_SUBMIT_VERIFY_COLOR_TARGET_DRAW||
+           Nvx3dIsDynamicDepthDraw(request.Operation)) {
             vertexEntry=Nvx3dFindBuffer(engine,vertexBufferId);
             if(!vertexEntry||vertexEntry->Busy||vertexEntry->Bytes<
                (request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH?
                     96U:request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLES?
                     request.Height*24U:
+                    Nvx3dIsDynamicDepthDraw(request.Operation)?
+                    request.Reserved[0]*32U:
                     (request.Operation==NVX_3D_SUBMIT_DRAW_COLOR_TARGET||
                      request.Operation==NVX_3D_SUBMIT_VERIFY_COLOR_TARGET_DRAW)?
                     request.Reserved[0]*24U:72U)) {
+                if(request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH) {
+                    LogStr("NVX [3D-DEPTH]: vertex buffer rejected.");
+                    LogStr(" id=");LogHex(vertexBufferId);
+                    LogStr(" found=");LogHex(vertexEntry!=NULL);
+                    LogStr(" busy=");LogHex(vertexEntry?vertexEntry->Busy:0);
+                    LogStr(" bytes=");LogHex(vertexEntry?vertexEntry->Bytes:0);
+                    LogStr(" needed=0x60\n");
+                }
+                if(Nvx3dIsDynamicDepthDraw(request.Operation)) {
+                    LogStr("NVX [3D-DYNAMIC]: vertex buffer rejected id=");
+                    LogHex(vertexBufferId);LogStr(" found=");
+                    LogHex(vertexEntry!=NULL);LogStr(" busy=");
+                    LogHex(vertexEntry?vertexEntry->Busy:0);LogStr(" bytes=");
+                    LogHex(vertexEntry?vertexEntry->Bytes:0);
+                    LogStr(" needed=");LogHex(request.Reserved[0]*32U);
+                    LogStr("\n");
+                }
                 entry->Busy=FALSE;Nvx3dUnlockBuffers();
                 status=ERROR_INVALID_PARAMETER;break;
             }
             vertexEntry->Busy=TRUE;vertexSaved=*vertexEntry;
         }
+        if(Nvx3dIsDynamicDepthDraw(request.Operation)) {
+            depthEntry=Nvx3dFindBuffer(engine,depthBufferId);
+            if(!depthEntry||depthEntry->Busy||
+               !(depthEntry->Usage&NVX_3D_USAGE_DEPTH_TARGET)||
+               !(depthEntry->Usage&NVX_3D_USAGE_DEPTH_ZF32)||
+               depthEntry->Width!=request.Width||
+               depthEntry->Height!=request.Height||
+               depthEntry->Bytes<=NVX_3D_DEPTH_TARGET_OFFSET) {
+                LogStr("NVX [3D-DYNAMIC]: depth buffer rejected id=");
+                LogHex(depthBufferId);LogStr(" found=");
+                LogHex(depthEntry!=NULL);LogStr(" busy=");
+                LogHex(depthEntry?depthEntry->Busy:0);LogStr(" usage=");
+                LogHex(depthEntry?depthEntry->Usage:0);LogStr(" dimensions=");
+                LogHex(depthEntry?depthEntry->Width:0);LogStr("x");
+                LogHex(depthEntry?depthEntry->Height:0);LogStr(" bytes=");
+                LogHex(depthEntry?depthEntry->Bytes:0);LogStr(" pitch=");
+                LogHex(depthEntry?depthEntry->PitchBytes:0);LogStr("\n");
+                entry->Busy=FALSE;
+                if(vertexEntry) vertexEntry->Busy=FALSE;
+                Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
+            }
+            depthEntry->Busy=TRUE;depthSaved=*depthEntry;
+        }
         fenceValue=engine->Nvx3dLastFence+1;
         if(!fenceValue||fenceValue>0xffffffffULL) {
             entry->Busy=FALSE;
             if(vertexEntry) vertexEntry->Busy=FALSE;
+            if(depthEntry) depthEntry->Busy=FALSE;
             Nvx3dUnlockBuffers();
             status=ERROR_DEVICE_NOT_READY;break;
         }
@@ -2386,10 +2677,53 @@ BOOLEAN NTAPI HwVidStartIO(
                         NVX_3D_ZT_FORMAT_X8Z24:NVX_3D_ZT_FORMAT_Z24S8,
                     fenceValue,
                     &drawPixels,&whitePixels)) {
+                if(request.Operation==NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH) {
+                    LogStr("NVX [3D-DEPTH]: miniport draw submit failed.");
+                    LogStr(" status=");LogHex(status);
+                    LogStr(" dst=");LogHex(saved.GpuVa);
+                    LogStr(" depth=");LogHex(saved.DepthGpuVa);
+                    LogStr(" vertex=");LogHex(vertexSaved.GpuVa);
+                    LogStr(" fence=");LogHex(fenceValue);LogStr("\n");
+                }
                 status=ERROR_DEVICE_NOT_READY;
             } else {
                 request.Reserved[0]=drawPixels;
                 request.Reserved[1]=whitePixels;
+                request.FenceValue=fenceValue;
+                VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,sizeof(request));
+                statusBlock->Information=sizeof(request);status=NO_ERROR;
+                engine->GspGraphicsUserSubmitReady=TRUE;
+                engine->GspGraphicsClientTriangleVerified=TRUE;
+            }
+        } else if(request.Operation==NVX_3D_SUBMIT_CLEAR_COLOR_TARGET_DEPTH) {
+            if(!NvxGspSubmitUserColorTargetDepthClear(engine,
+                    saved.DepthGpuVa,saved.Bytes-
+                    NVX_3D_DEPTH_TARGET_OFFSET,fenceValue)) {
+                status=ERROR_DEVICE_NOT_READY;
+            } else {
+                request.FenceValue=fenceValue;
+                VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,sizeof(request));
+                statusBlock->Information=sizeof(request);status=NO_ERROR;
+                engine->GspGraphicsUserSubmitReady=TRUE;
+            }
+        } else if(Nvx3dIsDynamicDepthDraw(request.Operation)) {
+            ULONG vertexCount=request.Reserved[0];
+            if(!NvxGspSubmitUserColorTargetDepthTriangles(engine,
+                    saved.GpuVa,saved.Width,saved.Height,saved.TileMode,
+                    depthSaved.DepthGpuVa,depthSaved.PitchBytes,
+                    vertexSaved.GpuVa,vertexCount,request.Color,
+                    Nvx3dDepthModeForOperation(request.Operation),fenceValue)) {
+                LogStr("NVX [3D-DYNAMIC]: C797 submit failed color=");
+                LogHex(saved.GpuVa);LogStr(" depth=");LogHex(depthSaved.GpuVa);
+                LogStr(" depthPitch=");LogHex(depthSaved.PitchBytes);
+                LogStr(" vertex=");LogHex(vertexSaved.GpuVa);
+                LogStr(" count=");LogHex(vertexCount);LogStr(" mode=");
+                LogHex(Nvx3dDepthModeForOperation(request.Operation));
+                LogStr(" fence=");LogHex(fenceValue);LogStr("\n");
+                status=ERROR_DEVICE_NOT_READY;
+            } else {
+                request.Reserved[0]=request.Reserved[1]=request.Reserved[2]=
+                    request.Reserved[3]=request.Reserved[4]=request.Reserved[5]=0;
                 request.FenceValue=fenceValue;
                 VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,sizeof(request));
                 statusBlock->Information=sizeof(request);status=NO_ERROR;
@@ -2416,6 +2750,11 @@ BOOLEAN NTAPI HwVidStartIO(
         } else if(request.Operation==NVX_3D_SUBMIT_CLEAR_DEPTH) {
             if(!NvxGspSubmitUserDepthClear(engine,saved.DepthGpuVa,
                     (saved.Usage&NVX_3D_USAGE_DEPTH_ZF32)!=0,fenceValue)) {
+                LogStr("NVX [3D-DEPTH]: miniport clear submit failed.");
+                LogStr(" depth=");LogHex(saved.DepthGpuVa);
+                LogStr(" bytes=");LogHex(saved.Bytes);
+                LogStr(" usage=");LogHex(saved.Usage);
+                LogStr(" fence=");LogHex(fenceValue);LogStr("\n");
                 status=ERROR_DEVICE_NOT_READY;
             } else {
                 request.FenceValue=fenceValue;
@@ -2463,11 +2802,20 @@ BOOLEAN NTAPI HwVidStartIO(
             }
         }
         if(Nvx3dLockBuffers()) {
+            if(status==NO_ERROR&&request.ClientToken) {
+                engine->Nvx3dLastSubmitToken=request.ClientToken;
+                VideoPortMoveMemory(engine->Nvx3dLastSubmitReply,&request,
+                                    sizeof(request));
+            }
             entry=Nvx3dFindBuffer(engine,saved.Id);
             if(entry) entry->Busy=FALSE;
             if(vertexBufferId) {
                 vertexEntry=Nvx3dFindBuffer(engine,vertexBufferId);
                 if(vertexEntry) vertexEntry->Busy=FALSE;
+            }
+            if(depthBufferId) {
+                depthEntry=Nvx3dFindBuffer(engine,depthBufferId);
+                if(depthEntry) depthEntry->Busy=FALSE;
             }
             Nvx3dUnlockBuffers();
         }

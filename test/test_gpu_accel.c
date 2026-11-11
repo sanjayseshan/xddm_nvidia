@@ -45,6 +45,13 @@ static void DumpMesaBridgeTrace(void)
         LONG screenCount;
         LONG callbackCount;
         LONG gpuBatchCount;
+        LONG lastPrimitive;
+        LONG lastCount;
+        LONG lastTriangleCount;
+        LONG lastClearMs;
+        LONG lastDrawMs;
+        LONG lastReadbackMs;
+        LONG lastUploadBits[8];
         char lastMessage[96];
         LONG depthStageCount;
         char depthStages[3][96];
@@ -63,9 +70,20 @@ static void DumpMesaBridgeTrace(void)
     }
     mesaGpuBridgeBatchCount = (unsigned)status.gpuBatchCount;
     mesaGpuFramebufferVerified = mesaGpuBridgeBatchCount != 0;
-    LogMsg("[MESA_BRIDGE_STATUS] screens=%ld callbacks=%ld gpu_batches=%ld version=%lu last=%s\n",
+    LogMsg("[MESA_BRIDGE_STATUS] screens=%ld callbacks=%ld gpu_batches=%ld version=%lu last_primitive=%ld last_count=%ld last_triangles=%ld clear_ms=%ld draw_ms=%ld readback_ms=%ld last=%s\n",
            status.screenCount, status.callbackCount, status.gpuBatchCount,
-           (unsigned long)status.version, status.lastMessage);
+           (unsigned long)status.version, status.lastPrimitive,
+           status.lastCount, status.lastTriangleCount, status.lastClearMs,
+           status.lastDrawMs, status.lastReadbackMs, status.lastMessage);
+    LogMsg("[MESA_BRIDGE_UPLOAD_BITS] %08lx %08lx %08lx %08lx %08lx %08lx %08lx %08lx\n",
+           (unsigned long)(DWORD)status.lastUploadBits[0],
+           (unsigned long)(DWORD)status.lastUploadBits[1],
+           (unsigned long)(DWORD)status.lastUploadBits[2],
+           (unsigned long)(DWORD)status.lastUploadBits[3],
+           (unsigned long)(DWORD)status.lastUploadBits[4],
+           (unsigned long)(DWORD)status.lastUploadBits[5],
+           (unsigned long)(DWORD)status.lastUploadBits[6],
+           (unsigned long)(DWORD)status.lastUploadBits[7]);
     for (LONG i = 0; i < status.depthStageCount && i < 3; i++)
         LogMsg("[MESA_BRIDGE_DEPTH_STAGE] %s\n", status.depthStages[i]);
 }
@@ -503,7 +521,7 @@ static void ClearMesaIcdTrace(void)
 {
     DWORD deleteError;
     SetEnvironmentVariableA("NVX_MESA_ICD_TRACE", "1");
-    if (!DeleteFileA("C:\\test_accel\\nvxogl_trace.txt"))
+    if (!DeleteFileA("C:\\test_accel\nvxogl_trace.txt"))
         deleteError = GetLastError();
     else
         deleteError = ERROR_SUCCESS;
@@ -514,7 +532,7 @@ static void DumpMesaIcdTrace(void)
 {
     char buffer[4096];
     DWORD bytesRead = 0;
-    HANDLE file = CreateFileA("C:\\test_accel\\nvxogl_trace.txt",
+    HANDLE file = CreateFileA("C:\\test_accel\nvxogl_trace.txt",
                               GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
                               NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (file == INVALID_HANDLE_VALUE) {
@@ -691,6 +709,10 @@ static void DrawCube(float angle)
 
     glPopMatrix();
 }
+
+#if defined(NVX_MESA_DEPTH_MODE_OVERRIDE) && NVX_MESA_DEPTH_MODE_OVERRIDE == 2
+static void TestSelectedZetaFullSurface(HDC hdc);
+#endif
 
 static void TestOpenGL(HWND hwnd, HDC hdc)
 {
@@ -941,6 +963,134 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                    rightRedPixels);
         }
         DumpMesaBridgeTrace();
+        {
+            BYTE fullTargetCenter[4]={0,0,0,0},fullTargetCorner[4]={0,0,0,0};
+            BYTE fullTargetBackCenter[4]={0,0,0,0};
+            GLenum fullTargetError;
+            unsigned batchesBefore=mesaGpuBridgeBatchCount;
+            glViewport(0,0,w,h);
+            glDisable(GL_DEPTH_TEST);
+            glClearColor(0.0f,0.0f,0.0f,1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glBegin(GL_QUADS);
+            glColor4f(0.0f,1.0f,0.0f,1.0f);
+            glVertex3f(-0.9f,-0.9f,0.0f);
+            glVertex3f( 0.9f,-0.9f,0.0f);
+            glVertex3f( 0.9f, 0.9f,0.0f);
+            glVertex3f(-0.9f, 0.9f,0.0f);
+            glEnd();
+            glFinish();
+            fullTargetError=glGetError();
+            if(fullTargetError==GL_NO_ERROR) {
+                glReadBuffer(GL_BACK);
+                glReadPixels(w/2,h/2,1,1,GL_RGBA,GL_UNSIGNED_BYTE,
+                             fullTargetBackCenter);
+                fullTargetError=glGetError();
+            }
+            if(fullTargetError==GL_NO_ERROR&&SwapBuffers(hdc)) {
+                glReadBuffer(GL_FRONT);
+                glReadPixels(w/2,h/2,1,1,GL_RGBA,GL_UNSIGNED_BYTE,
+                             fullTargetCenter);
+                glReadPixels(4,4,1,1,GL_RGBA,GL_UNSIGNED_BYTE,
+                             fullTargetCorner);
+                fullTargetError=glGetError();
+            } else if(fullTargetError==GL_NO_ERROR) {
+                fullTargetError=(GLenum)GetLastError();
+            }
+            LogMsg("[MESA_GPU_FULL_TARGET_BACK] center=%u,%u,%u error=0x%X\n",
+                   fullTargetBackCenter[0],fullTargetBackCenter[1],
+                   fullTargetBackCenter[2],fullTargetError);
+            DumpMesaBridgeTrace();
+            if(fullTargetError==GL_NO_ERROR&&
+               mesaGpuBridgeBatchCount>batchesBefore&&
+               fullTargetCenter[1]>200&&fullTargetCenter[0]<32&&
+               fullTargetCorner[0]<16&&fullTargetCorner[1]<16&&
+               fullTargetCorner[2]<16) {
+                LogMsg("[MESA_GPU_FULL_TARGET_RESULT] PASS size=%dx%d center=%u,%u,%u corner=%u,%u,%u\n",
+                    w,h,fullTargetCenter[0],fullTargetCenter[1],
+                    fullTargetCenter[2],fullTargetCorner[0],
+                    fullTargetCorner[1],fullTargetCorner[2]);
+            } else {
+                LogMsg("[MESA_GPU_FULL_TARGET_RESULT] FAIL size=%dx%d center=%u,%u,%u corner=%u,%u,%u error=0x%X batches=%u->%u\n",
+                    w,h,fullTargetCenter[0],fullTargetCenter[1],
+                    fullTargetCenter[2],fullTargetCorner[0],
+                    fullTargetCorner[1],fullTargetCorner[2],fullTargetError,
+                    batchesBefore,mesaGpuBridgeBatchCount);
+                failures++;
+            }
+        }
+        {
+            BYTE depthCenter[4]={0,0,0,0},depthCorner[4]={0,0,0,0};
+            BYTE depthBackCorner[4]={0,0,0,0},depthBackMirror[4]={0,0,0,0};
+            BYTE depthBackCenter[4]={0,0,0,0};
+            GLenum depthError;
+            unsigned batchesBefore=mesaGpuBridgeBatchCount;
+            glViewport(0,0,w,h);
+            glEnable(GL_DEPTH_TEST);
+            glDepthFunc(GL_LESS);
+            glDepthMask(GL_TRUE);
+            glClearColor(0.0f,0.0f,0.0f,1.0f);
+            glClearDepth(1.0);
+            glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT);
+            glBegin(GL_TRIANGLES);
+            glColor4f(0.0f,1.0f,0.0f,1.0f);
+            glVertex3f(-0.8f,-0.8f,0.5f);
+            glVertex3f( 0.8f,-0.8f,0.5f);
+            glVertex3f( 0.8f, 0.8f,0.5f);
+            glVertex3f(-0.8f,-0.8f,0.5f);
+            glVertex3f( 0.8f, 0.8f,0.5f);
+            glVertex3f(-0.8f, 0.8f,0.5f);
+            glColor4f(1.0f,0.0f,0.0f,1.0f);
+            glVertex3f(-0.3f,-0.3f,-0.5f);
+            glVertex3f( 0.3f,-0.3f,-0.5f);
+            glVertex3f( 0.3f, 0.3f,-0.5f);
+            glVertex3f(-0.3f,-0.3f,-0.5f);
+            glVertex3f( 0.3f, 0.3f,-0.5f);
+            glVertex3f(-0.3f, 0.3f,-0.5f);
+            glEnd();
+            glFinish();
+            depthError=glGetError();
+            if(depthError==GL_NO_ERROR) {
+                glReadBuffer(GL_BACK);
+                glReadPixels(w/6,h/6,1,1,GL_RGBA,GL_UNSIGNED_BYTE,
+                             depthBackCorner);
+                glReadPixels(w/6,5*h/6,1,1,GL_RGBA,GL_UNSIGNED_BYTE,
+                             depthBackMirror);
+                glReadPixels(w/2,h/2,1,1,GL_RGBA,GL_UNSIGNED_BYTE,
+                             depthBackCenter);
+                depthError=glGetError();
+            }
+            if(depthError==GL_NO_ERROR&&SwapBuffers(hdc)) {
+                glReadBuffer(GL_FRONT);
+                glReadPixels(w/2,h/2,1,1,GL_RGBA,GL_UNSIGNED_BYTE,
+                             depthCenter);
+                glReadPixels(w/6,h/6,1,1,GL_RGBA,GL_UNSIGNED_BYTE,depthCorner);
+                depthError=glGetError();
+            } else if(depthError==GL_NO_ERROR) {
+                depthError=(GLenum)GetLastError();
+            }
+            LogMsg("[MESA_GPU_FULL_TARGET_DEPTH_BACK] far=%u,%u,%u mirror=%u,%u,%u center=%u,%u,%u error=0x%X\n",
+                   depthBackCorner[0],depthBackCorner[1],depthBackCorner[2],
+                   depthBackMirror[0],depthBackMirror[1],depthBackMirror[2],
+                   depthBackCenter[0],depthBackCenter[1],depthBackCenter[2],
+                   depthError);
+            DumpMesaBridgeTrace();
+            if(depthError==GL_NO_ERROR&&
+               mesaGpuBridgeBatchCount>batchesBefore&&
+               depthCenter[0]>200&&depthCenter[1]<32&&
+               depthCorner[1]>200&&depthCorner[0]<32) {
+                LogMsg("[MESA_GPU_FULL_TARGET_DEPTH_RESULT] PASS size=%dx%d center=%u,%u,%u corner=%u,%u,%u\n",
+                    w,h,depthCenter[0],depthCenter[1],depthCenter[2],
+                    depthCorner[0],depthCorner[1],depthCorner[2]);
+            } else {
+                LogMsg("[MESA_GPU_FULL_TARGET_DEPTH_RESULT] FAIL size=%dx%d center=%u,%u,%u corner=%u,%u,%u error=0x%X batches=%u->%u\n",
+                    w,h,depthCenter[0],depthCenter[1],depthCenter[2],
+                    depthCorner[0],depthCorner[1],depthCorner[2],depthError,
+                    batchesBefore,mesaGpuBridgeBatchCount);
+                failures++;
+            }
+            glDisable(GL_DEPTH_TEST);
+        }
         glViewport(0, 0, w, h);
     }
     glMatrixMode(GL_PROJECTION);
@@ -1015,43 +1165,207 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
 
         /* Keep the cube's GPU evidence independent of the depth probe above. */
         DeleteFileA("C:\\test_accel\\mesa_bridge.log");
-        BYTE cubePixels[64 * 16 * 4];
-        unsigned coloredPixels = 0, p;
+        BYTE *cubePixels = NULL, *softCubePixels = NULL;
+        SIZE_T cubeBytes = (SIZE_T)w * (SIZE_T)h * 4;
+        unsigned coloredPixels = 0, referenceColored = 0,
+                 facePixels[6] = {0,0,0,0,0,0},
+                 referenceFaces[6] = {0,0,0,0,0,0},
+                 minX = (unsigned)w, minY = (unsigned)h, maxX = 0, maxY = 0,
+                 p, visibleFaces = 0, differentPixels = 0;
+        int referenceValid = 0;
         GLenum error;
         unsigned batchesBefore = mesaGpuBridgeBatchCount;
-        glViewport(0, 0, 64, 16);
-        glDisable(GL_DEPTH_TEST);
+        glViewport(0, 0, w, h);
+        glEnable(GL_DEPTH_TEST);
+        glDepthFunc(GL_LESS);
+        glDepthMask(GL_TRUE);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
+        glClearDepth(1.0);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         DrawCube(17.0f);
         glFinish();
-        if (!SwapBuffers(hdc)) {
+        cubePixels = (BYTE *)HeapAlloc(GetProcessHeap(), 0, cubeBytes);
+        if (!cubePixels) {
+            LogMsg("[MESA_GPU_CUBE_RESULT] FAIL (full-frame readback allocation failed)\n");
+            failures++;
+        } else if (!SwapBuffers(hdc)) {
             LogMsg("[MESA_GPU_CUBE_RESULT] FAIL (SwapBuffers error=%lu)\n",
                    GetLastError());
             failures++;
         } else {
             glReadBuffer(GL_FRONT);
-            glReadPixels(0, 0, 64, 16, GL_RGBA, GL_UNSIGNED_BYTE, cubePixels);
+            glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, cubePixels);
             error = glGetError();
-            for (p = 0; p < 64 * 16; p++)
-                if (cubePixels[p * 4 + 0] > 16 || cubePixels[p * 4 + 1] > 16 ||
-                    cubePixels[p * 4 + 2] > 16)
+            softCubePixels = (BYTE *)HeapAlloc(GetProcessHeap(), 0, cubeBytes);
+            if (error == GL_NO_ERROR && softCubePixels &&
+                SetEnvironmentVariableA("NVX_MESA_GALLIUM_BRIDGE", "0")) {
+                /* Mesa softpipe is the reference image for the same cube.
+                 * Compare the complete GPU-backed frame against it so a few
+                 * colored pixels cannot hide missing or overlapping faces. */
+                glViewport(0, 0, w, h);
+                glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                glClearDepth(1.0);
+                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+                DrawCube(17.0f);
+                glFinish();
+                if (glGetError() == GL_NO_ERROR && SwapBuffers(hdc)) {
+                    glReadBuffer(GL_FRONT);
+                    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
+                                 softCubePixels);
+                    referenceValid = glGetError() == GL_NO_ERROR;
+                }
+                SetEnvironmentVariableA("NVX_MESA_GALLIUM_BRIDGE", "1");
+                if (referenceValid) {
+                    for (p = 0; p < (unsigned)(w * h); p++) {
+                        BYTE rr = softCubePixels[p * 4];
+                        BYTE rg = softCubePixels[p * 4 + 1];
+                        BYTE rb = softCubePixels[p * 4 + 2];
+                        int dr = (int)cubePixels[p * 4] - softCubePixels[p * 4];
+                        int dg = (int)cubePixels[p * 4 + 1] - softCubePixels[p * 4 + 1];
+                        int db = (int)cubePixels[p * 4 + 2] - softCubePixels[p * 4 + 2];
+                        if (dr < 0) dr = -dr;
+                        if (dg < 0) dg = -dg;
+                        if (db < 0) db = -db;
+                        if (dr > 32 || dg > 32 || db > 32)
+                            differentPixels++;
+                        if (rr > 200 || rg > 200 || rb > 200) {
+                            referenceColored++;
+                            if (rr > 200 && rg < 32 && rb < 32) referenceFaces[0]++;
+                            else if (rg > 200 && rr < 32 && rb < 32) referenceFaces[1]++;
+                            else if (rb > 200 && rr < 32 && rg < 32) referenceFaces[2]++;
+                            else if (rr > 200 && rg > 200 && rb < 32) referenceFaces[3]++;
+                            else if (rg > 200 && rb > 200 && rr < 32) referenceFaces[4]++;
+                            else if (rr > 200 && rb > 200 && rg < 32) referenceFaces[5]++;
+                        }
+                    }
+                }
+            }
+            for (p = 0; p < (unsigned)(w * h); p++) {
+                BYTE r = cubePixels[p * 4 + 0];
+                BYTE g = cubePixels[p * 4 + 1];
+                BYTE b = cubePixels[p * 4 + 2];
+                unsigned x = p % (unsigned)w, y = p / (unsigned)w;
+                if (r > 200 || g > 200 || b > 200) {
                     coloredPixels++;
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                    if (r > 200 && g < 32 && b < 32) facePixels[0]++;
+                    else if (g > 200 && r < 32 && b < 32) facePixels[1]++;
+                    else if (b > 200 && r < 32 && g < 32) facePixels[2]++;
+                    else if (r > 200 && g > 200 && b < 32) facePixels[3]++;
+                    else if (g > 200 && b > 200 && r < 32) facePixels[4]++;
+                    else if (r > 200 && b > 200 && g < 32) facePixels[5]++;
+                }
+            }
+            for (p = 0; p < 6; p++)
+                if (facePixels[p] >= 32) visibleFaces++;
             DumpMesaBridgeTrace();
-            if (error == GL_NO_ERROR && coloredPixels >= 8 &&
+            if (error == GL_NO_ERROR && referenceValid &&
+                differentPixels <= (unsigned)(w * h / 100) &&
+                coloredPixels >= 2000 &&
+                visibleFaces >= 2 && maxX - minX >= 40 && maxY - minY >= 40 &&
                 mesaGpuBridgeBatchCount > batchesBefore) {
-                LogMsg("[MESA_GPU_CUBE_RESULT] PASS colored_pixels=%u new_gpu_batches=%u\n",
-                       coloredPixels, mesaGpuBridgeBatchCount - batchesBefore);
+                LogMsg("[MESA_GPU_CUBE_RESULT] PASS colored_pixels=%u bbox=%u,%u-%u,%u faces=%u rgb_counts=%u,%u,%u,%u,%u,%u reference_colored=%u reference_faces=%u,%u,%u,%u,%u,%u reference_diff=%u new_gpu_batches=%u\n",
+                       coloredPixels, minX, minY, maxX, maxY, visibleFaces,
+                       facePixels[0], facePixels[1], facePixels[2], facePixels[3],
+                       facePixels[4], facePixels[5], referenceColored,
+                       referenceFaces[0], referenceFaces[1], referenceFaces[2],
+                       referenceFaces[3], referenceFaces[4], referenceFaces[5],
+                       differentPixels,
+                       mesaGpuBridgeBatchCount - batchesBefore);
             } else {
-                LogMsg("[MESA_GPU_CUBE_RESULT] FAIL colored_pixels=%u gpu_batches=%u error=0x%X\n",
-                       coloredPixels, mesaGpuBridgeBatchCount - batchesBefore,
-                       error);
+                LogMsg("[MESA_GPU_CUBE_RESULT] FAIL colored_pixels=%u bbox=%u,%u-%u,%u faces=%u rgb_counts=%u,%u,%u,%u,%u,%u reference_valid=%u reference_colored=%u reference_faces=%u,%u,%u,%u,%u,%u reference_diff=%u gpu_batches=%u error=0x%X\n",
+                       coloredPixels, minX, minY, maxX, maxY, visibleFaces,
+                       facePixels[0], facePixels[1], facePixels[2], facePixels[3],
+                       facePixels[4], facePixels[5], referenceValid,
+                       referenceColored, referenceFaces[0], referenceFaces[1],
+                       referenceFaces[2], referenceFaces[3], referenceFaces[4],
+                       referenceFaces[5], differentPixels,
+                       mesaGpuBridgeBatchCount - batchesBefore, error);
                 failures++;
             }
         }
+        if (cubePixels && softCubePixels) {
+            unsigned noDepthDiff = 0;
+            GLenum noDepthError = GL_NO_ERROR;
+            unsigned noDepthBatches = mesaGpuBridgeBatchCount;
+            glDisable(GL_DEPTH_TEST);
+            glClear(GL_COLOR_BUFFER_BIT);
+            DrawCube(17.0f);
+            glFinish();
+            noDepthError = glGetError();
+            if (noDepthError == GL_NO_ERROR && !SwapBuffers(hdc))
+                noDepthError = (GLenum)GetLastError();
+            if (noDepthError == GL_NO_ERROR) {
+                glReadBuffer(GL_FRONT);
+                glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
+                             cubePixels);
+                noDepthError = glGetError();
+            }
+            DumpMesaBridgeTrace();
+            {
+                unsigned noDepthBatchesAfterGpu = mesaGpuBridgeBatchCount;
+                int noDepthHardwareRendered =
+                    noDepthBatchesAfterGpu > noDepthBatches;
+                int referenceRendered = 0;
+                if (noDepthError == GL_NO_ERROR &&
+                SetEnvironmentVariableA("NVX_MESA_GALLIUM_BRIDGE", "0")) {
+                glClear(GL_COLOR_BUFFER_BIT);
+                DrawCube(17.0f);
+                glFinish();
+                noDepthError = glGetError();
+                if (noDepthError == GL_NO_ERROR && !SwapBuffers(hdc))
+                    noDepthError = (GLenum)GetLastError();
+                if (noDepthError == GL_NO_ERROR) {
+                    glReadBuffer(GL_FRONT);
+                    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
+                                 softCubePixels);
+                    noDepthError = glGetError();
+                    referenceRendered = noDepthError == GL_NO_ERROR;
+                }
+                SetEnvironmentVariableA("NVX_MESA_GALLIUM_BRIDGE", "1");
+                }
+                if (noDepthError == GL_NO_ERROR && noDepthHardwareRendered &&
+                    referenceRendered) {
+                for (p = 0; p < (unsigned)(w * h); p++) {
+                    int dr = (int)cubePixels[p * 4] - softCubePixels[p * 4];
+                    int dg = (int)cubePixels[p * 4 + 1] - softCubePixels[p * 4 + 1];
+                    int db = (int)cubePixels[p * 4 + 2] - softCubePixels[p * 4 + 2];
+                    if (dr < 0) dr = -dr;
+                    if (dg < 0) dg = -dg;
+                    if (db < 0) db = -db;
+                    if (dr > 32 || dg > 32 || db > 32)
+                        noDepthDiff++;
+                }
+                }
+                LogMsg("[MESA_GPU_CUBE_NODEPTH] %s reference_diff=%u error=0x%X new_gpu_batches=%u hardware_rendered=%u reference_rendered=%u\n",
+                   noDepthError == GL_NO_ERROR &&
+                   noDepthHardwareRendered &&
+                   referenceRendered &&
+                   noDepthDiff <= (unsigned)(w * h / 100) ? "PASS" : "FAIL",
+                   noDepthDiff, noDepthError,
+                   noDepthBatchesAfterGpu - noDepthBatches,
+                   noDepthHardwareRendered, referenceRendered);
+                if (noDepthError != GL_NO_ERROR ||
+                noDepthDiff > (unsigned)(w * h / 100) ||
+                    !noDepthHardwareRendered || !referenceRendered)
+                    failures++;
+            }
+            glEnable(GL_DEPTH_TEST);
+        }
+        if (cubePixels) HeapFree(GetProcessHeap(), 0, cubePixels);
+        if (softCubePixels) HeapFree(GetProcessHeap(), 0, softCubePixels);
         glViewport(0, 0, w, h);
     }
 
+#if defined(NVX_MESA_DEPTH_MODE_OVERRIDE) && NVX_MESA_DEPTH_MODE_OVERRIDE == 2
+    /* Run after the depth-tested and no-depth cube paths so the isolated
+       selected-Zeta probe also checks the state transition that precedes the
+       animated WGL workload. */
+    TestSelectedZetaFullSurface(hdc);
+#endif
     glEnable(GL_DEPTH_TEST);
 
     const int GL_FRAMES = 100;
@@ -1059,6 +1373,8 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
 
     int framesRendered = 0;
     double tStart = GetTimeSeconds();
+    double intervalStart = tStart;
+    unsigned intervalBatches = mesaGpuBridgeBatchCount;
     for (int frame = 0; frame < GL_FRAMES; frame++) {
         glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -1071,6 +1387,17 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             break;
         }
         framesRendered++;
+        if ((framesRendered % 10) == 0 || framesRendered == GL_FRAMES) {
+            DumpMesaBridgeTrace();
+            double intervalEnd = GetTimeSeconds();
+            LogMsg("[OPENGL_FRAME_PROGRESS] frames=%d/%d interval_s=%.3f interval_fps=%.1f gpu_batches=%u\n",
+                   framesRendered, GL_FRAMES, intervalEnd - intervalStart,
+                   intervalEnd > intervalStart ?
+                       10.0 / (intervalEnd - intervalStart) : 0.0,
+                   mesaGpuBridgeBatchCount - intervalBatches);
+            intervalStart = intervalEnd;
+            intervalBatches = mesaGpuBridgeBatchCount;
+        }
     }
     double tEnd = GetTimeSeconds();
 
@@ -1153,7 +1480,7 @@ static void TestMesaWglFrontend(HINSTANCE instance)
     PFN_GET_STRING getString;
 
     LogMsg("\n[MESA_WGL_SHIM] Starting direct Mesa WGL frontend diagnostic\n");
-    mesa = LoadLibraryA("C:\\test_accel\\nvxmesa.dll");
+    mesa = LoadLibraryA("C:\\test_accel\nvxmesa.dll");
     if (!mesa) {
         LogMsg("[MESA_WGL_SHIM] DLL load failed err=%lu\n", GetLastError());
         return;
@@ -1240,6 +1567,268 @@ static int WaitNvx3dFence(HDC hdc,uint64_t fenceValue)
            waited.FenceValue==fenceValue;
 }
 
+#if defined(NVX_MESA_DEPTH_MODE_OVERRIDE) && NVX_MESA_DEPTH_MODE_OVERRIDE == 2
+static void TestSelectedZetaFullSurface(HDC hdc)
+{
+    const uint32_t width=632U,height=453U;
+    const uint32_t repeats=600U;
+    static const float probeTriangle[24]={
+        -0.6f,-0.6f,0.5f,1.0f, 0.5f,1.0f,0.0f,1.0f,
+         0.6f,-0.6f,0.5f,1.0f, 0.5f,1.0f,0.0f,1.0f,
+         0.0f, 0.6f,0.5f,1.0f, 0.5f,1.0f,0.0f,1.0f
+    };
+    /* Captured from the first WGL batch that stalled at GPGet 0x73 in
+       test_logs/v3.0.0.1-20261110-230727.log. */
+    static const uint32_t stalledBatchBits[48]={
+        0x3e32f9c0U,0xbe79b254U,0x3f4f1902U,0x3f800000U,
+        0x3f4f1902U,0x3f800000U,0x00000000U,0x3f800000U,
+        0x3d2dee80U,0xbd72a8d0U,0x3f5ba4d0U,0x3f800000U,
+        0x3f5ba4d0U,0x3f800000U,0x00000000U,0x3f800000U,
+        0x3d93ac10U,0x3e798b20U,0x3f561240U,0x3f800000U,
+        0x3f561240U,0x3f800000U,0x00000000U,0x3f800000U,
+        0x3e32f9c0U,0xbe79b254U,0x3f4f1902U,0x3f800000U,
+        0x3f4f1902U,0x3f800000U,0x00000000U,0x3f800000U,
+        0x3d93ac10U,0x3e798b20U,0x3f561240U,0x3f800000U,
+        0x3f561240U,0x3f800000U,0x00000000U,0x3f800000U,
+        0x3e77ebe0U,0x3e0ec840U,0x3f44e2a6U,0x3f800000U,
+        0x3f44e2a6U,0x3f800000U,0x00000000U,0x3f800000U
+    };
+    static const uint32_t probeColors[6]={
+        0xff00ff00U,0xffff0000U,0xff0000ffU,
+        0xffffff00U,0xff00ffffU,0xffff00ffU
+    };
+    NVX_3D_COLOR_SURFACE_LAYOUT colorLayout;
+    NVX_3D_DEPTH_SURFACE_LAYOUT depthLayout;
+    NVX_3D_ALLOC_BUFFER colorAlloc={0},color={0};
+    NVX_3D_ALLOC_BUFFER depthAlloc={0},depth={0};
+    NVX_3D_ALLOC_BUFFER vertexAlloc={0},vertex={0};
+    NVX_3D_SUBMIT submit={0},submitted={0};
+    NVX_3D_FREE_BUFFER freeRequest={0};
+    struct { NVX_3D_UPLOAD_BUFFER header; float data[48]; } upload;
+    float probeVertices[48];
+    const char *stage="color allocation";
+    uint32_t draw;
+    LogMsg("[NVX_SELECTED_ZETA_PROBE] begin width=%lu height=%lu\n",
+           (unsigned long)width,(unsigned long)height);
+    if(!Nvx3dComputeColorSurfaceLayout(width,height,&colorLayout)||
+       !Nvx3dComputeDepthSurfaceLayout(width,height,&depthLayout)) {
+        LogMsg("[NVX_SELECTED_ZETA_PROBE] FAIL surface layout\n");
+        failures++;
+        return;
+    }
+    colorAlloc.Size=sizeof(colorAlloc);
+    colorAlloc.Version=NVX_3D_ABI_VERSION;
+    colorAlloc.Usage=NVX_3D_USAGE_COLOR_TARGET;
+    colorAlloc.Bytes=colorLayout.Bytes;
+    colorAlloc.Width=width;colorAlloc.Height=height;
+    colorAlloc.PitchBytes=colorLayout.PitchBytes;
+    colorAlloc.TileMode=colorLayout.TileMode;
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_ALLOC,sizeof(colorAlloc),
+                  (LPCSTR)&colorAlloc,sizeof(color),(LPSTR)&color))
+        goto fail;
+    stage="depth allocation";
+    depthAlloc.Size=sizeof(depthAlloc);
+    depthAlloc.Version=NVX_3D_ABI_VERSION;
+    depthAlloc.Usage=NVX_3D_USAGE_DEPTH_TARGET|NVX_3D_USAGE_DEPTH_ZF32;
+    depthAlloc.Bytes=NVX_3D_DEPTH_TARGET_OFFSET+depthLayout.Bytes;
+    depthAlloc.Width=width;depthAlloc.Height=height;
+    depthAlloc.PitchBytes=depthLayout.PitchBytes;
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_ALLOC,sizeof(depthAlloc),
+                  (LPCSTR)&depthAlloc,sizeof(depth),(LPSTR)&depth))
+        goto fail;
+    stage="vertex allocation";
+    vertexAlloc.Size=sizeof(vertexAlloc);
+    vertexAlloc.Version=NVX_3D_ABI_VERSION;
+    vertexAlloc.Usage=1U;vertexAlloc.Bytes=4096U;
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_ALLOC,sizeof(vertexAlloc),
+                  (LPCSTR)&vertexAlloc,sizeof(vertex),(LPSTR)&vertex)
+       ) goto fail;
+    LogMsg("[NVX_SELECTED_ZETA_PROBE] ids color=%llu depth=%llu vertex=%llu va=%llx/%llx/%llx\n",
+           (unsigned long long)color.BufferId,
+           (unsigned long long)depth.BufferId,
+           (unsigned long long)vertex.BufferId,
+           (unsigned long long)color.GpuVa,
+           (unsigned long long)depth.GpuVa,
+           (unsigned long long)vertex.GpuVa);
+    /* Mode 2 neither tests nor writes depth, so leave both targets
+       untouched and make the selected-Zeta draw the first GR operation. */
+    memset(&upload,0,sizeof(upload));
+    upload.header.Size=sizeof(upload.header);
+    upload.header.Version=NVX_3D_ABI_VERSION;
+    upload.header.BufferId=vertex.BufferId;
+    upload.header.Bytes=sizeof(upload.data);
+    stage="selected-Zeta draw";
+    memset(&submit,0,sizeof(submit));
+    submit.Size=sizeof(submit);submit.Version=NVX_3D_ABI_VERSION;
+    submit.Operation=NVX_3D_SUBMIT_DRAW_COLOR_TARGET_DEPTH_ATTACH;
+    submit.Width=width;submit.Height=height;submit.BufferId=color.BufferId;
+    submit.Color=0xff00ff00U;
+    submit.Reserved[0]=6U;
+    submit.Reserved[1]=(uint32_t)vertex.BufferId;
+    submit.Reserved[2]=(uint32_t)(vertex.BufferId>>32);
+    submit.Reserved[3]=colorLayout.TileMode;
+    submit.Reserved[4]=(uint32_t)depth.BufferId;
+    submit.Reserved[5]=(uint32_t)(depth.BufferId>>32);
+    for(draw=0;draw<repeats;draw++) {
+        float xShift=((float)(draw%9U)-4.0f)*0.025f;
+        float z=0.35f+(float)(draw%5U)*0.05f;
+        uint32_t vertexIndex;
+        if(draw==0U) {
+            memcpy(upload.data,stalledBatchBits,sizeof(stalledBatchBits));
+            submit.Color=0xff0000ffU;
+        } else {
+            memcpy(upload.data,probeTriangle,sizeof(probeTriangle));
+            for(vertexIndex=0;vertexIndex<3U;vertexIndex++) {
+                upload.data[vertexIndex*8U+0U]+=xShift;
+                upload.data[vertexIndex*8U+2U]=z;
+                upload.data[vertexIndex*8U+4U]=z;
+            }
+            memcpy(probeVertices,upload.data,sizeof(probeTriangle));
+            memcpy(probeVertices+24U,upload.data,sizeof(probeTriangle));
+            memcpy(upload.data,probeVertices,sizeof(probeVertices));
+            submit.Color=probeColors[draw%6U];
+        }
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_UPLOAD,sizeof(upload),
+                      (LPCSTR)&upload,0,NULL)) {
+            LogMsg("[NVX_SELECTED_ZETA_PROBE] FAIL vertex upload draw=%u winerr=%lu\n",
+                   (unsigned)draw,(unsigned long)GetLastError());
+            failures++;
+            return;
+        }
+        memset(&submitted,0,sizeof(submitted));
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_SUBMIT,sizeof(submit),(LPCSTR)&submit,
+                      sizeof(submitted),(LPSTR)&submitted)||!submitted.FenceValue) {
+            LogMsg("[NVX_SELECTED_ZETA_PROBE] FAIL full-size submit draw=%u winerr=%lu\n",
+                   (unsigned)draw,(unsigned long)GetLastError());
+            failures++;
+            return;
+        }
+        if(!WaitNvx3dFence(hdc,submitted.FenceValue)) {
+            LogMsg("[NVX_SELECTED_ZETA_PROBE] FAIL draw=%u fence=%llu\n",
+                   (unsigned)draw,(unsigned long long)submitted.FenceValue);
+            failures++;
+            return;
+        }
+        if((draw+1U)%100U==0U)
+            LogMsg("[NVX_SELECTED_ZETA_PROBE] progress=%u/%u fence=%llu\n",
+                   (unsigned)(draw+1U),(unsigned)repeats,
+                   (unsigned long long)submitted.FenceValue);
+    }
+    LogMsg("[NVX_SELECTED_ZETA_PROBE] PASS draws=%u pitch=%lu tile=%lu fence=%llu\n",
+           (unsigned)repeats,
+           (unsigned long)depthLayout.PitchBytes,
+           (unsigned long)colorLayout.TileMode,
+           (unsigned long long)submitted.FenceValue);
+    freeRequest.Size=sizeof(freeRequest);freeRequest.Version=NVX_3D_ABI_VERSION;
+    freeRequest.BufferId=vertex.BufferId;
+    ExtEscape(hdc,NVX_ESCAPE_3D_FREE,sizeof(freeRequest),(LPCSTR)&freeRequest,0,NULL);
+    freeRequest.BufferId=depth.BufferId;
+    ExtEscape(hdc,NVX_ESCAPE_3D_FREE,sizeof(freeRequest),(LPCSTR)&freeRequest,0,NULL);
+    freeRequest.BufferId=color.BufferId;
+    ExtEscape(hdc,NVX_ESCAPE_3D_FREE,sizeof(freeRequest),(LPCSTR)&freeRequest,0,NULL);
+    return;
+
+fail:
+    LogMsg("[NVX_SELECTED_ZETA_PROBE] FAIL stage=%s winerr=%lu\n",
+           stage,(unsigned long)GetLastError());
+    failures++;
+    /* Retain allocations on failure: the queue may still reference them
+       until channel teardown. */
+}
+#endif
+
+static int TestNvc0ClearEscape(HDC hdc)
+{
+    NVX_3D_COLOR_SURFACE_LAYOUT layout;
+    NVX_3D_ALLOC_BUFFER alloc={0},allocated={0};
+    NVX_3D_NVC0_CLEAR clear={0},submitted={0};
+    NVX_3D_WAIT_FENCE wait={0},waited={0};
+    NVX_3D_READBACK readback={0};
+    NVX_3D_FREE_BUFFER freeRequest={0};
+    uint32_t pixels[NVX_3D_READBACK_PIXELS];
+    uint32_t expected=0xff8040ffU;
+    unsigned i;
+    int ok=1,allocatedOk=0;
+
+    LogMsg("-> Testing one validated 23-dword NVC0 full-target clear packet\n");
+    if(!Nvx3dComputeColorSurfaceLayout(64,16,&layout)) return 0;
+    alloc.Size=sizeof(alloc);alloc.Version=NVX_3D_ABI_VERSION;
+    alloc.Usage=NVX_3D_USAGE_COLOR_TARGET;alloc.Bytes=layout.Bytes;
+    alloc.Width=layout.Width;alloc.Height=layout.Height;
+    alloc.PitchBytes=layout.PitchBytes;alloc.TileMode=layout.TileMode;
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_ALLOC,sizeof(alloc),(LPCSTR)&alloc,
+                  sizeof(allocated),(LPSTR)&allocated)) {
+        LogMsg("-> [FAIL] NVC0 clear target allocation failed\n");
+        return 0;
+    }
+    allocatedOk=1;
+    clear.Size=sizeof(clear);clear.Version=NVX_3D_ABI_VERSION;
+    clear.DwordCount=NVX_3D_NVC0_CLEAR_DWORDS;
+    clear.BufferId=allocated.BufferId;
+    clear.Dwords[0]=Nvx3dNvc0SeqHeader(0x0d80U,4U);
+    clear.Dwords[1]=0x3f000000U;clear.Dwords[2]=0x3e800000U;
+    clear.Dwords[3]=0x3f800000U;clear.Dwords[4]=0x3f800000U;
+    clear.Dwords[5]=Nvx3dNvc0SeqHeader(0x0ff4U,2U);
+    clear.Dwords[6]=layout.Width<<16;clear.Dwords[7]=layout.Height<<16;
+    clear.Dwords[8]=Nvx3dNvc0SeqHeader(0x121cU,1U);clear.Dwords[9]=1U;
+    clear.Dwords[10]=Nvx3dNvc0SeqHeader(0x0800U,9U);
+    clear.Dwords[11]=(uint32_t)(allocated.GpuVa>>32);
+    clear.Dwords[12]=(uint32_t)allocated.GpuVa;
+    clear.Dwords[13]=layout.Width;clear.Dwords[14]=layout.Height;
+    clear.Dwords[15]=0xcfU;clear.Dwords[16]=layout.TileMode;
+    clear.Dwords[17]=1U;clear.Dwords[18]=allocated.Bytes/4U;
+    clear.Dwords[19]=0U;
+    clear.Dwords[20]=Nvx3dNvc0ImmediateHeader(0x15d0U,0U);
+    clear.Dwords[21]=Nvx3dNvc0NonIncHeader(0x19d0U,1U);
+    clear.Dwords[22]=0x3cU;
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_NVC0_CLEAR,sizeof(clear),
+                  (LPCSTR)&clear,sizeof(submitted),(LPSTR)&submitted)) {
+        LogMsg("-> [FAIL] miniport rejected the valid NVC0 clear packet\n");
+        ok=0;
+    } else {
+        wait.Size=sizeof(wait);wait.Version=NVX_3D_ABI_VERSION;
+        wait.FenceValue=submitted.FenceValue;wait.TimeoutMs=10000;
+        if(!submitted.FenceValue||
+           !ExtEscape(hdc,NVX_ESCAPE_3D_WAIT,sizeof(wait),(LPCSTR)&wait,
+                      sizeof(waited),(LPSTR)&waited)) {
+            LogMsg("-> [FAIL] NVC0 translated C797 clear fence did not signal\n");
+            ok=0;
+        } else {
+            readback.Size=sizeof(readback);readback.Version=NVX_3D_ABI_VERSION;
+            readback.BufferId=allocated.BufferId;
+            readback.Width=layout.Width;readback.Height=layout.Height;
+            if(!ExtEscape(hdc,NVX_ESCAPE_3D_READBACK,sizeof(readback),
+                          (LPCSTR)&readback,sizeof(pixels),(LPSTR)pixels)) {
+                LogMsg("-> [FAIL] NVC0 clear target readback failed\n");
+                ok=0;
+            } else {
+                for(i=0;i<NVX_3D_READBACK_PIXELS;i++) {
+                    if(pixels[i]!=expected) {ok=0;break;}
+                }
+                if(ok)
+                    LogMsg("-> NVC0 packet translated to C797; 1024 pixels match 0x%08lX, fence=%llu\n",
+                        (unsigned long)expected,
+                        (unsigned long long)submitted.FenceValue);
+                else
+                    LogMsg("-> [FAIL] NVC0 clear pixel %u was 0x%08lX, expected 0x%08lX\n",
+                        i,(unsigned long)pixels[i],(unsigned long)expected);
+            }
+        }
+    }
+    if(allocatedOk) {
+        freeRequest.Size=sizeof(freeRequest);
+        freeRequest.Version=NVX_3D_ABI_VERSION;
+        freeRequest.BufferId=allocated.BufferId;
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_FREE,sizeof(freeRequest),
+                      (LPCSTR)&freeRequest,0,NULL)) {
+            LogMsg("-> [FAIL] NVC0 clear target release failed\n");
+            ok=0;
+        }
+    }
+    LogMsg("[NVX_NVC0_CLEAR_RESULT] %s\n",ok?"PASS":"FAIL");
+    return ok;
+}
+
 static void TestNvx3dSubmission(HDC hdc)
 {
     NVX_3D_QUERY_CAPS caps={0};
@@ -1301,6 +1890,7 @@ static void TestNvx3dSubmission(HDC hdc)
 #endif
         return;
     }
+    if(!TestNvc0ClearEscape(hdc)) ok=0;
     alloc.Size=sizeof(alloc);alloc.Version=NVX_3D_ABI_VERSION;
     alloc.Usage=1;alloc.Bytes=65536;
     if(!ExtEscape(hdc,NVX_ESCAPE_3D_ALLOC,sizeof(alloc),(LPCSTR)&alloc,
@@ -1429,7 +2019,11 @@ static void TestNvx3dSubmission(HDC hdc)
             depthSubmit.Color=0xffffffffU;
             if(!ExtEscape(hdc,NVX_ESCAPE_3D_SUBMIT,sizeof(depthSubmit),
                     (LPCSTR)&depthSubmit,sizeof(depthSubmitted),
-                    (LPSTR)&depthSubmitted)) { ok=0; }
+                    (LPSTR)&depthSubmitted)) {
+                LogMsg("-> [FAIL] ZF32 test color-target clear failed (winerr=%lu)\n",
+                       (unsigned long)GetLastError());
+                ok=0;
+            }
             memset(&depthSubmit,0,sizeof(depthSubmit));
             memset(&depthSubmitted,0,sizeof(depthSubmitted));
             depthSubmit.Size=sizeof(depthSubmit);
@@ -1439,7 +2033,11 @@ static void TestNvx3dSubmission(HDC hdc)
             depthSubmit.BufferId=depthAllocated.BufferId;
             if(!ExtEscape(hdc,NVX_ESCAPE_3D_SUBMIT,sizeof(depthSubmit),
                     (LPCSTR)&depthSubmit,sizeof(depthSubmitted),
-                    (LPSTR)&depthSubmitted)) { ok=0; }
+                    (LPSTR)&depthSubmitted)) {
+                LogMsg("-> [FAIL] ZF32 depth clear failed (winerr=%lu)\n",
+                       (unsigned long)GetLastError());
+                ok=0;
+            }
             {
                 struct { NVX_3D_UPLOAD_BUFFER header; float data[24]; } depthVertexUpload;
                 static const float depthTriangle[24]={
@@ -1472,7 +2070,8 @@ static void TestNvx3dSubmission(HDC hdc)
             if(!ExtEscape(hdc,NVX_ESCAPE_3D_SUBMIT,sizeof(depthSubmit),
                     (LPCSTR)&depthSubmit,sizeof(depthSubmitted),
                     (LPSTR)&depthSubmitted)) {
-                LogMsg("-> [FAIL] ZF32 depth-tested known triangle failed\n");
+                LogMsg("-> [FAIL] ZF32 depth-tested known triangle failed (winerr=%lu)\n",
+                       (unsigned long)GetLastError());
                 ok=0;
             } else {
                 LogMsg("-> ZF32 depth-tested known triangle fence=%llu draw_pixels=%lu background=%lu\n",
@@ -1624,19 +2223,46 @@ static void TestNvx3dSubmission(HDC hdc)
                     wait.FenceValue=surfaceSubmitted.FenceValue;
                     wait.TimeoutMs=10000;
                     if(!ExtEscape(hdc,NVX_ESCAPE_3D_WAIT,sizeof(wait),
-                                  (LPCSTR)&wait,sizeof(waited),(LPSTR)&waited) ||
-                       surfaceSubmitted.Reserved[0]!=5) {
-                        LogMsg("[NVX_3D_SURFACE_RESULT] FAIL fence/sample verification\n");
+                                  (LPCSTR)&wait,sizeof(waited),(LPSTR)&waited)) {
+                        LogMsg("[NVX_3D_SURFACE_RESULT] FAIL clear fence wait\n");
                         ok=0;
                     } else {
+                        memset(&readbackRequest,0,sizeof(readbackRequest));
+                        readbackRequest.Size=sizeof(readbackRequest);
+                        readbackRequest.Version=NVX_3D_ABI_VERSION;
+                        readbackRequest.BufferId=surfaceAllocated.BufferId;
+                        readbackRequest.Width=64;
+                        readbackRequest.Height=16;
+                        if(!ExtEscape(hdc,NVX_ESCAPE_3D_READBACK,
+                                sizeof(readbackRequest),
+                                (LPCSTR)&readbackRequest,sizeof(surfacePixels),
+                                (LPSTR)surfacePixels) ||
+                           (surfacePixels[0]&0x00ffffffU)!=0x00204080U) {
+                            LogMsg("[NVX_3D_SURFACE_RESULT] FAIL clear readback origin=%08lX\n",
+                                (unsigned long)surfacePixels[0]);
+                            ok=0;
+                        } else {
+                            readbackRequest.Reserved[0]=576;
+                            readbackRequest.Reserved[1]=448;
+                            if(!ExtEscape(hdc,NVX_ESCAPE_3D_READBACK,
+                                    sizeof(readbackRequest),
+                                    (LPCSTR)&readbackRequest,
+                                    sizeof(surfacePixels),(LPSTR)surfacePixels) ||
+                               (surfacePixels[4*64+55]&0x00ffffffU)!=0x00204080U) {
+                                LogMsg("[NVX_3D_SURFACE_RESULT] FAIL clear edge readback=%08lX\n",
+                                    (unsigned long)surfacePixels[4*64+55]);
+                                ok=0;
+                            } else {
                         LogMsg("[NVX_3D_SURFACE_RESULT] PASS %lux%lu pitch=%lu tileMode=0x%X bytes=%lu samples=%lu fence=%llu\n",
                             (unsigned long)layout.Width,
                             (unsigned long)layout.Height,
                             (unsigned long)layout.PitchBytes,
                             (unsigned)layout.TileMode,
                             (unsigned long)layout.Bytes,
-                            (unsigned long)surfaceSubmitted.Reserved[0],
+                            2UL,
                             (unsigned long long)surfaceSubmitted.FenceValue);
+                            }
+                        }
                     }
                 }
                 surfaceVertexAlloc.Size=sizeof(surfaceVertexAlloc);
@@ -1912,6 +2538,19 @@ int main(int argc, char **argv)
     }
     SetEnvironmentVariableA("NVX_MESA_GALLIUM_BRIDGE",
                             mesaGpuBridgeProbe ? "1" : NULL);
+#if defined(NVX_MESA_BRIDGE_DISABLE_DEPTH) && NVX_MESA_BRIDGE_DISABLE_DEPTH
+    SetEnvironmentVariableA("NVX_MESA_BRIDGE_DISABLE_DEPTH",
+                            mesaGpuBridgeProbe ? "1" : NULL);
+#else
+    SetEnvironmentVariableA("NVX_MESA_BRIDGE_DISABLE_DEPTH", NULL);
+#endif
+#if defined(NVX_MESA_DEPTH_MODE_OVERRIDE) && NVX_MESA_DEPTH_MODE_OVERRIDE == 2
+    SetEnvironmentVariableA("NVX_MESA_DEPTH_MODE", "2");
+#elif defined(NVX_MESA_DEPTH_MODE_OVERRIDE) && NVX_MESA_DEPTH_MODE_OVERRIDE == 3
+    SetEnvironmentVariableA("NVX_MESA_DEPTH_MODE", "3");
+#else
+    SetEnvironmentVariableA("NVX_MESA_DEPTH_MODE", NULL);
+#endif
 #if defined(NVX_MESA_ZF32_DIAGNOSTIC) && NVX_MESA_ZF32_DIAGNOSTIC
     SetEnvironmentVariableA("NVX_MESA_ZF32_DIAGNOSTIC",
                             mesaGpuBridgeProbe ? "1" : NULL);
@@ -1966,7 +2605,7 @@ int main(int argc, char **argv)
                                       runMesaFrontendTest,
                                       sizeof(runMesaFrontendTest)) > 0 &&
               runMesaFrontendTest[0] == '1' &&
-            GetFileAttributesA("C:\\test_accel\\nvxmesa.dll") != INVALID_FILE_ATTRIBUTES)
+            GetFileAttributesA("C:\\test_accel\nvxmesa.dll") != INVALID_FILE_ATTRIBUTES)
             TestMesaWglFrontend(wc.hInstance);
 #endif
         int before = failures;

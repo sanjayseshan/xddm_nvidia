@@ -1,6 +1,41 @@
 #include "../nvx_3d_abi.h"
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
+
+static void
+build_nvc0_clear(NVX_3D_NVC0_CLEAR *request)
+{
+    const uint64_t gpuVa=0x23000000ULL;
+    memset(request,0,sizeof(*request));
+    request->Size=sizeof(*request);
+    request->Version=NVX_3D_ABI_VERSION;
+    request->DwordCount=NVX_3D_NVC0_CLEAR_DWORDS;
+    request->BufferId=17;
+    request->Dwords[0]=Nvx3dNvc0SeqHeader(0x0d80U,4U);
+    request->Dwords[1]=0x3f000000U; /* R = 0.5 */
+    request->Dwords[2]=0x3e800000U; /* G = 0.25 */
+    request->Dwords[3]=0x3f800000U; /* B = 1.0 */
+    request->Dwords[4]=0x3f800000U; /* A = 1.0 */
+    request->Dwords[5]=Nvx3dNvc0SeqHeader(0x0ff4U,2U);
+    request->Dwords[6]=64U<<16; /* full-width scissor at x=0 */
+    request->Dwords[7]=16U<<16; /* full-height scissor at y=0 */
+    request->Dwords[8]=Nvx3dNvc0SeqHeader(0x121cU,1U);
+    request->Dwords[9]=1U; /* one render target */
+    request->Dwords[10]=Nvx3dNvc0SeqHeader(0x0800U,9U);
+    request->Dwords[11]=(uint32_t)(gpuVa>>32);
+    request->Dwords[12]=(uint32_t)gpuVa;
+    request->Dwords[13]=64U;
+    request->Dwords[14]=16U;
+    request->Dwords[15]=0xcfU; /* BGRA8 UNORM */
+    request->Dwords[16]=0x10U; /* one-GOB block height */
+    request->Dwords[17]=1U; /* one layer */
+    request->Dwords[18]=65536U/4U;
+    request->Dwords[19]=0U; /* base layer */
+    request->Dwords[20]=Nvx3dNvc0ImmediateHeader(0x15d0U,0U);
+    request->Dwords[21]=Nvx3dNvc0NonIncHeader(0x19d0U,1U);
+    request->Dwords[22]=0x3cU; /* RGBA clear only */
+}
 
 int main(void)
 {
@@ -13,16 +48,24 @@ int main(void)
     uint32_t readbackPixels[NVX_3D_READBACK_PIXELS];
     NVX_3D_QUERY_CAPS caps;
     NVX_3D_COLOR_SURFACE_LAYOUT surface;
+    NVX_3D_DEPTH_SURFACE_LAYOUT depthSurface;
+    NVX_3D_NVC0_CLEAR nvc0Clear, nvc0Bad;
+    uint32_t nvc0Color=0;
     uint32_t information=99;
 
     assert(sizeof(NVX_3D_QUERY_CAPS)==32);
-    assert(sizeof(NVX_3D_ALLOC_BUFFER)==48);
+    assert(sizeof(NVX_3D_ALLOC_BUFFER)==56);
     assert(sizeof(NVX_3D_FREE_BUFFER)==16);
     assert(sizeof(NVX_3D_UPLOAD_BUFFER)==32);
-    assert(sizeof(NVX_3D_SUBMIT)==56);
+    assert(sizeof(NVX_3D_SUBMIT)==72);
     assert(sizeof(NVX_3D_WAIT_FENCE)==24);
     assert(sizeof(NVX_3D_READBACK)==32);
     assert(sizeof(NVX_3D_COLOR_SURFACE_LAYOUT)==24);
+    assert(sizeof(NVX_3D_NVC0_CLEAR)==128);
+    assert(Nvx3dNvc0Unorm8(0x00000000U)==0);
+    assert(Nvx3dNvc0Unorm8(0x3e800000U)==64);
+    assert(Nvx3dNvc0Unorm8(0x3f000000U)==128);
+    assert(Nvx3dNvc0Unorm8(0x3f800000U)==255);
 
     assert(Nvx3dComputeColorSurfaceLayout(64,16,&surface));
     assert(surface.PitchBytes==256&&surface.TileMode==0x10&&
@@ -47,6 +90,62 @@ int main(void)
     assert(!Nvx3dComputeColorSurfaceLayout(4097,453,&surface));
     assert(!Nvx3dComputeColorSurfaceLayout(4096,4097,&surface));
     assert(!Nvx3dComputeColorSurfaceLayout(4096,4096,NULL));
+    assert(Nvx3dComputeDepthSurfaceLayout(64,16,&depthSurface));
+    assert(depthSurface.PitchBytes==256&&depthSurface.Bytes==65536);
+    assert(Nvx3dComputeDepthSurfaceLayout(632,453,&depthSurface));
+    assert(depthSurface.PitchBytes==2560&&depthSurface.Bytes==1179648);
+    assert(!Nvx3dComputeDepthSurfaceLayout(4097,453,&depthSurface));
+    assert(!Nvx3dComputeDepthSurfaceLayout(632,0,&depthSurface));
+
+    build_nvc0_clear(&nvc0Clear);
+    assert(Nvx3dValidateNvc0Clear(&nvc0Clear,sizeof(nvc0Clear),
+        0x23000000ULL,65536,64,16,256,0x10,&nvc0Color));
+    assert(nvc0Color==0xff8040ffU);
+    assert(!Nvx3dValidateNvc0Clear(&nvc0Clear,sizeof(nvc0Clear)-4,
+        0x23000000ULL,65536,64,16,256,0x10,&nvc0Color));
+    assert(!Nvx3dValidateNvc0Clear(&nvc0Clear,sizeof(nvc0Clear),
+        0x23010000ULL,65536,64,16,256,0x10,&nvc0Color));
+    assert(!Nvx3dValidateNvc0Clear(&nvc0Clear,sizeof(nvc0Clear),
+        0x23000000ULL,65535,64,16,256,0x10,&nvc0Color));
+    assert(!Nvx3dValidateNvc0Clear(&nvc0Clear,sizeof(nvc0Clear),
+        0x23000000ULL,65536,64,16,260,0x10,&nvc0Color));
+    assert(!Nvx3dValidateNvc0Clear(&nvc0Clear,sizeof(nvc0Clear),
+        0x23000000ULL,65536,64,16,256,0x20,&nvc0Color));
+#define REJECT_NVC0_CLEAR(_word, _value) do { \
+        nvc0Bad=nvc0Clear; nvc0Bad.Dwords[(_word)]=(_value); \
+        assert(!Nvx3dValidateNvc0Clear(&nvc0Bad,sizeof(nvc0Bad), \
+            0x23000000ULL,65536,64,16,256,0x10,&nvc0Color)); \
+    } while(0)
+    REJECT_NVC0_CLEAR(0,0x40000000U); /* not an NVC0 sequential packet */
+    REJECT_NVC0_CLEAR(5,Nvx3dNvc0SeqHeader(0x0ff8U,2U)); /* other method */
+    REJECT_NVC0_CLEAR(1,0xbf000000U); /* negative clear component */
+    REJECT_NVC0_CLEAR(2,0x7fc00000U); /* NaN component */
+    REJECT_NVC0_CLEAR(3,0x3f800001U); /* component above one */
+    REJECT_NVC0_CLEAR(6,(64U<<16)|1U); /* partial scissor */
+    REJECT_NVC0_CLEAR(7,15U<<16); /* partial scissor */
+    REJECT_NVC0_CLEAR(9,0U); /* no target */
+    REJECT_NVC0_CLEAR(12,0x23000004U); /* unvalidated address */
+    REJECT_NVC0_CLEAR(13,63U); /* target extent mismatch */
+    REJECT_NVC0_CLEAR(15,0U); /* unsupported format */
+    REJECT_NVC0_CLEAR(16,0x20U); /* mismatched tiling */
+    REJECT_NVC0_CLEAR(17,2U); /* layered target */
+    REJECT_NVC0_CLEAR(18,65536U/8U); /* invalid layer stride */
+    REJECT_NVC0_CLEAR(19,1U); /* nonzero base layer */
+    REJECT_NVC0_CLEAR(20,Nvx3dNvc0ImmediateHeader(0x15d0U,1U));
+    REJECT_NVC0_CLEAR(22,0x3dU); /* depth/stencil or extra RT clear */
+#undef REJECT_NVC0_CLEAR
+    nvc0Bad=nvc0Clear;nvc0Bad.FenceValue=1;
+    assert(!Nvx3dValidateNvc0Clear(&nvc0Bad,sizeof(nvc0Bad),
+        0x23000000ULL,65536,64,16,256,0x10,NULL));
+    nvc0Bad=nvc0Clear;nvc0Bad.Reserved=1;
+    assert(!Nvx3dValidateNvc0Clear(&nvc0Bad,sizeof(nvc0Bad),
+        0x23000000ULL,65536,64,16,256,0x10,NULL));
+    nvc0Bad=nvc0Clear;nvc0Bad.Reserved2=1;
+    assert(!Nvx3dValidateNvc0Clear(&nvc0Bad,sizeof(nvc0Bad),
+        0x23000000ULL,65536,64,16,256,0x10,NULL));
+    nvc0Bad=nvc0Clear;nvc0Bad.DwordCount++;
+    assert(!Nvx3dValidateNvc0Clear(&nvc0Bad,sizeof(nvc0Bad),
+        0x23000000ULL,65536,64,16,256,0x10,NULL));
 
     Nvx3dBuildCaps(&caps,0,0,0,0,0,0,0,0);
     assert(caps.Size==sizeof(caps)&&caps.Version==NVX_3D_ABI_VERSION);
@@ -69,7 +168,7 @@ int main(void)
     assert(caps.Features==0);
 
     alloc.Size=sizeof(alloc);alloc.Version=NVX_3D_ABI_VERSION;
-    alloc.Usage=3;alloc.Bytes=65536;
+    alloc.Usage=3;alloc.Bytes=NVX_3D_DEPTH_TARGET_TOTAL_BYTES;
     assert(Nvx3dValidateAlloc(&alloc));
     assert(Nvx3dComputeColorSurfaceLayout(632,453,&surface));
     alloc.Usage=NVX_3D_USAGE_COLOR_TARGET;alloc.Bytes=surface.Bytes;
@@ -86,6 +185,8 @@ int main(void)
     assert(!Nvx3dValidateAlloc(&alloc));
     alloc.Usage=3;alloc.Bytes=65536;alloc.Width=alloc.Height=0;
     alloc.PitchBytes=alloc.TileMode=0;
+    assert(!Nvx3dValidateAlloc(&alloc));
+    alloc.Bytes=NVX_3D_DEPTH_TARGET_TOTAL_BYTES;
     assert(Nvx3dValidateAlloc(&alloc));
     alloc.Usage=7;alloc.Bytes=NVX_3D_DEPTH_TARGET_TOTAL_BYTES;
     assert(Nvx3dValidateAlloc(&alloc));
@@ -94,12 +195,24 @@ int main(void)
     alloc.Usage=NVX_3D_USAGE_DEPTH_TARGET|NVX_3D_USAGE_DEPTH_ZF32;
     alloc.Bytes=NVX_3D_DEPTH_TARGET_TOTAL_BYTES;
     assert(Nvx3dValidateAlloc(&alloc));
+    assert(Nvx3dComputeDepthSurfaceLayout(632,453,&depthSurface));
+    alloc.Width=depthSurface.Width;alloc.Height=depthSurface.Height;
+    alloc.PitchBytes=depthSurface.PitchBytes;
+    alloc.Bytes=NVX_3D_DEPTH_TARGET_OFFSET+depthSurface.Bytes;
+    assert(Nvx3dValidateAlloc(&alloc));
+    alloc.PitchBytes++;
+    assert(!Nvx3dValidateAlloc(&alloc));
+    alloc.PitchBytes=depthSurface.PitchBytes;
+    alloc.TileMode=1;
+    assert(!Nvx3dValidateAlloc(&alloc));
+    alloc.Width=alloc.Height=alloc.PitchBytes=alloc.TileMode=0;
+    alloc.Bytes=NVX_3D_DEPTH_TARGET_TOTAL_BYTES;
     alloc.Usage=NVX_3D_USAGE_DEPTH_TARGET|NVX_3D_USAGE_DEPTH_ZF32|
                 NVX_3D_USAGE_DEPTH_S8Z24;
     assert(!Nvx3dValidateAlloc(&alloc));
     alloc.Usage=4;assert(!Nvx3dValidateAlloc(&alloc));
     alloc.Usage=8;assert(!Nvx3dValidateAlloc(&alloc));
-    alloc.Usage=3;alloc.Bytes=65536;
+    alloc.Usage=3;alloc.Bytes=NVX_3D_DEPTH_TARGET_TOTAL_BYTES;
     assert(Nvx3dDispatch(NVX_3D_OP_ALLOC,&alloc,sizeof(alloc),NULL,0,NULL,
         0,0,0,0,0,0)==NVX_3D_STATUS_SUCCESS);
     alloc.Bytes=65535;assert(!Nvx3dValidateAlloc(&alloc));
@@ -225,6 +338,26 @@ int main(void)
     assert(Nvx3dSubmitVertexBufferId(&submit)==2);
     submit.Operation=NVX_3D_SUBMIT_VERIFY_COLOR_TARGET_DRAW;
     assert(Nvx3dValidateSubmit(&submit,sizeof(submit),surface.Bytes));
+    submit.Operation=NVX_3D_SUBMIT_DRAW_COLOR_TARGET_DEPTH;
+    submit.Reserved[4]=3;submit.Reserved[5]=0;
+    assert(Nvx3dValidateSubmit(&submit,sizeof(submit),surface.Bytes));
+    assert(Nvx3dDepthModeForOperation(submit.Operation)==5U);
+    submit.Operation=NVX_3D_SUBMIT_DRAW_COLOR_TARGET_DEPTH_ATTACH;
+    assert(Nvx3dValidateSubmit(&submit,sizeof(submit),surface.Bytes));
+    assert(Nvx3dDepthModeForOperation(submit.Operation)==2U);
+    submit.Operation=NVX_3D_SUBMIT_DRAW_COLOR_TARGET_DEPTH_TEST_ONLY;
+    assert(Nvx3dValidateSubmit(&submit,sizeof(submit),surface.Bytes));
+    assert(Nvx3dDepthModeForOperation(submit.Operation)==3U);
+    submit.Operation=NVX_3D_SUBMIT_DRAW_COLOR_TARGET_DEPTH;
+    submit.Reserved[4]=2;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),surface.Bytes));
+    submit.Reserved[4]=3;submit.Reserved[5]=0;
+    submit.Operation=NVX_3D_SUBMIT_CLEAR_COLOR_TARGET_DEPTH;
+    memset(submit.Reserved,0,sizeof(submit.Reserved));
+    assert(Nvx3dValidateSubmit(&submit,sizeof(submit),surface.Bytes));
+    submit.Reserved[0]=1;
+    assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),surface.Bytes));
+    submit.Reserved[0]=0;
     submit.Operation=NVX_3D_SUBMIT_DRAW_COLOR_TARGET;
     submit.Reserved[0]=5;
     assert(!Nvx3dValidateSubmit(&submit,sizeof(submit),surface.Bytes));

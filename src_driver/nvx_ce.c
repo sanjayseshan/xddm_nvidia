@@ -182,6 +182,16 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
 /* The two display adapters share one CE queue, fence and push-buffer ring. */
 static volatile ULONG NvxGspEngineBusy=0;
 
+static BOOLEAN NvxGspLockUserScratch(void)
+{
+    ULONG wait;
+    for(wait=0;wait<20000;wait++) {
+        if(!__sync_lock_test_and_set(&NvxGrUserSubmitBusy,1)) return TRUE;
+        VideoPortStallExecution(10);
+    }
+    return FALSE;
+}
+
 static BOOLEAN NvxGspLockEngine(void)
 {
     ULONG wait;
@@ -270,6 +280,66 @@ static BOOLEAN NvxGspSubmitCopyUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,UL
     return FALSE;
 }
 
+/* Submit four block-linear GOB strips in one CE pushbuffer and wait once.
+ * A 64x16 RGBA tile is four contiguous 16x16 strips in Turing/Ampere layout.
+ * The four copy methods plus one release fit in the existing 256-byte slot. */
+static BOOLEAN NvxGspSubmitColorTileStrips(PNVX_DEVICE_EXTENSION dev,
+    const ULONG64 dstVa[4],const ULONG64 srcVa[4])
+{
+    PUCHAR scratch;
+    volatile ULONG *userd,*fence;
+    volatile ULONG64 *fifo;
+    PULONG push;
+    ULONG slot,n=0,fenceVal,i;
+    ULONG64 va,pushVa;
+    if(!dev||!dev->GspInitialized||!dev->GspCopyVerified||
+       dev->GspChannelFaulted) return FALSE;
+    scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET;
+    userd=(volatile ULONG *)(scratch+0x3200);
+    fence=(volatile ULONG *)(scratch+0xc000);
+    fifo=(volatile ULONG64 *)scratch;
+    va=dev->GspScratchGpuVa;
+    slot=dev->GspGPPut%16;
+    push=(PULONG)(scratch+0xd000+slot*0x100);
+    pushVa=va+0xd000+slot*0x100;
+    for(i=0;i<4;i++) {
+        push[n++]=0x20018000;push[n++]=0xc7b5;
+        push[n++]=0x20048100;
+        push[n++]=(ULONG)(srcVa[i]>>32);push[n++]=(ULONG)srcVa[i];
+        push[n++]=(ULONG)(dstVa[i]>>32);push[n++]=(ULONG)dstVa[i];
+        push[n++]=0x20048104;
+        push[n++]=1024;push[n++]=1024;push[n++]=1024;push[n++]=1;
+        push[n++]=0x200180c0;push[n++]=0x04000386;
+    }
+    fenceVal=dev->GspNextFence++;
+    if(!fenceVal) fenceVal=dev->GspNextFence++;
+    push[n++]=0x20038090;
+    push[n++]=(ULONG)((va+0xc000)>>32);push[n++]=(ULONG)(va+0xc000);
+    push[n++]=fenceVal;
+    push[n++]=0x200180c0;push[n++]=0x0400000c;
+    if(n>64) return FALSE;
+    fence[0]=0;__sync_synchronize();
+    fifo[dev->GspGPPut%1024]=(pushVa&0xfffffffcULL)|
+        (((pushVa>>32)&0xffULL)<<32)|((ULONG64)n<<42);
+    __sync_synchronize();
+    dev->GspGPPut=(dev->GspGPPut+1)%1024;
+    userd[0x8c/4]=dev->GspGPPut;__sync_synchronize();
+    if(dev->Bar0Length>=0x30094)
+        VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+
+            0x30090),dev->GspSubmitToken);
+    VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+
+        dev->GspRunlistBase+0x90),1);
+    for(ULONG wait=0;wait<20000;wait++) {
+        if(fence[0]==fenceVal) {__sync_synchronize();return TRUE;}
+        VideoPortStallExecution(10);
+    }
+    LogStr("NVX [COPY-Q]: color-tile strip batch timeout fence=");
+    LogHex(fenceVal);LogStr(" GPGet=");LogHex(userd[0x88/4]);
+    LogStr(" GPPut=");LogHex(userd[0x8c/4]);LogStr("\\n");
+    dev->GspChannelFaulted=TRUE;
+    return FALSE;
+}
+
 BOOLEAN NvxGspSubmitCopy(PVOID extension,ULONG64 dstVa,ULONG64 srcVa,ULONG bytes)
 {
     return NvxGspSubmitCopy2D(extension,dstVa,srcVa,bytes,bytes,bytes,1);
@@ -340,6 +410,18 @@ BOOLEAN NvxGspSubmitCopy2D(PVOID extension,ULONG64 dstVa,ULONG64 srcVa,
                            ULONG srcPitch,ULONG dstPitch,ULONG bytesPerLine,ULONG lineCount)
 {
     BOOLEAN result;
+    if(!NvxGspLockUserScratch()) return FALSE;
+    result=NvxGspSubmitCopy2DLocked(extension,dstVa,srcVa,srcPitch,dstPitch,
+                                    bytesPerLine,lineCount);
+    __sync_lock_release(&NvxGrUserSubmitBusy);
+    return result;
+}
+
+BOOLEAN NvxGspSubmitCopy2DLocked(PVOID extension,ULONG64 dstVa,ULONG64 srcVa,
+                                 ULONG srcPitch,ULONG dstPitch,
+                                 ULONG bytesPerLine,ULONG lineCount)
+{
+    BOOLEAN result;
     if(!NvxGspLockEngine()) return FALSE;
     result=NvxGspSubmitCopyUnlocked(extension,dstVa,srcVa,srcPitch,dstPitch,
                                     bytesPerLine,lineCount);
@@ -358,7 +440,8 @@ BOOLEAN NvxGspReadUserColorTargetTile(PVOID HwDeviceExtension,ULONG64 srcVa,
     PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
     NVX_3D_COLOR_SURFACE_LAYOUT layout;
     PUCHAR scratch;
-    ULONG strip,x,y;
+    ULONG strip,x,y,activeStrips=0;
+    ULONG64 stripDst[4],stripSrc[4];
     ULONG wait;
     BOOLEAN ok=FALSE;
     if(!dev||!output||outputPixels!=NVX_3D_READBACK_PIXELS||!srcVa||
@@ -382,12 +465,25 @@ BOOLEAN NvxGspReadUserColorTargetTile(PVOID HwDeviceExtension,ULONG64 srcVa,
     for(strip=0;strip<4;strip++) {
         ULONG xOrigin=tileX+strip*16U;
         ULONG offset;
-        if(xOrigin>=targetWidth) continue;
+        if(xOrigin>=targetWidth) {
+            stripDst[strip]=stripSrc[strip]=0;
+            continue;
+        }
         offset=Nvx3dTuringColorPixelOffset(xOrigin,tileY,targetWidth,tileMode);
-        if((ULONG64)offset+1024U>layout.Bytes||
-           !NvxGspSubmitCopyUnlocked(dev,dev->GspScratchGpuVa+0xe000+strip*1024U,
-               srcVa+offset,1024U,1024U,1024U,1U))
+        if((ULONG64)offset+1024U>layout.Bytes)
             goto done;
+        stripDst[strip]=dev->GspScratchGpuVa+0xe000+strip*1024U;
+        stripSrc[strip]=srcVa+offset;
+        activeStrips++;
+    }
+    if(activeStrips==4) {
+        if(!NvxGspSubmitColorTileStrips(dev,stripDst,stripSrc)) goto done;
+    } else {
+        for(strip=0;strip<4;strip++)
+            if(stripSrc[strip]&&
+               !NvxGspSubmitCopyUnlocked(dev,stripDst[strip],stripSrc[strip],
+                                          1024U,1024U,1024U,1U))
+                goto done;
     }
     __sync_synchronize();
     for(y=0;y<16;y++) for(x=0;x<64;x++) {
@@ -468,6 +564,15 @@ static BOOLEAN NvxGspSubmitFillUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,UL
 BOOLEAN NvxGspSubmitFill(PVOID extension,ULONG64 dstVa,ULONG color,ULONG bytes)
 {
     BOOLEAN result;
+    if(!NvxGspLockUserScratch()) return FALSE;
+    result=NvxGspSubmitFillLocked(extension,dstVa,color,bytes);
+    __sync_lock_release(&NvxGrUserSubmitBusy);
+    return result;
+}
+
+BOOLEAN NvxGspSubmitFillLocked(PVOID extension,ULONG64 dstVa,ULONG color,ULONG bytes)
+{
+    BOOLEAN result;
     if(!NvxGspLockEngine()) return FALSE;
     result=NvxGspSubmitFillUnlocked(extension,dstVa,color,bytes);
     NvxGspUnlockEngine();
@@ -518,9 +623,14 @@ static BOOLEAN NvxGspUploadUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,const 
 BOOLEAN NvxGspUpload(PVOID extension,ULONG64 dstVa,const void *src,ULONG bytes)
 {
     BOOLEAN result;
-    if(!NvxGspLockEngine()) return FALSE;
+    if(!NvxGspLockUserScratch()) return FALSE;
+    if(!NvxGspLockEngine()) {
+        __sync_lock_release(&NvxGrUserSubmitBusy);
+        return FALSE;
+    }
     result=NvxGspUploadUnlocked(extension,dstVa,src,bytes);
     NvxGspUnlockEngine();
+    __sync_lock_release(&NvxGrUserSubmitBusy);
     return result;
 }
 

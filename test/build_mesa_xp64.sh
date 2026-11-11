@@ -11,6 +11,7 @@ MESA_WGL_DLL="$BUILD_DIR/src/gallium/targets/libgl-gdi/opengl32.dll"
 # XP target remains _WIN32_WINNT=0x0502 in mesa_xp64.ini; final PE imports and
 # subsystem versions are checked against the XP guest by audit_xp_imports.py.
 MESA_MIN_WINDOWS_VERSION=7
+MESA_GALLIUM_DRIVERS="${NVX_MESA_GALLIUM_DRIVERS:-softpipe}"
 
 "$ROOT/test/apply_mesa_xp_patches.sh"
 restore_mesa_sources() {
@@ -27,7 +28,7 @@ if [[ -f "$BUILD_DIR/meson-private/coredata.dat" ]]; then
     "$MESON" setup --reconfigure "$BUILD_DIR" "$ROOT/mesa" \
         --cross-file "$ROOT/test/mesa_xp64.ini" \
         --buildtype=release -Dstrip=true -Dplatforms=windows \
-        -Dgallium-drivers=softpipe -Dvulkan-drivers= -Dllvm=disabled \
+        -Dgallium-drivers="$MESA_GALLIUM_DRIVERS" -Dvulkan-drivers= -Dllvm=disabled \
         -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dopengl=true \
         -Dgallium-wgl-dll-name=nvxogl64 -Ddefault_library=static \
         -Dmin-windows-version="$MESA_MIN_WINDOWS_VERSION"
@@ -35,7 +36,7 @@ else
     "$MESON" setup "$BUILD_DIR" "$ROOT/mesa" \
         --cross-file "$ROOT/test/mesa_xp64.ini" \
         --buildtype=release -Dstrip=true -Dplatforms=windows \
-        -Dgallium-drivers=softpipe -Dvulkan-drivers= -Dllvm=disabled \
+        -Dgallium-drivers="$MESA_GALLIUM_DRIVERS" -Dvulkan-drivers= -Dllvm=disabled \
         -Dglx=disabled -Degl=disabled -Dgbm=disabled -Dopengl=true \
         -Dgallium-wgl-dll-name=nvxogl64 -Ddefault_library=static \
         -Dmin-windows-version="$MESA_MIN_WINDOWS_VERSION"
