@@ -147,9 +147,10 @@ main(void)
                           NVX_3D_FEATURE_DOWNLOAD;
    winsys.caps.DeviceId = 0x2488U;
    winsys.caps.Chipset = 0x170U;
-   winsys.caps.PciLocation = Nvx3dPackPciLocation(0x2aU, 0xabU);
    winsys.caps.VramApertureBytes = 64U * 1024U * 1024U;
    winsys.caps.MaxBufferBytes = 16U * 1024U * 1024U;
+   assert(NvxXf86DrmRegisterDevice(&winsys) == -1);
+   winsys.caps.PciLocation = Nvx3dPackPciLocation(0x2aU, 0xabU);
    fd = NvxXf86DrmRegisterDevice(&winsys);
    assert(fd > 0 && NvxXf86DrmIsRegistered(fd));
 
