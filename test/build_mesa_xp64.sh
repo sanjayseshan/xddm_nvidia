@@ -35,10 +35,10 @@ for option in ("c_args", "cpp_args"):
 Path(destination).write_text(text)
 PY
 
-"$ROOT/test/apply_mesa_xp_patches.sh"
 restore_mesa_sources() {
     rm -f "$ROOT/mesa/src/gallium/winsys/nouveau/drm/nvx_xf86drm.c"
     for patch_file in \
+        "$ROOT/mesa_patches/0013-nouveau-xp-flush-mapped-pushbuf.patch" \
         "$ROOT/mesa_patches/0012-nouveau-xp-nvx-bo-map.patch" \
         "$ROOT/mesa_patches/0011-nouveau-use-os-mman.patch" \
         "$ROOT/mesa_patches/0010-nouveau-xp-disable-drm-sharing.patch" \
@@ -57,6 +57,7 @@ restore_mesa_sources() {
     done
 }
 trap restore_mesa_sources EXIT
+"$ROOT/test/apply_mesa_xp_patches.sh"
 if [[ -e "$ROOT/mesa/src/gallium/winsys/nouveau/drm/nvx_xf86drm.c" ]]; then
     echo "Refusing to overwrite existing Nouveau source: nvx_xf86drm.c" >&2
     exit 1

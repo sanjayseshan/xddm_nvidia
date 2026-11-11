@@ -440,6 +440,20 @@ main(void)
       assert(mock.download_bytes == bytes + 12288);
       assert(mock.upload_bytes == bytes + 8192);
 
+      mapped = NvxNouveauBoMap(&bo, NVX_NOUVEAU_BO_WRITE);
+      assert(mapped);
+      mapped[2] = 0x3C;
+      mock.event_count = 0;
+      assert(NvxNouveauBoFlush(&bo));
+      assert(mock.event_count == 1 && mock.events[0] == MOCK_EVENT_UPLOAD);
+      assert(find_buffer(&mock, bo.allocation.BufferId)->storage[2] == 0x3C);
+      assert(bo.map_count == 1 && bo.shadow == mapped);
+      mapped[2] = 0xA4;
+      assert(NvxNouveauBoFlush(&bo));
+      assert(find_buffer(&mock, bo.allocation.BufferId)->storage[2] == 0xA4);
+      assert(NvxNouveauBoUnmap(&bo));
+      assert(NvxNouveauBoFlush(&bo));
+
       NvxNouveauBoReference(&bo);
       assert(bo.references == 2);
       assert(NvxNouveauBoDestroy(&bo));

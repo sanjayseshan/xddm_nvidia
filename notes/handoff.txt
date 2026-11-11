@@ -2,6 +2,23 @@
 
 Updated November 11, 2026, after the XP-backed `xf86drm` BO shim and VFIO run.
 
+## Persistent Nouveau BO mappings and pushbuffer visibility (November 11, 2026)
+
+The XP BO adapter stages maps in a CPU shadow and uploads writes on unmap.
+Mesa's legacy Nouveau winsys keeps pushbuffer BOs mapped while submitting them,
+so relying on unmap would leave the latest command stream only in system
+memory. Added `NvxNouveauBoFlush()` and an XP `NvxXf86DrmFlushBuffer()` hook;
+the external Mesa patch flushes referenced mapped BOs before a future
+`GEM_PUSHBUF` call. Unmapped buffers are a successful no-op. Mock tests verify
+the upload occurs while the mapping stays open and that the shim can flush a
+persistent mapping.
+
+`make -C src_driver check` passes, and the external Nouveau+softpipe XP x64
+Mesa build completed 703 Ninja actions with only GDI32, KERNEL32, MSVCRT, and
+USER32 imports. The Mesa submodule was restored clean. This fixes CPU-shadow
+visibility only: `DRM_NOUVEAU_CHANNEL_ALLOC` and `DRM_NOUVEAU_GEM_PUSHBUF`
+remain unsupported, so it does not change the current softpipe runtime result.
+
 ## Windows replacement for `xf86drm` (November 11, 2026)
 
 Yes: Mesa's libdrm calls can be adapted to Windows interfaces, and this tree

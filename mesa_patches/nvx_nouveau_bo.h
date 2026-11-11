@@ -39,6 +39,8 @@ int NvxNouveauBoBuildRelocation(const NVX_NOUVEAU_BO *bo,
                                 uint64_t bytes, uint32_t access,
                                 NVX_NOUVEAU_RELOCATION *relocation);
 void *NvxNouveauBoMap(NVX_NOUVEAU_BO *bo, uint32_t access);
+/* Publish writes from a persistent CPU mapping before a GPU submission. */
+int NvxNouveauBoFlush(NVX_NOUVEAU_BO *bo);
 int NvxNouveauBoUnmap(NVX_NOUVEAU_BO *bo);
 int NvxNouveauBoDestroy(NVX_NOUVEAU_BO *bo);
 

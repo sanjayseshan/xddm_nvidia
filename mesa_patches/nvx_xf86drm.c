@@ -430,6 +430,26 @@ NvxXf86DrmUnmapBuffer(int fd, uint32_t handle)
    return result ? 0 : -1;
 }
 
+int
+NvxXf86DrmFlushBuffer(int fd, uint32_t handle)
+{
+   struct nvx_drm_device_slot *device;
+   struct nvx_drm_bo_slot *slot;
+   int result = 0;
+   int found;
+
+   nvx_drm_lock_acquire();
+   device = nvx_drm_find_device_locked(fd);
+   slot = nvx_drm_find_bo_locked(device, handle);
+   found = slot != NULL;
+   if (slot)
+      result = NvxNouveauBoFlush(&slot->bo);
+   nvx_drm_lock_release();
+   if (!result)
+      errno = found ? EIO : ENOENT;
+   return result ? 0 : -1;
+}
+
 drmVersionPtr
 drmGetVersion(int fd)
 {

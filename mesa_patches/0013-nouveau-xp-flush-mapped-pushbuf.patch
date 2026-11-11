@@ -1,0 +1,23 @@
+diff --git a/src/gallium/winsys/nouveau/drm/nouveau.c b/src/gallium/winsys/nouveau/drm/nouveau.c
+--- a/src/gallium/winsys/nouveau/drm/nouveau.c
++++ b/src/gallium/winsys/nouveau/drm/nouveau.c
+@@ -1182,6 +1182,19 @@ pushbuf_submit(struct nouveau_pushbuf *push, struct nouveau_object *chan)
+       if (dbg_on(0))
+          pushbuf_dump(dev, krec, krec_id++, channel);
+ 
++#ifdef NVX_XP_WIN32_SHIMS
++      /* XP mappings use a CPU shadow. Publish mapped writes before asking
++       * the miniport to consume the Nouveau pushbuffer and referenced BOs. */
++      kref = krec->buffer;
++      for (i = 0; i < krec->nr_buffer; i++, kref++) {
++         if (NvxXf86DrmFlushBuffer(drm->fd, kref->handle)) {
++            ret = -errno;
++            break;
++         }
++      }
++      if (ret)
++         break;
++#endif
+       ret = drmCommandWriteRead(drm->fd, DRM_NOUVEAU_GEM_PUSHBUF, &req, sizeof(req));
+       nvpb->suffix0 = req.suffix0;
+       nvpb->suffix1 = req.suffix1;

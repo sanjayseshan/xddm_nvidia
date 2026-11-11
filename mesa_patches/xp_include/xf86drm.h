@@ -103,6 +103,7 @@ int NvxXf86DrmIsRegistered(int fd);
 void NvxXf86DrmGetStatus(NVX_XF86DRM_STATUS *status);
 void *NvxXf86DrmMapBuffer(int fd, uint32_t handle, uint32_t access);
 int NvxXf86DrmUnmapBuffer(int fd, uint32_t handle);
+int NvxXf86DrmFlushBuffer(int fd, uint32_t handle);
 
 drmVersionPtr drmGetVersion(int fd);
 void drmFreeVersion(drmVersionPtr version);

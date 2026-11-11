@@ -178,6 +178,8 @@ main(void)
                                 NVX_XF86DRM_MAP_WRITE);
       assert(map != NULL && map[0] == 0);
       map[0] = 0x12345678U;
+      assert(NvxXf86DrmFlushBuffer(fd, create.info.handle) == 0);
+      assert(buffers[0].data[0] == 0x78U);
       assert(NvxXf86DrmUnmapBuffer(fd, create.info.handle) == 0);
       map = NvxXf86DrmMapBuffer(fd, create.info.handle,
                                 NVX_XF86DRM_MAP_READ);
@@ -187,6 +189,7 @@ main(void)
       prep.flags = NOUVEAU_GEM_CPU_PREP_NOWAIT;
       assert(drmCommandWrite(fd, DRM_NOUVEAU_GEM_CPU_PREP, &prep,
                              sizeof(prep)) == 0);
+      assert(NvxXf86DrmFlushBuffer(fd, create.info.handle) == 0);
       assert(drmCloseBufferHandle(fd, create.info.handle) == 0);
       assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_INFO, &info,
                                  sizeof(info)) == -1);

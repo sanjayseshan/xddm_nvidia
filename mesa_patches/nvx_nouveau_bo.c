@@ -136,6 +136,22 @@ NvxNouveauBoMap(NVX_NOUVEAU_BO *bo, uint32_t access)
 }
 
 int
+NvxNouveauBoFlush(NVX_NOUVEAU_BO *bo)
+{
+   if (!bo || !bo->references)
+      return 0;
+   if (!bo->map_count)
+      return 1;
+   if (!bo->shadow)
+      return 0;
+   if (!(bo->map_access & NVX_NOUVEAU_BO_WRITE))
+      return 1;
+   return NvxWinsysUploadBuffer(bo->device, bo->allocation.BufferId,
+                                bo->allocation.Bytes, 0, bo->shadow,
+                                bo->allocation.Bytes);
+}
+
+int
 NvxNouveauBoUnmap(NVX_NOUVEAU_BO *bo)
 {
    int result = 1;
