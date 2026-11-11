@@ -23,6 +23,34 @@ records one startup firmware assertion and no MMU fault. PCI identity is now
 correctly represented, but this does not create a Nouveau channel or prove
 hardware-accelerated OpenGL.
 
+## Nouveau channel and pushbuffer boundary audit (November 11, 2026)
+
+The existing GR path is a single miniport-owned GSP-RM channel. The diagnostic
+GR setup allocates channel handle `0xc56f0002`, stores its 512-entry GPFIFO and
+push memory in the miniport's private DMA scratch allocation, and serializes
+the native clear submitter with a global lock. `NvxGspSubmitNvc0NativeClear()`
+adds a kernel-owned C797 object bind, accepts exactly the 28-dword clear
+profile, then appends idle and a report semaphore. It does not expose channel
+memory or a kick operation to Mesa.
+
+Gallium Nouveau's `nouveau_screen_init()` requests a FIFO channel before it
+creates the client pushbuffer. `nouveau_pushbuf_new()` immediately sends a
+zero-push `DRM_NOUVEAU_GEM_PUSHBUF`; normal kicks later send user pointers to BO,
+relocation, and push arrays, and expect kernel-updated BO domains and suffix
+state. `nouveau_object_new()` also uses the returned channel for NVIF objects
+and channel teardown. Therefore returning the existing RM handle as if it
+were a libdrm channel would mismatch lifetime, ownership, and submission
+semantics.
+
+A viable bridge needs a client-token-owned logical session, operation-specific
+NVIF object handling, bounded copying/serialization of the GEM push arrays,
+the NVC0 `PUSH_REF` BO set, kernel validation of C797 methods and every direct
+GPU address, actual emission on the private GPFIFO, and completion/fence
+results. The current batch IOCTL only validates framing/BO ownership; the
+native clear IOCTL only submits its exact profile. Neither is a generic
+pushbuffer submission service. Do not report channel allocation success
+until this session can reach a validated, fenced batch execution path.
+
 ## NVX batch BO references (ABI 13, current work)
 
 ABI 13 extends the bounded batch header with explicit BO reference count and

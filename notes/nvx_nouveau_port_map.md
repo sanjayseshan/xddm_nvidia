@@ -10,6 +10,15 @@ runtime test `../test_logs/v3.0.0.3-20261111-175309.log` confirms BDF `00:02.0`
 and still identifies `DRM_NOUVEAU_CHANNEL_ALLOC` as the first unsupported
 operation. OpenGL remains softpipe; channel allocation, objects, and validated
 submission are still required for a native screen.
+
+The driver-owned GR test channel uses a private 512-entry GPFIFO and a strict
+kernel-authored clear envelope. Nouveau's screen setup also allocates a
+pushbuffer and performs a zero-push kick before later sending user-pointer BO,
+relocation, and push arrays through `GEM_PUSHBUF`. Reusing the RM channel
+handle cannot satisfy this lifecycle. See the channel boundary audit in
+`handoff.txt`; the required bridge must own a session, validate method/address
+state from BO references, submit on the private queue, and return completion.
+
 The softpipe WGL bridge now constructs the NVC0-format clear packet from
 Gallium clear state and its NVX resource metadata. On RTX 3070, the XP miniport
 validated and translated 104 such clears in one 100-frame diagnostic run.
