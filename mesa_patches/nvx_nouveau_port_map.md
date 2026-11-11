@@ -72,6 +72,24 @@ in MinGW) is only the first portability error. Supplying that header would
 mask a platform include and still leave all of the missing DRM operations
 above. Do not treat an ioctl-header shim as a winsys port.
 
+## WGL integration boundary
+
+The pinned WGL screen factory is `mesa/src/gallium/targets/wgl/wgl.c`.
+`wgl_screen_create_by_name` currently knows llvmpipe, D3D12, Zink, and
+softpipe, but has no Nouveau/NVC0 case. When `GALLIUM_DRIVER=nouveau` is set,
+the requested driver therefore cannot produce a screen. The WGL presentation
+switch also has no Nouveau case; it only handles llvmpipe, D3D12, Zink, and
+softpipe. Thus enabling `nouveau` in the Meson driver list alone cannot route
+an XP WGL context to NVC0 or present its target.
+
+The required external Mesa delta needs an XP factory taking the active `HDC`
+and an NVX winsys/device, plus a present path that copies or flips the
+GPU-owned target through a validated miniport operation. Package these as a
+patch in `mesa_patches/` and apply/reverse it in `test/build_mesa_xp64.sh`; do
+not edit the Mesa submodule in place. The factory must not claim success until
+it can create and destroy a real NVC0 context with resources and fences. The
+presentation path should avoid per-draw CPU readback.
+
 ## Required safe submission boundary
 
 Do not add an escape that blindly executes an application-provided pushbuffer.
@@ -143,12 +161,13 @@ shader/resource address validation.
 XP x64. The full Nouveau driver build stops in the Linux DRM/UAPI boundary;
 no XP runtime or GL acceleration is claimed by this experiment.
 
-Next gate: expose an XP winsys entry that creates an NVC0 screen/context, and
-connect the Gallium clear callback to this validated packet escape using
-resource IDs and layout metadata from that winsys. The current test constructs
-the packet manually, so it verifies encoding, kernel parsing, translation, and
-hardware pixels but not NVC0 runtime integration. Continue with BO mapping and
-transfers, context/object setup, fences, then shader-backed draw submission;
-do not advertise general GL acceleration before those gates pass. Keep the
-Mesa submodule pinned and clean; all adaptations belong in `mesa_patches/` and
-`src_driver/`.
+Next gate: create the XP winsys/device boundary and external WGL factory/present
+patch so an XP WGL context can request Nouveau and either create a genuine
+NVC0 screen or fail explicitly. Then connect the Gallium clear callback to the
+validated escape using resource IDs and layout metadata from that winsys. The
+current test constructs the packet manually, so it verifies encoding, kernel
+parsing, translation, and hardware pixels but not NVC0 runtime integration.
+Continue with BO mapping and transfers, context/object setup, fences, then
+shader-backed draw submission; do not advertise general GL acceleration
+before those gates pass. Keep the Mesa submodule pinned and clean; all
+adaptations belong in `mesa_patches/` and `src_driver/`.
