@@ -1390,10 +1390,10 @@ nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
        caps.Version != NVX_3D_ABI_VERSION ||
        (caps.Features & (NVX_3D_FEATURE_USER_ALLOC |
                          NVX_3D_FEATURE_UPLOAD |
-                         NVX_3D_FEATURE_SUBMIT)) !=
+                         NVX_3D_FEATURE_FIXED_PROFILE_SUBMIT)) !=
           (NVX_3D_FEATURE_USER_ALLOC |
            NVX_3D_FEATURE_UPLOAD |
-           NVX_3D_FEATURE_SUBMIT)) {
+           NVX_3D_FEATURE_FIXED_PROFILE_SUBMIT)) {
       char message[96];
       wsprintfA(message, "reject caps: escape=%d version=%u features=%08lX",
                 caps_escape, caps.Version, (unsigned long)caps.Features);

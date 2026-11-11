@@ -210,7 +210,8 @@ NvxNouveauPushbufSubmitNvc0Clear(NVX_NOUVEAU_PUSHBUF *push,
    if (submitted_fence)
       *submitted_fence = 0;
    if (!submitted_fence || !push || !target || !push->device || !target->device ||
-       !(push->device->caps.Features & NVX_3D_FEATURE_SUBMIT) ||
+       !(push->device->caps.Features &
+         NVX_3D_FEATURE_FIXED_PROFILE_SUBMIT) ||
        push->device != target->device || !target->references ||
        !target->allocation.ClientToken ||
        push->client_token != target->allocation.ClientToken ||

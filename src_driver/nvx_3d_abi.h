@@ -34,12 +34,14 @@
 #define NVX_3D_FEATURE_GR_CHANNEL       0x00000001U
 #define NVX_3D_FEATURE_I2M_VERIFIED     0x00000002U
 #define NVX_3D_FEATURE_CLEAR_VERIFIED   0x00000004U
-#define NVX_3D_FEATURE_SUBMIT           0x00000008U
+#define NVX_3D_FEATURE_FIXED_PROFILE_SUBMIT 0x00000008U
 #define NVX_3D_FEATURE_USER_ALLOC       0x00000010U
 #define NVX_3D_FEATURE_TEST_TRIANGLE    0x00000020U
 #define NVX_3D_FEATURE_UPLOAD           0x00000040U
 #define NVX_3D_FEATURE_CLIENT_TRIANGLE   0x00000080U
 #define NVX_3D_FEATURE_DOWNLOAD          0x00000100U
+/* Reserved for a real validated NVC0 batch execution path. */
+#define NVX_3D_FEATURE_NVC0_BATCH_SUBMIT 0x00000200U
 
 #define NVX_3D_OP_QUERY_CAPS  1U
 #define NVX_3D_OP_ALLOC       2U
@@ -852,7 +854,8 @@ Nvx3dBuildCaps(NVX_3D_QUERY_CAPS *caps, int channelReady,
         NVX_3D_FEATURE_UPLOAD;
     if(userAllocReady&&dataWriteVerified)
         caps->Features|=NVX_3D_FEATURE_DOWNLOAD;
-    if(submitReady) caps->Features|=NVX_3D_FEATURE_SUBMIT;
+    if(submitReady)
+        caps->Features|=NVX_3D_FEATURE_FIXED_PROFILE_SUBMIT;
 }
 
 static inline int

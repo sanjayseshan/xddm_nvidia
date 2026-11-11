@@ -2,6 +2,23 @@
 
 Updated November 11, 2026, after the XP-backed `xf86drm` BO shim and VFIO run.
 
+## Distinguish fixed-profile GPU submits from generic NVC0 batches (November 11, 2026)
+
+The capability formerly named `NVX_3D_FEATURE_SUBMIT` represented only the
+miniport's bounded, kernel-authored clear/draw profiles. It did not mean that
+Gallium Nouveau could submit arbitrary NVC0 batches. Renamed that bit to
+`NVX_3D_FEATURE_FIXED_PROFILE_SUBMIT` without changing its ABI value and
+reserved `NVX_3D_FEATURE_NVC0_BATCH_SUBMIT` for a future validated batch
+executor. The latter remains unset. The test now asserts this, and the
+Nouveau helper sources only test the fixed-profile capability for their
+prototype clear helper.
+
+`make -C src_driver check`, `make -C src_driver full`, and the XP x64
+Nouveau+softpipe Mesa build (708 Ninja actions) passed; the PE import audit
+reported only XP system DLLs and Mesa was restored clean. No runtime behavior
+changed: Gallium Nouveau still fails channel allocation and the renderer is
+still softpipe.
+
 ## Persistent Nouveau BO mappings and pushbuffer visibility (November 11, 2026)
 
 The XP BO adapter stages maps in a CPU shadow and uploads writes on unmap.

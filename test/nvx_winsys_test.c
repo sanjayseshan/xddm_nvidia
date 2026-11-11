@@ -80,7 +80,7 @@ mock_escape(void *opaque, uint32_t escape, uint32_t input_bytes,
       assert(output_bytes >= sizeof(*caps));
       caps->Features = NVX_3D_FEATURE_USER_ALLOC | NVX_3D_FEATURE_UPLOAD |
                        NVX_3D_FEATURE_DOWNLOAD | NVX_3D_FEATURE_GR_CHANNEL |
-                       NVX_3D_FEATURE_SUBMIT;
+                       NVX_3D_FEATURE_FIXED_PROFILE_SUBMIT;
       caps->GraphicsClass = 0xc797;
       caps->MaxPushDwords = NVX_3D_MAX_PUSH_DWORDS;
       caps->PageBytes = NVX_3D_PAGE_BYTES;

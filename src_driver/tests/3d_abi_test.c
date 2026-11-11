@@ -471,7 +471,8 @@ int main(void)
     assert(caps.Features==(NVX_3D_FEATURE_GR_CHANNEL|
         NVX_3D_FEATURE_I2M_VERIFIED|NVX_3D_FEATURE_CLEAR_VERIFIED|
         NVX_3D_FEATURE_USER_ALLOC|NVX_3D_FEATURE_UPLOAD|
-        NVX_3D_FEATURE_DOWNLOAD|NVX_3D_FEATURE_SUBMIT));
+        NVX_3D_FEATURE_DOWNLOAD|NVX_3D_FEATURE_FIXED_PROFILE_SUBMIT));
+    assert(!(caps.Features&NVX_3D_FEATURE_NVC0_BATCH_SUBMIT));
     assert(Nvx3dDispatch(NVX_3D_OP_QUERY_CAPS,NULL,0,&caps,sizeof(caps),
         &information,1,1,0,0,1,1)==NVX_3D_STATUS_SUCCESS);
     assert(information==sizeof(caps)&&caps.Features!=0);

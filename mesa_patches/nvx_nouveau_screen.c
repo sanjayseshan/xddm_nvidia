@@ -9,7 +9,8 @@ NvxNouveauScreenInit(NVX_NOUVEAU_SCREEN *screen,
 {
    if (!screen || !device || !client_token ||
        device->class_3d != 0xc797U ||
-       !(device->winsys.caps.Features & NVX_3D_FEATURE_SUBMIT))
+       !(device->winsys.caps.Features &
+         NVX_3D_FEATURE_FIXED_PROFILE_SUBMIT))
       return 0;
 
    memset(screen, 0, sizeof(*screen));
