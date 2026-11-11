@@ -120,7 +120,7 @@ sed -i -E "s|^DriverVer[[:space:]]*=.*|DriverVer   = $NVX_DRIVER_DATE, $NVX_TEST
     "$NVX_ROOT/dist_full/nvx.inf"
 
 if [ "${NVX_BUILD_MESA_ICD:-0}" = "1" ]; then
-    echo "==> Building the XP x64 Mesa WGL ICD (softpipe reference backend)"
+    echo "==> Building the XP x64 Mesa WGL ICD (Nouveau with softpipe fallback)"
     "$NVX_ROOT/test/build_mesa_xp64.sh"
 fi
 

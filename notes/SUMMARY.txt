@@ -1,7 +1,16 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 11, 2026 (version 3.0.0.3, XP PCI identity and Nouveau shim)
+Updated: November 11, 2026 (version 3.0.0.3, XP Nouveau-enabled ICD test package)
 
 Current Phase 2C status (verified November 11, 2026):
+- The standard optional Mesa ICD test build now defaults to Gallium
+  `nouveau,softpipe`, so the XP package includes the native NVC0/Nouveau code
+  with softpipe fallback. Full hardware run
+  `../test_logs/v3.0.0.3-20261111-184619.log` loaded the ICD and passed its
+  independent GR 3D and 2D tests, but OpenGL remained `[OPENGL_RESULT] SOFTWARE`;
+  the shim still reports `DRM_NOUVEAU_CHANNEL_ALLOC` unsupported. One startup
+  firmware assertion remained and no MMU fault was logged. This package change
+  ensures the native backend is present; it does not provide its missing NVX
+  channel/submission service.
 - Version 3.0.0.3 hardware run: `../test_logs/v3.0.0.3-20261111-175309.log`.
   ABI 14 reports the actual PCI location (`00:02.0`) to Nouveau's DRM shim;
   NVX 3D and 2D probes pass. Nouveau still fails channel allocation and

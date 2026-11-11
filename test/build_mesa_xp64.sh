@@ -12,7 +12,10 @@ MESA_WGL_DLL="$BUILD_DIR/src/gallium/targets/libgl-gdi/opengl32.dll"
 # The cross file sets _WIN32_WINNT/WINVER to 0x0502 for XP x64; final PE imports
 # and subsystem versions are checked by audit_xp_imports.py.
 MESA_MIN_WINDOWS_VERSION=5
-MESA_GALLIUM_DRIVERS="${NVX_MESA_GALLIUM_DRIVERS:-softpipe}"
+# Include Nouveau in the normal XP ICD package so WGL exercises the native
+# Gallium screen factory. Softpipe remains available as a deliberate fallback
+# while the NVX channel/submission boundary is being brought up.
+MESA_GALLIUM_DRIVERS="${NVX_MESA_GALLIUM_DRIVERS:-nouveau,softpipe}"
 
 mkdir -p "$BUILD_DIR"
 python3 - "$ROOT/test/mesa_xp64.ini" "$XP_CROSS_FILE" \

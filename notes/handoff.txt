@@ -2,6 +2,28 @@
 
 Updated November 11, 2026, after the XP-backed `xf86drm` BO shim and VFIO run.
 
+## Normal XP ICD package now includes Gallium Nouveau (November 11, 2026)
+
+Changed `test/build_mesa_xp64.sh` to default to `nouveau,softpipe` rather than
+`softpipe` only, and updated `test/test_full_driver.sh` to describe the package
+as Nouveau with a softpipe fallback. This makes the standard optional ICD test
+package include Mesa's NVC0/Gallium Nouveau driver instead of requiring a
+separate manual build. The explicit environment override still allows a
+softpipe-only build when that is wanted.
+
+Both the direct XP x64 cross-build and the full real-hardware suite passed with
+this configuration. Log: `../test_logs/v3.0.0.3-20261111-184619.log`. The
+cross-build compiled all 702 targets; imports remained limited to GDI32,
+KERNEL32, MSVCRT, and USER32, and the XP package audit passed. On the RTX 3070,
+the ICD loaded and OpenGL completed 100 frames, but reported
+`[OPENGL_RESULT] SOFTWARE`; the Nouveau shim reports its unsupported operation
+as `DRM_NOUVEAU_CHANNEL_ALLOC` (`0x02`). The independent GR 3D test and 2D tests
+passed; firmware assertions remained at one and no MMU fault was logged. This
+proves the shipped ICD includes the Nouveau backend and reaches its current
+channel boundary, not that Mesa rendering is GPU accelerated. Native Nouveau
+screen creation still needs a kernel-backed channel/object/pushbuffer/fence
+contract. Mesa was restored clean after the build.
+
 ## Nouveau screen bootstrap boundary audit (November 11, 2026)
 
 Followed initialization beyond the first unsupported ioctl to avoid treating
