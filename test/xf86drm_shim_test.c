@@ -267,6 +267,7 @@ main(void)
 
    {
       struct drm_nouveau_channel_alloc channel = {0};
+      struct drm_nouveau_gem_pushbuf pushbuf = {0};
       NVX_XF86DRM_STATUS status;
       uint32_t previous_unsupported;
       NvxXf86DrmGetStatus(&status);
@@ -280,6 +281,16 @@ main(void)
       assert(status.LastUnsupportedKind ==
              NVX_XF86DRM_UNSUPPORTED_WRITE_READ);
       assert(status.LastUnsupportedOperation == DRM_NOUVEAU_CHANNEL_ALLOC);
+
+      previous_unsupported = status.UnsupportedCount;
+      assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_PUSHBUF, &pushbuf,
+                                 sizeof(pushbuf)) == -1);
+      assert(errno == ENOSYS);
+      NvxXf86DrmGetStatus(&status);
+      assert(status.UnsupportedCount == previous_unsupported + 1U);
+      assert(status.LastUnsupportedKind ==
+             NVX_XF86DRM_UNSUPPORTED_WRITE_READ);
+      assert(status.LastUnsupportedOperation == DRM_NOUVEAU_GEM_PUSHBUF);
    }
 
    NvxXf86DrmUnregisterDevice(fd);
