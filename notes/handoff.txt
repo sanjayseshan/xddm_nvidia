@@ -2,6 +2,36 @@
 
 Updated November 11, 2026, after the XP-backed `xf86drm` BO shim and VFIO run.
 
+## Nouveau screen bootstrap boundary audit (November 11, 2026)
+
+Followed initialization beyond the first unsupported ioctl to avoid treating
+`DRM_NOUVEAU_CHANNEL_ALLOC` as the only missing piece. In
+`mesa/src/gallium/winsys/nouveau/drm/nouveau.c`, Nouveau channel creation expects
+an engine channel plus pushbuffer domain and notifier metadata. In
+`mesa/src/gallium/drivers/nouveau/nvc0/nvc0_screen.c`, `nvc0_screen_create()`
+then initializes the common screen/pushbuffer, allocates and maps a fence BO,
+creates SW, M2MF, copy, 2D, and C797 objects, emits object bindings and setup
+methods, and submits those methods before returning a `pipe_screen`.
+`nouveau_pushbuf_new()` itself issues a zero-dword `DRM_NOUVEAU_GEM_PUSHBUF`
+kick; normal setup and rendering kicks pass user arrays of BO references,
+relocations, and push dwords, then depend on kernel-updated suffix and presumed
+BO state. The XP shim currently supports limited metadata and GEM BO operations
+only. Its NVX batch path is validation-only, and its native submit path accepts
+one fixed clear profile. Thus implementing a channel-allocation response alone
+would only move initialization to the next unsupported operation.
+
+Next implementation gate: add a miniport-owned client submission contract that
+can safely cover channel/session lifetime, required object bindings, BO
+references, the NVC0 screen-init method stream, ordered submission, and fence
+completion. Do not return a successful Nouveau channel until the matching
+session and submit operations work end to end; do not expose `nvc0_screen_create`
+to WGL until its initialization kick can complete. The present single private
+C56F test channel and fixed-profile clear do not satisfy this contract. Any
+Mesa-side changes remain external under `mesa_patches/`; keep the Mesa
+submodule clean. This source audit does not change runtime behavior: latest
+hardware evidence still reports `[OPENGL_RESULT] SOFTWARE` because the channel
+request returns `ENOSYS`.
+
 ## Video-port callback identity probe (November 11, 2026)
 
 Added a one-time diagnostic in the miniport's 3D capability query and logged
