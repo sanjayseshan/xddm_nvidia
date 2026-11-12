@@ -1559,3 +1559,34 @@ activity. This means the fresh-map optimization has not yet been exercised on
 real hardware. Restore a known-good VFIO boot first, then verify the log
 contains fewer/no early DOWNLOAD_BUFFER calls and advances from SCLASS to NVIF
 NEW before assessing rendering.
+
+The auto-retry runner's no-serial path was further changed to record HMP
+`info status` and `info pci` output in a `.qemu.log` sidecar, request ACPI
+shutdown, and only then use bounded quit/TERM/KILL fallbacks. This avoids
+immediate SIGKILL of a potentially booting guest and gives the next no-boot
+attempt useful QEMU state evidence. The script passes `bash -n`; this shutdown
+path has not yet been exercised against a live VM.
+
+The bounded diagnostic attempt `../test_logs/v3.0.0.8-20261111-230755.log`
+also had no serial output. Its `.qemu.log` sidecar confirms QEMU remained
+`running` and enumerated the GA104 VGA and audio functions on PCI bus 0; it was
+not paused or missing the passthrough device. The attached driver ISO has no
+El Torito boot record. The runner now explicitly selects hard-disk boot and
+sends a few Enter events early through the QEMU virtual keyboard, before
+requiring serial output, to handle a boot or logon prompt without host input
+capture. Validate this revised startup path before using later Nouveau trace
+results.
+
+The next bounded attempt
+`../test_logs/v3.0.0.8-20261111-231030.log` still had no serial output after
+explicit hard-disk boot and early virtual Enter events. Its QEMU sidecar again
+reported `VM status: running` with the RTX 3070 VGA and audio functions on the
+expected PCI addresses. QEMU then received ACPI powerdown followed by monitor
+quit; the run did not reach Windows miniport logging or the OpenGL app.
+
+After that attempt, `qemu-img check winxp_x64.qcow2` reported no QCOW2 errors,
+and `guestfish --ro -a winxp_x64.qcow2 -m /dev/sda1 ls /` successfully mounted
+the NTFS volume read-only and listed the Windows root (`WINDOWS`, `Program
+Files`, `ntldr`, `boot.ini`, and test directories). This verifies the disk
+container and basic filesystem readability, though it does not prove every
+file or filesystem structure is intact. No QEMU process remains active.

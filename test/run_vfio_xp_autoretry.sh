@@ -37,6 +37,14 @@ while [ "$attempt" -le "$MAX_RETRIES" ]; do
             break
         fi
 
+        # Use only QEMU's virtual keyboard. Send a few early Enter events so
+        # the guest can pass a boot/login prompt even when miniport serial
+        # logging has not started yet.
+        if [ "$i" -ge 8 ] && [ "$i" -le 24 ] && [ $((i % 8)) -eq 0 ]; then
+            echo "sendkey ret" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock \
+                2>/dev/null || true
+        fi
+
         if grep -q "NVX" "$NVX_RUN_LOG" 2>/dev/null || \
            grep -q "Miniport" "$NVX_RUN_LOG" 2>/dev/null; then
             echo "==> Boot confirmed! Windows XP kernel/driver is actively booting."
@@ -117,10 +125,31 @@ while [ "$attempt" -le "$MAX_RETRIES" ]; do
         echo "==> Windows XP session completed."
         exit 0
     else
-        echo "==> No serial activity within ${BOOT_TIMEOUT}s; GPU did not boot cleanly. Retrying..."
-        pkill -9 -P "$VM_PID" 2>/dev/null || true
-        kill -9 "$VM_PID" 2>/dev/null || true
+        echo "==> No serial activity within ${BOOT_TIMEOUT}s; collecting QEMU state."
+        QEMU_STATE_LOG="${NVX_RUN_LOG%.log}.qemu.log"
+        { echo "info status"; echo "info pci"; } |
+            socat - UNIX-CONNECT:/tmp/qemu-monitor.sock \
+            > "$QEMU_STATE_LOG" 2>&1 || true
+        echo "system_powerdown" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock \
+            2>/dev/null || true
+        sleep 8
+        if kill -0 "$VM_PID" 2>/dev/null; then
+            echo "quit" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock \
+                2>/dev/null || true
+            sleep 3
+        fi
+        if kill -0 "$VM_PID" 2>/dev/null; then
+            echo "==> QEMU did not stop after ACPI; sending TERM."
+            kill -TERM "$VM_PID" 2>/dev/null || true
+            sleep 2
+        fi
+        if kill -0 "$VM_PID" 2>/dev/null; then
+            echo "==> QEMU is still active; sending KILL."
+            pkill -9 -P "$VM_PID" 2>/dev/null || true
+            kill -9 "$VM_PID" 2>/dev/null || true
+        fi
         wait "$VM_PID" 2>/dev/null || true
+        echo "==> QEMU state log: $QEMU_STATE_LOG"
         sleep 3
     fi
 

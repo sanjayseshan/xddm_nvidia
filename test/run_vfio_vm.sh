@@ -73,6 +73,7 @@ qemu-system-x86_64 \
     -cpu host,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time \
     -smp 4 \
     -vga none \
+    -boot order=c,menu=off \
     -usb \
     -device usb-kbd \
     -device usb-tablet \
