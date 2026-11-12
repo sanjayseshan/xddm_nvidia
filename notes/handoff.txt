@@ -1135,3 +1135,17 @@ copying only its Metal-to-Vulkan bridge would not provide them. Keep the
 current WGL/Gallium path unless a separate Vulkan ICD effort is explicitly
 chosen; first define the miniport-owned channel, address-space, validated-submit,
 and fence APIs required by either Mesa backend.
+
+XP miniport submission audit (November 11, 2026): `IOCTL_NVX_3D_VALIDATE_BATCH`
+copies and validates packet framing, session-owned BO references, recognized
+NVC0 address pairs, and relocation bounds. It is preflight only: it does not
+apply a complete C797 method/subchannel allowlist and does not submit the
+user-provided methods. `IOCTL_NVX_3D_SUBMIT` separately accepts a closed set of
+fixed clear/triangle operations and rebuilds trusted methods in kernel-owned
+scratch memory. This is why neither `DRM_NOUVEAU_CHANNEL_ALLOC` nor
+`DRM_NOUVEAU_GEM_PUSHBUF` can be wired to the existing channel or batch escape
+yet. The next kernel step must be a separate validated submit request that
+checks every method, subchannel, class binding, address range, and BO access,
+then copies/rebuilds an approved command stream on the RM-managed channel and
+returns a fence. Only after that contract is proven should the DRM wrapper
+expose a channel/pushbuf interface to Mesa.
