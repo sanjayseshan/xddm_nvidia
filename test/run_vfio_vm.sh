@@ -8,6 +8,8 @@ cd "$ROOT_DIR"
 NVX_DRIVER_ISO="${NVX_DRIVER_ISO:-$ROOT_DIR/nvx_driver_full.iso}"
 NVX_SERIAL_LOG="${NVX_SERIAL_LOG:-$ROOT_DIR/vm_serial.log}"
 NVX_VM_MEMORY_MB="${NVX_VM_MEMORY_MB:-3072}"
+LOGITECH_KBD="${NVX_LOGITECH_KBD:-/dev/input/by-id/usb-Logitech_USB_Receiver-if02-event-kbd}"
+LOGITECH_MOUSE="${NVX_LOGITECH_MOUSE:-/dev/input/by-id/usb-Logitech_USB_Receiver-if02-event-mouse}"
 
 NVX_QEMU_CDROM_ARGS=()
 if [ -f "$NVX_DRIVER_ISO" ]; then
@@ -41,7 +43,7 @@ if [ "${#VFIO_GROUP_NODES[@]}" -eq 0 ]; then
     echo "Error: no VFIO IOMMU group node is available. See ROOTLESS_TESTING.md." >&2
     exit 1
 fi
-for dev in /dev/vfio/vfio "${VFIO_GROUP_NODES[@]}"; do
+for dev in /dev/vfio/vfio "${VFIO_GROUP_NODES[@]}" "$LOGITECH_KBD" "$LOGITECH_MOUSE"; do
     if [ ! -r "$dev" ] || [ ! -w "$dev" ]; then
         echo "Error: $dev is not accessible to $(id -un). See ROOTLESS_TESTING.md." >&2
         exit 1
@@ -64,7 +66,7 @@ echo "Display Output: Monitor plugged into the RTX 3070"
 echo "Driver CD: $NVX_CDROM_STATUS"
 echo "Serial log: $NVX_SERIAL_LOG"
 echo "Guest RAM: ${NVX_VM_MEMORY_MB} MB (memlock: ${NVX_MEMLOCK_KB} KB)"
-echo "Input: QEMU virtual USB keyboard/tablet; host input devices are not attached"
+echo "Input: Dedicated Logitech keyboard and mouse (evdev)"
 echo "------------------------------------------------------------------"
 
 qemu-system-x86_64 \
@@ -73,16 +75,14 @@ qemu-system-x86_64 \
     -cpu host,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time \
     -smp 4 \
     -vga none \
-    -boot order=c,menu=off \
-    -usb \
-    -device usb-kbd \
-    -device usb-tablet \
     -net none \
     -device vfio-pci,host=01:00.0,multifunction=on,x-vga=on,addr=02.0 \
     -device vfio-pci,host=01:00.1,addr=02.1 \
     -drive file="$ROOT_DIR/winxp_x64.qcow2",format=qcow2,if=ide \
     "${NVX_QEMU_CDROM_ARGS[@]}" \
+    -object input-linux,id=logitech_kbd,evdev="$LOGITECH_KBD",grab_all=on,repeat=on \
+    -object input-linux,id=logitech_mouse,evdev="$LOGITECH_MOUSE" \
     -serial "file:$NVX_SERIAL_LOG" \
     -no-reboot \
     -monitor unix:/tmp/qemu-monitor.sock,server,nowait \
-    -display none
+    -monitor stdio

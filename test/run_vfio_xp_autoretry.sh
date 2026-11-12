@@ -37,9 +37,8 @@ while [ "$attempt" -le "$MAX_RETRIES" ]; do
             break
         fi
 
-        # Use only QEMU's virtual keyboard. Send a few early Enter events so
-        # the guest can pass a boot/login prompt even when miniport serial
-        # logging has not started yet.
+        # Inject a few early Enter events through QEMU's monitor so the guest
+        # can pass a boot/login prompt before miniport serial logging starts.
         if [ "$i" -ge 8 ] && [ "$i" -le 24 ] && [ $((i % 8)) -eq 0 ]; then
             echo "sendkey ret" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock \
                 2>/dev/null || true

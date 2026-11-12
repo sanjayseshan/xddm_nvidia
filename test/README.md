@@ -47,7 +47,7 @@ tests exercise the existing NVX boundary and fixed C797 clear profile; they do
 not test a native Gallium Nouveau screen or arbitrary NVC0 batches.
 
 ### 3. `run_vfio_xp_autoretry.sh`
-Monitors and auto-retries Windows XP x64 VM bringup with RTX 3070 VFIO passthrough until active driver boot and dual-display configuration is confirmed via the serial log.
+Monitors and auto-retries Windows XP x64 VM bringup with RTX 3070 VFIO passthrough until guest driver activity appears in the serial log. It launches `run_vfio_vm.sh` for every attempt, so it uses the same Logitech evdev input devices, passthrough devices, and QEMU settings as a direct run. Set `MAX_RETRIES` and `BOOT_TIMEOUT` to adjust retry behavior. When run through `test_full_driver.sh`, set `NVX_AUTO_RETRY=1` to enable this path.
 
 ```bash
 ./test/run_vfio_xp_autoretry.sh
@@ -70,7 +70,7 @@ sudo ./test/reset_test_gpu.sh
 ```
 
 ### 6. VM Launchers (VFIO Passthrough)
-- `run_vfio_vm.sh`: Launches Windows XP x64 VM with dedicated RTX 3070 VFIO passthrough.
+- `run_vfio_vm.sh`: Launches Windows XP x64 VM with dedicated RTX 3070 VFIO passthrough and the Logitech keyboard/mouse selected by `NVX_LOGITECH_KBD` and `NVX_LOGITECH_MOUSE` (defaulting to the USB receiver event devices under `/dev/input/by-id/`).
 - `run_vfio_vm_win98.sh`: Launches Windows 98 SE VM with dedicated RTX 3070 VFIO passthrough.
 
 ### 7. Disk Image Updaters
