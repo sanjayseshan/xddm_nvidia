@@ -7,7 +7,7 @@
 
 /* Fixed-width ABI shared by XP x64/x86 clients and the miniport.  GPU VAs are
  * always 64-bit; no kernel pointers or RM handles cross this boundary. */
-#define NVX_3D_ABI_VERSION 16U
+#define NVX_3D_ABI_VERSION 17U
 #define NVX_3D_MAX_PUSH_DWORDS 4096U
 #define NVX_3D_MAX_BATCH_RELOCATIONS 256U
 #define NVX_3D_MAX_BATCH_BUFFERS 64U
@@ -740,7 +740,7 @@ typedef struct NVX_3D_NVC0_CLEAR {
     uint64_t BufferId;
     uint64_t FenceValue;
     uint32_t Dwords[NVX_3D_NVC0_CLEAR_DWORDS];
-    uint32_t Reserved2;
+    uint64_t ClientToken;
 } NVX_3D_NVC0_CLEAR;
 
 static inline uint32_t
@@ -787,7 +787,8 @@ Nvx3dNvc0FloatIsUnorm(uint32_t bits)
 
 static inline int
 Nvx3dValidateNvc0Clear(const NVX_3D_NVC0_CLEAR *request,
-                       uint32_t inputBytes, uint64_t expectedGpuVa,
+                       uint32_t inputBytes, uint64_t expectedClientToken,
+                       uint64_t expectedGpuVa,
                        uint32_t allocatedBytes, uint32_t width,
                        uint32_t height, uint32_t pitchBytes,
                        uint32_t tileMode, uint32_t *packedAarrggbb)
@@ -799,7 +800,8 @@ Nvx3dValidateNvc0Clear(const NVX_3D_NVC0_CLEAR *request,
     if(!request || inputBytes!=sizeof(*request) ||
        request->Size!=sizeof(*request) ||
        request->Version!=NVX_3D_ABI_VERSION || request->Reserved ||
-       request->Reserved2 || request->FenceValue || !request->BufferId ||
+       request->FenceValue || !request->BufferId ||
+       !expectedClientToken || request->ClientToken!=expectedClientToken ||
        request->DwordCount!=NVX_3D_NVC0_CLEAR_DWORDS ||
        !expectedGpuVa || (expectedGpuVa&0xffffULL) ||
        !Nvx3dComputeColorSurfaceLayout(width,height,&layout) ||

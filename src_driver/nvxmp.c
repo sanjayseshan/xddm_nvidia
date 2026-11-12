@@ -2612,10 +2612,12 @@ BOOLEAN NTAPI HwVidStartIO(
         }
         entry=Nvx3dFindBuffer(engine,request.BufferId);
         if(!entry||entry->Busy||
+           entry->ClientToken!=request.ClientToken||
+           !Nvx3dClientSessionActiveLocked(engine,request.ClientToken)||
            !(entry->Usage&NVX_3D_USAGE_COLOR_TARGET)||
            (entry->Usage&NVX_3D_USAGE_DEPTH_TARGET)||
            !Nvx3dValidateNvc0Clear(&request,sizeof(request),
-                entry->GpuVa,entry->Bytes,entry->Width,entry->Height,
+                entry->ClientToken,entry->GpuVa,entry->Bytes,entry->Width,entry->Height,
                 entry->PitchBytes,entry->TileMode,&parsedColor)) {
             Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
         }

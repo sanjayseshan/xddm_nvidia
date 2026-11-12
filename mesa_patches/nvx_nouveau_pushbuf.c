@@ -251,6 +251,7 @@ NvxNouveauPushbufSubmitNvc0Clear(NVX_NOUVEAU_PUSHBUF *push,
    request.Version = NVX_3D_ABI_VERSION;
    request.DwordCount = push->dword_count;
    request.BufferId = target->allocation.BufferId;
+   request.ClientToken = target->allocation.ClientToken;
    memcpy(request.Dwords, push->dwords, sizeof(request.Dwords));
    /* The two address words are resolved from the live owned BO. The kernel
     * validates the exact clear profile and builds its own trusted queue data. */

@@ -279,6 +279,7 @@ build_nvc0_clear(NVX_3D_NVC0_CLEAR *request)
     request->Version=NVX_3D_ABI_VERSION;
     request->DwordCount=NVX_3D_NVC0_CLEAR_DWORDS;
     request->BufferId=17;
+    request->ClientToken=0x1234U;
     request->Dwords[0]=Nvx3dNvc0SeqHeader(0x0d80U,4U);
     request->Dwords[1]=0x3f000000U; /* R = 0.5 */
     request->Dwords[2]=0x3e800000U; /* G = 0.25 */
@@ -423,22 +424,22 @@ int main(void)
 
     build_nvc0_clear(&nvc0Clear);
     assert(Nvx3dValidateNvc0Clear(&nvc0Clear,sizeof(nvc0Clear),
-        0x23000000ULL,65536,64,16,256,0x10,&nvc0Color));
+        0x1234U,0x23000000ULL,65536,64,16,256,0x10,&nvc0Color));
     assert(nvc0Color==0xff8040ffU);
     assert(!Nvx3dValidateNvc0Clear(&nvc0Clear,sizeof(nvc0Clear)-4,
-        0x23000000ULL,65536,64,16,256,0x10,&nvc0Color));
+        0x1234U,0x23000000ULL,65536,64,16,256,0x10,&nvc0Color));
     assert(!Nvx3dValidateNvc0Clear(&nvc0Clear,sizeof(nvc0Clear),
-        0x23010000ULL,65536,64,16,256,0x10,&nvc0Color));
+        0x1234U,0x23010000ULL,65536,64,16,256,0x10,&nvc0Color));
     assert(!Nvx3dValidateNvc0Clear(&nvc0Clear,sizeof(nvc0Clear),
-        0x23000000ULL,65535,64,16,256,0x10,&nvc0Color));
+        0x1234U,0x23000000ULL,65535,64,16,256,0x10,&nvc0Color));
     assert(!Nvx3dValidateNvc0Clear(&nvc0Clear,sizeof(nvc0Clear),
-        0x23000000ULL,65536,64,16,260,0x10,&nvc0Color));
+        0x1234U,0x23000000ULL,65536,64,16,260,0x10,&nvc0Color));
     assert(!Nvx3dValidateNvc0Clear(&nvc0Clear,sizeof(nvc0Clear),
-        0x23000000ULL,65536,64,16,256,0x20,&nvc0Color));
+        0x1234U,0x23000000ULL,65536,64,16,256,0x20,&nvc0Color));
 #define REJECT_NVC0_CLEAR(_word, _value) do { \
         nvc0Bad=nvc0Clear; nvc0Bad.Dwords[(_word)]=(_value); \
         assert(!Nvx3dValidateNvc0Clear(&nvc0Bad,sizeof(nvc0Bad), \
-            0x23000000ULL,65536,64,16,256,0x10,&nvc0Color)); \
+            0x1234U,0x23000000ULL,65536,64,16,256,0x10,&nvc0Color)); \
     } while(0)
     REJECT_NVC0_CLEAR(0,0x40000000U); /* not an NVC0 sequential packet */
     REJECT_NVC0_CLEAR(5,Nvx3dNvc0SeqHeader(0x0ff8U,2U)); /* other method */
@@ -463,16 +464,21 @@ int main(void)
 #undef REJECT_NVC0_CLEAR
     nvc0Bad=nvc0Clear;nvc0Bad.FenceValue=1;
     assert(!Nvx3dValidateNvc0Clear(&nvc0Bad,sizeof(nvc0Bad),
-        0x23000000ULL,65536,64,16,256,0x10,NULL));
+        0x1234U,0x23000000ULL,65536,64,16,256,0x10,NULL));
     nvc0Bad=nvc0Clear;nvc0Bad.Reserved=1;
     assert(!Nvx3dValidateNvc0Clear(&nvc0Bad,sizeof(nvc0Bad),
-        0x23000000ULL,65536,64,16,256,0x10,NULL));
-    nvc0Bad=nvc0Clear;nvc0Bad.Reserved2=1;
+        0x1234U,0x23000000ULL,65536,64,16,256,0x10,NULL));
+    nvc0Bad=nvc0Clear;nvc0Bad.ClientToken++;
     assert(!Nvx3dValidateNvc0Clear(&nvc0Bad,sizeof(nvc0Bad),
-        0x23000000ULL,65536,64,16,256,0x10,NULL));
+        0x1234U,0x23000000ULL,65536,64,16,256,0x10,NULL));
+    nvc0Bad=nvc0Clear;nvc0Bad.ClientToken=0;
+    assert(!Nvx3dValidateNvc0Clear(&nvc0Bad,sizeof(nvc0Bad),
+        0x1234U,0x23000000ULL,65536,64,16,256,0x10,NULL));
+    assert(!Nvx3dValidateNvc0Clear(&nvc0Clear,sizeof(nvc0Clear),
+        0,0x23000000ULL,65536,64,16,256,0x10,NULL));
     nvc0Bad=nvc0Clear;nvc0Bad.DwordCount++;
     assert(!Nvx3dValidateNvc0Clear(&nvc0Bad,sizeof(nvc0Bad),
-        0x23000000ULL,65536,64,16,256,0x10,NULL));
+        0x1234U,0x23000000ULL,65536,64,16,256,0x10,NULL));
 
     Nvx3dBuildCaps(&caps,0,0,0,0,0,0,0,0);
     assert(caps.Size==sizeof(caps)&&caps.Version==NVX_3D_ABI_VERSION);

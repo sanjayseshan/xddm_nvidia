@@ -238,7 +238,8 @@ mock_escape(void *opaque, uint32_t escape, uint32_t input_bytes,
       assert(Nvx3dComputeColorSurfaceLayout(buffer->width, buffer->height,
                                             &layout));
       assert(layout.Bytes <= buffer->bytes);
-      assert(Nvx3dValidateNvc0Clear(request, input_bytes, buffer->gpu_va,
+      assert(Nvx3dValidateNvc0Clear(request, input_bytes,
+                                   buffer->client_token, buffer->gpu_va,
                                    buffer->bytes, buffer->width,
                                    buffer->height, buffer->pitch_bytes,
                                    buffer->tile_mode, &color));

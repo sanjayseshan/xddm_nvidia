@@ -1,5 +1,20 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 11, 2026 (version 3.0.0.5, session and request identities)
+Updated: November 11, 2026 (version 3.0.0.6, clear ownership identity)
+
+Latest full hardware test: `../test_logs/v3.0.0.6-20261111-200043.log`.
+ABI 17 binds the native NVC0 clear request to the owning client session; the
+152-byte request layout is preserved. Host negative-token checks, XP package
+audits, and the RTX 3070 native clear/readback passed. The independent GR and
+2D checks passed too. OpenGL remains `[OPENGL_RESULT] SOFTWARE`: Gallium
+Nouveau still stops at unsupported `NOUVEAU_CHANNEL_ALLOC` (`ENOSYS`), and no
+NVC0 Gallium draw has executed. One startup firmware assertion was logged and
+no MMU fault appeared. Phase 2C remains incomplete.
+
+BO allocation was already implemented in the XP `DRM_NOUVEAU_GEM_NEW` shim and
+maps to miniport-owned NVX allocations; this change adds session ownership
+validation to the special clear operation. The next substantive boundary is a
+real RM-managed Nouveau channel/object lifecycle and validated command
+submission/fence path. Continue keeping Mesa modifications in `mesa_patches/`.
 
 Latest default-build hardware check: `../test_logs/v3.0.0.5-20261111-194550.log`.
 Normal `full` builds now enable isolated RM-managed GR channel/context setup and

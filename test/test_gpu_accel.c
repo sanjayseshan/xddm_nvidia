@@ -1872,6 +1872,7 @@ static int TestNvc0ClearEscape(HDC hdc)
     clear.Size=sizeof(clear);clear.Version=NVX_3D_ABI_VERSION;
     clear.DwordCount=NVX_3D_NVC0_CLEAR_DWORDS;
     clear.BufferId=allocated.BufferId;
+    clear.ClientToken=allocated.ClientToken;
     clear.Dwords[0]=Nvx3dNvc0SeqHeader(0x0d80U,4U);
     clear.Dwords[1]=0x3f000000U;clear.Dwords[2]=0x3e800000U;
     clear.Dwords[3]=0x3f800000U;clear.Dwords[4]=0x3f800000U;
@@ -2314,6 +2315,7 @@ static int TestNativeNvc0FullSizeClear(HDC hdc)
     clear.Size=sizeof(clear);clear.Version=NVX_3D_ABI_VERSION;
     clear.DwordCount=NVX_3D_NVC0_CLEAR_DWORDS;
     clear.BufferId=allocated.BufferId;
+    clear.ClientToken=allocated.ClientToken;
     clear.Dwords[0]=Nvx3dNvc0SeqHeader(0x0d80U,4U);
     clear.Dwords[1]=0x3f800000U;clear.Dwords[2]=0U;
     clear.Dwords[3]=0x3f800000U;clear.Dwords[4]=0x3f800000U;

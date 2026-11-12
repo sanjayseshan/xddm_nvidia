@@ -2,6 +2,32 @@
 
 Updated November 11, 2026, after the XP-backed `xf86drm` BO shim and VFIO run.
 
+## ABI 17 clear ownership and current hardware result (November 11, 2026)
+
+Version 3.0.0.6 adds the owning `ClientToken` to the fixed-profile NVC0 clear
+request. The miniport now checks that the token matches both the referenced
+buffer and a live client session before it accepts the clear. The request stays
+152 bytes; ABI 17 marks the changed request semantics. The Mesa Nouveau pushbuf
+wrapper and XP hardware probes pass the allocation token, and host ABI/winsys
+checks cover zero and mismatched tokens.
+
+Full RTX 3070 test: `../test_logs/v3.0.0.6-20261111-200043.log`. The ABI 17
+package/import audit and real-hardware native clear/readback passed
+(`[NVX_NVC0_NATIVE_CLEAR_RESULT] PASS`), as did the independent GR and 2D
+checks. `[OPENGL_RESULT] SOFTWARE` remains: Nouveau screen creation stops at
+`NOUVEAU_CHANNEL_ALLOC` (`ENOSYS`), so no Gallium NVC0 draw has run. The log
+also records one startup firmware assertion and no MMU fault. This closes an
+ownership gap in the proven clear operation; it does not implement the Nouveau
+channel/object/pushbuffer/fence contract. Phase 2C remains incomplete.
+
+The next allocation/submission milestone is not another GEM BO allocation
+shim: `DRM_NOUVEAU_GEM_NEW` already maps through `NvxNouveauBoCreate` to
+miniport-owned allocations, with map, transfer, wait, and free paths. Gallium
+cannot reach those BO operations until the screen has a real RM-managed
+channel. Implement channel/object lifecycle and a separately validated C797
+submit/fence ABI; only then expose `DRM_NOUVEAU_CHANNEL_ALLOC` and pushbuf to
+Mesa. Keep Mesa customizations in `mesa_patches/` and the submodule clean.
+
 ## ABI 16 session and request identity (November 11, 2026)
 
 Version 3.0.0.5 adds fixed-width OPEN/CLOSE session escapes and separates three
