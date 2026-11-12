@@ -1,27 +1,43 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 11, 2026, after the XP-backed `xf86drm` BO shim and VFIO run.
+Updated November 11, 2026, after the ABI 18 GART BO test on the RTX 3070.
 
-## GART mapping groundwork (November 11, 2026)
+## Verified XP GART BO path (November 11, 2026)
 
-Added a bounded allocator and PTE builder in `src_driver/nvx_gr_context.[ch]`
-for a proposed 230 MiB GART VA window at `0x11a00000..0x1fffffff`. The window
-uses 115 2 MiB slices, each backed by one 512-entry 4 KiB page table, and ends
-before the existing VRAM aperture at `0x20000000`. The helper first-fits and
-releases contiguous slices and builds the current coherent-system PTE encoding
-for a physically contiguous allocation. Host GR context tests cover address
-bounds, fragmentation, double/partial release, zero-length requests, and PTE
-encoding.
+Implemented the 230 MiB GART VA window `0x11a00000..0x1fffffff` in
+`src_driver/nvx_gr_context.[ch]` and wired it through the miniport. It uses 115
+2 MiB slices, each with a 512-entry 4 KiB page table in a VideoPort common
+buffer. The PTE pages are installed in the existing PD0, and map/unmap perform
+an RM VASpace TLB invalidate. GART BOs use common-buffer backing; a backing
+whose mapping or teardown cannot be confirmed is retained. ABI 18 adds the
+client session token to free/upload/download requests so GART BO operations
+must match the owning active session.
 
-`make -C src_driver check` passed. This is groundwork only: no miniport buffer
-entry stores GART backing yet, no common-buffer allocation is wired to the
-helper, caps still report zero GART, and GEM_NEW remains linear VRAM only.
-Before advertising GART, wire allocate/map/upload/download/free through
-VideoPort common buffers, install PTE pointers in the existing PD0 for this VA
-range, invalidate the RM VASpace TLB on map/unmap, retain backing on failed
-teardown, and add host and hardware ownership/readback checks. Gallium still
-stops earlier at `NOUVEAU_CHANNEL_ALLOC`; this change does not alter OpenGL
-runtime behavior.
+Host checks pass with `make -C src_driver check`; both `nvxmp.sys` and
+`nvxmp32.sys` build. Full RTX 3070 test:
+`../test_logs/v3.0.0.8-20261111-203107.log`. The guest allocated GART BO id 2
+at `0x11a00000`, uploaded 1024 bytes, downloaded them through the GPU copy
+engine, matched every byte, and unmapped/freed the allocation:
+`[NVX_GART_BUFFER_ROUNDTRIP_RESULT] PASS`. Caps report 241172480 bytes of GART.
+The same run reports `[NVX_3D_RESULT] PASS` and existing GR/2D checks pass.
+One startup firmware assertion remains; no MMU fault was logged.
+
+This verifies the bounded XP allocation, GPU mapping, transfer, readback and
+free path. It does not verify Mesa/Nouveau GEM use or OpenGL rendering: the
+renderer remains `[OPENGL_RESULT] SOFTWARE`, because Mesa screen creation
+still stops at `NOUVEAU_CHANNEL_ALLOC` (`ENOSYS`). Next implement and validate
+an RM-managed Nouveau channel/client/object lifecycle, pushbuffer submission,
+and fence completion; then run Nouveau screen initialization and prove a
+Gallium-rendered framebuffer on hardware. Keep Mesa customizations under
+`mesa_patches/` and do not modify the Mesa submodule.
+
+## ABI 18 session ownership for BO transfer operations
+
+Free, upload and download requests now carry `ClientToken`. The miniport checks
+that the token is active and matches the selected BO before it accesses VRAM
+or GART backing. The WGL winsys fills tokens from its client session; the XP
+diagnostic harness does likewise. Host ABI, winsys and DRM shim tests pass.
+Package version is 3.0.0.8.
 
 ## Linear VRAM GEM allocation contract (November 11, 2026)
 

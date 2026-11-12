@@ -582,12 +582,15 @@ BOOLEAN NvxGspSubmitFillLocked(PVOID extension,ULONG64 dstVa,ULONG color,ULONG b
 static BOOLEAN NvxGspUploadUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,const void *src,ULONG bytes)
 {
     PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    BOOLEAN gart;
     if(!dev||!src||!bytes||bytes>GSP_UPLOAD_MAX_BYTES||
        !dev->GspInitialized||!dev->GspCopyVerified||dev->GspChannelFaulted||
        !dev->GspDmaVirtual||!dev->GspVramGpuVa) return FALSE;
-    if(NvxMmuCheckRange(dev->GspVramGpuVa,dev->GspVramMapBytes,dstVa,bytes)!=NVX_MMU_OK)
+    gart=NvxGspUserAllocationContains(dev,dstVa,bytes,TRUE);
+    if(!gart&&NvxMmuCheckRange(dev->GspVramGpuVa,dev->GspVramMapBytes,
+                               dstVa,bytes)!=NVX_MMU_OK)
         return FALSE;
-    {
+    if(!gart) {
         ULONG64 offset=dstVa-dev->GspVramGpuVa;
         if(!dev->GspFbLayoutValid ||
            offset>dev->GspFbFreeLimit || bytes-1>dev->GspFbFreeLimit-offset) return FALSE;
@@ -600,7 +603,7 @@ static BOOLEAN NvxGspUploadUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,const 
     /* Verify the real staging path, not just the separately mapped scratch. */
     {
         static ULONG verifiedUploads[2]={0,0};
-        ULONG adapter=(dstVa-dev->GspVramGpuVa)>=0x2000000ULL;
+        ULONG adapter=gart?1U:(dstVa-dev->GspVramGpuVa)>=0x2000000ULL;
         if(verifiedUploads[adapter]<3) {
             ULONG count=bytes<256?bytes:256, mismatches=0;
             PUCHAR readback=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET+0xa000;

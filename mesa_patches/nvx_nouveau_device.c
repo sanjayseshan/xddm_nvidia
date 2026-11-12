@@ -20,8 +20,7 @@ NvxNouveauDeviceInitFromWinsys(NVX_NOUVEAU_DEVICE *device,
        !(winsys->caps.Features & NVX_3D_FEATURE_USER_ALLOC) ||
        !(winsys->caps.Features & NVX_3D_FEATURE_UPLOAD) ||
        !(winsys->caps.Features & NVX_3D_FEATURE_DOWNLOAD) ||
-       !winsys->caps.VramApertureBytes ||
-       winsys->caps.GartBytes != 0)
+       !winsys->caps.VramApertureBytes)
       return 0;
 
    chipset = Nvx3dChipsetFromDeviceId(winsys->caps.DeviceId);

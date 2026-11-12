@@ -303,6 +303,8 @@ nvx_drm_gem_new(struct nvx_drm_device_slot *device,
    NVX_3D_ALLOC_BUFFER description;
    uint64_t requested_bytes;
    uint32_t allocated_bytes, handle;
+   uint32_t usage = 0;
+   uint32_t domain = NOUVEAU_GEM_DOMAIN_VRAM;
    unsigned i;
 
    if (!device || !request || request->info.handle ||
@@ -316,8 +318,16 @@ nvx_drm_gem_new(struct nvx_drm_device_slot *device,
        (request->info.domain & (NOUVEAU_GEM_DOMAIN_CPU |
                                 NOUVEAU_GEM_DOMAIN_COHERENT)) ||
        (request->info.domain &&
-        !(request->info.domain & NOUVEAU_GEM_DOMAIN_VRAM)))
+        !(request->info.domain & (NOUVEAU_GEM_DOMAIN_VRAM |
+                                  NOUVEAU_GEM_DOMAIN_GART))))
       return 0;
+
+   if (!(request->info.domain & NOUVEAU_GEM_DOMAIN_VRAM)) {
+      if (!device->device.caps.GartBytes)
+         return 0;
+      usage = NVX_3D_USAGE_GART_BUFFER;
+      domain = NOUVEAU_GEM_DOMAIN_GART;
+   }
 
    requested_bytes = request->info.size;
    if (requested_bytes > UINT32_MAX - (NVX_3D_PAGE_BYTES - 1U))
@@ -339,6 +349,7 @@ nvx_drm_gem_new(struct nvx_drm_device_slot *device,
    memset(&description, 0, sizeof(description));
    description.Size = sizeof(description);
    description.Version = NVX_3D_ABI_VERSION;
+   description.Usage = usage;
    description.Bytes = allocated_bytes;
    handle = device->next_handle++;
    if (!handle)
@@ -361,7 +372,7 @@ nvx_drm_gem_new(struct nvx_drm_device_slot *device,
 
    slot->handle = handle;
    request->info.handle = handle;
-   request->info.domain = NOUVEAU_GEM_DOMAIN_VRAM |
+   request->info.domain = domain |
                           NOUVEAU_GEM_DOMAIN_MAPPABLE;
    request->info.size = requested_bytes;
    request->info.offset = slot->bo.allocation.GpuVa;
@@ -379,7 +390,9 @@ nvx_drm_gem_info(struct nvx_drm_device_slot *device,
    if (!device || !info || !(slot = nvx_drm_find_bo_locked(device,
                                                             info->handle)))
       return 0;
-   info->domain = NOUVEAU_GEM_DOMAIN_VRAM | NOUVEAU_GEM_DOMAIN_MAPPABLE;
+   info->domain = (slot->bo.allocation.Usage & NVX_3D_USAGE_GART_BUFFER ?
+                   NOUVEAU_GEM_DOMAIN_GART : NOUVEAU_GEM_DOMAIN_VRAM) |
+                  NOUVEAU_GEM_DOMAIN_MAPPABLE;
    info->size = slot->bo.allocation.Bytes;
    info->offset = slot->bo.allocation.GpuVa;
    info->map_handle = slot->handle;

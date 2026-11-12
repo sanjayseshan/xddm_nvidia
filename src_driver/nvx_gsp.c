@@ -432,6 +432,91 @@ BOOLEAN NvxGspSetDepthRangeKind(PVOID HwDeviceExtension,ULONG64 gpuVa,
     return TRUE;
 }
 
+static BOOLEAN NvxGspInvalidateVaSpace(PNVX_DEVICE_EXTENSION dev)
+{
+    NV2080_CTRL_DMA_INVALIDATE_TLB_PARAMS invalidate;
+    if(!dev||!dev->GspVaSpaceHandle) return FALSE;
+    VideoPortZeroMemory(&invalidate,sizeof(invalidate));
+    invalidate.hVASpace=dev->GspVaSpaceHandle;
+    return NvxGspControl(dev,dev->GspSubdeviceHandle,
+                         NV2080_CTRL_CMD_DMA_INVALIDATE_TLB,
+                         &invalidate,sizeof(invalidate));
+}
+
+static volatile ULONG g_NvxGartPteBusy;
+
+static BOOLEAN NvxGspLockGartPtes(VOID)
+{
+    ULONG wait;
+    for(wait=0;wait<100000U;wait++) {
+        if(!__sync_lock_test_and_set(&g_NvxGartPteBusy,1U)) return TRUE;
+        VideoPortStallExecution(1U);
+    }
+    return FALSE;
+}
+
+static VOID NvxGspUnlockGartPtes(VOID)
+{
+    __sync_lock_release(&g_NvxGartPteBusy);
+}
+
+BOOLEAN NvxGspMapGartRange(PVOID HwDeviceExtension,ULONG firstSlice,
+                           ULONG sliceCount,ULONG64 physical,ULONG bytes)
+{
+    PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    PULONG64 entries;
+    ULONG capacity=NVX_GART_SLICE_COUNT*NVX_GART_PTES_PER_SLICE;
+    ULONG clearBytes;
+    if(!dev||!dev->GspGartReady||!dev->GspGartPteVirtual||
+       !sliceCount||firstSlice>=NVX_GART_SLICE_COUNT||
+       sliceCount>NVX_GART_SLICE_COUNT-firstSlice||
+       !bytes||(bytes&0xfffU)||(physical&0xfffULL)||
+       physical>0x100000000ULL-bytes||
+       (ULONG64)bytes>(ULONG64)sliceCount*NVX_GART_SLICE_BYTES)
+        return FALSE;
+    if(!NvxGspLockGartPtes()) return FALSE;
+    entries=(PULONG64)dev->GspGartPteVirtual;
+    clearBytes=sliceCount*NVX_GART_SLICE_BYTES/4096U*sizeof(ULONG64);
+    VideoPortZeroMemory(entries+firstSlice*NVX_GART_PTES_PER_SLICE,
+                        clearBytes);
+    if(!NvxGartBuildPtes((uint64_t *)entries,capacity,firstSlice,sliceCount,
+                         physical,bytes,0)) {
+        NvxGspUnlockGartPtes();
+        return FALSE;
+    }
+    __sync_synchronize();
+    /* On an unconfirmed invalidate, the caller must retain the physical
+     * backing and VA reservation; stale translations may still reference it. */
+    {
+        BOOLEAN ok=NvxGspInvalidateVaSpace(dev);
+        NvxGspUnlockGartPtes();
+        return ok;
+    }
+}
+
+BOOLEAN NvxGspUnmapGartRange(PVOID HwDeviceExtension,ULONG firstSlice,
+                             ULONG sliceCount)
+{
+    PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    PULONG64 entries;
+    ULONG clearBytes;
+    if(!dev||!dev->GspGartReady||!dev->GspGartPteVirtual||!sliceCount||
+       firstSlice>=NVX_GART_SLICE_COUNT||
+       sliceCount>NVX_GART_SLICE_COUNT-firstSlice)
+        return FALSE;
+    if(!NvxGspLockGartPtes()) return FALSE;
+    entries=(PULONG64)dev->GspGartPteVirtual;
+    clearBytes=sliceCount*NVX_GART_SLICE_BYTES/4096U*sizeof(ULONG64);
+    VideoPortZeroMemory(entries+firstSlice*NVX_GART_PTES_PER_SLICE,
+                        clearBytes);
+    __sync_synchronize();
+    {
+        BOOLEAN ok=NvxGspInvalidateVaSpace(dev);
+        NvxGspUnlockGartPtes();
+        return ok;
+    }
+}
+
 #if NVX_ENABLE_GR_CHANNEL_PROBE
 static VOID NvxGspDumpNocatJournal(PNVX_DEVICE_EXTENSION dev)
 {
@@ -565,6 +650,20 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
     if(dev->GspDmaLength<GSP_PAGE_TABLES_OFFSET+GSP_PAGE_TABLES_SIZE||
        dev->GspDmaLength<GSP_UPLOAD_OFFSET+GSP_UPLOAD_SIZE||
        (physical&4095)) return FALSE;
+    if(!dev->GspGartPteVirtual) {
+        dev->GspGartPteLength=NVX_GART_SLICE_COUNT*4096U;
+        dev->GspGartPteVirtual=VideoPortAllocateCommonBuffer(dev,
+            dev->DmaAdapter,dev->GspGartPteLength,
+            &dev->GspGartPtePhysical,FALSE,NULL);
+        if(!dev->GspGartPteVirtual||
+           (dev->GspGartPtePhysical.QuadPart&0xfff)||
+           (ULONG64)dev->GspGartPtePhysical.QuadPart>
+               0x100000000ULL-dev->GspGartPteLength) {
+            LogStr("NVX [GART]: page-table backing allocation failed or exceeds 32-bit DMA.\n");
+            return FALSE;
+        }
+        VideoPortZeroMemory(dev->GspGartPteVirtual,dev->GspGartPteLength);
+    }
     VideoPortZeroMemory(tables,GSP_PAGE_TABLES_SIZE);
     /* PDEs: coherent-system aperture, volatile, next-table address >> 4. */
     tables[0]=((physical+0x1000)>>4)|0xc;
@@ -572,6 +671,16 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
     tables[1024]=((physical+0x3000)>>4)|0xc;
     /* PD0 has paired large/small entries; VA>>21 == 128, small is +8. */
     tables[1536+128*2+1]=((physical+0x4000)>>4)|0xc;
+    /* Reserve PD0 entries 141..255 for GART at 0x11a00000..0x1fffffff.
+       The page-table pool is common system memory and is installed before
+       SET_PAGE_DIRECTORY; individual BO PTEs are populated on allocation. */
+    for(ULONG slice=0;slice<NVX_GART_SLICE_COUNT;slice++) {
+        ULONG pdIndex=(ULONG)(NVX_GART_GPU_VA_BASE>>21)+slice;
+        ULONG64 ptePhysical=(ULONG64)dev->GspGartPtePhysical.QuadPart+
+                            (ULONG64)slice*4096U;
+        if(pdIndex>255U) return FALSE;
+        tables[1536+pdIndex*2+1]=(ptePhysical>>4)|0xc;
+    }
     for(ULONG i=0;i<16;i++)
         tables[2048+i]=((dev->GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET+i*4096)>>4)|0xd;
 #if NVX_ENABLE_GR_CHANNEL_PROBE
@@ -653,6 +762,8 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
     setDirectory[3]=1; /* SYSMEM_COH */
     setDirectory[4]=dev->GspVaSpaceHandle;
     if(!NvxGspControl(dev,dev->GspDeviceHandle,NV0080_CTRL_CMD_DMA_SET_PAGE_DIRECTORY,setDirectory,sizeof(setDirectory))) return FALSE;
+    VideoPortZeroMemory(&dev->GspGartHeap,sizeof(dev->GspGartHeap));
+    dev->GspGartReady=TRUE;
     dev->GspScratchGpuVa=0x10000000;
     LogStr("NVX [RM]: scratch memory mapped at GPU VA 0x10000000.\n");return TRUE;
 }
@@ -3354,6 +3465,25 @@ BOOLEAN NvxGspReadUserSurface(PVOID HwDeviceExtension,ULONG64 srcVa,
     return TRUE;
 }
 
+static BOOLEAN NvxGspUserAllocationContains(PNVX_DEVICE_EXTENSION dev,
+                                            ULONG64 gpuVa,ULONG bytes,
+                                            BOOLEAN gartOnly)
+{
+    ULONG i;
+    if(!dev||!gpuVa||!bytes||gpuVa>~0ULL-bytes) return FALSE;
+    for(i=0;i<NVX_3D_USER_BUFFER_SLOTS;i++) {
+        const NVX_3D_USER_BUFFER_ENTRY *entry=&dev->Nvx3dBuffers[i];
+        BOOLEAN gart=(entry->Usage&NVX_3D_USAGE_GART_BUFFER)!=0;
+        if(!entry->Id||!entry->Busy||(gartOnly&&!gart)||
+           (gart&&(!entry->SystemVirtual||!entry->GartSliceCount))||
+           gpuVa<entry->GpuVa||entry->GpuVa>~0ULL-entry->Bytes||
+           gpuVa+bytes>entry->GpuVa+entry->Bytes)
+            continue;
+        return TRUE;
+    }
+    return FALSE;
+}
+
 /* Read one dword-aligned raw BO range through the CE. The 4 KiB staging
    window is private miniport DMA memory; caller pointers are never mapped
    into the GPU address space. Larger BO maps must be assembled in chunks. */
@@ -3369,6 +3499,8 @@ BOOLEAN NvxGspReadUserBuffer(PVOID HwDeviceExtension,ULONG64 srcVa,
        !dev->GspInitialized||!dev->GspCopyVerified||
        dev->GspChannelFaulted||dev->GspMmuFaultQueued||
        !dev->GspDmaVirtual||!dev->GspScratchGpuVa)
+        return FALSE;
+    if(!NvxGspUserAllocationContains(dev,srcVa,bytes,FALSE))
         return FALSE;
 
     for(wait=0;wait<20000;wait++) {

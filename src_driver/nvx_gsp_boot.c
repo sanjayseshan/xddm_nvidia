@@ -929,6 +929,28 @@ VOID NvxGspShutdown(PVOID HwDeviceExtension) {
             devExt->GspGrContextAliasVerified=FALSE;
             devExt->GspGrPromotionAccepted=FALSE;
         }
+        /* RM and GPU engines are stopped above, so every client GART mapping
+           is dead before its common-buffer backing or PTE pool is released. */
+        for(ULONG i=0;i<NVX_3D_USER_BUFFER_SLOTS;i++) {
+            NVX_3D_USER_BUFFER_ENTRY *entry=&devExt->Nvx3dBuffers[i];
+            if(entry->SystemVirtual) {
+                VideoPortFreeCommonBuffer(HwDeviceExtension,entry->Bytes,
+                    entry->SystemVirtual,entry->SystemPhysical,FALSE);
+                entry->SystemVirtual=NULL;
+                entry->SystemPhysical.QuadPart=0;
+            }
+        }
+        if(devExt->GspGartPteVirtual) {
+            VideoPortFreeCommonBuffer(HwDeviceExtension,
+                devExt->GspGartPteLength,devExt->GspGartPteVirtual,
+                devExt->GspGartPtePhysical,FALSE);
+            devExt->GspGartPteVirtual=NULL;
+            devExt->GspGartPteLength=0;
+            devExt->GspGartPtePhysical.QuadPart=0;
+        }
+        VideoPortZeroMemory(&devExt->GspGartHeap,
+                            sizeof(devExt->GspGartHeap));
+        devExt->GspGartReady=FALSE;
         VideoPortFreeCommonBuffer(
             HwDeviceExtension,
             devExt->GspDmaLength,

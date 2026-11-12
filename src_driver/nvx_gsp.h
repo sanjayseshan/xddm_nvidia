@@ -3,6 +3,7 @@
 
 #include "miniport.h"
 #include "nvx_display.h"
+#include "nvx_gr_context.h"
 #include "include/nvx_nvidia_open_shim.h"
 
 #define MAX_NVX_MODES 32
@@ -318,6 +319,11 @@ typedef struct _NVX_3D_USER_BUFFER_ENTRY {
     ULONG PitchBytes;
     ULONG TileMode;
     ULONG Busy;
+    ULONG GartFirstSlice;
+    ULONG GartSliceCount;
+    BOOLEAN GartUnmapPending;
+    PVOID SystemVirtual;
+    PHYSICAL_ADDRESS SystemPhysical;
 } NVX_3D_USER_BUFFER_ENTRY;
 typedef NVX_3D_USER_BUFFER_ENTRY *PNVX_3D_USER_BUFFER_ENTRY;
 
@@ -454,6 +460,11 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG64 Nvx3dCompletedFence;
     NVX_3D_CLIENT_SESSION_ENTRY Nvx3dClientSessions[NVX_3D_CLIENT_SESSION_SLOTS];
     NVX_3D_USER_BUFFER_ENTRY Nvx3dBuffers[NVX_3D_USER_BUFFER_SLOTS];
+    NVX_GART_HEAP GspGartHeap;
+    PVOID GspGartPteVirtual;
+    PHYSICAL_ADDRESS GspGartPtePhysical;
+    ULONG GspGartPteLength;
+    BOOLEAN GspGartReady;
     BOOLEAN GspFbLayoutValid;
     ULONG GspFbRegionCount;
     ULONG64 GspFbFreeBase,GspFbFreeLimit;
@@ -509,6 +520,10 @@ BOOLEAN NvxGspSetDepthPageKind(PVOID HwDeviceExtension,ULONG64 gpuVa,
                                ULONG kind,BOOLEAN map);
 BOOLEAN NvxGspSetDepthRangeKind(PVOID HwDeviceExtension,ULONG64 gpuVa,
                                 ULONG bytes,ULONG kind,BOOLEAN map);
+BOOLEAN NvxGspMapGartRange(PVOID HwDeviceExtension,ULONG firstSlice,
+                           ULONG sliceCount,ULONG64 physical,ULONG bytes);
+BOOLEAN NvxGspUnmapGartRange(PVOID HwDeviceExtension,ULONG firstSlice,
+                             ULONG sliceCount);
 BOOLEAN NvxGspSubmitFill(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG bytes);
 BOOLEAN NvxGspSubmitFillLocked(PVOID HwDeviceExtension,ULONG64 dstVa,
                                ULONG color,ULONG bytes);

@@ -7,7 +7,7 @@
 
 /* Fixed-width ABI shared by XP x64/x86 clients and the miniport.  GPU VAs are
  * always 64-bit; no kernel pointers or RM handles cross this boundary. */
-#define NVX_3D_ABI_VERSION 17U
+#define NVX_3D_ABI_VERSION 18U
 #define NVX_3D_MAX_PUSH_DWORDS 4096U
 #define NVX_3D_MAX_BATCH_RELOCATIONS 256U
 #define NVX_3D_MAX_BATCH_BUFFERS 64U
@@ -70,6 +70,7 @@
 #define NVX_3D_USAGE_DEPTH_METHOD_S8Z24 8U
 #define NVX_3D_USAGE_DEPTH_ZF32 16U
 #define NVX_3D_USAGE_COLOR_TARGET 32U
+#define NVX_3D_USAGE_GART_BUFFER 64U
 #define NVX_3D_ZT_FORMAT_Z24S8 0U
 #define NVX_3D_ZT_FORMAT_X8Z24 1U
 #define NVX_3D_ZT_FORMAT_S8Z24 2U
@@ -664,6 +665,7 @@ typedef struct NVX_3D_FREE_BUFFER {
     uint32_t Size;
     uint32_t Version;
     uint64_t BufferId;
+    uint64_t ClientToken;
 } NVX_3D_FREE_BUFFER;
 
 /* Follow this fixed header with Bytes payload bytes. Uploads are chunked so
@@ -675,6 +677,7 @@ typedef struct NVX_3D_UPLOAD_BUFFER {
     uint32_t Offset;
     uint32_t Bytes;
     uint32_t Reserved[2];
+    uint64_t ClientToken;
 } NVX_3D_UPLOAD_BUFFER;
 
 /* Download one bounded chunk through the CE to miniport staging memory.
@@ -686,6 +689,7 @@ typedef struct NVX_3D_DOWNLOAD_BUFFER {
     uint32_t Offset;
     uint32_t Bytes;
     uint32_t Reserved[2];
+    uint64_t ClientToken;
 } NVX_3D_DOWNLOAD_BUFFER;
 
 typedef struct NVX_3D_SUBMIT {
@@ -1031,7 +1035,8 @@ static inline int
 Nvx3dValidateFree(const NVX_3D_FREE_BUFFER *request)
 {
     return request && request->Size==sizeof(*request) &&
-        request->Version==NVX_3D_ABI_VERSION && request->BufferId;
+        request->Version==NVX_3D_ABI_VERSION && request->BufferId &&
+        request->ClientToken;
 }
 
 static inline int
@@ -1042,6 +1047,7 @@ Nvx3dValidateUpload(const NVX_3D_UPLOAD_BUFFER *request,
     if(!request || inputBytes<sizeof(*request) ||
        request->Size!=sizeof(*request) ||
        request->Version!=NVX_3D_ABI_VERSION || !request->BufferId ||
+       !request->ClientToken ||
        !request->Bytes || request->Bytes>NVX_3D_MAX_UPLOAD_BYTES ||
        (request->Offset&3U) || (request->Bytes&3U) ||
        inputBytes!=sizeof(*request)+request->Bytes ||
@@ -1061,6 +1067,7 @@ Nvx3dValidateDownload(const NVX_3D_DOWNLOAD_BUFFER *request,
     if(!request || inputBytes!=sizeof(*request) ||
        request->Size!=sizeof(*request) ||
        request->Version!=NVX_3D_ABI_VERSION || !request->BufferId ||
+       !request->ClientToken ||
        !request->Bytes || request->Bytes>NVX_3D_MAX_DOWNLOAD_BYTES ||
        (request->Offset&3U) || (request->Bytes&3U) ||
        outputBytes<request->Bytes || request->Offset>allocatedBytes ||
@@ -1076,7 +1083,9 @@ Nvx3dValidateAlloc(const NVX_3D_ALLOC_BUFFER *request)
     NVX_3D_COLOR_SURFACE_LAYOUT layout;
     NVX_3D_DEPTH_SURFACE_LAYOUT depthLayout;
     if(!request || request->Size!=sizeof(*request) ||
-       request->Version!=NVX_3D_ABI_VERSION || request->Usage>63U ||
+       request->Version!=NVX_3D_ABI_VERSION || request->Usage>127U ||
+       ((request->Usage&NVX_3D_USAGE_GART_BUFFER) &&
+        (request->Usage&~NVX_3D_USAGE_GART_BUFFER)) ||
        ((request->Usage&NVX_3D_USAGE_DEPTH_S8Z24) &&
         !(request->Usage&NVX_3D_USAGE_DEPTH_TARGET)) ||
        ((request->Usage&NVX_3D_USAGE_DEPTH_METHOD_S8Z24) &&

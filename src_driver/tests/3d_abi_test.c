@@ -334,9 +334,9 @@ int main(void)
     assert(sizeof(NVX_3D_ALLOC_BUFFER)==64);
     assert(sizeof(NVX_3D_BATCH_HEADER)==40);
     assert(sizeof(NVX_3D_RELOCATION)==40);
-    assert(sizeof(NVX_3D_FREE_BUFFER)==16);
-    assert(sizeof(NVX_3D_UPLOAD_BUFFER)==32);
-    assert(sizeof(NVX_3D_DOWNLOAD_BUFFER)==32);
+    assert(sizeof(NVX_3D_FREE_BUFFER)==24);
+    assert(sizeof(NVX_3D_UPLOAD_BUFFER)==40);
+    assert(sizeof(NVX_3D_DOWNLOAD_BUFFER)==40);
     assert(sizeof(NVX_3D_SUBMIT)==80);
     assert(sizeof(NVX_3D_WAIT_FENCE)==24);
     assert(sizeof(NVX_3D_READBACK)==32);
@@ -359,6 +359,7 @@ int main(void)
     download.Size=sizeof(download);
     download.Version=NVX_3D_ABI_VERSION;
     download.BufferId=17;
+    download.ClientToken=1;
     download.Offset=256;
     download.Bytes=4096;
     assert(Nvx3dValidateDownload(&download,sizeof(download),4096,8192));
@@ -554,7 +555,7 @@ int main(void)
     alloc.Bytes=4096;alloc.BufferId=1;assert(!Nvx3dValidateAlloc(&alloc));
 
     upload.Size=sizeof(upload);upload.Version=NVX_3D_ABI_VERSION;
-    upload.BufferId=1;upload.Offset=128;upload.Bytes=256;
+    upload.BufferId=1;upload.Offset=128;upload.Bytes=256;upload.ClientToken=1;
     assert(Nvx3dValidateUpload(&upload,sizeof(upload)+upload.Bytes,4096));
     assert(!Nvx3dValidateUpload(&upload,sizeof(upload)+upload.Bytes-1,4096));
     assert(!Nvx3dValidateUpload(&upload,sizeof(upload)+upload.Bytes,383));
@@ -709,7 +710,8 @@ int main(void)
     wait.TimeoutMs=30001;assert(!Nvx3dValidateWait(&wait));
 
     freeRequest.Size=sizeof(freeRequest);freeRequest.Version=NVX_3D_ABI_VERSION;
-    freeRequest.BufferId=1;assert(Nvx3dValidateFree(&freeRequest));
+    freeRequest.BufferId=1;freeRequest.ClientToken=1;
+    assert(Nvx3dValidateFree(&freeRequest));
     assert(Nvx3dDispatch(NVX_3D_OP_FREE,&freeRequest,sizeof(freeRequest),NULL,0,
         NULL,0,0,0,0,0,0)==NVX_3D_STATUS_SUCCESS);
     freeRequest.BufferId=0;assert(!Nvx3dValidateFree(&freeRequest));

@@ -93,6 +93,18 @@ NvxTestExtEscape(HDC hdc, int escape, int input_bytes, LPCSTR input,
         if(!request->ClientToken) return 0;
         if(++nvx_test_request_token==0) ++nvx_test_request_token;
         request->RequestToken=nvx_test_request_token;
+    } else if(escape==NVX_ESCAPE_3D_FREE && input &&
+              input_bytes==(int)sizeof(NVX_3D_FREE_BUFFER)) {
+        NVX_3D_FREE_BUFFER *request=(NVX_3D_FREE_BUFFER *)input;
+        request->ClientToken=NvxTestGetClientToken(hdc);
+    } else if(escape==NVX_ESCAPE_3D_UPLOAD && input &&
+              input_bytes>=(int)sizeof(NVX_3D_UPLOAD_BUFFER)) {
+        NVX_3D_UPLOAD_BUFFER *request=(NVX_3D_UPLOAD_BUFFER *)input;
+        request->ClientToken=NvxTestGetClientToken(hdc);
+    } else if(escape==NVX_ESCAPE_3D_DOWNLOAD && input &&
+              input_bytes==(int)sizeof(NVX_3D_DOWNLOAD_BUFFER)) {
+        NVX_3D_DOWNLOAD_BUFFER *request=(NVX_3D_DOWNLOAD_BUFFER *)input;
+        request->ClientToken=NvxTestGetClientToken(hdc);
     }
     return ExtEscape(hdc,escape,input_bytes,input,output_bytes,output);
 }
@@ -2412,7 +2424,7 @@ done:
     return ok;
 }
 
-static int TestNvxBufferRoundTrip(HDC hdc)
+static int TestNvxBufferRoundTrip(HDC hdc,uint32_t usage,const char *name)
 {
     enum { WORDS=256, OFFSET=256 };
     struct {
@@ -2426,9 +2438,9 @@ static int TestNvxBufferRoundTrip(HDC hdc)
     unsigned i;
     int ok=0,allocatedOk=0;
 
-    LogMsg("-> Testing NVX BO upload/download staging round trip\n");
+    LogMsg("-> Testing NVX %s BO upload/download staging round trip\n",name);
     alloc.Size=sizeof(alloc);alloc.Version=NVX_3D_ABI_VERSION;
-    alloc.Usage=1U;alloc.Bytes=4096U;
+    alloc.Usage=usage;alloc.Bytes=4096U;
     if(!ExtEscape(hdc,NVX_ESCAPE_3D_ALLOC,sizeof(alloc),(LPCSTR)&alloc,
                   sizeof(allocated),(LPSTR)&allocated))
         goto done;
@@ -2467,10 +2479,10 @@ done:
             ok=0;
     }
     if(ok)
-        LogMsg("[NVX_3D_STAGE] upload-download-roundtrip PASS bytes=%u offset=%u\n",
-               (unsigned)(WORDS*sizeof(uint32_t)),(unsigned)OFFSET);
-    LogMsg("[NVX_BUFFER_ROUNDTRIP_RESULT] %s words=%u bytes=%u\n",
-           ok?"PASS":"FAIL",(unsigned)WORDS,
+        LogMsg("[NVX_3D_STAGE] %s-upload-download-roundtrip PASS bytes=%u offset=%u\n",
+               name,(unsigned)(WORDS*sizeof(uint32_t)),(unsigned)OFFSET);
+    LogMsg("[NVX_%s_BUFFER_ROUNDTRIP_RESULT] %s words=%u bytes=%u\n",
+           name,ok?"PASS":"FAIL",(unsigned)WORDS,
            (unsigned)(WORDS*sizeof(uint32_t)));
     return ok;
 }
@@ -3262,7 +3274,8 @@ int main(int argc, char **argv)
 
     if (rapid3d) {
         LogMsg("[MESA_GPU_CUBE_RESULT] SKIPPED reason=rapid_3d_mode (use the full guest test to run depth and no-depth cube comparisons)\n");
-        int result=(TestNvxBufferRoundTrip(hdc)&&
+        int result=(TestNvxBufferRoundTrip(hdc,1U,"VRAM")&&
+                    TestNvxBufferRoundTrip(hdc,NVX_3D_USAGE_GART_BUFFER,"GART")&&
                     TestNvc0ClearEscape(hdc)&&
                     TestNativeNvc0FullSizeClear(hdc))?0:1;
         NvxTestCloseClient(hdc);
@@ -3274,7 +3287,9 @@ int main(int argc, char **argv)
     }
 
     /* Run Tests */
-    if (!only2d && !TestNvxBufferRoundTrip(hdc))
+    if (!only2d &&
+        (!TestNvxBufferRoundTrip(hdc,1U,"VRAM")||
+         !TestNvxBufferRoundTrip(hdc,NVX_3D_USAGE_GART_BUFFER,"GART")))
         failures++;
     Test2D(hwnd, hdc);
     LogMsg("[2D_RESULT] %s\n", failures ? "FAIL" : "PASS");

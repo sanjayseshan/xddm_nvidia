@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "xf86drm.h"
+#include "../src_driver/nvx_gr_context.h"
 #include "drm-uapi/nouveau_drm.h"
 #include "nvif/class.h"
 #include "nvif/cl0080.h"
@@ -20,6 +21,7 @@ struct mock_buffer {
 static struct mock_buffer buffers[8];
 static uint64_t next_buffer_id = 1;
 static uint64_t next_gpu_va = 0x10000000ULL;
+static uint64_t next_gart_va = 0x11a00000ULL;
 
 static struct mock_buffer *
 find_buffer(uint64_t id)
@@ -61,8 +63,13 @@ mock_escape(void *opaque, uint32_t escape, uint32_t input_bytes,
       buffer->bytes = request->Bytes;
       *result = *request;
       result->BufferId = buffer->id;
-      result->GpuVa = next_gpu_va;
-      next_gpu_va += request->Bytes;
+      if (request->Usage & NVX_3D_USAGE_GART_BUFFER) {
+         result->GpuVa = next_gart_va;
+         next_gart_va += request->Bytes;
+      } else {
+         result->GpuVa = next_gpu_va;
+         next_gpu_va += request->Bytes;
+      }
       return 1;
    }
    if (escape == NVX_ESCAPE_3D_FREE &&
@@ -146,12 +153,15 @@ main(void)
    winsys.caps.Version = NVX_3D_ABI_VERSION;
    winsys.caps.Size = sizeof(winsys.caps);
    winsys.caps.GraphicsClass = 0xc797U;
-   winsys.caps.Features = NVX_3D_FEATURE_USER_ALLOC |
+   winsys.caps.Features = NVX_3D_FEATURE_GR_CHANNEL |
+                          NVX_3D_FEATURE_USER_ALLOC |
                           NVX_3D_FEATURE_UPLOAD |
                           NVX_3D_FEATURE_DOWNLOAD;
    winsys.caps.DeviceId = 0x2488U;
    winsys.caps.Chipset = 0x170U;
    winsys.caps.VramApertureBytes = 64U * 1024U * 1024U;
+   winsys.caps.GartBytes =
+      (uint64_t)NVX_GART_SLICE_COUNT * NVX_GART_SLICE_BYTES;
    winsys.caps.MaxBufferBytes = 16U * 1024U * 1024U;
    assert(NvxXf86DrmRegisterDevice(&winsys) == -1);
    winsys.caps.PciLocation = Nvx3dPackPciLocation(0x2aU, 0xabU);
@@ -166,8 +176,25 @@ main(void)
       create.info.size = 4096;
       create.info.domain = NOUVEAU_GEM_DOMAIN_GART;
       assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_NEW, &create,
-                                 sizeof(create)) == -1);
+                                 sizeof(create)) == 0);
+      assert(create.info.handle != 0);
+      assert(create.info.domain == (NOUVEAU_GEM_DOMAIN_GART |
+                                    NOUVEAU_GEM_DOMAIN_MAPPABLE));
+      info.handle = create.info.handle;
+      assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_INFO, &info,
+                                 sizeof(info)) == 0);
+      assert(info.domain == create.info.domain && info.size == 4096);
+      map = NvxXf86DrmMapBuffer(fd, create.info.handle,
+                                NVX_XF86DRM_MAP_READ |
+                                NVX_XF86DRM_MAP_WRITE);
+      assert(map != NULL);
+      map[0] = 0x89abcdefU;
+      assert(NvxXf86DrmUnmapBuffer(fd, create.info.handle) == 0);
+      assert(drmCloseBufferHandle(fd, create.info.handle) == 0);
+
+      memset(&create, 0, sizeof(create));
       create.info.domain = NOUVEAU_GEM_DOMAIN_VRAM;
+      create.info.size = 4096;
       create.align = 3U;
       assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_NEW, &create,
                                  sizeof(create)) == -1);

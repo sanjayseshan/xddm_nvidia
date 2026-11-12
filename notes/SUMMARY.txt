@@ -1,24 +1,26 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 11, 2026 (GART allocator groundwork)
+Updated: November 11, 2026 (GART BO hardware round trip)
 
-New groundwork in `src_driver/nvx_gr_context.[ch]` implements a bounded
-230 MiB GART VA slice allocator and coherent PTE builder. Host tests pass for
-reserve/release behavior and PTE encoding. It is not connected to miniport BO
-allocation yet; GART caps remain zero and the runtime is unchanged. Next wire
-VideoPort common-buffer backing, PD0 entries and TLB invalidation into the
-miniport, then validate a GPU read/write through a GART BO. The most recent
-full XP runtime test remains `../test_logs/v3.0.0.7-20261111-200604.log`, where
-OpenGL was software due to unsupported `NOUVEAU_CHANNEL_ALLOC`.
+The XP miniport now allocates common-buffer-backed GART BOs in a 230 MiB VA
+window, installs coherent PTEs in PD0, invalidates the RM VASpace TLB, and
+supports GPU copy-engine uploads/downloads plus safe unmap/free. ABI 18 binds
+free/upload/download requests to the owning active client session. Host checks
+and XP x86/x64 driver builds pass.
 
-Latest full hardware check: `../test_logs/v3.0.0.7-20261111-200604.log`.
-The XP Nouveau GEM shim now rejects tiled/compressed metadata it cannot
-actually allocate and validates power-of-two alignment up to the miniport's
-64 KiB VRAM alignment. Host tests cover unsupported GART-only/tiled requests
-and successful aligned linear VRAM allocation, map, and free. Host suite and
-XP package/import audit passed; RTX 3070 GR clear/semaphore, independent 3D,
-2D, and display checks passed. OpenGL remains software because native screen
-startup stops at `NOUVEAU_CHANNEL_ALLOC` (`ENOSYS`), before Mesa can exercise
-GEM allocation. Phase 2C remains incomplete.
+Latest full RTX 3070 test: `../test_logs/v3.0.0.8-20261111-203107.log`. A
+1 KiB GART allocation at `0x11a00000` completed an upload/download byte-for-
+byte round trip and was released (`[NVX_GART_BUFFER_ROUNDTRIP_RESULT] PASS`).
+Caps report 241172480 bytes of GART; independent 3D, GR and 2D checks pass.
+One startup firmware assertion remains and no MMU fault appeared. OpenGL is
+still `[OPENGL_RESULT] SOFTWARE`; Gallium Nouveau screen startup stops at
+`NOUVEAU_CHANNEL_ALLOC` (`ENOSYS`). GART BO support is now hardware-verified,
+but Phase 2C remains incomplete until a real Nouveau channel, object setup,
+validated pushbuffer submission and fence path drive a Gallium-rendered frame.
+All Mesa-specific customizations remain outside the `mesa/` submodule.
+
+The XP `DRM_NOUVEAU_GEM_NEW` shim now accepts GART-only requests and reports
+their domain correctly, while continuing to reject unsupported tiled or
+compressed metadata and honoring supported linear alignment requests.
 
 Latest full hardware test: `../test_logs/v3.0.0.6-20261111-200043.log`.
 ABI 17 binds the native NVC0 clear request to the owning client session; the

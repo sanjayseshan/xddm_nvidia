@@ -123,6 +123,7 @@ NvxWinsysFreeBuffer(NVX_WINSYS_DEVICE *device, uint64_t buffer_id)
    request.Size = sizeof(request);
    request.Version = NVX_3D_ABI_VERSION;
    request.BufferId = buffer_id;
+   request.ClientToken = device->ClientToken;
    if (!Nvx3dValidateFree(&request))
       return 0;
    return device->escape(device->opaque, NVX_ESCAPE_3D_FREE,
@@ -165,6 +166,7 @@ NvxWinsysUploadBuffer(NVX_WINSYS_DEVICE *device, uint64_t buffer_id,
       request->Size = sizeof(*request);
       request->Version = NVX_3D_ABI_VERSION;
       request->BufferId = buffer_id;
+      request->ClientToken = device->ClientToken;
       request->Offset = current_offset;
       request->Bytes = chunk;
       memcpy((uint8_t *)request + sizeof(*request), source, chunk);
@@ -212,6 +214,7 @@ NvxWinsysDownloadBuffer(NVX_WINSYS_DEVICE *device, uint64_t buffer_id,
       request.Size = sizeof(request);
       request.Version = NVX_3D_ABI_VERSION;
       request.BufferId = buffer_id;
+      request.ClientToken = device->ClientToken;
       request.Offset = current_offset;
       request.Bytes = chunk;
       if (!Nvx3dValidateDownload(&request, sizeof(request), chunk,
