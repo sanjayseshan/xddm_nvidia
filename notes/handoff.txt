@@ -39,6 +39,41 @@ or GART backing. The WGL winsys fills tokens from its client session; the XP
 diagnostic harness does likewise. Host ABI, winsys and DRM shim tests pass.
 Package version is 3.0.0.8.
 
+## Exact GA104 Nouveau screen bootstrap contract (source audit)
+
+The next transport milestone must satisfy the initialization sequence in the
+pinned Mesa sources, not just return success for `DRM_NOUVEAU_CHANNEL_ALLOC`.
+`nouveau_screen_init()` creates a FIFO channel, Nouveau client, and a 512 KiB
+mapped pushbuffer, then performs a zero-dword pushbuf kick. `nvc0_screen_create()`
+allocates/maps a 4 KiB GART fence BO, selects classes, emits setup methods, and
+kicks them before it returns a usable screen.
+
+For chipset `0x170` (GA104), `nvc0_screen.c` skips the legacy SW object because
+the chipset is at least `0x140`. The minimum screen object set is therefore:
+
+* One M2MF class selected from NVF0 P2MF (`0xa140`), NVE4 P2MF (`0xa040`), or
+  NVC0 M2MF (`0x9039`) using `nouveau_object_mclass()`.
+* Ampere copy class (`AMPERE_DMA_COPY_B`, `0xc7b5`), selected ahead of older
+  copy classes for this chipset.
+* NVC0 2D class (`0x902d`).
+* GA102 3D class (`0xc797`), selected ahead of TU102 and earlier classes.
+
+The 2D and 3D objects are followed by method streams that set object bindings,
+2D state, 3D raster/compression/multisample state, internal buffers, and
+shader/constant-buffer addresses. A channel implementation must return class
+enumeration consistent with the classes actually bound, and its submission
+path must validate and execute these setup batches before claiming the screen
+is initialized. The current private C56F/C797 probe channel and fixed clear
+escape do not provide this client channel contract. Do not fake the kernel
+channel handle or return a successful channel allocation before the matching
+owned submission/fence path is live.
+
+Source evidence: `mesa/src/gallium/drivers/nouveau/nouveau_screen.c`
+(`nouveau_screen_init()`); `mesa/src/gallium/drivers/nouveau/nvc0/nvc0_screen.c`
+(`nvc0_screen_create()`); `mesa/src/gallium/winsys/nouveau/drm/nouveau.c`
+(`nouveau_object_channel_new()`, `nouveau_object_mclass()`, and
+`nouveau_pushbuf_kick()`). This audit changes no runtime behavior.
+
 ## Linear VRAM GEM allocation contract (November 11, 2026)
 
 The `DRM_NOUVEAU_GEM_NEW` compatibility path now rejects unsupported tiled or
