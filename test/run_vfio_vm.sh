@@ -35,16 +35,13 @@ if [ "$EUID" -eq 0 ]; then
     chmod 660 /dev/vfio/* 2>/dev/null || true
 fi
 
-LOGITECH_KBD="/dev/input/by-id/usb-Logitech_USB_Receiver-if02-event-kbd"
-LOGITECH_MOUSE="/dev/input/by-id/usb-Logitech_USB_Receiver-if02-event-mouse"
-
 shopt -s nullglob
 VFIO_GROUP_NODES=(/dev/vfio/[0-9]*)
 if [ "${#VFIO_GROUP_NODES[@]}" -eq 0 ]; then
     echo "Error: no VFIO IOMMU group node is available. See ROOTLESS_TESTING.md." >&2
     exit 1
 fi
-for dev in /dev/vfio/vfio "${VFIO_GROUP_NODES[@]}" "$LOGITECH_KBD" "$LOGITECH_MOUSE"; do
+for dev in /dev/vfio/vfio "${VFIO_GROUP_NODES[@]}"; do
     if [ ! -r "$dev" ] || [ ! -w "$dev" ]; then
         echo "Error: $dev is not accessible to $(id -un). See ROOTLESS_TESTING.md." >&2
         exit 1
@@ -67,7 +64,7 @@ echo "Display Output: Monitor plugged into the RTX 3070"
 echo "Driver CD: $NVX_CDROM_STATUS"
 echo "Serial log: $NVX_SERIAL_LOG"
 echo "Guest RAM: ${NVX_VM_MEMORY_MB} MB (memlock: ${NVX_MEMLOCK_KB} KB)"
-echo "Input: Dedicated Logitech Keyboard & Mouse (PS/2 mapping)"
+echo "Input: QEMU virtual USB keyboard/tablet; host input devices are not attached"
 echo "------------------------------------------------------------------"
 
 qemu-system-x86_64 \
@@ -76,14 +73,15 @@ qemu-system-x86_64 \
     -cpu host,hv_relaxed,hv_spinlocks=0x1fff,hv_vapic,hv_time \
     -smp 4 \
     -vga none \
+    -usb \
+    -device usb-kbd \
+    -device usb-tablet \
     -net none \
     -device vfio-pci,host=01:00.0,multifunction=on,x-vga=on,addr=02.0 \
     -device vfio-pci,host=01:00.1,addr=02.1 \
     -drive file="$ROOT_DIR/winxp_x64.qcow2",format=qcow2,if=ide \
     "${NVX_QEMU_CDROM_ARGS[@]}" \
-    -object input-linux,id=logitech_kbd,evdev="$LOGITECH_KBD",grab_all=on,repeat=on \
-    -object input-linux,id=logitech_mouse,evdev="$LOGITECH_MOUSE" \
     -serial "file:$NVX_SERIAL_LOG" \
     -no-reboot \
     -monitor unix:/tmp/qemu-monitor.sock,server,nowait \
-    -monitor stdio
+    -display none

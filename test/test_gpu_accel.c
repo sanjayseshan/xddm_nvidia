@@ -849,6 +849,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
     BOOL bridgeTraceDeleted = DeleteFileA("C:\\test_accel\\mesa_bridge.log");
     DWORD bridgeTraceDeleteError = bridgeTraceDeleted ? ERROR_SUCCESS : GetLastError();
     LogMsg("[MESA_BRIDGE_TRACE_RESET] delete_error=%lu\n", bridgeTraceDeleteError);
+    (void)DeleteFileA("C:\\test_accel\\nvx_nouveau_trace.log");
     ClearMesaIcdTrace();
     InstallOpenGl32TraceHooks();
     unsigned wglTraceStart = openGlTraceCount;

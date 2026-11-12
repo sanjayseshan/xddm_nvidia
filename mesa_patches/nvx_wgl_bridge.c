@@ -56,7 +56,17 @@ static char nvx_bridge_last_message[96];
 static LONG nvx_bridge_depth_stage_count;
 static char nvx_bridge_depth_stages[3][96];
 static void nvx_bridge_trace(const char *message);
+static void nvx_bridge_nouveau_trace(const char *message);
 void NvxWglRecordMesaInitFailure(const char *stage, int error);
+void NvxWglRecordNouveauSclass(uint32_t token_low, uint32_t token_high,
+                               uint32_t result, uint32_t count,
+                               const uint32_t *classes);
+void NvxWglRecordNouveauPushbuf(uint32_t channel, uint32_t nr_push,
+                                uint32_t nr_buffers, uint32_t nr_relocs);
+void NvxWglRecordNouveauObject(uint32_t token_low, uint32_t token_high,
+                               uint32_t user_class, uint32_t user_handle,
+                               uint32_t rm_class, uint32_t rm_handle,
+                               uint32_t result);
 static int nvx_bridge_is_enabled(void);
 static int nvx_pack_color(const float rgba[4], uint32_t *color);
 static int nvx_alloc(HDC hdc, const NVX_3D_ALLOC_BUFFER *request,
@@ -340,16 +350,17 @@ nvx_wgl_create_native_nouveau_screen(void)
    int fd = nvx_wgl_xf86drm_fd();
    struct pipe_screen *screen;
 
+   InterlockedExchange(&nvx_bridge_nouveau_init_failed, 0);
+   nvx_bridge_nouveau_trace("Nouveau screen create begin");
    if (fd <= 0 || !NvxXf86DrmIsRegistered(fd))
       return NULL;
-   InterlockedExchange(&nvx_bridge_nouveau_init_failed, 0);
    screen = nouveau_drm_screen_create(fd);
    if (screen) {
-      nvx_bridge_trace("Native Nouveau Gallium pipe_screen created");
+      nvx_bridge_nouveau_trace("Native Nouveau Gallium pipe_screen created");
       InterlockedIncrement(&nvx_bridge_screen_count);
    } else {
       if (!InterlockedCompareExchange(&nvx_bridge_nouveau_init_failed, 0, 0))
-         nvx_bridge_trace("Native Nouveau screen creation failed; see DRM boundary");
+         nvx_bridge_nouveau_trace("Native Nouveau screen creation failed; see DRM boundary");
    }
    return screen;
 }
@@ -388,7 +399,11 @@ nvx_bridge_trace(const char *message)
    memcpy(nvx_bridge_last_message, message, length);
    nvx_bridge_last_message[length] = '\0';
 
-   if (count > 32 && strncmp(message, "NVC0 init rc=", 13) != 0)
+   if (count > 32 && strncmp(message, "NVC0 init rc=", 13) != 0 &&
+       strncmp(message, "NVIF SCLASS", 11) != 0 &&
+       strncmp(message, "Nouveau pushbuf", 15) != 0 &&
+       strncmp(message, "Nouveau screen", 14) != 0 &&
+       strncmp(message, "Native Nouveau", 14) != 0)
       return;
    file = CreateFileA("C:\\test_accel\\mesa_bridge.log", FILE_APPEND_DATA,
                       FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS,
@@ -422,7 +437,73 @@ NvxWglRecordMesaInitFailure(const char *stage, int error)
    memcpy(message + prefix_length, stage, stage_length);
    message[prefix_length + stage_length] = '\0';
    InterlockedExchange(&nvx_bridge_nouveau_init_failed, 1);
-   nvx_bridge_trace(message);
+   nvx_bridge_nouveau_trace(message);
+}
+
+void
+NvxWglRecordNouveauSclass(uint32_t token_low, uint32_t token_high,
+                          uint32_t result, uint32_t count,
+                          const uint32_t *classes)
+{
+   char message[96];
+   unsigned i;
+
+   wsprintfA(message, "NVIF SCLASS token=%08lx:%08lx result=%lu count=%lu",
+             (unsigned long)token_high, (unsigned long)token_low,
+             (unsigned long)result, (unsigned long)count);
+   nvx_bridge_nouveau_trace(message);
+   if (!classes)
+      return;
+   for (i = 0; i < count && i < 4U; i++) {
+      wsprintfA(message, "NVIF SCLASS class[%lu]=%08lx",
+                (unsigned long)i, (unsigned long)classes[i]);
+      nvx_bridge_nouveau_trace(message);
+   }
+}
+
+void
+NvxWglRecordNouveauPushbuf(uint32_t channel, uint32_t nr_push,
+                           uint32_t nr_buffers, uint32_t nr_relocs)
+{
+   char message[96];
+
+   wsprintfA(message, "Nouveau pushbuf channel=%08lx pushes=%lu buffers=%lu relocs=%lu",
+             (unsigned long)channel, (unsigned long)nr_push,
+             (unsigned long)nr_buffers, (unsigned long)nr_relocs);
+   nvx_bridge_nouveau_trace(message);
+}
+
+void
+NvxWglRecordNouveauObject(uint32_t token_low, uint32_t token_high,
+                          uint32_t user_class, uint32_t user_handle,
+                          uint32_t rm_class, uint32_t rm_handle,
+                          uint32_t result)
+{
+   char message[96];
+
+   wsprintfA(message,
+             "NVIF NEW token=%08lx:%08lx class=%08lx handle=%08lx rm=%08lx/%08lx result=%lu",
+             (unsigned long)token_high, (unsigned long)token_low,
+             (unsigned long)user_class, (unsigned long)user_handle,
+             (unsigned long)rm_class, (unsigned long)rm_handle,
+             (unsigned long)result);
+   nvx_bridge_nouveau_trace(message);
+}
+
+static void
+nvx_bridge_nouveau_trace(const char *message)
+{
+   HANDLE file;
+   DWORD written;
+
+   file = CreateFileA("C:\\test_accel\\nvx_nouveau_trace.log",
+                      FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                      NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+   if (file == INVALID_HANDLE_VALUE)
+      return;
+   WriteFile(file, message, (DWORD)strlen(message), &written, NULL);
+   WriteFile(file, "\r\n", 2, &written, NULL);
+   CloseHandle(file);
 }
 
 /* Use the bounded NVX bridge by default on the NVX WGL screen. An explicit

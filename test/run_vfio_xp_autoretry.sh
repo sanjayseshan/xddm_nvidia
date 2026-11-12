@@ -49,7 +49,8 @@ while [ "$attempt" -le "$MAX_RETRIES" ]; do
         echo "==> Driver activity confirmed (PID $VM_PID). Monitoring session..."
 
         # Monitor loop for test completion or timeout, then soft powerdown
-        for s in $(seq 1 120); do
+        TEST_TIMEOUT="${NVX_TEST_TIMEOUT:-90}"
+        for s in $(seq 1 "$TEST_TIMEOUT"); do
             sleep 1
             if ! kill -0 "$VM_PID" 2>/dev/null; then
                 break
@@ -66,6 +67,17 @@ while [ "$attempt" -le "$MAX_RETRIES" ]; do
                 else
                     echo "==> All benchmarks completed! Sending soft ACPI powerdown..."
                 fi
+                echo "system_powerdown" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock 2>/dev/null || true
+                sleep 5
+                break
+            fi
+
+            # WGL context creation can stall before the application emits a
+            # completion marker. Stop promptly once the miniport confirms the
+            # same run has wedged its CE queue instead of leaving the guest
+            # attached to the physical display for the full timeout.
+            if grep -q 'NVX \[COPY-Q\]: submit timeout' "$NVX_RUN_LOG" 2>/dev/null; then
+                echo "==> GPU queue timeout detected; requesting soft ACPI powerdown."
                 echo "system_powerdown" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock 2>/dev/null || true
                 sleep 5
                 break
@@ -88,6 +100,17 @@ while [ "$attempt" -le "$MAX_RETRIES" ]; do
         if kill -0 "$VM_PID" 2>/dev/null; then
             echo "quit" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock 2>/dev/null || true
             sleep 2
+        fi
+
+        if kill -0 "$VM_PID" 2>/dev/null; then
+            echo "==> QEMU did not exit after monitor shutdown; sending TERM."
+            kill -TERM "$VM_PID" 2>/dev/null || true
+            sleep 2
+        fi
+        if kill -0 "$VM_PID" 2>/dev/null; then
+            echo "==> QEMU is still active; sending KILL to end the bounded test."
+            pkill -9 -P "$VM_PID" 2>/dev/null || true
+            kill -9 "$VM_PID" 2>/dev/null || true
         fi
 
         wait "$VM_PID" || true

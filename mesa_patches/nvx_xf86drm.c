@@ -16,6 +16,18 @@
 #include "nvif/cl0080.h"
 #include "nvif/ioctl.h"
 
+#if defined(_WIN32) || defined(_WIN64)
+void NvxWglRecordNouveauSclass(uint32_t token_low, uint32_t token_high,
+                              uint32_t result, uint32_t count,
+                              const uint32_t *classes);
+void NvxWglRecordNouveauPushbuf(uint32_t channel, uint32_t nr_push,
+                               uint32_t nr_buffers, uint32_t nr_relocs);
+void NvxWglRecordNouveauObject(uint32_t token_low, uint32_t token_high,
+                              uint32_t user_class, uint32_t user_handle,
+                              uint32_t rm_class, uint32_t rm_handle,
+                              uint32_t result);
+#endif
+
 #define NVX_DRM_DEVICE_SLOTS 8U
 #define NVX_DRM_BUFFER_SLOTS 64U
 #define NVX_DRM_OBJECT_SLOTS 8U
@@ -246,6 +258,12 @@ nvx_drm_nvif_sclass(int fd, void *data, unsigned long size)
    }
    nvx_drm_lock_release();
 
+#if defined(_WIN32) || defined(_WIN64)
+   NvxWglRecordNouveauSclass((uint32_t)ioctl->token,
+                             (uint32_t)(ioctl->token >> 32),
+                             found ? 0U : 1U, class_count, classes);
+#endif
+
    if (!found) {
       errno = ENODEV;
       return -1;
@@ -305,6 +323,13 @@ nvx_drm_nvif_channel_object_new(int fd, void *data, unsigned long size)
       return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_WRITE,
                                            DRM_NOUVEAU_NVIF);
 
+#if defined(_WIN32) || defined(_WIN64)
+   NvxWglRecordNouveauObject((uint32_t)ioctl->token,
+                             (uint32_t)(ioctl->token >> 32),
+                             (uint32_t)create->oclass,
+                             (uint32_t)create->handle, 0, 0, 1U);
+#endif
+
    nvx_drm_lock_acquire();
    device = nvx_drm_find_device_locked(fd);
    if (!device || !nvx_drm_channel_token_matches(
@@ -338,6 +363,13 @@ nvx_drm_nvif_channel_object_new(int fd, void *data, unsigned long size)
    slot->rm_handle = rm_handle;
    slot->rm_class = rm_class;
    nvx_drm_lock_release();
+#if defined(_WIN32) || defined(_WIN64)
+   NvxWglRecordNouveauObject((uint32_t)ioctl->token,
+                             (uint32_t)(ioctl->token >> 32),
+                             (uint32_t)create->oclass,
+                             (uint32_t)create->handle, rm_class, rm_handle,
+                             0U);
+#endif
    return 0;
 }
 
@@ -471,8 +503,17 @@ nvx_drm_pushbuf_nop(int fd, struct drm_nouveau_gem_pushbuf *request,
    if (request->nr_push || request->nr_buffers || request->nr_relocs ||
        request->buffers || request->relocs || request->push ||
        request->suffix0 || request->suffix1)
+#if defined(_WIN32) || defined(_WIN64)
+   {
+      NvxWglRecordNouveauPushbuf(request->channel, request->nr_push,
+                                 request->nr_buffers, request->nr_relocs);
       return nvx_drm_unsupported_operation(
          NVX_XF86DRM_UNSUPPORTED_WRITE_READ, DRM_NOUVEAU_GEM_PUSHBUF);
+   }
+#else
+      return nvx_drm_unsupported_operation(
+         NVX_XF86DRM_UNSUPPORTED_WRITE_READ, DRM_NOUVEAU_GEM_PUSHBUF);
+#endif
 
    nvx_drm_lock_acquire();
    device = nvx_drm_find_device_locked(fd);

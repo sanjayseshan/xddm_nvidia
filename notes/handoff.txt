@@ -1491,3 +1491,44 @@ SCLASS result/count/classes and GEM_NEW request details. Next: obtain a clean
 guest run proving SCLASS returns A040/C7B5/902D/C797, then trace the first
 nonempty pushbuf and implement it only through validated operation-specific
 miniport semantics.
+
+## Nouveau object trace and bounded test attempt (November 11, 2026)
+
+The prior hardware run `../test_logs/v3.0.0.8-20261111-224407.log` did prove
+the sign-extension fix: SCLASS accepted token `ffffffff:c56f0002` and returned
+A040, C7B5, 902D, and C797. The guest then stalled during WGL context creation
+and logged a Copy Engine submit timeout. The separate Nouveau trace contained
+no NVIF NEW or nonempty pushbuf request, so the failure is before an observed
+object-create request.
+
+Added per-request NVIF NEW and pushbuf-shape logging to the separate guest file
+`C:\\test_accel\\nvx_nouveau_trace.log`. The XP x64 Nouveau ICD rebuilt with
+Meson 1.12.1, and `make -C src_driver check` passed, including ASan/UBSan host
+tests and x86/x64 MinGW compilation. Mesa submodule sources were restored
+cleanly after the build.
+
+The next attempt, `../test_logs/v3.0.0.8-20261111-225049.log`, produced no
+serial output within 45 seconds and was stopped before the OpenGL test. That
+attempt also changed QEMU to hide its emulated display and removed host evdev
+keyboard/mouse passthrough. It does not test the new object trace and does not
+establish whether removing physical input caused the missing boot activity.
+`-display none` only hides QEMU's emulated display; the passed-through RTX 3070
+still drives its physical monitor, so it cannot guarantee the monitor is
+unaffected by a guest GPU/display stall.
+
+`test/run_vfio_xp_autoretry.sh` now accepts `NVX_TEST_TIMEOUT` (default 90
+seconds), stops early on a logged Copy Engine timeout, then requests ACPI
+powerdown. `test/run_vfio_vm.sh` no longer attaches host evdev devices and uses
+a socket-only monitor. Before another hardware attempt, determine why this
+launch produced no serial activity and ensure the input/display setup can reach
+XP without capturing host input. Keep the next run bounded; the first
+acceptance target is SCLASS plus NVIF NEW trace, not rendering.
+
+A second bounded attempt, `../test_logs/v3.0.0.8-20261111-225434.log`, added
+QEMU virtual USB keyboard/tablet devices and allowed 60 seconds for boot. It
+also produced no serial activity. `qemu-img check winxp_x64.qcow2` reported no
+errors after both stopped boots. The monitor shutdown path now has TERM/KILL
+fallbacks after its bounded graceful-exit attempts, so a future hung QEMU
+process cannot keep the runner waiting indefinitely. The root cause of the
+missing serial output remains unresolved; do not treat these attempts as
+OpenGL or NVIF-object test results.
