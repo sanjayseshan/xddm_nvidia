@@ -42,6 +42,15 @@ application initializes and regular system WGL creates its context. The full
 package import audit is in `../test/audit_xp_imports.py`; XP compatibility shims
 and their Mesa patch remain outside the Mesa submodule in `../mesa_patches/`.
 
+The latest full hardware run is
+`../test_logs/v3.0.0.8-20261111-204936.log`. The Mesa WGL ICD built, passed the
+XP import/subsystem audit, installed into the offline guest, and loaded during
+the run. The Nouveau bridge found the GA104 device, but `NOUVEAU_CHANNEL_ALLOC`
+is still unsupported, so `screens=0`, no NVC0 screen or draw was created, and
+ordinary OpenGL reports `[OPENGL_RESULT] FAIL` / SOFTWARE. Separate NVX
+triangle and native-clear diagnostics passed. This verifies package build/load
+and the failure boundary, not accelerated OpenGL.
+
 ## Existing driver assessment
 
 Mesa's NVC0 Gallium driver contains the relevant C797 command construction,
@@ -90,21 +99,32 @@ MESON=/path/to/meson NVX_MESA_BUILD_DIR=/tmp/mesa-xp64-build \
   ./../test/build_mesa_xp64.sh
 ```
 
-The build currently selects `-Dgallium-drivers=softpipe` and produces
-`nvxogl64.dll` for XP subsystem 5.2. `../test/audit_xp_imports.py` checks the
-package against the guest's actual exports. `../test/test_mesa_xp_shims.sh` and
+The build selects `-Dgallium-drivers=nouveau,softpipe` and produces
+`nvxogl64.dll` for XP subsystem 5.2. WGL attempts Nouveau first, but channel
+allocation currently prevents screen creation; softpipe remains the ordinary
+renderer. `../test/audit_xp_imports.py` checks the package against the guest's
+actual exports. `../test/test_mesa_xp_shims.sh` and
 `../test/test_mesa_wgl_load.sh` cover the XP shims and ICD load/export path.
+When the Meson version differs from the one that created the `/tmp` build
+directory, the build helper wipes and reconfigures that directory. Its
+generated cross file is stored alongside the build directory so a wipe does
+not remove it.
 
 ## Next implementation steps
 
-1. Specify resource, context, mapping, and synchronization operations needed
-   by Gallium; extend the miniport ABI with bounded general buffers and
-   block-linear color/depth targets while preserving current probes.
-2. Implement a Windows Gallium winsys using those interfaces, then wire the
-   NVC0 Gallium driver into Mesa's WGL target through external patches.
-3. Bring up shader/state submission and normal triangle draws, then add
+1. Implement a real RM-owned Nouveau channel lifecycle behind
+   `DRM_NOUVEAU_CHANNEL_ALLOC`, including its mapped pushbuffer, engine objects,
+   and fence BO. Do not report a screen until the channel can submit and retire
+   validated work.
+2. Extend the miniport ABI from fixed diagnostic profiles to bounded NVC0
+   batches with full method/subchannel/class validation, BO residency and
+   access validation, kernel-owned command staging, and fence completion.
+3. Implement remaining XP resource, context, mapping, and synchronization
+   operations needed by Gallium, then connect the actual NVC0 screen and WGL
+   presentation through external patches.
+4. Bring up shader/state submission and normal triangle draws, then add
    textures, depth, blending, and full application viewport presentation.
-4. Verify Antigravity's ordinary renderer reports hardware and its animation
+5. Verify Antigravity's ordinary renderer reports hardware and its animation
    runs without new firmware assertions, MMU faults, or display/2D regressions.
 
 Full hardware validation command:
