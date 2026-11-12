@@ -923,11 +923,10 @@ static BOOLEAN NvxGspAllocChannel(PNVX_DEVICE_EXTENSION dev)
 }
 
 /*
- * Opt-in XP x64 graphics-engine bring-up probe. This creates a distinct GR
- * TSG/channel and advertised Ampere graphics object alongside the known-good CE path. It does
- * not submit a draw, change scanout, or make OpenGL available yet. Keep the
- * allocation behind NVX_ENABLE_GR_CHANNEL_PROBE until the guest log confirms
- * the 535 GSP-RM ABI and resource setup on hardware.
+ * Initialize an isolated RM-managed XP x64 graphics channel alongside the
+ * known-good CE path. The normal channel setup validates scheduling and a
+ * semaphore completion, but does not submit a user draw or expose arbitrary
+ * pushbuffer methods. The optional submission probe adds shader workloads.
  */
 #if NVX_ENABLE_GR_CHANNEL_PROBE
 #define NVX_FAULT_SHADOW_PAGE 0x1000U
@@ -1431,15 +1430,13 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
 #endif
     } else LogStr("NVX [GR]: context layout unavailable or exceeds 12MB; no memory promoted.\n");
 #if !NVX_ENABLE_GR_SUBMISSION_PROBE
-    LogStr("NVX [GR]: GR submission disabled; no draw tested.\n");
-    return FALSE;
-#else
+    LogStr("NVX [GR]: shader triangle probe disabled; running bounded C797 clear validation.\n");
+#endif
     if(!dev->GspGrPromotionAccepted||!dev->GspGrContextAliasVerified||
        dev->GspMmuFaultQueued) {
-        LogStr("NVX [GR]: context promotion or backing unverified; no GR submission.\n");
+        LogStr("NVX [GR]: context promotion or backing unverified; no GR work submitted.\n");
         return FALSE;
     }
-#endif
     /* Query RM's own view of context preparation and channel scheduling before
        attempting any packet. These inherited B06F controls are diagnostic;
        they do not synthesize or overwrite GR context state. */

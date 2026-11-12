@@ -2619,7 +2619,7 @@ static void TestNvx3dSubmission(HDC hdc)
             LogMsg("-> [FAIL] 3D completion fence wait failed\n");ok=0;
         } else {LogMsg("-> 3D completion fence signaled\n");clearSubmitted=1;}
     }
-    if(clearSubmitted) {
+    if(clearSubmitted && (caps.Features&NVX_3D_FEATURE_TEST_TRIANGLE)) {
         memset(&submit,0,sizeof(submit));
         memset(&submitted,0,sizeof(submitted));
         submit.Size=sizeof(submit);submit.Version=NVX_3D_ABI_VERSION;
@@ -2648,6 +2648,8 @@ static void TestNvx3dSubmission(HDC hdc)
                 LogMsg("-> [FAIL] triangle fence wait failed\n");ok=0;
             } else LogMsg("-> triangle completion fence signaled\n");
         }
+    } else if(clearSubmitted) {
+        LogMsg("-> Skipping fixed triangle operation; the miniport did not advertise NVX_3D_FEATURE_TEST_TRIANGLE\n");
     }
     if(vertexReady && (caps.Features&NVX_3D_FEATURE_CLIENT_TRIANGLE)) {
         NVX_3D_ALLOC_BUFFER depthAlloc={0},depthAllocated={0};
@@ -2739,7 +2741,8 @@ static void TestNvx3dSubmission(HDC hdc)
                       (LPCSTR)&depthFree,0,NULL);
         }
     }
-    if(clearSubmitted&&vertexReady) {
+    if(clearSubmitted&&vertexReady&&
+       (caps.Features&NVX_3D_FEATURE_CLIENT_TRIANGLE)) {
         memset(&submit,0,sizeof(submit));memset(&submitted,0,sizeof(submitted));
         submit.Size=sizeof(submit);submit.Version=NVX_3D_ABI_VERSION;
         submit.Operation=NVX_3D_SUBMIT_DRAW_TRIANGLE;
@@ -2918,6 +2921,9 @@ static void TestNvx3dSubmission(HDC hdc)
                         }
                     }
                 }
+                if(!(caps.Features&NVX_3D_FEATURE_CLIENT_TRIANGLE)) {
+                    LogMsg("[NVX_3D_SURFACE_DRAW_RESULT] SKIP client-triangle capability not advertised\n");
+                } else {
                 surfaceVertexAlloc.Size=sizeof(surfaceVertexAlloc);
                 surfaceVertexAlloc.Version=NVX_3D_ABI_VERSION;
                 surfaceVertexAlloc.Usage=1;
@@ -3004,6 +3010,7 @@ static void TestNvx3dSubmission(HDC hdc)
                             ok=0;
                         }
                     }
+                }
                 }
                 surfaceFree.Size=sizeof(surfaceFree);
                 surfaceFree.Version=NVX_3D_ABI_VERSION;

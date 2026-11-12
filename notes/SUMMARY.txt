@@ -1,6 +1,17 @@
 NVIDIA GA104 Display Driver — cumulative development summary
 Updated: November 11, 2026 (version 3.0.0.5, session and request identities)
 
+Latest default-build hardware check: `../test_logs/v3.0.0.5-20261111-194550.log`.
+Normal `full` builds now enable isolated RM-managed GR channel/context setup and
+the bounded kernel-authored C797 clear by default; the shader-triangle probe
+remains disabled. The RTX 3070 guest verifies the clear and semaphore, reports
+`[NVX_3D_RESULT] PASS`, and retains the existing 2D path. The test harness now
+skips triangle operations unless the miniport advertises the matching feature.
+Startup firmware assertion count remains one. Mesa still reports
+`[OPENGL_RESULT] SOFTWARE`: its first native Nouveau operation,
+`NOUVEAU_CHANNEL_ALLOC`, is unsupported, so there is still no Nouveau screen,
+Gallium NVC0 rendering, or hardware-accelerated OpenGL. Phase 2C remains open.
+
 Current ABI 16 work (version 3.0.0.5): `ClientToken` owns BOs within a
 kernel-issued session; `AllocationToken` and `RequestToken` provide separate
 retry identities for allocations and submits. Host checks, XP x86/x64 builds,

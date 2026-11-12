@@ -1035,13 +1035,13 @@ static BOOLEAN NvxGspCreateObjects(PNVX_DEVICE_EXTENSION dev,ULONG rxSequence)
         LogStr("NVX [GR-MAP]: context mapping is unverified; GR promotion remains disabled.\n");
         if(dev->GspChannelFaulted) return FALSE;
     }
-    LogStr("NVX [GR]: compile-time isolated GR probe enabled.\n");
-    /* GR allocation failure is diagnostic only; preserve the known-good
-       display/copy path while we validate the new engine independently. */
+    LogStr("NVX [GR]: isolated RM graphics channel initialization enabled.\n");
+    /* GR setup is isolated from the known-good CE/display path. A setup
+       failure leaves graphics unavailable while preserving display/copy. */
     if(!NvxGspCreateGraphicsProbe(dev))
         LogStr("NVX [GR]: bring-up probe incomplete; display remains enabled.\n");
 #else
-    LogStr("NVX [GR]: compile-time isolated GR probe disabled.\n");
+    LogStr("NVX [GR]: isolated RM graphics channel initialization disabled.\n");
 #endif
     return TRUE;
 }

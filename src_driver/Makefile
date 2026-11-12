@@ -2,8 +2,8 @@ CC = x86_64-w64-mingw32-gcc
 CC32 = i686-w64-mingw32-gcc
 EXPERIMENTAL_GSP ?= 0
 UNSAFE_GSP_PROBE ?= 0
-NVX_ENABLE_GR_CHANNEL_PROBE ?= 0
-NVX_ENABLE_GR_PROMOTE_PROBE ?= 0
+NVX_ENABLE_GR_CHANNEL_PROBE ?= 1
+NVX_ENABLE_GR_PROMOTE_PROBE ?= 1
 NVX_ENABLE_GR_SUBMISSION_PROBE ?= 0
 NVX_ENABLE_GR_UNPRIVILEGED_CONTEXT_PROBE ?= 0
 OPEN_GPU_DIR = ../open-gpu-kernel-modules
@@ -105,8 +105,8 @@ probe: EXPERIMENTAL_GSP=1
 probe: UNSAFE_GSP_PROBE=1
 probe: nvxmp.sys
 
-# Opt-in RM allocation diagnostic. It does not submit rendering work and is
-# deliberately excluded from normal full builds until tested on the XP guest.
+# The RM-managed GR channel setup is included in normal full builds. The
+# dedicated target remains useful for isolating it from other probe options.
 full-gr-probe: EXPERIMENTAL_GSP=1
 full-gr-probe: NVX_ENABLE_GR_CHANNEL_PROBE=1
 full-gr-probe: nvxmp.sys

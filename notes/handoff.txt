@@ -1095,3 +1095,29 @@ semaphore probes passed, with one startup firmware assertion and no MMU-fault
 entry. The depth-enabled cube comparison still failed while the dedicated
 no-depth comparison passed. This supports keeping the bridge's experimental
 depth submission disabled while investigating the persistent-depth path.
+## Default GR bring-up and test-gating follow-up (November 11, 2026)
+
+The ordinary `full` build now enables isolated RM-managed GR channel and
+context-promotion setup. With shader-triangle submission disabled, it runs the
+bounded kernel-authored C797 clear and semaphore validation. Hardware log:
+`../test_logs/v3.0.0.5-20261111-194550.log`. GR clear/readback and semaphore
+pass, `[NVX_3D_RESULT] PASS`, and 2D checks pass. The test harness now skips
+triangle operations unless the miniport advertises that capability. Startup
+firmware assertion count remains one. Mesa still reports software because
+native Nouveau screen creation stops at unsupported `NOUVEAU_CHANNEL_ALLOC`;
+no Gallium NVC0 draw has occurred.
+
+Allocation clarification: the XP `DRM_NOUVEAU_GEM_NEW` shim already calls
+`NvxNouveauBoCreate`, which maps a Nouveau BO request to the miniport's owned
+NVX allocation ABI; map, upload/download, fence wait, and free paths are also
+present. This BO layer is not reachable from the native Gallium Nouveau screen
+factory because screen initialization first requests a Nouveau channel. Do not
+fake a channel handle: proper support needs an RM-owned channel/object setup,
+validated NVC0 submission, and fences through the kernel ABI.
+
+NullMoth's macOS NVK path uses a different front-end contract: its Metal plugin
+translates AIR shaders to SPIR-V and calls Mesa NVK as a Vulkan driver. That is
+not Gallium Nouveau's `nouveau_screen_create()` path. An XP analogue could
+choose a Vulkan ICD plus NVK, but it would still need an XP Vulkan loader/ICD
+boundary and NVK winsys/kernel services. Current work instead targets an
+OpenGL ICD and Gallium Nouveau, so the OS-facing interfaces are not interchangeable.
