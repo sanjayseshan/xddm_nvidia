@@ -441,6 +441,9 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG GspGraphicsContextShareHandle;
     ULONG GspGraphicsChannelHandle;
     ULONG GspGraphicsObjectHandle;
+    ULONG GspGraphicsM2mfObjectHandle;
+    ULONG GspGraphicsCopyObjectHandle;
+    ULONG GspGraphics2dObjectHandle;
     BOOLEAN GspCopyVerified;
     BOOLEAN GspChannelFaulted;
     BOOLEAN GspGraphicsChannelReady;

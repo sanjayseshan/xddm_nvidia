@@ -41,6 +41,13 @@
 #define NVX_ENABLE_GR_UNPRIVILEGED_CONTEXT_PROBE 0
 #endif
 
+#define NVX_RM_CLASS_KEPLER_I2M_B        0x0000a140U
+#define NVX_RM_CLASS_AMPERE_DMA_COPY_B   0x0000c7b5U
+#define NVX_RM_CLASS_FERMI_2D_A          0x0000902dU
+#define NVX_RM_OBJECT_NVC0_M2MF          0xc6970010U
+#define NVX_RM_OBJECT_NVC0_COPY          0xc6970011U
+#define NVX_RM_OBJECT_NVC0_2D            0xc6970012U
+
 /* Convert a pixel coordinate in an Ampere/Turing 2D GOB ARGB target to its
    byte offset. TileMode carries the vertical GOB block height in bits 6:4.
    The intra-GOB sector ordering differs from the legacy Fermi helper below. */
@@ -1231,6 +1238,9 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         LogStr("NVX [GR]: probe preconditions failed; graphics remains disabled.\n");
         return FALSE;
     }
+    dev->GspGraphicsM2mfObjectHandle=0;
+    dev->GspGraphicsCopyObjectHandle=0;
+    dev->GspGraphics2dObjectHandle=0;
     grBufferInfo=&dev->GrContextInfoParams;
     scratchPhys=(ULONG64)dev->GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET;
     instPhys=scratchPhys+0xa000;
@@ -1370,6 +1380,27 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     if(!NvxGspAlloc(dev,channelHandle,grHandle,grClass,NULL,0)) {
         LogStr("NVX [GR]: Ampere graphics object allocation failed; class=");LogHex(grClass);LogStr("\n");
         return FALSE;
+    }
+    if(NvxGspAlloc(dev,channelHandle,NVX_RM_OBJECT_NVC0_M2MF,
+                   NVX_RM_CLASS_KEPLER_I2M_B,NULL,0)) {
+        dev->GspGraphicsM2mfObjectHandle=NVX_RM_OBJECT_NVC0_M2MF;
+        LogStr("NVX [GR]: RM P2MF/I2M-B object allocated on graphics channel.\n");
+    } else {
+        LogStr("NVX [GR]: RM P2MF/I2M-B allocation unavailable.\n");
+    }
+    if(NvxGspAlloc(dev,channelHandle,NVX_RM_OBJECT_NVC0_COPY,
+                   NVX_RM_CLASS_AMPERE_DMA_COPY_B,NULL,0)) {
+        dev->GspGraphicsCopyObjectHandle=NVX_RM_OBJECT_NVC0_COPY;
+        LogStr("NVX [GR]: Ampere copy object allocated on graphics channel.\n");
+    } else {
+        LogStr("NVX [GR]: Ampere copy object allocation unavailable.\n");
+    }
+    if(NvxGspAlloc(dev,channelHandle,NVX_RM_OBJECT_NVC0_2D,
+                   NVX_RM_CLASS_FERMI_2D_A,NULL,0)) {
+        dev->GspGraphics2dObjectHandle=NVX_RM_OBJECT_NVC0_2D;
+        LogStr("NVX [GR]: Fermi 2D object allocated on graphics channel.\n");
+    } else {
+        LogStr("NVX [GR]: Fermi 2D object allocation unavailable.\n");
     }
     if(!NvxGspControl(dev,channelHandle,NVA06F_CTRL_CMD_BIND,&bindEngine,sizeof(bindEngine))) {
         LogStr("NVX [GR]: graphics channel bind failed.\n");

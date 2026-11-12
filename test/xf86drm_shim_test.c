@@ -170,7 +170,10 @@ main(void)
    winsys.caps.Features = NVX_3D_FEATURE_GR_CHANNEL |
                           NVX_3D_FEATURE_USER_ALLOC |
                           NVX_3D_FEATURE_UPLOAD |
-                          NVX_3D_FEATURE_DOWNLOAD |
+                            NVX_3D_FEATURE_DOWNLOAD |
+                            NVX_3D_FEATURE_NVC0_M2MF_OBJECT |
+                            NVX_3D_FEATURE_NVC0_COPY_OBJECT |
+                            NVX_3D_FEATURE_NVC0_2D_OBJECT |
                           NVX_3D_FEATURE_FIXED_PROFILE_SUBMIT;
    winsys.caps.DeviceId = 0x2488U;
    winsys.caps.Chipset = 0x170U;
@@ -187,6 +190,7 @@ main(void)
       struct drm_nouveau_gem_new create = {0};
       struct drm_nouveau_gem_info info = {0};
       struct drm_nouveau_gem_cpu_prep prep = {0};
+      struct drm_nouveau_gem_cpu_fini fini = {0};
       uint32_t *map;
       create.info.size = 4096;
       create.info.domain = NOUVEAU_GEM_DOMAIN_GART;
@@ -251,6 +255,12 @@ main(void)
       assert(drmCommandWrite(fd, DRM_NOUVEAU_GEM_CPU_PREP, &prep,
                              sizeof(prep)) == 0);
       assert(NvxXf86DrmFlushBuffer(fd, create.info.handle) == 0);
+      fini.handle = create.info.handle;
+      assert(drmCommandWrite(fd, DRM_NOUVEAU_GEM_CPU_FINI, &fini,
+                             sizeof(fini)) == 0);
+      assert(drmCommandWrite(fd, DRM_NOUVEAU_GEM_CPU_FINI, &fini,
+                             sizeof(fini) - 1U) == -1);
+      assert(errno == ENOSYS);
       assert(drmCloseBufferHandle(fd, create.info.handle) == 0);
       assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_INFO, &info,
                                  sizeof(info)) == -1);
@@ -352,8 +362,34 @@ main(void)
          query.sclass.count = 16;
          assert(drmCommandWriteRead(fd, DRM_NOUVEAU_NVIF, &query,
                                     sizeof(query)) == 0);
-         assert(query.sclass.count == 1);
-         assert(query.classes[0].oclass == 0xc797);
+         assert(query.sclass.count == 4);
+         assert(query.classes[0].oclass == 0xa040);
+         assert(query.classes[1].oclass == 0xc7b5);
+         assert(query.classes[2].oclass == 0x902d);
+         assert(query.classes[3].oclass == 0xc797);
+      }
+      {
+         struct {
+            struct nvif_ioctl_v0 ioctl;
+            struct nvif_ioctl_new_v0 create;
+         } create = {0};
+         struct nvif_ioctl_v0 destroy = {0};
+
+         create.ioctl.route = NVIF_IOCTL_V0_ROUTE_HIDDEN;
+         create.ioctl.token = (uint32_t)channel.channel;
+         create.ioctl.type = NVIF_IOCTL_V0_NEW;
+         create.create.handle = 0xbeef323fU;
+         create.create.object = 0x12345678U;
+         create.create.oclass = 0xa040;
+         create.create.route = NVIF_IOCTL_V0_ROUTE_NVIF;
+         assert(drmCommandWrite(fd, DRM_NOUVEAU_NVIF, &create,
+                                sizeof(create)) == 0);
+
+         destroy.version = 0;
+         destroy.type = NVIF_IOCTL_V0_DEL;
+         destroy.object = create.create.object;
+         assert(drmCommandWrite(fd, DRM_NOUVEAU_NVIF, &destroy,
+                                sizeof(destroy)) == 0);
       }
 
       pushbuf.channel = (uint32_t)channel.channel;

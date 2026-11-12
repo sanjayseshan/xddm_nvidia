@@ -6,8 +6,9 @@
  *
  * This is a Windows XP compatibility surface, not a Linux DRM implementation.
  * The matching nvx_xf86drm.c maps supported version/device queries and GEM
- * PCI identity and buffer operations onto the NVX miniport ABI; channel allocation, submission,
- * PRIME, and generic ioctls remain unsupported without equivalent NVX calls.
+ * PCI identity, channel leasing, BO lifecycle, and CPU synchronization onto
+ * the NVX miniport ABI. Nonempty pushbuffer submission, PRIME, and generic
+ * ioctls remain unsupported without validated NVX equivalents.
  */
 #include <stdint.h>
 #include <fcntl.h>

@@ -2603,6 +2603,12 @@ BOOLEAN NTAPI HwVidStartIO(
             engine&&engine->GspGraphicsChannelReady&&
                 engine->GspGraphicsCommandVerified&&
                 engine->GspGraphicsPixelClearVerified);
+        if(engine&&engine->GspGraphicsM2mfObjectHandle)
+            caps->Features|=NVX_3D_FEATURE_NVC0_M2MF_OBJECT;
+        if(engine&&engine->GspGraphicsCopyObjectHandle)
+            caps->Features|=NVX_3D_FEATURE_NVC0_COPY_OBJECT;
+        if(engine&&engine->GspGraphics2dObjectHandle)
+            caps->Features|=NVX_3D_FEATURE_NVC0_2D_OBJECT;
         if(engine) {
             caps->DeviceId=engine->DeviceId;
             caps->Chipset=Nvx3dChipsetFromDeviceId(engine->DeviceId);

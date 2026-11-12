@@ -1403,3 +1403,35 @@ implement a kernel-validated submit interface for initialization and draw
 batches. SCLASS must only advertise objects whose creation and lifetime are
 actually backed by RM. A successful empty pushbuf is startup bookkeeping, not
 GPU command submission or accelerated rendering.
+
+## RM engine-object probe and CPU-finish shim (November 11, 2026)
+
+The current uncommitted probe adds RM allocations for the Mesa NVC0 screen's
+M2MF, copy, and 2D classes, then exposes those classes through the NVIF shim
+only when the corresponding RM allocation succeeded. The real run
+`../test_logs/v3.0.0.8-20261111-220022.log` confirms RM allocation status zero
+for classes `0xA140`, `0xC7B5`, and `0x902D`, in addition to C797. This only
+proves RM accepts those resource classes: the logical NVIF object slots are
+not yet safely attached to the leased channel/subchannels, and no Mesa command
+stream is submitted. The run still reports `screens=0` and SOFTWARE OpenGL.
+The unsupported operation remains the optional GETPARAM (operation zero), so
+screen failure is a supported operation returning an error; add failure-stage
+telemetry before drawing a conclusion about which allocation or init step
+fails.
+
+Implemented `DRM_NOUVEAU_GEM_CPU_FINI` in the XP xf86drm shim. It validates the
+UAPI structure and live handle, then flushes the BO's staged write mapping.
+The mock xf86drm test covers valid and malformed CPU-fini requests. The shim
+header now describes channel leasing and BO/CPU synchronization as implemented
+while keeping nonempty pushbuf submission explicitly unsupported.
+`make -C src_driver check` passed after this change, including ASan/UBSan host
+tests and x86/x64 MinGW compilation. No new real-hardware run was made for the
+CPU-fini change.
+
+Remaining OS-pipe work is still substantial: capture why NVC0 screen init
+returns failure; implement truthful channel-child object creation/binding and
+teardown; connect Mesa BO mmap to NVX staging (the Mesa winsys currently calls
+`os_mmap` directly); implement fence/notifier behavior; and map only validated
+NVC0 operations to miniport submission. Do not advertise the current RM object
+probe as a complete Nouveau OS pipe or a working Gallium screen. The hardware
+success gate remains `[OPENGL_RESULT] RENDERED`.
