@@ -1,6 +1,7 @@
 #include "nvx_gr_context.h"
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 int main(void)
@@ -8,6 +9,10 @@ int main(void)
     NVX_GR_REQUIREMENT req[NVX_GR_REQUIREMENT_COUNT]={0};
     NVX_GR_LAYOUT plan;
     uint64_t ptes[4]={0};
+    uint64_t *gart_ptes;
+    NVX_GART_HEAP gart={0};
+    uint32_t first,count;
+    uint64_t gpu_va;
     const unsigned ids[]={0,9,16,17,18,19,20,21,22,23,24};
     const unsigned sizes[]={0xfb000,0xe000,0x5000,0x3000,0x20000,0x851200,
                             0x80000,0,0x464,0x10000,0x80000};
@@ -38,6 +43,34 @@ int main(void)
     assert(!NvxGrBuildPtes(ptes,2,0x123000,0x3000,1));
     assert(!NvxGrBuildPtes(ptes,4,0x123001,0x1000,1));
     assert(!NvxGrBuildPtes(ptes,4,UINT64_C(0xfffff000),0x2000,1));
+    gart_ptes=(uint64_t *)calloc(NVX_GART_SLICE_COUNT *
+                                 NVX_GART_PTES_PER_SLICE,sizeof(uint64_t));
+    assert(gart_ptes);
+    assert(NvxGartReserve(&gart,0x210000,&first,&count,&gpu_va));
+    assert(first==0&&count==2&&gpu_va==NVX_GART_GPU_VA_BASE);
+    assert(NvxGartBuildPtes(gart_ptes,
+        NVX_GART_SLICE_COUNT*NVX_GART_PTES_PER_SLICE,first,count,
+        0x123000,0x210000,0));
+    assert(gart_ptes[0]==((UINT64_C(0x123000)>>4)|0x0d));
+    assert(gart_ptes[(0x20f000>>12)]==
+           ((UINT64_C(0x332000)>>4)|0x0d));
+    assert(gart_ptes[(uint32_t)count*NVX_GART_PTES_PER_SLICE-1U]==0);
+    assert(!NvxGartRelease(&gart,0,3));
+    assert(NvxGartReserve(&gart,1,&first,&count,&gpu_va));
+    assert(first==2&&count==1&&gpu_va==NVX_GART_GPU_VA_BASE+0x400000);
+    assert(NvxGartRelease(&gart,0,2));
+    assert(NvxGartReserve(&gart,0x400000,&first,&count,&gpu_va));
+    assert(first==0&&count==2);
+    assert(NvxGartRelease(&gart,0,2));
+    assert(NvxGartRelease(&gart,2,1));
+    assert(!NvxGartReserve(&gart,0,&first,&count,&gpu_va));
+    assert(!NvxGartReserve(&gart,
+        (uint64_t)NVX_GART_SLICE_COUNT*NVX_GART_SLICE_BYTES+1,
+        &first,&count,&gpu_va));
+    assert(!NvxGartBuildPtes(gart_ptes,
+        NVX_GART_SLICE_COUNT*NVX_GART_PTES_PER_SLICE,0,1,
+        0x123000,0x200001,0));
+    free(gart_ptes);
     puts("GR context layout tests passed: bounds, alignment, required buffers and subcontext headers.");
     return 0;
 }

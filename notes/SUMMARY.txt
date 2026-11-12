@@ -1,5 +1,14 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 11, 2026 (version 3.0.0.7, truthful GEM allocation contract)
+Updated: November 11, 2026 (GART allocator groundwork)
+
+New groundwork in `src_driver/nvx_gr_context.[ch]` implements a bounded
+230 MiB GART VA slice allocator and coherent PTE builder. Host tests pass for
+reserve/release behavior and PTE encoding. It is not connected to miniport BO
+allocation yet; GART caps remain zero and the runtime is unchanged. Next wire
+VideoPort common-buffer backing, PD0 entries and TLB invalidation into the
+miniport, then validate a GPU read/write through a GART BO. The most recent
+full XP runtime test remains `../test_logs/v3.0.0.7-20261111-200604.log`, where
+OpenGL was software due to unsupported `NOUVEAU_CHANNEL_ALLOC`.
 
 Latest full hardware check: `../test_logs/v3.0.0.7-20261111-200604.log`.
 The XP Nouveau GEM shim now rejects tiled/compressed metadata it cannot

@@ -2,6 +2,27 @@
 
 Updated November 11, 2026, after the XP-backed `xf86drm` BO shim and VFIO run.
 
+## GART mapping groundwork (November 11, 2026)
+
+Added a bounded allocator and PTE builder in `src_driver/nvx_gr_context.[ch]`
+for a proposed 230 MiB GART VA window at `0x11a00000..0x1fffffff`. The window
+uses 115 2 MiB slices, each backed by one 512-entry 4 KiB page table, and ends
+before the existing VRAM aperture at `0x20000000`. The helper first-fits and
+releases contiguous slices and builds the current coherent-system PTE encoding
+for a physically contiguous allocation. Host GR context tests cover address
+bounds, fragmentation, double/partial release, zero-length requests, and PTE
+encoding.
+
+`make -C src_driver check` passed. This is groundwork only: no miniport buffer
+entry stores GART backing yet, no common-buffer allocation is wired to the
+helper, caps still report zero GART, and GEM_NEW remains linear VRAM only.
+Before advertising GART, wire allocate/map/upload/download/free through
+VideoPort common buffers, install PTE pointers in the existing PD0 for this VA
+range, invalidate the RM VASpace TLB on map/unmap, retain backing on failed
+teardown, and add host and hardware ownership/readback checks. Gallium still
+stops earlier at `NOUVEAU_CHANNEL_ALLOC`; this change does not alter OpenGL
+runtime behavior.
+
 ## Linear VRAM GEM allocation contract (November 11, 2026)
 
 The `DRM_NOUVEAU_GEM_NEW` compatibility path now rejects unsupported tiled or

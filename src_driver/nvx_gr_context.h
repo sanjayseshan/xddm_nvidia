@@ -14,4 +14,20 @@ typedef struct { uint32_t count; uint64_t bytes; NVX_GR_BUFFER buffers[NVX_GR_MA
 int NvxGrBuildLayout(const NVX_GR_REQUIREMENT *, uint32_t, int, uint64_t, NVX_GR_LAYOUT *);
 /* Encode 4KB coherent system-memory leaves into caller-owned PTEs. */
 int NvxGrBuildPtes(uint64_t *, uint32_t, uint64_t, uint64_t, int);
+
+/* Reserved Gallium/Nouveau GART window: 115 2 MiB slices immediately below
+ * the existing VRAM aperture at 0x20000000. One 4 KiB small-page table maps
+ * each slice. */
+#define NVX_GART_GPU_VA_BASE UINT64_C(0x11a00000)
+#define NVX_GART_SLICE_BYTES UINT32_C(0x00200000)
+#define NVX_GART_SLICE_COUNT 115U
+#define NVX_GART_PTES_PER_SLICE 512U
+#define NVX_GART_BITMAP_WORDS ((NVX_GART_SLICE_COUNT + 31U) / 32U)
+typedef struct NVX_GART_HEAP {
+    uint32_t used[NVX_GART_BITMAP_WORDS];
+} NVX_GART_HEAP;
+int NvxGartReserve(NVX_GART_HEAP *, uint64_t, uint32_t *, uint32_t *, uint64_t *);
+int NvxGartRelease(NVX_GART_HEAP *, uint32_t, uint32_t);
+int NvxGartBuildPtes(uint64_t *, uint32_t, uint32_t, uint32_t,
+                     uint64_t, uint64_t, int);
 #endif
