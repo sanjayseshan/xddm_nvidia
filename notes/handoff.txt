@@ -1121,3 +1121,17 @@ not Gallium Nouveau's `nouveau_screen_create()` path. An XP analogue could
 choose a Vulkan ICD plus NVK, but it would still need an XP Vulkan loader/ICD
 boundary and NVK winsys/kernel services. Current work instead targets an
 OpenGL ICD and Gallium Nouveau, so the OS-facing interfaces are not interchangeable.
+
+Pinned Mesa source audit (`mesa` revision `cc2dcf9abdc6`, November 11, 2026):
+NVK's Nouveau memory/device layer calls `DRM_NOUVEAU_GEM_NEW/INFO`,
+`DRM_NOUVEAU_VM_BIND`, and `DRM_NOUVEAU_EXEC`, and uses DRM sync objects.
+Gallium Nouveau's classic winsys instead starts with `DRM_NOUVEAU_CHANNEL_ALLOC`
+and uses Nouveau channel/object/pushbuf operations. The XP shim currently
+implements BO allocation/map basics but neither submission contract. So moving
+from Gallium to NVK would change the userspace frontend, not eliminate the
+missing privileged GPUVM, channel/exec, synchronization, and fault services.
+The macOS project ports those kernel services alongside its NVK adaptation;
+copying only its Metal-to-Vulkan bridge would not provide them. Keep the
+current WGL/Gallium path unless a separate Vulkan ICD effort is explicitly
+chosen; first define the miniport-owned channel, address-space, validated-submit,
+and fence APIs required by either Mesa backend.
