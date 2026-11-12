@@ -1373,3 +1373,33 @@ Next work is an operation-specific validated submit path (including class,
 method, subchannel, relocation, and session-owned BO checks), then map Mesa's
 pushbuffer/fence operations onto that interface and rerun the real hardware
 OpenGL gate.
+
+## Nouveau empty pushbuf and SCLASS bootstrap (November 11, 2026)
+
+After channel lease began working, Mesa exposed two more startup operations.
+The first `DRM_NOUVEAU_GEM_PUSHBUF` from `nouveau_pushbuf_new()` has
+`nr_push=0` and no buffer or relocation arrays; it only obtains initial suffix
+state. The shim now accepts exactly that no-op for the leased channel and
+returns zero suffixes plus the bounded VRAM/GART aperture values. Requests with
+actual pushes remain unsupported. The Nouveau NVIF shim now answers channel
+`SCLASS` with only the C797 class that the RM channel actually owns; it does
+not pretend the channel has M2MF, copy, or 2D objects.
+
+`make -C src_driver check` passes, including the no-op success/non-empty reject
+cases and the SCLASS host test. Hardware run
+`../test_logs/v3.0.0.8-20261111-214425.log` reaches the Nouveau SCLASS query
+without an NVIF unsupported result. The OpenGL result is still `SOFTWARE` and
+the screen count remains zero. `[NVX_XF86DRM]` shows one remaining unsupported
+GETPARAM request (operation zero); Mesa's `nouveau_screen.c` requests the
+optional PTIMER timestamp and falls back to CPU time if it is unavailable.
+The channel has no M2MF/copy classes, so the NVC0 Gallium screen still cannot
+initialize its engine set or submit initialization commands. The real C797
+triangle/semaphore and 2D checks pass; the full test exits nonzero because the
+hardware OpenGL gate remains unmet.
+
+The next substantial step is to create RM-backed M2MF/copy/2D objects on the
+owned channel (or choose a Mesa screen design that does not require them), then
+implement a kernel-validated submit interface for initialization and draw
+batches. SCLASS must only advertise objects whose creation and lifetime are
+actually backed by RM. A successful empty pushbuf is startup bookkeeping, not
+GPU command submission or accelerated rendering.

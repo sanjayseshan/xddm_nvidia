@@ -18,6 +18,7 @@
 
 #define NVX_DRM_DEVICE_SLOTS 8U
 #define NVX_DRM_BUFFER_SLOTS 64U
+#define NVX_DRM_MAX_SCLASS 16U
 #define NVX_DRM_FD_BASE 0x4e580100
 
 struct nvx_drm_bo_slot {
@@ -151,6 +152,55 @@ nvx_drm_nvif_device_info(int fd, void *data, unsigned long size)
 }
 
 static int
+nvx_drm_nvif_sclass(int fd, void *data, unsigned long size)
+{
+   struct nvif_ioctl_v0 *ioctl = data;
+   struct nvif_ioctl_sclass_v0 *sclass;
+   struct nvx_drm_device_slot *device;
+   unsigned long prefix = sizeof(*ioctl) + sizeof(*sclass);
+   unsigned long expected;
+   uint8_t capacity;
+   int found = 0;
+
+   if (!data || size < prefix || ioctl->version != 0 ||
+       ioctl->type != NVIF_IOCTL_V0_SCLASS)
+      return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_WRITE_READ,
+                                           DRM_NOUVEAU_NVIF);
+   sclass = (struct nvif_ioctl_sclass_v0 *)((uint8_t *)data + sizeof(*ioctl));
+   capacity = sclass->count;
+   expected = prefix + (unsigned long)capacity *
+      sizeof(struct nvif_ioctl_sclass_oclass_v0);
+   if (capacity > NVX_DRM_MAX_SCLASS || size != expected ||
+       sclass->version != 0 ||
+       ioctl->route != NVIF_IOCTL_V0_ROUTE_HIDDEN)
+      return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_WRITE_READ,
+                                           DRM_NOUVEAU_NVIF);
+
+   nvx_drm_lock_acquire();
+   device = nvx_drm_find_device_locked(fd);
+   if (device && device->device.NouveauChannelHandle &&
+       ioctl->token == device->device.NouveauChannelHandle &&
+       device->device.NouveauGraphicsObjectHandle)
+      found = 1;
+   if (found && capacity) {
+      struct nvif_ioctl_sclass_oclass_v0 *entry =
+         (struct nvif_ioctl_sclass_oclass_v0 *)((uint8_t *)sclass +
+                                                 sizeof(*sclass));
+      entry[0].oclass = (int32_t)device->device.caps.GraphicsClass;
+      entry[0].minver = 0;
+      entry[0].maxver = 0;
+   }
+   nvx_drm_lock_release();
+
+   if (!found) {
+      errno = ENODEV;
+      return -1;
+   }
+   sclass->count = 1;
+   return 0;
+}
+
+static int
 nvx_drm_channel_alloc(int fd, struct drm_nouveau_channel_alloc *request,
                       unsigned long size)
 {
@@ -211,6 +261,43 @@ nvx_drm_channel_free(int fd, struct drm_nouveau_channel_free *request,
       return 0;
    errno = device ? EINVAL : ENODEV;
    return -1;
+}
+
+/* Mesa issues one empty pushbuf request during nouveau_pushbuf_new() to
+ * initialize its suffix state. It contains no command stream and needs no GPU
+ * submission. Keep this separate from real GEM_PUSHBUF kicks. */
+static int
+nvx_drm_pushbuf_nop(int fd, struct drm_nouveau_gem_pushbuf *request,
+                    unsigned long size)
+{
+   struct nvx_drm_device_slot *device;
+
+   if (!request || size != sizeof(*request))
+      return nvx_drm_unsupported_operation(
+         NVX_XF86DRM_UNSUPPORTED_WRITE_READ, DRM_NOUVEAU_GEM_PUSHBUF);
+
+   if (request->nr_push || request->nr_buffers || request->nr_relocs ||
+       request->buffers || request->relocs || request->push ||
+       request->suffix0 || request->suffix1)
+      return nvx_drm_unsupported_operation(
+         NVX_XF86DRM_UNSUPPORTED_WRITE_READ, DRM_NOUVEAU_GEM_PUSHBUF);
+
+   nvx_drm_lock_acquire();
+   device = nvx_drm_find_device_locked(fd);
+   if (!device || !device->device.NouveauChannelHandle ||
+       !device->device.NouveauGraphicsObjectHandle ||
+       request->channel != device->device.NouveauChannelHandle) {
+      nvx_drm_lock_release();
+      errno = device ? EINVAL : ENODEV;
+      return -1;
+   }
+
+   request->suffix0 = 0;
+   request->suffix1 = 0;
+   request->vram_available = device->device.caps.VramApertureBytes;
+   request->gart_available = device->device.caps.GartBytes;
+   nvx_drm_lock_release();
+   return 0;
 }
 
 static void
@@ -680,8 +767,15 @@ drmCommandWriteRead(int fd, unsigned long command, void *data,
       return nvx_drm_getparam(fd, data, size);
    if (command == DRM_NOUVEAU_CHANNEL_ALLOC)
       return nvx_drm_channel_alloc(fd, data, size);
+   if (command == DRM_NOUVEAU_GEM_PUSHBUF)
+      return nvx_drm_pushbuf_nop(fd, data, size);
    if (command == DRM_NOUVEAU_NVIF)
-      return nvx_drm_nvif_device_info(fd, data, size);
+      {
+         struct nvif_ioctl_v0 *ioctl = data;
+         if (ioctl && ioctl->type == NVIF_IOCTL_V0_SCLASS)
+            return nvx_drm_nvif_sclass(fd, data, size);
+         return nvx_drm_nvif_device_info(fd, data, size);
+      }
    if (command == DRM_NOUVEAU_GEM_NEW) {
       struct drm_nouveau_gem_new *request = data;
       int found;

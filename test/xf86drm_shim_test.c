@@ -340,9 +340,33 @@ main(void)
              (NOUVEAU_GEM_DOMAIN_VRAM | NOUVEAU_GEM_DOMAIN_GART));
       assert(channel.notifier_handle == 0);
 
+      {
+         struct {
+            struct nvif_ioctl_v0 ioctl;
+            struct nvif_ioctl_sclass_v0 sclass;
+            struct nvif_ioctl_sclass_oclass_v0 classes[16];
+         } query = {0};
+         query.ioctl.type = NVIF_IOCTL_V0_SCLASS;
+         query.ioctl.route = NVIF_IOCTL_V0_ROUTE_HIDDEN;
+         query.ioctl.token = (uint32_t)channel.channel;
+         query.sclass.count = 16;
+         assert(drmCommandWriteRead(fd, DRM_NOUVEAU_NVIF, &query,
+                                    sizeof(query)) == 0);
+         assert(query.sclass.count == 1);
+         assert(query.classes[0].oclass == 0xc797);
+      }
+
+      pushbuf.channel = (uint32_t)channel.channel;
+      assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_PUSHBUF, &pushbuf,
+                                 sizeof(pushbuf)) == 0);
+      assert(pushbuf.suffix0 == 0 && pushbuf.suffix1 == 0);
+      assert(pushbuf.vram_available == winsys.caps.VramApertureBytes);
+      assert(pushbuf.gart_available == winsys.caps.GartBytes);
+
       memset(&status, 0, sizeof(status));
       NvxXf86DrmGetStatus(&status);
       previous_unsupported = status.UnsupportedCount;
+      pushbuf.nr_push = 1;
       assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_PUSHBUF, &pushbuf,
                                  sizeof(pushbuf)) == -1);
       assert(errno == ENOSYS);
