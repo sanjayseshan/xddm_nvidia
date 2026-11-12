@@ -4,12 +4,21 @@ Status: source/API mapping, an XP device/BO adapter, and a narrow clear-packet
 bridge; no Mesa submodule files were changed. The pinned NVC0 compiler target
 cross-builds for XP x64.
 
-ABI 14 now carries the PCI bus and slot from the miniport, and the external
-`xf86drm` shim exposes a PCI device record instead of a platform record. The
-runtime test `../test_logs/v3.0.0.3-20261111-175309.log` confirms BDF `00:02.0`
-and still identifies `DRM_NOUVEAU_CHANNEL_ALLOC` as the first unsupported
-operation. OpenGL remains softpipe; channel allocation, objects, and validated
-submission are still required for a native screen.
+ABI 16 carries the PCI bus/slot and uses kernel-issued client sessions with
+separate allocation and submit retry keys. The runtime test
+`../test_logs/v3.0.0.5-20261111-191355.log` confirms the XP x64 package, direct
+NVX 3D path, Nouveau+softpipe ICD, and RTX 3070 boot all pass, while OpenGL
+remains softpipe. `DRM_NOUVEAU_CHANNEL_ALLOC` is still the first unsupported
+operation. The session work is BO ownership/lifecycle groundwork; it does not
+create a Gallium channel, NVIF object service, or generic pushbuffer submitter.
+
+The first channel request from pinned Gallium source is for the GR engine
+(`nve0_fifo.engine = 0x30`). Its 32-byte output must include a usable channel
+handle, pushbuffer domains, notifier handle, and subchannel assignments. Mesa
+immediately follows it with an empty `DRM_NOUVEAU_GEM_PUSHBUF` kick and consumes
+the returned suffix fields. It then queries NVIF channel classes and creates
+SW/M2MF/COPY/2D/C797 objects before issuing setup methods. This exact sequence
+is mapped in the ABI 16 section of `handoff.txt`.
 
 The driver-owned GR test channel uses a private 512-entry GPFIFO and a strict
 kernel-authored clear envelope. Nouveau's screen setup also allocates a

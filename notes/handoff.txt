@@ -213,6 +213,35 @@ hardware-accelerated OpenGL.
 
 ## Nouveau channel and pushbuffer boundary audit (November 11, 2026)
 
+### Exact Gallium first-call contract (source checked November 11, 2026)
+
+For GA104, Nouveau's `nouveau_screen_init()` creates a
+`NOUVEAU_FIFO_CHANNEL_CLASS` object with `nve0_fifo.engine = 0x30`
+(`NOUVEAU_FIFO_ENGINE_GR`). `nouveau_object_channel_new()` sends a
+`drm_nouveau_channel_alloc` request (32 bytes): framebuffer and TT context-DMA
+handles are request inputs; channel ID, pushbuffer domains, notifier handle,
+and up to eight subchannel class/handle pairs are response fields. The returned
+channel ID becomes the object handle used by all later object operations.
+
+Before any NVC0 screen setup methods, `nouveau_pushbuf_new()` sends a
+zero-push `DRM_NOUVEAU_GEM_PUSHBUF` with only that channel ID and consumes the
+returned `suffix0`/`suffix1`. It then allocates a 512 KiB CPU-side pushbuffer.
+`nvc0_screen_create()` allocates/maps a fence BO, queries channel classes with
+NVIF `SCLASS`, creates SW/M2MF/COPY/2D/C797 objects with NVIF `NEW`, and queues
+initialization methods referencing GPU BO addresses. Normal GEM push submits
+user pointer arrays for BO references, relocations, and push dwords; Nouveau
+consumes kernel-updated BO presumed domains and push suffix state after each
+kick. A channel response by itself is therefore not a useful milestone.
+
+Acceptance gate for a first channel vertical slice: real RM channel ownership
+for the session; correctly initialized response metadata; the zero-push kick
+and suffix update; accurate `SCLASS` results; safe object create/destroy; and
+one known screen-init method batch copied into kernel memory, validated, emitted
+on the scheduled channel, and fenced. Only then let WGL retain the NVC0 screen.
+The following gate must cover normal NVC0 resource and draw submissions before
+claiming accelerated OpenGL. The existing miniport fixed-profile clear cannot
+meet either gate.
+
 The existing GR path is a single miniport-owned GSP-RM channel. The diagnostic
 GR setup allocates channel handle `0xc56f0002`, stores its 512-entry GPFIFO and
 push memory in the miniport's private DMA scratch allocation, and serializes
