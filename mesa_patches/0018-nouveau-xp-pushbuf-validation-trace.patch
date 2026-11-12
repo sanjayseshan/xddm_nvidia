@@ -1,0 +1,226 @@
+--- a/src/gallium/winsys/nouveau/drm/nouveau.c
++++ b/src/gallium/winsys/nouveau/drm/nouveau.c
+@@ -21,6 +21,13 @@
+ #include "util/u_atomic.h"
+ #include "util/u_memory.h"
+ 
++#ifdef NVX_XP_WIN32_SHIMS
++extern void NvxWglRecordMesaInitStage(const char *stage);
++#define NVX_PUSH_TRACE(stage) NvxWglRecordMesaInitStage(stage)
++#else
++#define NVX_PUSH_TRACE(stage) ((void)0)
++#endif
++
+ static FILE *nouveau_out = NULL;
+ static uint32_t nouveau_debug = 0;
+ 
+@@ -1269,14 +1276,19 @@
+    struct nouveau_pushbuf_priv *nvpb = nouveau_pushbuf(push);
+    struct nouveau_pushbuf_krec *krec = nvpb->krec;
+    struct drm_nouveau_gem_pushbuf_bo *kref;
+-   int i;
++   int i, ret;
+ 
+-   int ret = pushbuf_submit(push, push->channel);
++   NVX_PUSH_TRACE("PBFL: enter");
++   NVX_PUSH_TRACE("PBFL: submit begin");
++   ret = pushbuf_submit(push, push->channel);
++   NVX_PUSH_TRACE("PBFL: submit returned");
+ 
+    kref = krec->buffer;
+    for (i = 0; i < krec->nr_buffer; i++, kref++) {
+       struct nouveau_bo *bo = (void *)(uintptr_t)kref->user_priv;
++      NVX_PUSH_TRACE("PBFL: detach begin");
+       ret = cli_kref_set(push->client, bo, NULL, NULL);
++      NVX_PUSH_TRACE("PBFL: detach returned");
+       if (ret)
+          return ret;
+       nouveau_bo_ref(NULL, &bo);
+@@ -1289,12 +1301,14 @@
+    krec->nr_reloc = 0;
+    krec->nr_push = 0;
+ 
++   NVX_PUSH_TRACE("PBFL: bufctx cleanup begin");
+    list_for_each_entry_safe(struct nouveau_bufctx, bctx, &nvpb->bctx_list, head) {
+       list_splice(&bctx->current, &bctx->pending);
+       list_inithead(&bctx->current);
+       list_delinit(&bctx->head);
+    }
+ 
++   NVX_PUSH_TRACE("PBFL: exit");
+    return ret;
+ }
+ 
+@@ -1389,22 +1403,29 @@
+     * the correct ordering of commands
+     */
+    fpush = cli_push_get(push->client, bo);
+-   if (fpush && fpush != push)
++   if (fpush && fpush != push) {
++      NVX_PUSH_TRACE("PBK: other pushbuf flush begin");
+       pushbuf_flush(fpush);
++      NVX_PUSH_TRACE("PBK: other pushbuf flush returned");
++   }
+ 
+    kref = cli_kref_get(push->client, bo);
+    if (kref) {
+       /* possible conflict in memory types - flush and retry */
+-      if (!(kref->valid_domains & domains))
++      if (!(kref->valid_domains & domains)) {
++         NVX_PUSH_TRACE("PBK: existing BO domain conflict");
+          return NULL;
++      }
+ 
+       /* VRAM|GART buffer turning into a VRAM buffer.  Make sure
+        * it'll fit in VRAM and force a flush if not.
+        */
+       if ((kref->valid_domains  & NOUVEAU_GEM_DOMAIN_GART) &&
+           (            domains == NOUVEAU_GEM_DOMAIN_VRAM)) {
+-         if (krec->vram_used + bo->size > dev->vram_limit)
++         if (krec->vram_used + bo->size > dev->vram_limit) {
++            NVX_PUSH_TRACE("PBK: existing BO VRAM limit");
+             return NULL;
++         }
+          krec->vram_used += bo->size;
+          krec->gart_used -= bo->size;
+       }
+@@ -1413,9 +1434,14 @@
+       kref->write_domains |= domains_wr;
+       kref->read_domains  |= domains_rd;
+    } else {
+-      if (krec->nr_buffer == NOUVEAU_GEM_MAX_BUFFERS ||
+-          !pushbuf_kref_fits(push, bo, &domains))
++      if (krec->nr_buffer == NOUVEAU_GEM_MAX_BUFFERS) {
++         NVX_PUSH_TRACE("PBK: max buffer references");
+          return NULL;
++      }
++      if (!pushbuf_kref_fits(push, bo, &domains)) {
++         NVX_PUSH_TRACE("PBK: memory domain limit");
++         return NULL;
++      }
+ 
+       kref = &krec->buffer[krec->nr_buffer++];
+       kref->user_priv = (uintptr_t)bo;
+@@ -1431,8 +1457,10 @@
+          kref->presumed.domain = NOUVEAU_GEM_DOMAIN_GART;
+ 
+       ret = cli_kref_set(push->client, bo, kref, push);
+-      if (ret)
++      if (ret) {
++         NVX_PUSH_TRACE("PBK: client reference registration failed");
+          return NULL;
++      }
+       p_atomic_inc(&nouveau_bo(bo)->refcnt);
+    }
+ 
+@@ -1543,45 +1571,64 @@
+    int relocs = bctx ? bctx->relocs * 2: 0;
+    int sref, srel, ret;
+ 
++   NVX_PUSH_TRACE("PBV: enter");
++   NVX_PUSH_TRACE("PBV: space begin");
+    ret = nouveau_pushbuf_space(push, relocs, relocs, 0);
+-   if (ret || bctx == NULL)
++   NVX_PUSH_TRACE("PBV: space returned");
++   if (ret || bctx == NULL) {
++      NVX_PUSH_TRACE("PBV: exit without bufctx");
+       return ret;
++   }
+ 
+    sref = krec->nr_buffer;
+    srel = krec->nr_reloc;
+ 
++   NVX_PUSH_TRACE("PBV: bufctx list move begin");
+    list_del(&bctx->head);
+    list_add(&bctx->head, &nvpb->bctx_list);
++   NVX_PUSH_TRACE("PBV: bufctx list move returned");
+ 
++   NVX_PUSH_TRACE("PBV: pending refs begin");
+    list_for_each_entry(struct nouveau_bufref, bref, &bctx->pending, thead) {
++      NVX_PUSH_TRACE("PBV: kref begin");
+       kref = pushbuf_kref(push, bref->bo, bref->flags);
++      NVX_PUSH_TRACE("PBV: kref returned");
+       if (!kref) {
+          ret = -ENOSPC;
+          break;
+       }
+ 
+       if (bref->packet) {
++         NVX_PUSH_TRACE("PBV: packet relocs begin");
+          pushbuf_krel(push, bref->bo, bref->packet, 0, 0, 0);
+          *push->cur++ = 0;
+          pushbuf_krel(push, bref->bo, bref->data, bref->flags,
+                   bref->vor, bref->tor);
+          *push->cur++ = 0;
++         NVX_PUSH_TRACE("PBV: packet relocs returned");
+       }
+    }
+ 
++   NVX_PUSH_TRACE("PBV: pending refs returned");
+    list_splice(&bctx->pending, &bctx->current);
+    list_inithead(&bctx->pending);
++   NVX_PUSH_TRACE("PBV: pending splice returned");
+ 
+    if (ret) {
++      NVX_PUSH_TRACE("PBV: ref rollback begin");
+       ret = pushbuf_refn_fail(push, sref, srel);
++      NVX_PUSH_TRACE("PBV: ref rollback returned");
+       if (ret)
+          return ret;
+       if (retry) {
++         NVX_PUSH_TRACE("PBV: retry flush begin");
+          pushbuf_flush(push);
++         NVX_PUSH_TRACE("PBV: retry flush returned");
+          return pushbuf_validate(push, false);
+       }
+    }
+ 
++   NVX_PUSH_TRACE("PBV: exit");
+    return ret;
+ }
+ 
+@@ -1761,6 +1808,7 @@
+    bool flushed = false;
+    int ret = 0;
+ 
++   NVX_PUSH_TRACE("PBS: enter");
+    /* switch to next buffer if insufficient space in the current one */
+    if (!push->cur || (push->cur + dwords >= push->end)) {
+       if (nvpb->bo_next < nvpb->bo_nr) {
+@@ -1768,7 +1816,9 @@
+          if (nvpb->bo_next == nvpb->bo_nr)
+             nvpb->bo_next = 0;
+       } else {
++         NVX_PUSH_TRACE("PBS: replacement BO create begin");
+          ret = nouveau_bo_new(client->device, nvpb->type, 0, nvpb->bos[0]->size, NULL, &bo);
++         NVX_PUSH_TRACE("PBS: replacement BO create returned");
+          if (ret)
+             return ret;
+       }
+@@ -1793,11 +1843,15 @@
+ 
+    /* if necessary, switch to new buffer */
+    if (bo) {
++      NVX_PUSH_TRACE("PBS: replacement BO map begin");
+       ret = nouveau_bo_map(bo, NOUVEAU_BO_WR, push->client);
++      NVX_PUSH_TRACE("PBS: replacement BO map returned");
+       if (ret)
+          return ret;
+ 
++      NVX_PUSH_TRACE("PBS: old push data flush begin");
+       nouveau_pushbuf_data(push, NULL, 0, 0);
++      NVX_PUSH_TRACE("PBS: old push data flush returned");
+       nouveau_bo_ref(bo, &nvpb->bo);
+       nouveau_bo_ref(NULL, &bo);
+ 
+@@ -1808,7 +1862,10 @@
+       push->end -= 2 + push->rsvd_kick; /* space for suffix */
+    }
+ 
++   NVX_PUSH_TRACE("PBS: active pushbuf kref begin");
+    pushbuf_kref(push, nvpb->bo, push->flags);
++   NVX_PUSH_TRACE("PBS: active pushbuf kref returned");
++   NVX_PUSH_TRACE("PBS: exit");
+    return flushed ? pushbuf_validate(push, false) : 0;
+ }
+ 

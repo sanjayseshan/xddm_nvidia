@@ -325,6 +325,7 @@ int main(void)
     NVX_3D_DEPTH_SURFACE_LAYOUT depthSurface;
     NVX_3D_NVC0_CLEAR nvc0Clear, nvc0Bad;
     NVX_3D_CLIENT_SESSION clientSession={0};
+    NVX_3D_CHANNEL_LEASE channelLease={0};
     uint32_t nvc0Color=0;
     uint32_t information=99;
 
@@ -341,6 +342,19 @@ int main(void)
     assert(sizeof(NVX_3D_WAIT_FENCE)==24);
     assert(sizeof(NVX_3D_READBACK)==32);
     assert(sizeof(NVX_3D_CLIENT_SESSION)==24);
+    assert(sizeof(NVX_3D_CHANNEL_LEASE)==40);
+    channelLease.Size=sizeof(channelLease);
+    channelLease.Version=NVX_3D_ABI_VERSION;
+    channelLease.Operation=NVX_3D_CHANNEL_OPEN;
+    channelLease.ClientToken=0x123400000001ULL;
+    assert(Nvx3dValidateChannelLease(&channelLease,NVX_3D_CHANNEL_OPEN));
+    channelLease.ChannelHandle=7;
+    channelLease.GraphicsObjectHandle=8;
+    channelLease.ComputeObjectHandle=9;
+    channelLease.Operation=NVX_3D_CHANNEL_CLOSE;
+    assert(Nvx3dValidateChannelLease(&channelLease,NVX_3D_CHANNEL_CLOSE));
+    channelLease.ComputeObjectHandle=0;
+    assert(!Nvx3dValidateChannelLease(&channelLease,NVX_3D_CHANNEL_CLOSE));
     clientSession.Size=sizeof(clientSession);
     clientSession.Version=NVX_3D_ABI_VERSION;
     clientSession.Operation=NVX_3D_CLIENT_OPEN;
@@ -410,7 +424,7 @@ int main(void)
     assert(Nvx3dTuringColorPixelOffset(0,128,632,0x40)==327680);
     assert(Nvx3dComputeColorSurfaceLayout(4096,4096,&surface));
     assert(surface.PitchBytes==16384&&surface.TileMode==0x40&&
-           surface.Bytes==NVX_3D_MAX_BUFFER_BYTES);
+           surface.Bytes==64U*1024U*1024U);
     assert(!Nvx3dComputeColorSurfaceLayout(0,453,&surface));
     assert(!Nvx3dComputeColorSurfaceLayout(632,0,&surface));
     assert(!Nvx3dComputeColorSurfaceLayout(4097,453,&surface));
@@ -516,6 +530,9 @@ int main(void)
     assert(!Nvx3dValidateAlloc(&alloc));
     alloc.TileMode=surface.TileMode;alloc.Bytes-=NVX_3D_SURFACE_ALIGNMENT;
     assert(!Nvx3dValidateAlloc(&alloc));
+    alloc.Usage=0;alloc.Width=alloc.Height=alloc.PitchBytes=alloc.TileMode=0;
+    alloc.Bytes=0x04080000U; /* GA104 NVC0 TLS allocation from nvc0_screen.c. */
+    assert(Nvx3dValidateAlloc(&alloc));
     alloc.Bytes=surface.Bytes;alloc.Usage|=NVX_3D_USAGE_DEPTH_TARGET;
     assert(!Nvx3dValidateAlloc(&alloc));
     alloc.Usage=3;alloc.Bytes=65536;alloc.Width=alloc.Height=0;

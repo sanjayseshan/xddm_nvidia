@@ -56,7 +56,7 @@ while [ "$attempt" -le "$MAX_RETRIES" ]; do
         echo "==> Driver activity confirmed (PID $VM_PID). Monitoring session..."
 
         # Monitor loop for test completion or timeout, then soft powerdown
-        TEST_TIMEOUT="${NVX_TEST_TIMEOUT:-90}"
+        TEST_TIMEOUT="${NVX_TEST_TIMEOUT:-240}"
         for s in $(seq 1 "$TEST_TIMEOUT"); do
             sleep 1
             if ! kill -0 "$VM_PID" 2>/dev/null; then
@@ -90,9 +90,10 @@ while [ "$attempt" -le "$MAX_RETRIES" ]; do
                 break
             fi
 
-            # If desktop has been active for 75s, perform soft powerdown
-            if [ "$s" -ge 75 ] && grep -q "GPU solid fill" "$NVX_RUN_LOG" 2>/dev/null; then
-                echo "==> Desktop active session completed ($s s). Sending soft ACPI powerdown..."
+            # Allow the ICD enough time to initialize on slower XP boots.
+            NVX_DESKTOP_TIMEOUT="${NVX_DESKTOP_TIMEOUT:-180}"
+            if [ "$s" -ge "$NVX_DESKTOP_TIMEOUT" ] && grep -q "GPU solid fill" "$NVX_RUN_LOG" 2>/dev/null; then
+                echo "==> Desktop active session completed ($s s; limit ${NVX_DESKTOP_TIMEOUT}s). Sending soft ACPI powerdown..."
                 echo "system_powerdown" | socat - UNIX-CONNECT:/tmp/qemu-monitor.sock 2>/dev/null || true
                 sleep 6
                 break

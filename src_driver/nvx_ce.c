@@ -170,11 +170,25 @@ static BOOLEAN NvxGspCopySmokeTest(PNVX_DEVICE_EXTENSION dev)
         LogStr("NVX [COPY]: RAMFC userdLo=");LogHex(ramfc[0x8/4]);
         LogStr(" userdHi=");LogHex(ramfc[0xc/4]);LogStr(" gpBaseLo=");LogHex(ramfc[0x48/4]);
         LogStr(" gpBaseHi=");LogHex(ramfc[0x4c/4]);LogStr(" chid=");LogHex(ramfc[0xe8/4]);LogStr("\n");
+        VideoPortZeroMemory(fault,sizeof(fault));
         if(NvxGspControl(dev,dev->GspChannelHandle,NVA06F_CTRL_CMD_GET_MMU_FAULT_INFO,fault,sizeof(fault))) {
-            const ULONG *reply=(const ULONG *)dev->RpcRxRecord;
-            LogStr("NVX [COPY]: MMU fault addrHi=");LogHex(reply[26]);
-            LogStr(" addrLo=");LogHex(reply[27]);LogStr(" type=");LogHex(reply[28]);LogStr("\n");
+            const NV906F_CTRL_GET_MMU_FAULT_INFO_PARAMS *reply=
+                (const NV906F_CTRL_GET_MMU_FAULT_INFO_PARAMS *)(dev->RpcRxRecord+104);
+            LogStr("NVX [COPY]: MMU fault addrHi=");LogHex(reply->addrHi);
+            LogStr(" addrLo=");LogHex(reply->addrLo);
+            LogStr(" type=");LogHex(reply->faultType);LogStr("\n");
         } else LogStr("NVX [COPY]: MMU fault-info control unavailable.\n");
+        {
+            NVB06F_CTRL_GET_CHANNEL_HW_STATE_PARAMS channelState={0};
+            if(NvxGspControl(dev,dev->GspChannelHandle,
+                             NVB06F_CTRL_CMD_GET_CHANNEL_HW_STATE,
+                             &channelState,sizeof(channelState))) {
+                const NVB06F_CTRL_GET_CHANNEL_HW_STATE_PARAMS *reply=
+                    (const NVB06F_CTRL_GET_CHANNEL_HW_STATE_PARAMS *)(dev->RpcRxRecord+104);
+                LogStr("NVX [COPY]: channel hardware state=");
+                LogHex(reply->state);LogStr("\n");
+            } else LogStr("NVX [COPY]: channel hardware state unavailable.\n");
+        }
     }
     return FALSE;
 }
@@ -275,7 +289,84 @@ static BOOLEAN NvxGspSubmitCopyUnlocked(PVOID HwDeviceExtension,ULONG64 dstVa,UL
     }
     LogStr("NVX [COPY-Q]: submit timeout! fenceVal=");LogHex(fenceVal);
     LogStr(" fence=");LogHex(fence[0]);LogStr(" GPGet=");LogHex(userd[0x88/4]);
-    LogStr(" GPPut=");LogHex(userd[0x8c/4]);LogStr("\n");
+    LogStr(" GPPut=");LogHex(userd[0x8c/4]);
+    LogStr(" src=");LogHex(srcVa);LogStr(" dst=");LogHex(dstVa);
+    LogStr(" srcPitch=");LogHex(srcPitch);LogStr(" dstPitch=");LogHex(dstPitch);
+    LogStr(" lineBytes=");LogHex(bytesPerLine);LogStr(" lines=");LogHex(lineCount);
+    LogStr(" runlist=");LogHex(dev->GspRunlistBase);
+    LogStr(" submitToken=");LogHex(dev->GspSubmitToken);LogStr("\n");
+    {
+        ULONG chramBase=0;
+        ULONG chcfg=VideoPortReadRegisterUlong((PULONG)
+            ((PUCHAR)dev->Bar0MmioVirtual+dev->GspRunlistBase+4));
+        chramBase=chcfg&0xfffffff0U;
+        for(ULONG i=0;i<3;i++) {
+            ULONG status=VideoPortReadRegisterUlong((PULONG)
+                ((PUCHAR)dev->Bar0MmioVirtual+dev->GspRunlistBase+0x200+i*0x40));
+            ULONG instLo=VideoPortReadRegisterUlong((PULONG)
+                ((PUCHAR)dev->Bar0MmioVirtual+dev->GspRunlistBase+0x208+i*0x40));
+            ULONG instHi=VideoPortReadRegisterUlong((PULONG)
+                ((PUCHAR)dev->Bar0MmioVirtual+dev->GspRunlistBase+0x20c+i*0x40));
+            LogStr("NVX [COPY-Q]: engine=");LogHex(i);
+            LogStr(" channelStatus=");LogHex(status);
+            LogStr(" instance=");LogHex(instHi);LogHex(instLo);LogStr("\n");
+        }
+        if(chramBase&&chramBase+8<=dev->Bar0Length) {
+            LogStr("NVX [COPY-Q]: CHRAM slot0=");
+            LogHex(VideoPortReadRegisterUlong((PULONG)
+                ((PUCHAR)dev->Bar0MmioVirtual+chramBase)));
+            LogStr(" slot1=");
+            LogHex(VideoPortReadRegisterUlong((PULONG)
+                ((PUCHAR)dev->Bar0MmioVirtual+chramBase+4)));
+            LogStr("\n");
+        }
+        if(dev->CmdQueueVirtual&&dev->StatQueueVirtual) {
+        {
+            NV906F_CTRL_GET_MMU_FAULT_INFO_PARAMS fault={0};
+            if(NvxGspControl(dev,dev->GspChannelHandle,
+                             NVA06F_CTRL_CMD_GET_MMU_FAULT_INFO,
+                             &fault,sizeof(fault))) {
+                const NV906F_CTRL_GET_MMU_FAULT_INFO_PARAMS *reply=
+                    (const NV906F_CTRL_GET_MMU_FAULT_INFO_PARAMS *)
+                    (dev->RpcRxRecord+104);
+                LogStr("NVX [COPY-Q]: MMU fault addrHi=");LogHex(reply->addrHi);
+                LogStr(" addrLo=");LogHex(reply->addrLo);
+                LogStr(" type=");LogHex(reply->faultType);
+                if(reply->addrHi==0&&
+                   reply->addrLo>=NVX_GART_GPU_VA_BASE&&
+                   reply->addrLo<NVX_GART_GPU_VA_BASE+
+                       (ULONG64)NVX_GART_SLICE_COUNT*NVX_GART_SLICE_BYTES&&
+                   dev->GspGartPteVirtual) {
+                    ULONG pteIndex=(ULONG)((reply->addrLo-
+                        NVX_GART_GPU_VA_BASE)>>12);
+                    LogStr(" gartPteIndex=");LogHex(pteIndex);
+                    LogStr(" gartPte=");
+                    LogHex(((PULONG64)dev->GspGartPteVirtual)[pteIndex]);
+                    LogStr(" gartPtePhysical=");
+                    LogHex(dev->GspGartPtePhysical.QuadPart+
+                           (ULONG64)pteIndex*sizeof(ULONG64));
+                }
+                LogStr("\n");
+            } else {
+                LogStr("NVX [COPY-Q]: MMU fault info unavailable.\n");
+            }
+        }
+        {
+            NVB06F_CTRL_GET_CHANNEL_HW_STATE_PARAMS state={0};
+            if(NvxGspControl(dev,dev->GspChannelHandle,
+                             NVB06F_CTRL_CMD_GET_CHANNEL_HW_STATE,
+                             &state,sizeof(state))) {
+                const NVB06F_CTRL_GET_CHANNEL_HW_STATE_PARAMS *reply=
+                    (const NVB06F_CTRL_GET_CHANNEL_HW_STATE_PARAMS *)
+                    (dev->RpcRxRecord+104);
+                LogStr("NVX [COPY-Q]: channel hardware state=");
+                LogHex(reply->state);LogStr("\n");
+            } else {
+                LogStr("NVX [COPY-Q]: channel hardware state unavailable.\n");
+            }
+        }
+        }
+    }
     dev->GspChannelFaulted=TRUE;
     return FALSE;
 }

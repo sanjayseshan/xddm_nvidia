@@ -128,6 +128,12 @@ if [ "${NVX_RAPID_3D:-0}" = "1" ]; then
 else
     rm -f "$NVX_MOUNT/test_accel/rapid3d.flag"
 fi
+if [ "${NVX_OPENGL_ONLY:-0}" = "1" ]; then
+    mkdir -p "$NVX_MOUNT/test_accel"
+    : > "$NVX_MOUNT/test_accel/opengl_only.flag"
+else
+    rm -f "$NVX_MOUNT/test_accel/opengl_only.flag"
+fi
 sync
 guestunmount --retry=10 "$NVX_MOUNT"
 wait_for_release

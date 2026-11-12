@@ -99,6 +99,7 @@ mock_escape(void *opaque, uint32_t escape, uint32_t input_bytes,
       if (result->Operation == NVX_3D_CHANNEL_OPEN) {
          result->ChannelHandle = 0xc56f0002U;
          result->GraphicsObjectHandle = 0xc6970001U;
+         result->ComputeObjectHandle = 0xc6970013U;
       }
       return 1;
    }
@@ -282,10 +283,12 @@ main(void)
    device.caps.Features &= ~NVX_3D_FEATURE_FIXED_PROFILE_SUBMIT;
    assert(NvxWinsysOpenNouveauChannel(&device));
    assert(device.NouveauChannelHandle == 0xc56f0002U &&
-          device.NouveauGraphicsObjectHandle == 0xc6970001U);
+          device.NouveauGraphicsObjectHandle == 0xc6970001U &&
+          device.NouveauComputeObjectHandle == 0xc6970013U);
    assert(NvxWinsysCloseNouveauChannel(&device));
    assert(!device.NouveauChannelHandle &&
-          !device.NouveauGraphicsObjectHandle);
+          !device.NouveauGraphicsObjectHandle &&
+          !device.NouveauComputeObjectHandle);
    device.caps.Features |= NVX_3D_FEATURE_FIXED_PROFILE_SUBMIT;
    assert(NvxNouveauDeviceInitFromWinsys(&nouveau_device, &device));
    assert(NvxNouveauScreenInit(&nouveau_screen, &nouveau_device,

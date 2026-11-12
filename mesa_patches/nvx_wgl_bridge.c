@@ -58,6 +58,7 @@ static char nvx_bridge_depth_stages[3][96];
 static void nvx_bridge_trace(const char *message);
 static void nvx_bridge_nouveau_trace(const char *message);
 void NvxWglRecordMesaInitFailure(const char *stage, int error);
+void NvxWglRecordMesaInitStage(const char *stage);
 void NvxWglRecordNouveauSclass(uint32_t token_low, uint32_t token_high,
                                uint32_t result, uint32_t count,
                                const uint32_t *classes);
@@ -67,6 +68,11 @@ void NvxWglRecordNouveauObject(uint32_t token_low, uint32_t token_high,
                                uint32_t user_class, uint32_t user_handle,
                                uint32_t rm_class, uint32_t rm_handle,
                                uint32_t result);
+void NvxWglRecordNouveauIoctl(uint32_t type, uint32_t version,
+                              uint32_t route, uint32_t method,
+                              uint32_t size);
+void NvxWglRecordNouveauGetparam(uint32_t param, uint32_t value,
+                                 uint32_t result);
 static int nvx_bridge_is_enabled(void);
 static int nvx_pack_color(const float rgba[4], uint32_t *color);
 static int nvx_alloc(HDC hdc, const NVX_3D_ALLOC_BUFFER *request,
@@ -488,6 +494,38 @@ NvxWglRecordNouveauObject(uint32_t token_low, uint32_t token_high,
              (unsigned long)rm_class, (unsigned long)rm_handle,
              (unsigned long)result);
    nvx_bridge_nouveau_trace(message);
+}
+
+void
+NvxWglRecordNouveauIoctl(uint32_t type, uint32_t version,
+                         uint32_t route, uint32_t method, uint32_t size)
+{
+   char message[96];
+
+   wsprintfA(message,
+             "NVIF WRITE_READ type=%08lx version=%lu route=%08lx method=%08lx size=%lu",
+             (unsigned long)type, (unsigned long)version,
+             (unsigned long)route, (unsigned long)method,
+             (unsigned long)size);
+   nvx_bridge_nouveau_trace(message);
+}
+
+void
+NvxWglRecordNouveauGetparam(uint32_t param, uint32_t value, uint32_t result)
+{
+   char message[80];
+
+   wsprintfA(message, "DRM GETPARAM param=%lu value=%08lx result=%lu",
+             (unsigned long)param, (unsigned long)value,
+             (unsigned long)result);
+   nvx_bridge_nouveau_trace(message);
+}
+
+void
+NvxWglRecordMesaInitStage(const char *stage)
+{
+   if (stage)
+      nvx_bridge_nouveau_trace(stage);
 }
 
 static void

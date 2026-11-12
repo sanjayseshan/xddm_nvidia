@@ -1,0 +1,27 @@
+--- a/src/gallium/winsys/nouveau/drm/nouveau.c
++++ b/src/gallium/winsys/nouveau/drm/nouveau.c
+@@ -1233,17 +1233,19 @@
+          break;
+ #endif
+       ret = drmCommandWriteRead(drm->fd, DRM_NOUVEAU_GEM_PUSHBUF, &req, sizeof(req));
+-      nvpb->suffix0 = req.suffix0;
+-      nvpb->suffix1 = req.suffix1;
+-      dev->vram_limit = (req.vram_available * nouveau_device(dev)->vram_limit_percent) / 100;
+-      dev->gart_limit = (req.gart_available * nouveau_device(dev)->gart_limit_percent) / 100;
+-
+       if (ret) {
+          err("kernel rejected pushbuf: %s\n", strerror(-ret));
+          pushbuf_dump(dev, krec, krec_id++, channel);
+          break;
+       }
+ 
++      /* The XP shim can reject a submission without initializing any output
++       * fields in req. Keep the last valid limits and suffixes on failure. */
++      nvpb->suffix0 = req.suffix0;
++      nvpb->suffix1 = req.suffix1;
++      dev->vram_limit = (req.vram_available * nouveau_device(dev)->vram_limit_percent) / 100;
++      dev->gart_limit = (req.gart_available * nouveau_device(dev)->gart_limit_percent) / 100;
++
+       kref = krec->buffer;
+       for (i = 0; i < krec->nr_buffer; i++, kref++) {
+          bo = (void *)(uintptr_t)kref->user_priv;

@@ -18,6 +18,7 @@ typedef struct NVX_WINSYS_DEVICE {
    uint64_t NextRequestToken;
    uint32_t NouveauChannelHandle;
    uint32_t NouveauGraphicsObjectHandle;
+   uint32_t NouveauComputeObjectHandle;
 } NVX_WINSYS_DEVICE;
 
 int NvxWinsysInit(NVX_WINSYS_DEVICE *device, NVX_WINSYS_ESCAPE escape,

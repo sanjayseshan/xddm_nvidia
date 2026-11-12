@@ -1,0 +1,571 @@
+Nouveau screen create begin
+NVIF WRITE_READ type=00000004 version=0 route=00000000 method=00000000 size=136
+DRM GETPARAM param=8 value=08000000 result=0
+DRM GETPARAM param=9 value=0e600000 result=0
+DRM GETPARAM param=14 value=00000000 result=1
+NVIF WRITE_READ type=00000001 version=0 route=000000ff method=00000000 size=160
+NVIF SCLASS token=ffffffff:c56f0002 result=0 count=5
+NVIF SCLASS class[0]=0000a040
+NVIF SCLASS class[1]=0000c7b5
+NVIF SCLASS class[2]=0000902d
+NVIF SCLASS class[3]=0000c7c0
+NVIF NEW token=ffffffff:c56f0002 class=0000a040 handle=beef323f rm=00000000/00000000 result=1
+NVIF NEW token=ffffffff:c56f0002 class=0000a040 handle=beef323f rm=0000a140/c6970010 result=0
+PBS: enter
+PBS: replacement BO map begin
+PBS: replacement BO map returned
+PBS: old push data flush begin
+PBS: old push data flush returned
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: exit without bufctx
+NVIF WRITE_READ type=00000001 version=0 route=000000ff method=00000000 size=160
+NVIF SCLASS token=ffffffff:c56f0002 result=0 count=5
+NVIF SCLASS class[0]=0000a040
+NVIF SCLASS class[1]=0000c7b5
+NVIF SCLASS class[2]=0000902d
+NVIF SCLASS class[3]=0000c7c0
+NVIF NEW token=ffffffff:c56f0002 class=0000c7b5 handle=00000000 rm=00000000/00000000 result=1
+NVIF NEW token=ffffffff:c56f0002 class=0000c7b5 handle=00000000 rm=0000c7b5/c6970011 result=0
+NVIF NEW token=ffffffff:c56f0002 class=0000902d handle=beef902d rm=00000000/00000000 result=1
+NVIF NEW token=ffffffff:c56f0002 class=0000902d handle=beef902d rm=0000902d/c6970012 result=0
+NVIF WRITE_READ type=00000001 version=0 route=000000ff method=00000000 size=160
+NVIF SCLASS token=ffffffff:c56f0002 result=0 count=5
+NVIF SCLASS class[0]=0000a040
+NVIF SCLASS class[1]=0000c7b5
+NVIF SCLASS class[2]=0000902d
+NVIF SCLASS class[3]=0000c7c0
+NVIF NEW token=ffffffff:c56f0002 class=0000c797 handle=beef003d rm=00000000/00000000 result=1
+NVIF NEW token=ffffffff:c56f0002 class=0000c797 handle=beef003d rm=0000c797/c6970001 result=0
+NVIF WRITE_READ type=00000001 version=0 route=000000ff method=00000000 size=160
+NVIF SCLASS token=ffffffff:c56f0002 result=0 count=5
+NVIF SCLASS class[0]=0000a040
+NVIF SCLASS class[1]=0000c7b5
+NVIF SCLASS class[2]=0000902d
+NVIF SCLASS class[3]=0000c7c0
+NVIF NEW token=ffffffff:c56f0002 class=0000c7c0 handle=beef00c0 rm=00000000/00000000 result=1
+NVIF NEW token=ffffffff:c56f0002 class=0000c7c0 handle=beef00c0 rm=0000c7c0/c6970013 result=0
+PBFL: enter
+PBFL: submit begin
+Nouveau pushbuf channel=c56f0002 pushes=1 buffers=2 relocs=0
+PBFL: submit returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: bufctx cleanup begin
+PBFL: exit
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: exit without bufctx
+Native Nouveau Gallium pipe_screen created
+STW: create layer context entry
+STW: create context attributes begin
+STW: st_api_create_context begin
+ST: pipe context_create begin
+NVC0: context_create begin
+NVC0: allocated context
+NVC0: blit context ready
+NVC0: nouveau context ready
+NVC0: uploaders ready
+NVC0: driver callbacks ready
+P2MF: TSC data push begin
+P2MF: bufctx ref begin
+P2MF: bufctx ref returned
+P2MF: pushbuf bufctx begin
+P2MF: pushbuf bufctx returned
+P2MF: fence lock wait
+P2MF: fence lock acquired
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: replacement BO map begin
+PBS: replacement BO map returned
+PBS: old push data flush begin
+PBS: old push data flush returned
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: bufctx list move begin
+PBV: bufctx list move returned
+PBV: pending refs begin
+PBV: kref begin
+PBV: kref returned
+PBV: pending refs returned
+PBV: pending splice returned
+PBV: exit
+PBV: space returned
+PBV: bufctx list move begin
+PBV: bufctx list move returned
+PBV: pending refs begin
+PBV: pending refs returned
+PBV: pending splice returned
+PBV: exit
+P2MF: pushbuf validate returned
+P2MF: fence lock released
+P2MF: command space begin
+P2MF: command space returned
+P2MF: TSC data push complete
+NVC0: program library uploaded
+NVC0: TCP empty program ready
+NVC0: screen context lock begin
+NVC0: screen context lock complete
+NVC0: permanent buffer refs begin
+NVC0: permanent buffer refs complete
+NVC0: initial fence created
+NVC0: TSC0 upload begin
+P2MF: TSC data push begin
+P2MF: bufctx ref begin
+P2MF: bufctx ref returned
+P2MF: pushbuf bufctx begin
+P2MF: pushbuf bufctx returned
+P2MF: fence lock wait
+P2MF: fence lock acquired
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: bufctx list move begin
+PBV: bufctx list move returned
+PBV: pending refs begin
+PBV: kref begin
+PBV: kref returned
+PBV: kref begin
+PBV: kref returned
+PBV: pending refs returned
+PBV: pending splice returned
+PBV: exit
+P2MF: pushbuf validate returned
+P2MF: fence lock released
+P2MF: command space begin
+P2MF: command space returned
+P2MF: TSC data push complete
+NVC0: TSC0 upload returned
+NVC0: context_create complete
+ST: pipe context_create returned
+ST: st_create_context begin
+ST: st_create_context returned
+STW: st_api_create_context returned
+P2MF: TSC data push begin
+P2MF: bufctx ref begin
+P2MF: bufctx ref returned
+P2MF: pushbuf bufctx begin
+P2MF: pushbuf bufctx returned
+P2MF: fence lock wait
+P2MF: fence lock acquired
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: bufctx list move begin
+PBV: bufctx list move returned
+PBV: pending refs begin
+PBV: kref begin
+PBV: kref returned
+PBV: pending refs returned
+PBV: pending splice returned
+PBV: exit
+P2MF: pushbuf validate returned
+P2MF: fence lock released
+P2MF: command space begin
+P2MF: command space returned
+P2MF: TSC data push complete
+P2MF: TSC data push begin
+P2MF: bufctx ref begin
+P2MF: bufctx ref returned
+P2MF: pushbuf bufctx begin
+P2MF: pushbuf bufctx returned
+P2MF: fence lock wait
+P2MF: fence lock acquired
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: bufctx list move begin
+PBV: bufctx list move returned
+PBV: pending refs begin
+PBV: kref begin
+PBV: kref returned
+PBV: pending refs returned
+PBV: pending splice returned
+PBV: exit
+P2MF: pushbuf validate returned
+P2MF: fence lock released
+P2MF: command space begin
+P2MF: command space returned
+P2MF: TSC data push complete
+P2MF: TSC data push begin
+P2MF: bufctx ref begin
+P2MF: bufctx ref returned
+P2MF: pushbuf bufctx begin
+P2MF: pushbuf bufctx returned
+P2MF: fence lock wait
+P2MF: fence lock acquired
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: bufctx list move begin
+PBV: bufctx list move returned
+PBV: pending refs begin
+PBV: kref begin
+PBV: kref returned
+PBV: pending refs returned
+PBV: pending splice returned
+PBV: exit
+P2MF: pushbuf validate returned
+P2MF: fence lock released
+P2MF: command space begin
+P2MF: command space returned
+P2MF: TSC data push complete
+P2MF: TSC data push begin
+P2MF: bufctx ref begin
+P2MF: bufctx ref returned
+P2MF: pushbuf bufctx begin
+P2MF: pushbuf bufctx returned
+P2MF: fence lock wait
+P2MF: fence lock acquired
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: bufctx list move begin
+PBV: bufctx list move returned
+PBV: pending refs begin
+PBV: kref begin
+PBV: kref returned
+PBV: pending refs returned
+PBV: pending splice returned
+PBV: exit
+P2MF: pushbuf validate returned
+P2MF: fence lock released
+P2MF: command space begin
+P2MF: command space returned
+P2MF: TSC data push complete
+P2MF: TSC data push begin
+P2MF: bufctx ref begin
+P2MF: bufctx ref returned
+P2MF: pushbuf bufctx begin
+P2MF: pushbuf bufctx returned
+P2MF: fence lock wait
+P2MF: fence lock acquired
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: bufctx list move begin
+PBV: bufctx list move returned
+PBV: pending refs begin
+PBV: kref begin
+PBV: kref returned
+PBV: pending refs returned
+PBV: pending splice returned
+PBV: exit
+P2MF: pushbuf validate returned
+P2MF: fence lock released
+P2MF: command space begin
+P2MF: command space returned
+P2MF: TSC data push complete
+P2MF: TSC data push begin
+P2MF: bufctx ref begin
+P2MF: bufctx ref returned
+P2MF: pushbuf bufctx begin
+P2MF: pushbuf bufctx returned
+P2MF: fence lock wait
+P2MF: fence lock acquired
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: bufctx list move begin
+PBV: bufctx list move returned
+PBV: pending refs begin
+PBV: kref begin
+PBV: kref returned
+PBV: pending refs returned
+PBV: pending splice returned
+PBV: exit
+P2MF: pushbuf validate returned
+P2MF: fence lock released
+P2MF: command space begin
+P2MF: command space returned
+P2MF: TSC data push complete
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: bufctx list move begin
+PBV: bufctx list move returned
+PBV: pending refs begin
+PBV: kref begin
+PBV: kref returned
+PBV: kref begin
+PBV: kref returned
+PBV: kref begin
+PBV: kref returned
+PBV: kref begin
+PBV: kref returned
+PBV: kref begin
+PBV: kref returned
+PBV: kref begin
+PBV: kref returned
+PBV: pending refs returned
+PBV: pending splice returned
+PBV: exit
+PBFL: enter
+PBFL: submit begin
+Nouveau pushbuf channel=c56f0002 pushes=1 buffers=6 relocs=0
+PBFL: submit returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: bufctx cleanup begin
+PBFL: exit
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: bufctx list move begin
+PBV: bufctx list move returned
+PBV: pending refs begin
+PBV: kref begin
+PBV: kref returned
+PBV: kref begin
+PBV: kref returned
+PBV: kref begin
+PBV: kref returned
+PBV: kref begin
+PBV: kref returned
+PBV: kref begin
+PBV: kref returned
+PBV: kref begin
+PBV: kref returned
+PBV: pending refs returned
+PBV: pending splice returned
+PBV: exit
+PBFL: enter
+PBFL: submit begin
+Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
+PBFL: submit returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: bufctx cleanup begin
+PBFL: exit
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: exit without bufctx
+PBFL: enter
+PBFL: submit begin
+PBFL: submit returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: bufctx cleanup begin
+PBFL: exit
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: exit without bufctx
+PBFL: enter
+PBFL: submit begin
+Nouveau pushbuf channel=c56f0002 pushes=1 buffers=2 relocs=0
+PBFL: submit returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: bufctx cleanup begin
+PBFL: exit
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: exit without bufctx
+PBFL: enter
+PBFL: submit begin
+PBFL: submit returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: bufctx cleanup begin
+PBFL: exit
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: exit without bufctx
+PBFL: enter
+PBFL: submit begin
+PBFL: submit returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: bufctx cleanup begin
+PBFL: exit
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: exit without bufctx
+PBFL: enter
+PBFL: submit begin
+PBFL: submit returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: bufctx cleanup begin
+PBFL: exit
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: exit without bufctx
+PBFL: enter
+PBFL: submit begin
+PBFL: submit returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: bufctx cleanup begin
+PBFL: exit
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: exit without bufctx
+PBFL: enter
+PBFL: submit begin
+PBFL: submit returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: bufctx cleanup begin
+PBFL: exit
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: exit without bufctx
+PBFL: enter
+PBFL: submit begin
+PBFL: submit returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: bufctx cleanup begin
+PBFL: exit
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: exit without bufctx
+PBFL: enter
+PBFL: submit begin
+Nouveau pushbuf channel=c56f0002 pushes=1 buffers=2 relocs=0
+PBFL: submit returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: detach begin
+PBFL: detach returned
+PBFL: bufctx cleanup begin
+PBFL: exit
+PBV: enter
+PBV: space begin
+PBS: enter
+PBS: active pushbuf kref begin
+PBS: active pushbuf kref returned
+PBS: exit
+PBV: space returned
+PBV: exit without bufctx
+

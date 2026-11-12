@@ -55,7 +55,8 @@ NvxWinsysOpenNouveauChannel(NVX_WINSYS_DEVICE *device)
    if (!nvx_winsys_ready(device) || !device->ClientToken ||
        !(device->caps.Features & NVX_3D_FEATURE_GR_CHANNEL))
       return 0;
-   if (device->NouveauChannelHandle && device->NouveauGraphicsObjectHandle)
+   if (device->NouveauChannelHandle && device->NouveauGraphicsObjectHandle &&
+       device->NouveauComputeObjectHandle)
       return 1;
    memset(&request, 0, sizeof(request));
    request.Size = sizeof(request);
@@ -71,10 +72,12 @@ NvxWinsysOpenNouveauChannel(NVX_WINSYS_DEVICE *device)
        result.Version != NVX_3D_ABI_VERSION ||
        result.Operation != NVX_3D_CHANNEL_OPEN || result.Reserved ||
        result.ClientToken != device->ClientToken ||
-       !result.ChannelHandle || !result.GraphicsObjectHandle)
+       !result.ChannelHandle || !result.GraphicsObjectHandle ||
+       !result.ComputeObjectHandle)
       return 0;
    device->NouveauChannelHandle = result.ChannelHandle;
    device->NouveauGraphicsObjectHandle = result.GraphicsObjectHandle;
+   device->NouveauComputeObjectHandle = result.ComputeObjectHandle;
    return 1;
 }
 
@@ -85,10 +88,12 @@ NvxWinsysCloseNouveauChannel(NVX_WINSYS_DEVICE *device)
    if (!nvx_winsys_ready(device) || !device->ClientToken)
       return 0;
    if (!device->NouveauChannelHandle &&
-       !device->NouveauGraphicsObjectHandle)
+       !device->NouveauGraphicsObjectHandle &&
+       !device->NouveauComputeObjectHandle)
       return 1;
    if (!device->NouveauChannelHandle ||
-       !device->NouveauGraphicsObjectHandle)
+       !device->NouveauGraphicsObjectHandle ||
+       !device->NouveauComputeObjectHandle)
       return 0;
    memset(&request, 0, sizeof(request));
    request.Size = sizeof(request);
@@ -97,6 +102,7 @@ NvxWinsysCloseNouveauChannel(NVX_WINSYS_DEVICE *device)
    request.ClientToken = device->ClientToken;
    request.ChannelHandle = device->NouveauChannelHandle;
    request.GraphicsObjectHandle = device->NouveauGraphicsObjectHandle;
+   request.ComputeObjectHandle = device->NouveauComputeObjectHandle;
    memset(&result, 0, sizeof(result));
    if (!device->escape(device->opaque, NVX_ESCAPE_3D_CHANNEL_LEASE,
                        sizeof(request), &request, sizeof(result), &result) ||
@@ -105,10 +111,12 @@ NvxWinsysCloseNouveauChannel(NVX_WINSYS_DEVICE *device)
        result.Operation != NVX_3D_CHANNEL_CLOSE || result.Reserved ||
        result.ClientToken != device->ClientToken ||
        result.ChannelHandle != device->NouveauChannelHandle ||
-       result.GraphicsObjectHandle != device->NouveauGraphicsObjectHandle)
+       result.GraphicsObjectHandle != device->NouveauGraphicsObjectHandle ||
+       result.ComputeObjectHandle != device->NouveauComputeObjectHandle)
       return 0;
    device->NouveauChannelHandle = 0;
    device->NouveauGraphicsObjectHandle = 0;
+   device->NouveauComputeObjectHandle = 0;
    return 1;
 }
 

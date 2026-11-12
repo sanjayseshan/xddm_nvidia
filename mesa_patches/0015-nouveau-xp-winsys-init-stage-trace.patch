@@ -1,0 +1,46 @@
+diff --git a/src/gallium/drivers/nouveau/nouveau_screen.c b/src/gallium/drivers/nouveau/nouveau_screen.c
+--- a/src/gallium/drivers/nouveau/nouveau_screen.c
++++ b/src/gallium/drivers/nouveau/nouveau_screen.c
+@@ -29,6 +29,10 @@
+ #include "nouveau_fence.h"
+ #include "nouveau_mm.h"
+ #include "nouveau_buffer.h"
++
++#ifdef NVX_XP_WIN32_SHIMS
++extern void NvxWglRecordMesaInitFailure(const char *stage, int error);
++#endif
+ 
+ #include <compiler/glsl_types.h>
+ 
+@@ -398,16 +402,28 @@
+ 
+    ret = nouveau_object_new(&dev->object, 0, NOUVEAU_FIFO_CHANNEL_CLASS,
+                             data, size, &screen->channel);
+-   if (ret)
++   if (ret) {
++#ifdef NVX_XP_WIN32_SHIMS
++      NvxWglRecordMesaInitFailure("Nouveau FIFO channel creation failed", ret);
++#endif
+       goto err;
++   }
+ 
+    ret = nouveau_client_new(screen->device, &screen->client);
+-   if (ret)
++   if (ret) {
++#ifdef NVX_XP_WIN32_SHIMS
++      NvxWglRecordMesaInitFailure("Nouveau client creation failed", ret);
++#endif
+       goto err;
++   }
+    ret = nouveau_pushbuf_create(screen, NULL, screen->client, screen->channel,
+                                 4, 512 * 1024, &screen->pushbuf);
+-   if (ret)
++   if (ret) {
++#ifdef NVX_XP_WIN32_SHIMS
++      NvxWglRecordMesaInitFailure("Nouveau pushbuf creation failed", ret);
++#endif
+       goto err;
++   }
+ 
+    /* getting CPU time first appears to be more accurate */
+    screen->cpu_gpu_time_delta = os_time_get();

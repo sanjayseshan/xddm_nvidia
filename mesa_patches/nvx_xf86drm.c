@@ -26,6 +26,11 @@ void NvxWglRecordNouveauObject(uint32_t token_low, uint32_t token_high,
                               uint32_t user_class, uint32_t user_handle,
                               uint32_t rm_class, uint32_t rm_handle,
                               uint32_t result);
+void NvxWglRecordNouveauIoctl(uint32_t type, uint32_t version,
+                              uint32_t route, uint32_t method,
+                              uint32_t size);
+void NvxWglRecordNouveauGetparam(uint32_t param, uint32_t value,
+                                 uint32_t result);
 #endif
 
 #define NVX_DRM_DEVICE_SLOTS 8U
@@ -37,6 +42,7 @@ void NvxWglRecordNouveauObject(uint32_t token_low, uint32_t token_high,
 #define NVX_RM_CLASS_KEPLER_I2M_B 0x0000a140U
 #define NVX_RM_CLASS_AMPERE_DMA_COPY_B 0x0000c7b5U
 #define NVX_RM_CLASS_FERMI_2D_A 0x0000902dU
+#define NVX_RM_CLASS_AMPERE_COMPUTE_B 0x0000c7c0U
 #define NVX_RM_OBJECT_NVC0_M2MF 0xc6970010U
 #define NVX_RM_OBJECT_NVC0_COPY 0xc6970011U
 #define NVX_RM_OBJECT_NVC0_2D 0xc6970012U
@@ -135,10 +141,26 @@ nvx_drm_getparam(int fd, void *data, unsigned long size)
    case NOUVEAU_GETPARAM_CHIPSET_ID:
       request->value = device.caps.Chipset;
       break;
+   case NOUVEAU_GETPARAM_EXEC_PUSH_MAX:
+      request->value = NOUVEAU_GEM_MAX_PUSH;
+      break;
+   case NOUVEAU_GETPARAM_GRAPH_UNITS:
+      /* GA104 RTX 3070 (PCI 2488): 6 GPCs, 46 enabled TPCs. */
+      if (device.caps.DeviceId != 0x2488U || device.caps.Chipset != 0x170U)
+         return nvx_drm_unsupported_operation(
+            NVX_XF86DRM_UNSUPPORTED_WRITE_READ, DRM_NOUVEAU_GETPARAM);
+      request->value = 6U | (46U << 8);
+      break;
    default:
+#if defined(_WIN32) || defined(_WIN64)
+      NvxWglRecordNouveauGetparam(request->param, 0, 1U);
+#endif
       return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_WRITE_READ,
                                           DRM_NOUVEAU_GETPARAM);
    }
+#if defined(_WIN32) || defined(_WIN64)
+   NvxWglRecordNouveauGetparam(request->param, (uint32_t)request->value, 0U);
+#endif
    return 0;
 }
 
@@ -202,7 +224,7 @@ nvx_drm_nvif_sclass(int fd, void *data, unsigned long size)
    unsigned long prefix = sizeof(*ioctl) + sizeof(*sclass);
    unsigned long expected;
    uint8_t capacity;
-   uint32_t classes[4];
+   uint32_t classes[16];
    unsigned class_count = 0;
    unsigned i;
    int found = 0;
@@ -239,6 +261,8 @@ nvx_drm_nvif_sclass(int fd, void *data, unsigned long size)
          classes[class_count++] = NVX_RM_CLASS_AMPERE_DMA_COPY_B;
       if (device->device.caps.Features & NVX_3D_FEATURE_NVC0_2D_OBJECT)
          classes[class_count++] = NVX_RM_CLASS_FERMI_2D_A;
+      if (device->device.NouveauComputeObjectHandle)
+         classes[class_count++] = NVX_RM_CLASS_AMPERE_COMPUTE_B;
       classes[class_count++] = device->device.caps.GraphicsClass;
       nvx_drm_status.LastSclassResult = 0;
       nvx_drm_status.LastSclassCount = class_count;
@@ -282,6 +306,11 @@ nvx_drm_rm_object_for_class(const NVX_WINSYS_DEVICE *device, uint32_t oclass,
        device->NouveauGraphicsObjectHandle) {
       *rm_class = oclass;
       return device->NouveauGraphicsObjectHandle;
+   }
+   if (oclass == NVX_RM_CLASS_AMPERE_COMPUTE_B &&
+       device->NouveauComputeObjectHandle) {
+      *rm_class = oclass;
+      return device->NouveauComputeObjectHandle;
    }
    if (oclass == NVX_MESA_CLASS_NVE4_P2MF &&
        (device->caps.Features & NVX_3D_FEATURE_NVC0_M2MF_OBJECT)) {
@@ -690,6 +719,7 @@ nvx_drm_gem_new(struct nvx_drm_device_slot *device,
    uint32_t allocated_bytes, handle;
    uint32_t usage = 0;
    uint32_t domain = NOUVEAU_GEM_DOMAIN_VRAM;
+   int allocated;
    unsigned i;
 
    if (!device || !request || request->info.handle ||
@@ -742,14 +772,25 @@ nvx_drm_gem_new(struct nvx_drm_device_slot *device,
    if (!handle)
       handle = device->next_handle++;
 
-   if (!NvxNouveauBoCreate(&device->device, &description,
-                           device->client_token, &slot->bo))
+   allocated = NvxNouveauBoCreate(&device->device, &description,
+                                  device->client_token, &slot->bo);
+   if (!allocated && (request->info.domain & NOUVEAU_GEM_DOMAIN_VRAM) &&
+       device->device.caps.GartBytes >= requested_bytes) {
+      /* NVC0's per-GPC TLS BO can exceed the small, firmware-confirmed free
+       * BAR1 VRAM window while still fitting the mapped GART. Keep placement
+       * truthful by retrying in system memory and reporting GART to Mesa. */
+      description.Usage = NVX_3D_USAGE_GART_BUFFER;
+      allocated = NvxNouveauBoCreate(&device->device, &description,
+                                     device->client_token, &slot->bo);
+      if (allocated)
+         domain = NOUVEAU_GEM_DOMAIN_GART;
+   }
+   if (!allocated)
       return 0;
 
-   /* The miniport places VRAM BOs at 128 KiB boundaries. GART BO alignment
-    * up to 64 KiB is accepted only when the returned VA actually satisfies
-    * it. Never claim that the NVX allocator/MMU created a Nouveau tiled or
-    * compressed layout. */
+   /* The miniport places VRAM BOs at 128 KiB boundaries and GART BOs at
+    * 2 MiB boundaries. Confirm every requested VA alignment; never claim the
+    * NVX allocator/MMU created a Nouveau tiled or compressed layout. */
    if (request->align &&
        (slot->bo.allocation.GpuVa & (request->align - 1U))) {
       (void)NvxNouveauBoDestroy(&slot->bo);
@@ -1029,6 +1070,20 @@ drmCommandWriteRead(int fd, unsigned long command, void *data,
    if (command == DRM_NOUVEAU_NVIF)
       {
          struct nvif_ioctl_v0 *ioctl = data;
+#if defined(_WIN32) || defined(_WIN64)
+         uint32_t method = 0;
+         if (ioctl && ioctl->type == NVIF_IOCTL_V0_MTHD &&
+             size >= sizeof(*ioctl) + sizeof(struct nvif_ioctl_mthd_v0)) {
+            const struct nvif_ioctl_mthd_v0 *mthd =
+               (const struct nvif_ioctl_mthd_v0 *)
+                  ((const uint8_t *)data + sizeof(*ioctl));
+            method = mthd->method;
+         }
+         if (ioctl)
+            NvxWglRecordNouveauIoctl(ioctl->type, ioctl->version,
+                                     ioctl->route, method,
+                                     (uint32_t)size);
+#endif
          if (ioctl && ioctl->type == NVIF_IOCTL_V0_SCLASS)
             return nvx_drm_nvif_sclass(fd, data, size);
          return nvx_drm_nvif_device_info(fd, data, size);
@@ -1044,10 +1099,10 @@ drmCommandWriteRead(int fd, unsigned long command, void *data,
       found = device != NULL;
       nvx_drm_status.GemNewCount++;
       nvx_drm_status.LastGemNewSize = request->info.size;
-      nvx_drm_status.LastGemNewDomain = request->info.domain;
       nvx_drm_status.LastGemNewTileMode = request->info.tile_mode;
       nvx_drm_status.LastGemNewTileFlags = request->info.tile_flags;
       ok = nvx_drm_gem_new(device, request);
+      nvx_drm_status.LastGemNewDomain = request->info.domain;
       nvx_drm_status.LastGemNewResult = ok ? 0U : (found ? 1U : 2U);
       nvx_drm_lock_release();
       if (ok)

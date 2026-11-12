@@ -1,0 +1,99 @@
+--- a/src/gallium/drivers/nouveau/nvc0/nvc0_context.c
++++ b/src/gallium/drivers/nouveau/nvc0/nvc0_context.c
+@@ -508,13 +508,16 @@
+    /* now that there are no more opportunities for errors, set the current
+     * context if there isn't already one.
+     */
++   NvxWglRecordMesaInitStage("NVC0: screen context lock begin");
+    simple_mtx_lock(&screen->state_lock);
+    if (!screen->cur_ctx) {
+       nvc0->state = screen->save_state;
+       screen->cur_ctx = nvc0;
+    }
+    simple_mtx_unlock(&screen->state_lock);
+-
++   NvxWglRecordMesaInitStage("NVC0: screen context lock complete");
++
++   NvxWglRecordMesaInitStage("NVC0: permanent buffer refs begin");
+    nouveau_pushbuf_bufctx(nvc0->base.pushbuf, nvc0->bufctx);
+    PUSH_SPACE(nvc0->base.pushbuf, 8);
+ 
+@@ -548,6 +551,7 @@
+    memset(nvc0->tex_handles, ~0, sizeof(nvc0->tex_handles));
+ 
+    nvc0->global_residents = UTIL_DYNARRAY_INIT;
++   NvxWglRecordMesaInitStage("NVC0: permanent buffer refs complete");
+ 
+    NvxWglRecordMesaInitStage("NVC0: initial fence created");
+ 
+@@ -558,8 +562,11 @@
+    // NOTE: Preliminary testing suggests that this isn't necessary at all at
+    // least on GM20x (untested on Kepler). However this is ~free, so no reason
+    // not to do it.
+-   if (!screen->tsc.entries[0])
++   if (!screen->tsc.entries[0]) {
++      NvxWglRecordMesaInitStage("NVC0: TSC0 upload begin");
+       nvc0_upload_tsc0(nvc0);
++      NvxWglRecordMesaInitStage("NVC0: TSC0 upload returned");
++   }
+ 
+    // On Fermi, mark samplers dirty so that the proper binding can happen
+    if (screen->base.class_3d < NVE4_3D_CLASS) {
+--- a/src/gallium/drivers/nouveau/nvc0/nvc0_transfer.c
++++ b/src/gallium/drivers/nouveau/nvc0/nvc0_transfer.c
+@@ -1,5 +1,7 @@
+ 
+ #include "util/format/u_format.h"
++
++extern void NvxWglRecordMesaInitStage(const char *stage);
+ 
+ #include "nvc0/nvc0_context.h"
+ 
+@@ -242,20 +244,38 @@
+                       struct nouveau_bo *dst, unsigned offset, unsigned domain,
+                       unsigned size, const void *data)
+ {
++   NvxWglRecordMesaInitStage("P2MF: TSC data push begin");
+    struct nvc0_context *nvc0 = nvc0_context(&nv->pipe);
+    struct nouveau_pushbuf *push = nv->pushbuf;
+    uint32_t *src = (uint32_t *)data;
+    unsigned count = (size + 3) / 4;
+ 
++   NvxWglRecordMesaInitStage("P2MF: bufctx ref begin");
+    nouveau_bufctx_refn(nvc0->bufctx, 0, dst, domain | NOUVEAU_BO_WR);
++   NvxWglRecordMesaInitStage("P2MF: bufctx ref returned");
++   NvxWglRecordMesaInitStage("P2MF: pushbuf bufctx begin");
+    nouveau_pushbuf_bufctx(push, nvc0->bufctx);
+-   PUSH_VAL(push);
++   NvxWglRecordMesaInitStage("P2MF: pushbuf bufctx returned");
++   {
++      struct nouveau_pushbuf_priv *ppush = push->user_priv;
++      int validate_ret;
++      NvxWglRecordMesaInitStage("P2MF: fence lock wait");
++      simple_mtx_lock(&ppush->screen->fence.lock);
++      NvxWglRecordMesaInitStage("P2MF: fence lock acquired");
++      validate_ret = nouveau_pushbuf_validate(push);
++      NvxWglRecordMesaInitStage(validate_ret ?
++         "P2MF: pushbuf validate failed" : "P2MF: pushbuf validate returned");
++      simple_mtx_unlock(&ppush->screen->fence.lock);
++      NvxWglRecordMesaInitStage("P2MF: fence lock released");
++   }
+ 
+    while (count) {
+       unsigned nr = MIN2(count, (NV04_PFIFO_MAX_PACKET_LEN - 1));
+ 
++      NvxWglRecordMesaInitStage("P2MF: command space begin");
+       if (!PUSH_SPACE(push, nr + 10))
+          break;
++      NvxWglRecordMesaInitStage("P2MF: command space returned");
+ 
+       BEGIN_NVC0(push, NVE4_P2MF(UPLOAD_DST_ADDRESS_HIGH), 2);
+       PUSH_DATAh(push, dst->offset + offset);
+@@ -275,6 +295,7 @@
+    }
+ 
+    nouveau_bufctx_reset(nvc0->bufctx, 0);
++   NvxWglRecordMesaInitStage("P2MF: TSC data push complete");
+ }
+ 
+ static void

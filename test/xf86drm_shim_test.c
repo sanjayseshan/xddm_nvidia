@@ -49,6 +49,7 @@ mock_escape(void *opaque, uint32_t escape, uint32_t input_bytes,
       if (request->Operation == NVX_3D_CHANNEL_OPEN) {
          result->ChannelHandle = 0xc56f0002U;
          result->GraphicsObjectHandle = 0xc6970001U;
+         result->ComputeObjectHandle = 0xc6970013U;
       }
       return 1;
    }
@@ -70,6 +71,9 @@ mock_escape(void *opaque, uint32_t escape, uint32_t input_bytes,
       }
       if (!buffer || !request || request->Bytes == 0)
          return 0;
+      if (!(request->Usage & NVX_3D_USAGE_GART_BUFFER) &&
+          request->Bytes > 64U * 1024U * 1024U)
+         return 0;
       buffer->data = calloc(1, request->Bytes);
       if (!buffer->data)
          return 0;
@@ -78,8 +82,12 @@ mock_escape(void *opaque, uint32_t escape, uint32_t input_bytes,
       *result = *request;
       result->BufferId = buffer->id;
       if (request->Usage & NVX_3D_USAGE_GART_BUFFER) {
+         next_gart_va = (next_gart_va + NVX_GART_SLICE_BYTES - 1U) &
+                        ~((uint64_t)NVX_GART_SLICE_BYTES - 1U);
          result->GpuVa = next_gart_va;
-         next_gart_va += request->Bytes;
+         next_gart_va += ((uint64_t)request->Bytes +
+                          NVX_GART_SLICE_BYTES - 1U) &
+                         ~((uint64_t)NVX_GART_SLICE_BYTES - 1U);
       } else {
          result->GpuVa = next_gpu_va;
          next_gpu_va += request->Bytes;
@@ -180,7 +188,7 @@ main(void)
    winsys.caps.VramApertureBytes = 64U * 1024U * 1024U;
    winsys.caps.GartBytes =
       (uint64_t)NVX_GART_SLICE_COUNT * NVX_GART_SLICE_BYTES;
-   winsys.caps.MaxBufferBytes = 16U * 1024U * 1024U;
+   winsys.caps.MaxBufferBytes = NVX_3D_MAX_BUFFER_BYTES;
    assert(NvxXf86DrmRegisterDevice(&winsys) == -1);
    winsys.caps.PciLocation = Nvx3dPackPciLocation(0x2aU, 0xabU);
    fd = NvxXf86DrmRegisterDevice(&winsys);
@@ -280,6 +288,19 @@ main(void)
    }
 
    {
+      struct drm_nouveau_gem_new create = {0};
+      create.info.size = 0x04080000U;
+      create.info.domain = NOUVEAU_GEM_DOMAIN_VRAM;
+      create.align = 0x20000U;
+      assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_NEW, &create,
+                                 sizeof(create)) == 0);
+      assert(create.info.domain == (NOUVEAU_GEM_DOMAIN_GART |
+                                    NOUVEAU_GEM_DOMAIN_MAPPABLE));
+      assert((create.info.offset & (create.align - 1U)) == 0);
+      assert(drmCloseBufferHandle(fd, create.info.handle) == 0);
+   }
+
+   {
       drmVersionPtr version = drmGetVersion(fd);
       assert(version && version->version_major == 0 &&
              version->version_minor == 0 && version->version_patchlevel == 0 &&
@@ -304,6 +325,14 @@ main(void)
       assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GETPARAM, &getparam,
                                  sizeof(getparam)) == 0);
       assert(getparam.value == winsys.caps.VramApertureBytes);
+      getparam.param = NOUVEAU_GETPARAM_EXEC_PUSH_MAX;
+      assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GETPARAM, &getparam,
+                                 sizeof(getparam)) == 0);
+      assert(getparam.value == NOUVEAU_GEM_MAX_PUSH);
+      getparam.param = NOUVEAU_GETPARAM_GRAPH_UNITS;
+      assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GETPARAM, &getparam,
+                                 sizeof(getparam)) == 0);
+      assert(getparam.value == (6U | (46U << 8)));
       getparam.param = 0xffffffffU;
       errno = 0;
       assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GETPARAM, &getparam,
@@ -366,11 +395,12 @@ main(void)
          query.sclass.count = 16;
          assert(drmCommandWriteRead(fd, DRM_NOUVEAU_NVIF, &query,
                                     sizeof(query)) == 0);
-         assert(query.sclass.count == 4);
+         assert(query.sclass.count == 5);
          assert(query.classes[0].oclass == 0xa040);
          assert(query.classes[1].oclass == 0xc7b5);
          assert(query.classes[2].oclass == 0x902d);
-         assert(query.classes[3].oclass == 0xc797);
+         assert(query.classes[3].oclass == 0xc7c0);
+         assert(query.classes[4].oclass == 0xc797);
       }
       {
          struct {

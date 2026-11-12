@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="3.0.0.8"
+NVX_TEST_VERSION="3.0.0.31"
 NVX_REQUIRE_HW_OPENGL="${NVX_REQUIRE_HW_OPENGL:-1}"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 NVX_TEST_FLAGS=()
@@ -150,6 +150,13 @@ fi
 finish() {
     echo
     echo "==> Result log: $NVX_RUN_LOG"
+    if [ -f "$NVX_ROOT/winxp_x64.qcow2" ] && command -v guestfish >/dev/null 2>&1; then
+        for guest_log in mesa_bridge.log nvx_nouveau_trace.log; do
+            echo "==> Guest OpenGL trace: $guest_log"
+            guestfish --ro -a "$NVX_ROOT/winxp_x64.qcow2" -i cat "/test_accel/$guest_log" \
+                >> "$NVX_RUN_LOG" 2>/dev/null || true
+        done
+    fi
     if [ -f "$NVX_RUN_LOG" ]; then
         echo "==> Display hardware verification"
         if grep -q '\[DISPLAY-VERIFY\]' "$NVX_RUN_LOG"; then

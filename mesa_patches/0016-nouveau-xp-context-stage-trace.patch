@@ -1,0 +1,158 @@
+--- a/src/gallium/frontends/wgl/stw_context.c
++++ b/src/gallium/frontends/wgl/stw_context.c
+@@ -27,6 +27,8 @@
+ 
+ #include "state_tracker/st_context.h"
+ 
++extern void NvxWglRecordMesaInitStage(const char *stage);
++
+ #include <windows.h>
+ 
+ #define WGL_WGLEXT_PROTOTYPES
+@@ -152,6 +154,7 @@
+ HGLRC WINAPI
+ stw_wglCreateLayerContext(HDC hdc, int iLayerPlane)
+ {
++   NvxWglRecordMesaInitStage("STW: create layer context entry");
+    if (!stw_dev)
+       return NULL;
+ 
+@@ -159,6 +162,7 @@
+    if (!pfi)
+       return NULL;
+ 
++   NvxWglRecordMesaInitStage("STW: create context attributes begin");
+    struct stw_context *ctx = stw_create_context_attribs(hdc, iLayerPlane, NULL, stw_dev->fscreen, 1, 0, 0,
+                                                         WGL_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB,
+                                                         pfi, WGL_NO_RESET_NOTIFICATION_ARB);
+@@ -274,8 +278,11 @@
+ 
+    attribs.options = stw_dev->st_options;
+ 
++   NvxWglRecordMesaInitStage("STW: st_api_create_context begin");
+    ctx->st = st_api_create_context(
+          fscreen, &attribs, &ctx_err, shareCtx ? shareCtx->st : NULL);
++   NvxWglRecordMesaInitStage(ctx->st ? "STW: st_api_create_context returned" :
++                                             "STW: st_api_create_context failed");
+    if (ctx->st == NULL)
+       goto no_st_ctx;
+ 
+--- a/src/mesa/state_tracker/st_manager.c
++++ b/src/mesa/state_tracker/st_manager.c
+@@ -29,6 +29,8 @@
+  */
+ 
+ #include "main/mtypes.h"
++
++extern void NvxWglRecordMesaInitStage(const char *stage);
+ #include "main/extensions.h"
+ #include "main/context.h"
+ #include "main/debug_output.h"
+@@ -1023,10 +1025,13 @@
+    bool is_gles = attribs->profile == API_OPENGLES2;
+    unsigned lod_bias_flag = is_gles ? PIPE_CONTEXT_NO_LOD_BIAS : 0;
+ 
++   NvxWglRecordMesaInitStage("ST: pipe context_create begin");
+    pipe = fscreen->screen->context_create(fscreen->screen, NULL,
+                                           PIPE_CONTEXT_PREFER_THREADED |
+                                           lod_bias_flag |
+                                           attribs->context_flags);
++   NvxWglRecordMesaInitStage(pipe ? "ST: pipe context_create returned" :
++                                      "ST: pipe context_create failed");
+    if (!pipe) {
+       *error = ST_CONTEXT_ERROR_NO_MEMORY;
+       return NULL;
+@@ -1035,9 +1040,12 @@
+    st_visual_to_context_mode(&attribs->visual, &mode);
+    if (attribs->visual.color_format == PIPE_FORMAT_NONE)
+       mode_ptr = NULL;
++   NvxWglRecordMesaInitStage("ST: st_create_context begin");
+    st = st_create_context(attribs->profile, pipe, mode_ptr, shared_ctx,
+                           &attribs->options, no_error,
+                           !!fscreen->validate_egl_image);
++   NvxWglRecordMesaInitStage(st ? "ST: st_create_context returned" :
++                                   "ST: st_create_context failed");
+    if (!st) {
+       *error = ST_CONTEXT_ERROR_NO_MEMORY;
+       pipe->destroy(pipe);
+--- a/src/gallium/drivers/nouveau/nvc0/nvc0_context.c
++++ b/src/gallium/drivers/nouveau/nvc0/nvc0_context.c
+@@ -21,6 +21,8 @@
+  */
+ 
+ #include "pipe/p_defines.h"
++
++extern void NvxWglRecordMesaInitStage(const char *stage);
+ #include "util/u_draw.h"
+ #include "util/u_framebuffer.h"
+ #include "util/u_upload_mgr.h"
+@@ -408,6 +410,7 @@
+ struct pipe_context *
+ nvc0_create(struct pipe_screen *pscreen, void *priv, unsigned ctxflags)
+ {
++   NvxWglRecordMesaInitStage("NVC0: context_create begin");
+    struct nvc0_screen *screen = nvc0_screen(pscreen);
+    struct nvc0_context *nvc0;
+    struct pipe_context *pipe;
+@@ -419,14 +422,17 @@
+       return NULL;
+    pipe = &nvc0->base.pipe;
+ 
++   NvxWglRecordMesaInitStage("NVC0: allocated context");
+    if (!nvc0_blitctx_create(nvc0))
+       goto out_err;
+ 
++   NvxWglRecordMesaInitStage("NVC0: blit context ready");
+    if (nouveau_context_init(&nvc0->base, &screen->base))
+       goto out_err;
+    nvc0->base.kick_notify = nvc0_default_kick_notify;
+    nvc0->base.pushbuf->rsvd_kick = 5;
+ 
++   NvxWglRecordMesaInitStage("NVC0: nouveau context ready");
+    ret = nouveau_bufctx_new(nvc0->base.client, 2, &nvc0->bufctx);
+    if (!ret)
+       ret = nouveau_bufctx_new(nvc0->base.client, NVC0_BIND_3D_COUNT,
+@@ -462,6 +468,7 @@
+    pipe->emit_string_marker = nvc0_emit_string_marker;
+    pipe->get_device_reset_status = nvc0_get_device_reset_status;
+ 
++   NvxWglRecordMesaInitStage("NVC0: uploaders ready");
+    nvc0_init_query_functions(nvc0);
+    nvc0_init_surface_functions(nvc0);
+    nvc0_init_state_functions(nvc0);
+@@ -479,11 +486,14 @@
+    pipe->create_video_buffer = nvc0_video_buffer_create;
+ 
+    /* shader builtin library is per-screen, but we need a context for m2mf */
++   NvxWglRecordMesaInitStage("NVC0: driver callbacks ready");
+    nvc0_program_library_upload(nvc0);
++   NvxWglRecordMesaInitStage("NVC0: program library uploaded");
+    nvc0_program_init_tcp_empty(nvc0);
+    if (!nvc0->tcp_empty)
+       goto out_err;
+ 
++   NvxWglRecordMesaInitStage("NVC0: TCP empty program ready");
+    if (!nouveau_fence_new(&nvc0->base, &nvc0->base.fence))
+       goto out_err;
+ 
+@@ -538,6 +548,8 @@
+    memset(nvc0->tex_handles, ~0, sizeof(nvc0->tex_handles));
+ 
+    nvc0->global_residents = UTIL_DYNARRAY_INIT;
++
++   NvxWglRecordMesaInitStage("NVC0: initial fence created");
+ 
+    // Make sure that the first TSC entry has SRGB conversion bit set, since we
+    // use it as a fallback on Fermi for TXF, and on Kepler+ generations for
+@@ -557,9 +569,11 @@
+       nvc0->dirty_cp |= NVC0_NEW_CP_SAMPLERS;
+    }
+ 
++   NvxWglRecordMesaInitStage("NVC0: context_create complete");
+    return pipe;
+ 
+ out_err:
++   NvxWglRecordMesaInitStage("NVC0: context_create failed");
+    if (nvc0) {
+       if (pipe->stream_uploader)
+          u_upload_destroy(pipe->stream_uploader);

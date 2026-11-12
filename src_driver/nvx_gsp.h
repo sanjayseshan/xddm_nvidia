@@ -143,7 +143,13 @@ extern volatile ULONG NvxGrUserSubmitBusy;
 #define GSP_SCRATCH_OFFSET             0x02F00000ULL
 #define GSP_SCRATCH_SIZE               0x10000UL
 #define GSP_PAGE_TABLES_OFFSET         0x02E00000ULL
-#define GSP_PAGE_TABLES_SIZE           0x9000UL
+#define GSP_VRAM_GPU_VA                0x20000000ULL
+#define GSP_VRAM_MAP_BYTES             0x08000000ULL
+#define GSP_VRAM_SLICE_BYTES           0x00200000ULL
+#define GSP_VRAM_SLICE_COUNT           64UL
+#define GSP_VRAM_LPT_OFFSET            0x6000UL
+#define GSP_UPLOAD_PTE_OFFSET          0xA000UL
+#define GSP_PAGE_TABLES_SIZE           0xB000UL
 #define GSP_GR_CONTEXT_BYTES           0x00C00000UL
 #define GSP_GR_CONTEXT_GPU_VA          0x10200000ULL
 #define GSP_GR_CONTEXT_TEST_GPU_VA     0x10E00000ULL
@@ -152,7 +158,7 @@ extern volatile ULONG NvxGrUserSubmitBusy;
 #define GSP_GR_TEST_PTES_SIZE          0x6000UL
 #define GSP_UPLOAD_OFFSET              0x02600000ULL
 #define GSP_UPLOAD_SIZE                0x00800000UL
-#define GSP_UPLOAD_GPU_VA              0x24000000ULL
+#define GSP_UPLOAD_GPU_VA              0x28000000ULL
 #define GSP_UPLOAD_MAX_BYTES           0x0000F000UL
 
 #pragma pack(push, 1)
@@ -441,6 +447,7 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG GspGraphicsContextShareHandle;
     ULONG GspGraphicsChannelHandle;
     ULONG GspGraphicsObjectHandle;
+    ULONG GspGraphicsComputeObjectHandle;
     ULONG GspGraphicsM2mfObjectHandle;
     ULONG GspGraphicsCopyObjectHandle;
     ULONG GspGraphics2dObjectHandle;

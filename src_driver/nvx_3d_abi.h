@@ -7,7 +7,7 @@
 
 /* Fixed-width ABI shared by XP x64/x86 clients and the miniport.  GPU VAs are
  * always 64-bit; no kernel pointers or RM handles cross this boundary. */
-#define NVX_3D_ABI_VERSION 18U
+#define NVX_3D_ABI_VERSION 19U
 #define NVX_3D_MAX_PUSH_DWORDS 4096U
 #define NVX_3D_MAX_BATCH_RELOCATIONS 256U
 #define NVX_3D_MAX_BATCH_BUFFERS 64U
@@ -19,7 +19,7 @@
 #define NVX_3D_NVC0_CLEAR_DWORDS 28U
 #define NVX_3D_PAGE_BYTES 4096U
 #define NVX_3D_VRAM_ALLOCATION_ALIGNMENT 0x20000U
-#define NVX_3D_MAX_BUFFER_BYTES (64U * 1024U * 1024U)
+#define NVX_3D_MAX_BUFFER_BYTES (128U * 1024U * 1024U)
 #define NVX_3D_MAX_UPLOAD_BYTES 0x0000F000U
 #define NVX_3D_MAX_DOWNLOAD_BYTES 0x00001000U
 #define NVX_3D_TRIANGLE_TARGET_BYTES 65536U
@@ -265,6 +265,7 @@ typedef struct NVX_3D_CHANNEL_LEASE {
     uint64_t ClientToken;
     uint32_t ChannelHandle;
     uint32_t GraphicsObjectHandle;
+    uint32_t ComputeObjectHandle;
 } NVX_3D_CHANNEL_LEASE;
 
 static inline int
@@ -277,9 +278,11 @@ Nvx3dValidateChannelLease(const NVX_3D_CHANNEL_LEASE *request,
        !request->ClientToken)
         return 0;
     if(operation==NVX_3D_CHANNEL_OPEN)
-        return !request->ChannelHandle&&!request->GraphicsObjectHandle;
+        return !request->ChannelHandle&&!request->GraphicsObjectHandle&&
+            !request->ComputeObjectHandle;
     if(operation==NVX_3D_CHANNEL_CLOSE)
-        return request->ChannelHandle&&request->GraphicsObjectHandle;
+        return request->ChannelHandle&&request->GraphicsObjectHandle&&
+            request->ComputeObjectHandle;
     return 0;
 }
 

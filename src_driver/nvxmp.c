@@ -1787,8 +1787,13 @@ static BOOLEAN Nvx3dFreeBuffer(PNVX_DEVICE_EXTENSION engine,ULONG64 id,
                entry->SystemVirtual==saved.SystemVirtual) {
                 VideoPortFreeCommonBuffer(engine,saved.Bytes,
                     saved.SystemVirtual,saved.SystemPhysical,FALSE);
-                (void)NvxGartRelease(&engine->GspGartHeap,
-                    saved.GartFirstSlice,saved.GartSliceCount);
+                /* Do not recycle a GART VA in this device lifetime. Ampere
+                   can retain invalid translations after a short mapping is
+                   removed; reusing that VA for a larger BO faults exactly
+                   at the old mapping boundary despite valid new CPU PTEs. */
+                LogStr("NVX [GART]: quarantined VA slice range first=");
+                LogHex(saved.GartFirstSlice);LogStr(" count=");
+                LogHex(saved.GartSliceCount);LogStr(" after confirmed unmap\n");
                 VideoPortZeroMemory(entry,sizeof(*entry));
             }
             Nvx3dUnlockBuffers();
@@ -1827,8 +1832,11 @@ static BOOLEAN Nvx3dFreeBuffer(PNVX_DEVICE_EXTENSION engine,ULONG64 id,
            entry->SystemVirtual==saved.SystemVirtual) {
             VideoPortFreeCommonBuffer(engine,saved.Bytes,
                 saved.SystemVirtual,saved.SystemPhysical,FALSE);
-            (void)NvxGartRelease(&engine->GspGartHeap,
-                saved.GartFirstSlice,saved.GartSliceCount);
+            /* Keep the VA reserved until the adapter is torn down so an
+               invalid PTE cached by Ampere cannot poison a later allocation. */
+            LogStr("NVX [GART]: quarantined VA slice range first=");
+            LogHex(saved.GartFirstSlice);LogStr(" count=");
+            LogHex(saved.GartSliceCount);LogStr(" after confirmed unmap\n");
             VideoPortZeroMemory(entry,sizeof(*entry));
         }
         Nvx3dUnlockBuffers();
@@ -2009,6 +2017,7 @@ BOOLEAN NTAPI HwVidStartIO(
                engine->GspGraphicsChannelFaulted||engine->GspMmuFaultQueued||
                !engine->GspGraphicsChannelHandle||
                !engine->GspGraphicsObjectHandle||
+               !engine->GspGraphicsComputeObjectHandle||
                (engine->Nvx3dChannelOwnerToken&&
                 engine->Nvx3dChannelOwnerToken!=request.ClientToken)) {
                 Nvx3dUnlockBuffers();status=ERROR_BUSY;break;
@@ -2016,11 +2025,13 @@ BOOLEAN NTAPI HwVidStartIO(
             engine->Nvx3dChannelOwnerToken=request.ClientToken;
             request.ChannelHandle=engine->GspGraphicsChannelHandle;
             request.GraphicsObjectHandle=engine->GspGraphicsObjectHandle;
+            request.ComputeObjectHandle=engine->GspGraphicsComputeObjectHandle;
             status=NO_ERROR;
         } else if(request.Operation==NVX_3D_CHANNEL_CLOSE) {
             if(engine->Nvx3dChannelOwnerToken!=request.ClientToken||
                request.ChannelHandle!=engine->GspGraphicsChannelHandle||
-               request.GraphicsObjectHandle!=engine->GspGraphicsObjectHandle) {
+               request.GraphicsObjectHandle!=engine->GspGraphicsObjectHandle||
+               request.ComputeObjectHandle!=engine->GspGraphicsComputeObjectHandle) {
                 Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
             }
             engine->Nvx3dChannelOwnerToken=0;

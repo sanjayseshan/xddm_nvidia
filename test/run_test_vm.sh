@@ -15,6 +15,5 @@ qemu-system-x86_64 \
     -drive file=nvx_driver_full.iso,media=cdrom,if=ide,index=1 \
     -boot c \
     -net nic,model=rtl8139 -net user \
-    -vnc :1 \
     -serial stdio \
     -qmp unix:/tmp/qmp-sock,server,nowait

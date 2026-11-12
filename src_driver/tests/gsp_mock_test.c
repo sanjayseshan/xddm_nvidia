@@ -8,7 +8,7 @@
 
 static ULONG regs[0x1000000/4];
 static UCHAR gpuMemory[0x10000];
-static UCHAR gpuVram[0x4000000];
+static UCHAR gpuVram[GSP_VRAM_MAP_BYTES];
 static NVX_DEVICE_EXTENSION dev;
 static int scenario, imemTransfers, dmemTransfers, cpuStarts,freeFailures,displayFreeFailures;
 static BOOLEAN dpLinkTrained;
@@ -170,21 +170,27 @@ VOID VideoPortWriteRegisterUlong(PULONG p,ULONG value)
             ULONG64 physical=dev.GspDmaPhysical.QuadPart+GSP_PAGE_TABLES_OFFSET;
             PULONG64 tables=(PULONG64)((PUCHAR)dev.GspDmaVirtual+GSP_PAGE_TABLES_OFFSET);
             assert(request[26]==(ULONG)physical&&request[28]==4&&request[29]==1);
+            assert(dev.GspVramGpuVa==GSP_VRAM_GPU_VA&&
+                   dev.GspVramMapBytes==GSP_VRAM_MAP_BYTES);
             assert(tables[0]==((physical+4096)>>4|0xc));
             assert(tables[1536+257]==((physical+0x4000)>>4|0xc));
             assert(tables[2048]==((dev.GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET)>>4|0xd));
             assert(tables[2064]==0);
             assert(tables[1025]==((physical+0x5000)>>4|0xc));
-            assert(tables[2560]==((physical+0x6000)>>4|0xc));
+            assert(tables[2560]==((physical+GSP_VRAM_LPT_OFFSET)>>4|0xc));
             assert(tables[3072]==(dev.GspFbLayoutValid?1:0));
             assert(tables[4095]==0);
             assert(tables[3072+32]==(dev.GspFbLayoutValid?((0x200000ULL>>4)|1):0));
             assert(tables[2560+16*2]==((physical+0x7000)>>4|0xc));
             assert(tables[3583]==(dev.GspFbLayoutValid?(((ULONG64)0x1ff0000>>4)|1):0));
-            assert(tables[2560+32*2]==0);
-            assert(tables[2560+32*2+1]==((physical+0x8000)>>4|0xc));
+            assert(tables[2560+(GSP_VRAM_SLICE_COUNT-1)*2]==
+                   ((physical+GSP_VRAM_LPT_OFFSET+
+                     (GSP_VRAM_SLICE_COUNT-1)*0x100)>>4|0xc));
+            assert(tables[2560+GSP_VRAM_SLICE_COUNT*2]==0);
+            assert(tables[2560+GSP_VRAM_SLICE_COUNT*2+1]==
+                   ((physical+GSP_UPLOAD_PTE_OFFSET)>>4|0xc));
             {
-                PULONG64 upload=(PULONG64)((PUCHAR)tables+0x8000);
+                PULONG64 upload=(PULONG64)((PUCHAR)tables+GSP_UPLOAD_PTE_OFFSET);
                 assert(upload[0]==((dev.GspDmaPhysical.QuadPart+GSP_UPLOAD_OFFSET)>>4|0xd));
                 assert(upload[15]==((dev.GspDmaPhysical.QuadPart+GSP_UPLOAD_OFFSET+0xf000)>>4|0xd));
                 assert(upload[16]==0);
@@ -576,9 +582,16 @@ int main(void)
         assert(NvxGspInitSubsystem(&dev)==(scenario==0 || scenario>=3));
         assert(dev.GspInitialized==(scenario==0 || scenario>=3));
         if (dev.GspInitialized) {
+            ULONG expectedRead=(ULONG)((scenario==4?30:28)+15+dev.MonitorCount+
+                                       (scenario==12?5:0)+(scenario==4?1:0));
+            if(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr!=expectedRead)
+                fprintf(stderr,"scenario=%d cmd ReadPtr=%lu expected=%lu monitors=%lu\n",
+                        scenario,
+                        (unsigned long)((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr,
+                        (unsigned long)expectedRead,
+                        (unsigned long)dev.MonitorCount);
             assert(((NVX_MSGQ_HEADER *)dev.CmdQueueVirtual)->ReadPtr==
-                   (ULONG)((scenario==4?30:28)+15+dev.MonitorCount+
-                           (scenario==12?5:0)));
+                   expectedRead);
             if(scenario==4) {
                 assert(!dev.GspCopyVerified);
                 assert(dev.GspDisplayHandle==0x73000001);

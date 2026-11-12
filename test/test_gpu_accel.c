@@ -150,7 +150,7 @@ static void DumpMesaBridgeTrace(void)
         DWORD xf86drmSclassCalls;
         DWORD xf86drmLastSclassResult;
         DWORD xf86drmLastSclassCount;
-        DWORD xf86drmLastSclass[4];
+        DWORD xf86drmLastSclass[16];
     } MESA_BRIDGE_STATUS;
     typedef BOOL (WINAPI *PFN_QUERY_BRIDGE_STATUS)(MESA_BRIDGE_STATUS *, DWORD);
     HMODULE icd = GetModuleHandleA("nvxogl64.dll");
@@ -674,6 +674,47 @@ static void DumpMesaIcdTrace(void)
     CloseHandle(file);
 }
 
+static void DumpMesaRuntimeTrace(const char *path, const char *label)
+{
+    char buffer[513];
+    DWORD total = 0;
+    HANDLE file = CreateFileA(path, GENERIC_READ,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        LogMsg("[%s] unavailable (error=%lu)\n", label, GetLastError());
+        return;
+    }
+
+    LogMsg("[%s] begin\n", label);
+    for (;;) {
+        DWORD bytesRead = 0;
+        DWORD request = sizeof(buffer) - 1;
+        if (total >= 8192)
+            break;
+        if (request > 8192 - total)
+            request = 8192 - total;
+        if (!ReadFile(file, buffer, request, &bytesRead, NULL) || !bytesRead)
+            break;
+        buffer[bytesRead] = '\0';
+        LogMsg("%s", buffer);
+        total += bytesRead;
+    }
+    if (total >= 8192)
+        LogMsg("\n[%s] truncated at 8192 bytes\n", label);
+    else
+        LogMsg("\n[%s] end (%lu bytes)\n", label, (unsigned long)total);
+    CloseHandle(file);
+}
+
+static void DumpMesaRuntimeTraces(void)
+{
+    DumpMesaRuntimeTrace("C:\\test_accel\\mesa_bridge.log",
+                         "MESA_BRIDGE_RUNTIME_TRACE");
+    DumpMesaRuntimeTrace("C:\\test_accel\\nvx_nouveau_trace.log",
+                         "NOUVEAU_RUNTIME_TRACE");
+}
+
 static void InitLogging(void)
 {
     hCom1 = CreateFileA("\\\\.\\COM1", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
@@ -928,6 +969,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
     DumpMesaIcdTrace();
     if (!hglrc) {
         LogMsg("-> wglCreateContext failed (err=%lu)\n", GetLastError());
+        DumpMesaRuntimeTraces();
         LogMsg("-> ICD already loaded by WGL: %s\n",
                GetModuleHandleA("nvxogl64.dll") ? "yes" : "no");
         HMODULE icd = LoadLibraryA("nvxogl64.dll");
@@ -1547,6 +1589,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             pixel[0], pixel[1], pixel[2], error);
         if (error != GL_NO_ERROR) failures++;
     }
+    DumpMesaRuntimeTraces();
     wglMakeCurrent(NULL, NULL);
     wglDeleteContext(hglrc);
     if (mesaGpuBridgeProbe) {
@@ -2459,21 +2502,25 @@ done:
 
 static int TestNvxBufferRoundTrip(HDC hdc,uint32_t usage,const char *name)
 {
-    enum { WORDS=256, OFFSET=256 };
+    /* The larger GART case crosses pages; retain the established VRAM case. */
+    const unsigned words=(usage==NVX_3D_USAGE_GART_BUFFER)?8192U:256U;
+    const unsigned offset=(usage==NVX_3D_USAGE_GART_BUFFER)?4096U:256U;
     struct {
         NVX_3D_UPLOAD_BUFFER header;
-        uint32_t data[WORDS];
+        uint32_t data[8192];
     } upload;
     NVX_3D_ALLOC_BUFFER alloc={0},allocated={0};
     NVX_3D_DOWNLOAD_BUFFER download={0};
     NVX_3D_FREE_BUFFER freeRequest={0};
-    uint32_t downloaded[WORDS];
-    unsigned i;
+    uint32_t downloaded[8192];
+    unsigned i,done,totalBytes,chunkBytes;
     int ok=0,allocatedOk=0;
 
     LogMsg("-> Testing NVX %s BO upload/download staging round trip\n",name);
     alloc.Size=sizeof(alloc);alloc.Version=NVX_3D_ABI_VERSION;
-    alloc.Usage=usage;alloc.Bytes=4096U;
+    alloc.Usage=usage;
+    alloc.Bytes=(usage==NVX_3D_USAGE_GART_BUFFER) ?
+        offset+words*(uint32_t)sizeof(upload.data[0]) : 4096U;
     if(!ExtEscape(hdc,NVX_ESCAPE_3D_ALLOC,sizeof(alloc),(LPCSTR)&alloc,
                   sizeof(allocated),(LPSTR)&allocated))
         goto done;
@@ -2483,24 +2530,33 @@ static int TestNvxBufferRoundTrip(HDC hdc,uint32_t usage,const char *name)
     upload.header.Size=sizeof(upload.header);
     upload.header.Version=NVX_3D_ABI_VERSION;
     upload.header.BufferId=allocated.BufferId;
-    upload.header.Offset=OFFSET;
-    upload.header.Bytes=sizeof(upload.data);
-    for(i=0;i<WORDS;i++)
+    upload.header.Offset=offset;
+    upload.header.Bytes=words*(uint32_t)sizeof(upload.data[0]);
+    for(i=0;i<words;i++)
         upload.data[i]=0x6d3a5000U^(i*0x10203U);
-    if(!ExtEscape(hdc,NVX_ESCAPE_3D_UPLOAD,sizeof(upload),
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_UPLOAD,
+                  sizeof(upload.header)+upload.header.Bytes,
                   (LPCSTR)&upload,0,NULL))
         goto done;
 
     download.Size=sizeof(download);
     download.Version=NVX_3D_ABI_VERSION;
     download.BufferId=allocated.BufferId;
-    download.Offset=OFFSET;
-    download.Bytes=sizeof(downloaded);
-    memset(downloaded,0,sizeof(downloaded));
-    if(!ExtEscape(hdc,NVX_ESCAPE_3D_DOWNLOAD,sizeof(download),
-                  (LPCSTR)&download,sizeof(downloaded),(LPSTR)downloaded))
-        goto done;
-    ok=memcmp(upload.data,downloaded,sizeof(downloaded))==0;
+    totalBytes=words*sizeof(downloaded[0]);
+    memset(downloaded,0,totalBytes);
+    for(done=0;done<totalBytes;) {
+        chunkBytes=totalBytes-done;
+        if(chunkBytes>NVX_3D_MAX_DOWNLOAD_BYTES)
+            chunkBytes=NVX_3D_MAX_DOWNLOAD_BYTES;
+        download.Bytes=chunkBytes;
+        download.Offset=offset+done;
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_DOWNLOAD,sizeof(download),
+                      (LPCSTR)&download,download.Bytes,
+                      (LPSTR)((UCHAR *)downloaded+done)))
+            goto done;
+        done+=chunkBytes;
+    }
+    ok=memcmp(upload.data,downloaded,words*sizeof(downloaded[0]))==0;
 
 done:
     if(allocatedOk) {
@@ -2513,10 +2569,52 @@ done:
     }
     if(ok)
         LogMsg("[NVX_3D_STAGE] %s-upload-download-roundtrip PASS bytes=%u offset=%u\n",
-               name,(unsigned)(WORDS*sizeof(uint32_t)),(unsigned)OFFSET);
+               name,words*(unsigned)sizeof(uint32_t),offset);
     LogMsg("[NVX_%s_BUFFER_ROUNDTRIP_RESULT] %s words=%u bytes=%u\n",
-           name,ok?"PASS":"FAIL",(unsigned)WORDS,
-           (unsigned)(WORDS*sizeof(uint32_t)));
+           name,ok?"PASS":"FAIL",words,
+           words*(unsigned)sizeof(uint32_t));
+    return ok;
+}
+
+static int TestNvxGartMaximumUpload(HDC hdc)
+{
+    struct {
+        NVX_3D_UPLOAD_BUFFER header;
+        UCHAR data[NVX_3D_MAX_UPLOAD_BYTES];
+    } upload;
+    NVX_3D_ALLOC_BUFFER alloc={0},allocated={0};
+    NVX_3D_FREE_BUFFER freeRequest={0};
+    int ok=0,allocatedOk=0;
+
+    LogMsg("-> Testing maximum-size GART upload into a fresh 512 KiB BO\n");
+    alloc.Size=sizeof(alloc);alloc.Version=NVX_3D_ABI_VERSION;
+    alloc.Usage=NVX_3D_USAGE_GART_BUFFER;alloc.Bytes=0x80000U;
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_ALLOC,sizeof(alloc),(LPCSTR)&alloc,
+                  sizeof(allocated),(LPSTR)&allocated))
+        goto done;
+    allocatedOk=1;
+    memset(&upload,0,sizeof(upload));
+    upload.header.Size=sizeof(upload.header);
+    upload.header.Version=NVX_3D_ABI_VERSION;
+    upload.header.BufferId=allocated.BufferId;
+    upload.header.Bytes=sizeof(upload.data);
+    memset(upload.data,0x5a,sizeof(upload.data));
+    LogMsg("[NVX_GART_MAX_UPLOAD] begin va=%I64X bytes=%lu\n",
+           (unsigned __int64)allocated.GpuVa,(unsigned long)upload.header.Bytes);
+    ok=ExtEscape(hdc,NVX_ESCAPE_3D_UPLOAD,
+                 sizeof(upload.header)+upload.header.Bytes,
+                 (LPCSTR)&upload,0,NULL)!=0;
+
+done:
+    if(allocatedOk) {
+        freeRequest.Size=sizeof(freeRequest);
+        freeRequest.Version=NVX_3D_ABI_VERSION;
+        freeRequest.BufferId=allocated.BufferId;
+        if(!ExtEscape(hdc,NVX_ESCAPE_3D_FREE,sizeof(freeRequest),
+                      (LPCSTR)&freeRequest,0,NULL))
+            ok=0;
+    }
+    LogMsg("[NVX_GART_MAX_UPLOAD_RESULT] %s\n",ok?"PASS":"FAIL");
     return ok;
 }
 
@@ -3236,7 +3334,7 @@ int main(int argc, char **argv)
     LogMsg(" NVX XP Graphics Verification Suite (2D correctness and 3D renderer audit)\n");
     LogMsg("==================================================================\n");
 
-    int only2d = 0, secondary = 0, rapid3d = 0;
+    int only2d = 0, secondary = 0, rapid3d = 0, openglOnly = 0;
     RECT target = {0,0,0,0};
     int originX = 100, originY = 100;
     for (int arg = 1; arg < argc; ++arg) {
@@ -3244,10 +3342,14 @@ int main(int argc, char **argv)
         if (!strcmp(argv[arg], "--3d-rapid")) rapid3d = 1;
         if (!strcmp(argv[arg], "--secondary")) secondary = 1;
         if (!strcmp(argv[arg], "--mesa-gpu-bridge")) mesaGpuBridgeProbe = 1;
+        if (!strcmp(argv[arg], "--opengl-only")) openglOnly = 1;
     }
     if (GetFileAttributesA("C:\\test_accel\\rapid3d.flag") !=
         INVALID_FILE_ATTRIBUTES)
         rapid3d = 1;
+    if (GetFileAttributesA("C:\\test_accel\\opengl_only.flag") !=
+        INVALID_FILE_ATTRIBUTES)
+        openglOnly = 1;
     SetEnvironmentVariableA("NVX_MESA_GALLIUM_BRIDGE",
                             mesaGpuBridgeProbe ? "1" : NULL);
 #if defined(NVX_MESA_BRIDGE_DISABLE_DEPTH) && NVX_MESA_BRIDGE_DISABLE_DEPTH
@@ -3320,12 +3422,17 @@ int main(int argc, char **argv)
     }
 
     /* Run Tests */
-    if (!only2d &&
+    if (!openglOnly && !only2d &&
         (!TestNvxBufferRoundTrip(hdc,1U,"VRAM")||
-         !TestNvxBufferRoundTrip(hdc,NVX_3D_USAGE_GART_BUFFER,"GART")))
+         !TestNvxBufferRoundTrip(hdc,NVX_3D_USAGE_GART_BUFFER,"GART")||
+         !TestNvxGartMaximumUpload(hdc)))
         failures++;
-    Test2D(hwnd, hdc);
-    LogMsg("[2D_RESULT] %s\n", failures ? "FAIL" : "PASS");
+    if (!openglOnly) {
+        Test2D(hwnd, hdc);
+        LogMsg("[2D_RESULT] %s\n", failures ? "FAIL" : "PASS");
+    } else {
+        LogMsg("[2D_RESULT] SKIPPED (OpenGL-only diagnostic)\n");
+    }
     if (!only2d) {
 #if !defined(NVX_MESA_APPLOCAL_FRONTEND)
         char runMesaFrontendTest[2];
@@ -3343,7 +3450,8 @@ int main(int argc, char **argv)
         if (mesaGpuBridgeProbe)
             DumpMesaBridgeTrace();
         LogMsg("[OPENGL_RESULT] %s\n", failures != before ? "FAIL" : software3d ? "SOFTWARE" : "RENDERED");
-        TestNvx3dSubmission(hdc);
+        if (!openglOnly)
+            TestNvx3dSubmission(hdc);
         before = failures;
         TestDirect3D9(hwnd);
         LogMsg("[D3D9_RESULT] %s\n", failures != before ? "FAIL" : d3dUnavailable ? "UNAVAILABLE (no Direct3D HAL)" : "RENDERED (see device type)");

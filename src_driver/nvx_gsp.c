@@ -28,6 +28,18 @@
 #include "bootloader_blob.h"
 #include "booter_load_blob.h"
 
+_Static_assert(GSP_VRAM_MAP_BYTES ==
+               GSP_VRAM_SLICE_COUNT * GSP_VRAM_SLICE_BYTES,
+               "VRAM PTE slices must cover the published aperture");
+_Static_assert(GSP_VRAM_LPT_OFFSET + GSP_VRAM_SLICE_COUNT * 0x100UL ==
+               GSP_UPLOAD_PTE_OFFSET,
+               "upload SPT must follow the VRAM LPT pool");
+_Static_assert(GSP_UPLOAD_PTE_OFFSET + 0x1000UL <= GSP_PAGE_TABLES_SIZE,
+               "page-table allocation must contain the upload SPT");
+_Static_assert(GSP_PAGE_TABLES_OFFSET + GSP_PAGE_TABLES_SIZE <=
+               GSP_DISPLAY_PUSH_OFFSET,
+               "page-table pool must not overlap display push buffers");
+
 #ifndef NVX_ENABLE_GR_CHANNEL_PROBE
 #define NVX_ENABLE_GR_CHANNEL_PROBE 0
 #endif
@@ -47,6 +59,8 @@
 #define NVX_RM_OBJECT_NVC0_M2MF          0xc6970010U
 #define NVX_RM_OBJECT_NVC0_COPY          0xc6970011U
 #define NVX_RM_OBJECT_NVC0_2D            0xc6970012U
+#define NVX_RM_OBJECT_NVC0_COMPUTE       0xc6970013U
+#define NVX_RM_CLASS_AMPERE_COMPUTE_B    0x0000c7c0U
 
 /* Convert a pixel coordinate in an Ampere/Turing 2D GOB ARGB target to its
    byte offset. TileMode carries the vertical GOB block height in bits 6:4.
@@ -395,10 +409,10 @@ BOOLEAN NvxGspSetDepthPageKind(PVOID HwDeviceExtension,ULONG64 gpuVa,
     if(offset>dev->GspVramMapBytes||0x10000ULL>dev->GspVramMapBytes-offset)
         return FALSE;
     tables=(PULONG64)((PUCHAR)dev->GspDmaVirtual+GSP_PAGE_TABLES_OFFSET);
-    slice=(ULONG)(offset/0x200000ULL);
-    page=(ULONG)((offset%0x200000ULL)/0x10000ULL);
-    if(slice>=32U||page>=32U) return FALSE;
-    lpt=(PULONG64)((PUCHAR)tables+0x6000+slice*0x100);
+    slice=(ULONG)(offset/GSP_VRAM_SLICE_BYTES);
+    page=(ULONG)((offset%GSP_VRAM_SLICE_BYTES)/0x10000ULL);
+    if(slice>=GSP_VRAM_SLICE_COUNT||page>=32U) return FALSE;
+    lpt=(PULONG64)((PUCHAR)tables+GSP_VRAM_LPT_OFFSET+slice*0x100);
     /* This is a VER2 video-aperture PTE. Keep the peer-id field (35:33)
        clear; ATOMIC_DISABLE is bit 7. The old bit-35 value encoded peer ID 4
        while leaving atomics enabled, which does not match UVM's PTE builder. */
@@ -491,6 +505,24 @@ BOOLEAN NvxGspMapGartRange(PVOID HwDeviceExtension,ULONG firstSlice,
         NvxGspUnlockGartPtes();
         return FALSE;
     }
+    LogStr("NVX [GART]: mapped slice=");LogHex(firstSlice);
+    LogStr(" count=");LogHex(sliceCount);
+    LogStr(" gpuVa=");LogHex(NVX_GART_GPU_VA_BASE+
+                             (ULONG64)firstSlice*NVX_GART_SLICE_BYTES);
+    LogStr(" physical=");LogHex(physical);
+    LogStr(" bytes=");LogHex(bytes);
+    LogStr(" pteTable=");LogHex(dev->GspGartPtePhysical.QuadPart);
+    LogStr(" pte0=");LogHex(entries[firstSlice*NVX_GART_PTES_PER_SLICE]);
+    LogStr(" pte1=");LogHex(entries[firstSlice*NVX_GART_PTES_PER_SLICE+1U]);
+    LogStr(" pte2=");LogHex(entries[firstSlice*NVX_GART_PTES_PER_SLICE+2U]);
+    LogStr(" pte3=");LogHex(entries[firstSlice*NVX_GART_PTES_PER_SLICE+3U]);
+    LogStr(" pte4=");LogHex(entries[firstSlice*NVX_GART_PTES_PER_SLICE+4U]);
+    LogStr(" pte5=");LogHex(entries[firstSlice*NVX_GART_PTES_PER_SLICE+5U]);
+    LogStr(" pte6=");LogHex(entries[firstSlice*NVX_GART_PTES_PER_SLICE+6U]);
+    LogStr(" pte7=");LogHex(entries[firstSlice*NVX_GART_PTES_PER_SLICE+7U]);
+    LogStr(" pteLast=");LogHex(entries[firstSlice*NVX_GART_PTES_PER_SLICE+
+                                      (bytes>>12)-1U]);
+    LogStr("\n");
     __sync_synchronize();
     /* On an unconfirmed invalidate, the caller must retain the physical
      * backing and VA reservation; stale translations may still reference it. */
@@ -737,16 +769,19 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
     }
 #endif
     /* VA 0x20000000 selects level-2 index 1, so it needs a second PD0 page.
-       Its paired PD0 entries point to a 64KB LPT and 4KB SPT. Each 256-byte
-       LPT covers one 2MB VA slice. Map VRAM physical 0..64MB in CE VA space. */
+       Its paired PD0 entries point to 64KB LPTs and a 4KB SPT. Each 256-byte
+       LPT covers one 2MB VA slice. Map 128MiB of VRAM for Nouveau screen BOs. */
     tables[1025]=((physical+0x5000)>>4)|0xc;
-    for(ULONG slice=0;slice<32;slice++) {
-        ULONG64 *lpt=(ULONG64 *)((PUCHAR)tables+0x6000+slice*0x100);
+    for(ULONG slice=0;slice<GSP_VRAM_SLICE_COUNT;slice++) {
+        ULONG64 *lpt=(ULONG64 *)((PUCHAR)tables+
+                                 GSP_VRAM_LPT_OFFSET+slice*0x100);
         ULONG pdIndex=slice;
-        tables[2560+pdIndex*2]=((physical+0x6000+slice*0x100)>>4)|0xc;
+        tables[2560+pdIndex*2]=
+            ((physical+GSP_VRAM_LPT_OFFSET+slice*0x100)>>4)|0xc;
         tables[2560+pdIndex*2+1]=0;
         for(ULONG page=0;page<32;page++) {
-            ULONG64 address=(ULONG64)slice*0x200000+(ULONG64)page*0x10000;
+            ULONG64 address=(ULONG64)slice*GSP_VRAM_SLICE_BYTES+
+                            (ULONG64)page*0x10000;
             if(address+0xffff<=dev->GspFbFreeLimit)
                 lpt[page]=(address>>4)|1;
         }
@@ -754,15 +789,17 @@ static BOOLEAN NvxGspMapScratch(PNVX_DEVICE_EXTENSION dev)
     /* DMA allocations are only 4KB aligned. 64KB leaves silently discard
        low physical address bits and read unrelated bytes on real XP boots.
        One SPT maps the 64KB staging window used by bounded upload requests. */
-    tables[2560+32*2]=0;
-    tables[2560+32*2+1]=((physical+0x8000)>>4)|0xc;
+    tables[2560+GSP_VRAM_SLICE_COUNT*2]=0;
+    tables[2560+GSP_VRAM_SLICE_COUNT*2+1]=
+        ((physical+GSP_UPLOAD_PTE_OFFSET)>>4)|0xc;
     for(ULONG page=0;page<16;page++) {
         ULONG64 pagePhysical=dev->GspDmaPhysical.QuadPart+GSP_UPLOAD_OFFSET+
             (ULONG64)page*0x1000;
-        tables[4096+page]=(pagePhysical>>4)|0xd;
+        tables[GSP_UPLOAD_PTE_OFFSET/sizeof(*tables)+page]=
+            (pagePhysical>>4)|0xd;
     }
-    dev->GspVramGpuVa=0x20000000ULL;
-    dev->GspVramMapBytes=0x4000000ULL;
+    dev->GspVramGpuVa=GSP_VRAM_GPU_VA;
+    dev->GspVramMapBytes=GSP_VRAM_MAP_BYTES;
     __sync_synchronize();
     setDirectory[0]=(ULONG)physical;setDirectory[1]=(ULONG)(physical>>32);
     setDirectory[2]=4; /* top-level 49-bit directory has four entries */
@@ -1241,6 +1278,7 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     dev->GspGraphicsM2mfObjectHandle=0;
     dev->GspGraphicsCopyObjectHandle=0;
     dev->GspGraphics2dObjectHandle=0;
+    dev->GspGraphicsComputeObjectHandle=0;
     grBufferInfo=&dev->GrContextInfoParams;
     scratchPhys=(ULONG64)dev->GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET;
     instPhys=scratchPhys+0xa000;
@@ -1401,6 +1439,13 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         LogStr("NVX [GR]: Fermi 2D object allocated on graphics channel.\n");
     } else {
         LogStr("NVX [GR]: Fermi 2D object allocation unavailable.\n");
+    }
+    if(NvxGspAlloc(dev,channelHandle,NVX_RM_OBJECT_NVC0_COMPUTE,
+                   NVX_RM_CLASS_AMPERE_COMPUTE_B,NULL,0)) {
+        dev->GspGraphicsComputeObjectHandle=NVX_RM_OBJECT_NVC0_COMPUTE;
+        LogStr("NVX [GR]: Ampere compute object allocated on graphics channel.\n");
+    } else {
+        LogStr("NVX [GR]: Ampere compute object allocation unavailable.\n");
     }
     if(!NvxGspControl(dev,channelHandle,NVA06F_CTRL_CMD_BIND,&bindEngine,sizeof(bindEngine))) {
         LogStr("NVX [GR]: graphics channel bind failed.\n");
