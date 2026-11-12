@@ -40,6 +40,8 @@ static int nvx_drm_unsupported(void);
 static int nvx_drm_unsupported_operation(uint32_t kind,
                                         unsigned long operation);
 static int nvx_drm_lookup(int fd, NVX_WINSYS_DEVICE *device);
+static void nvx_drm_lock_acquire(void);
+static void nvx_drm_lock_release(void);
 
 static struct nvx_drm_device_slot *
 nvx_drm_find_device_locked(int fd)
@@ -146,6 +148,69 @@ nvx_drm_nvif_device_info(int fd, void *data, unsigned long size)
    memcpy(info->chip, "GA104", sizeof("GA104"));
    memcpy(info->name, "NVX Ampere device", sizeof("NVX Ampere device"));
    return 0;
+}
+
+static int
+nvx_drm_channel_alloc(int fd, struct drm_nouveau_channel_alloc *request,
+                      unsigned long size)
+{
+   struct nvx_drm_device_slot *device;
+   int ok = 0;
+
+   if (!request || size != sizeof(*request) || request->channel ||
+       request->pushbuf_domains || request->notifier_handle ||
+       request->nr_subchan || request->fb_ctxdma_handle != 0xffffffffU ||
+       request->tt_ctxdma_handle != NOUVEAU_FIFO_ENGINE_GR) {
+      nvx_drm_status.ChannelAllocCount++;
+      nvx_drm_status.LastChannelAllocResult = 1U;
+      nvx_drm_status.LastChannelHandle = 0;
+      return nvx_drm_unsupported_operation(
+         NVX_XF86DRM_UNSUPPORTED_WRITE_READ, DRM_NOUVEAU_CHANNEL_ALLOC);
+   }
+
+   nvx_drm_lock_acquire();
+   device = nvx_drm_find_device_locked(fd);
+   nvx_drm_status.ChannelAllocCount++;
+   if (device && NvxWinsysOpenNouveauChannel(&device->device)) {
+      request->channel = (int32_t)device->device.NouveauChannelHandle;
+      request->pushbuf_domains = NOUVEAU_GEM_DOMAIN_VRAM |
+                                 NOUVEAU_GEM_DOMAIN_GART;
+      request->notifier_handle = 0;
+      nvx_drm_status.LastChannelAllocResult = 0;
+      nvx_drm_status.LastChannelHandle =
+         device->device.NouveauChannelHandle;
+      ok = 1;
+   } else {
+      nvx_drm_status.LastChannelAllocResult = device ? 2U : 3U;
+      nvx_drm_status.LastChannelHandle = 0;
+   }
+   nvx_drm_lock_release();
+   if (ok)
+      return 0;
+   errno = device ? EBUSY : ENODEV;
+   return -1;
+}
+
+static int
+nvx_drm_channel_free(int fd, struct drm_nouveau_channel_free *request,
+                     unsigned long size)
+{
+   struct nvx_drm_device_slot *device;
+   int ok = 0;
+
+   if (!request || size != sizeof(*request) || request->channel == 0)
+      return nvx_drm_unsupported_operation(NVX_XF86DRM_UNSUPPORTED_WRITE,
+                                           DRM_NOUVEAU_CHANNEL_FREE);
+   nvx_drm_lock_acquire();
+   device = nvx_drm_find_device_locked(fd);
+   if (device &&
+       (uint32_t)request->channel == device->device.NouveauChannelHandle)
+      ok = NvxWinsysCloseNouveauChannel(&device->device);
+   nvx_drm_lock_release();
+   if (ok)
+      return 0;
+   errno = device ? EINVAL : ENODEV;
+   return -1;
 }
 
 static void
@@ -570,6 +635,8 @@ int
 drmCommandWrite(int fd, unsigned long command, void *data,
                 unsigned long size)
 {
+   if (command == DRM_NOUVEAU_CHANNEL_FREE)
+      return nvx_drm_channel_free(fd, data, size);
    if (command == DRM_NOUVEAU_NVIF)
       return nvx_drm_nvif_device_new(fd, data, size);
    if (command == DRM_NOUVEAU_GEM_CPU_PREP) {
@@ -611,6 +678,8 @@ drmCommandWriteRead(int fd, unsigned long command, void *data,
 
    if (command == DRM_NOUVEAU_GETPARAM)
       return nvx_drm_getparam(fd, data, size);
+   if (command == DRM_NOUVEAU_CHANNEL_ALLOC)
+      return nvx_drm_channel_alloc(fd, data, size);
    if (command == DRM_NOUVEAU_NVIF)
       return nvx_drm_nvif_device_info(fd, data, size);
    if (command == DRM_NOUVEAU_GEM_NEW) {

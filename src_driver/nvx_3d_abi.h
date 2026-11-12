@@ -108,6 +108,7 @@ Nvx3dDepthModeForOperation(uint32_t operation)
 #define NVX_ESCAPE_3D_NVC0_NATIVE_CLEAR 0x800bU
 #define NVX_ESCAPE_3D_CLIENT_OPEN 0x800cU
 #define NVX_ESCAPE_3D_CLIENT_CLOSE 0x800dU
+#define NVX_ESCAPE_3D_CHANNEL_LEASE 0x800eU
 #define NVX_3D_STATUS_SUCCESS            0U
 #define NVX_3D_STATUS_INVALID_PARAMETER 87U
 #define NVX_3D_STATUS_NOT_SUPPORTED     50U
@@ -242,6 +243,8 @@ typedef struct NVX_3D_QUERY_CAPS {
 
 #define NVX_3D_CLIENT_OPEN  1U
 #define NVX_3D_CLIENT_CLOSE 2U
+#define NVX_3D_CHANNEL_OPEN  1U
+#define NVX_3D_CHANNEL_CLOSE 2U
 typedef struct NVX_3D_CLIENT_SESSION {
     uint32_t Size;
     uint32_t Version;
@@ -249,6 +252,32 @@ typedef struct NVX_3D_CLIENT_SESSION {
     uint32_t Reserved;
     uint64_t ClientToken;
 } NVX_3D_CLIENT_SESSION;
+
+typedef struct NVX_3D_CHANNEL_LEASE {
+    uint32_t Size;
+    uint32_t Version;
+    uint32_t Operation;
+    uint32_t Reserved;
+    uint64_t ClientToken;
+    uint32_t ChannelHandle;
+    uint32_t GraphicsObjectHandle;
+} NVX_3D_CHANNEL_LEASE;
+
+static inline int
+Nvx3dValidateChannelLease(const NVX_3D_CHANNEL_LEASE *request,
+                          uint32_t operation)
+{
+    if(!request||request->Size!=sizeof(*request)||
+       request->Version!=NVX_3D_ABI_VERSION||
+       request->Operation!=operation||request->Reserved||
+       !request->ClientToken)
+        return 0;
+    if(operation==NVX_3D_CHANNEL_OPEN)
+        return !request->ChannelHandle&&!request->GraphicsObjectHandle;
+    if(operation==NVX_3D_CHANNEL_CLOSE)
+        return request->ChannelHandle&&request->GraphicsObjectHandle;
+    return 0;
+}
 
 static inline int
 Nvx3dValidateClientSession(const NVX_3D_CLIENT_SESSION *request,

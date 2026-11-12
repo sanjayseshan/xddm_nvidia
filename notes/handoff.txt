@@ -1333,4 +1333,43 @@ The full test harness now defaults `NVX_REQUIRE_HW_OPENGL=1` and exits nonzero a
 
 The current failure occurs before Gallium's NVC0 screen or context is created. In `mesa/src/gallium/winsys/nouveau/drm/nouveau.c`, `nouveau_object_channel_new()` issues `DRM_NOUVEAU_CHANNEL_ALLOC` and expects the channel ID plus pushbuffer domains and notifier handle. After that, `nvc0_screen_init()` in `mesa/src/gallium/drivers/nouveau/nvc0/nvc0_screen.c` allocates/maps a 4 KiB fence BO, creates the M2MF and copy objects, creates 2D and GA102/GA104 3D objects, binds them to subchannels 2, 4, 3, and 0 (and software subchannel 7 on older class paths), then submits initialization state and allocates shader text/uniform BOs. Thus returning only a channel number cannot advance screen creation; the OS pipe also needs BO CPU-map semantics, NVIF object lifecycle/class enumeration, pushbuffer ownership and relocation, and fence/notifier behavior.
 
-The miniport currently owns one RM C56F channel and one kernel-bound C797 object for fixed diagnostic submits. The DRM shim has no session-bound channel object or GEM_PUSHBUF implementation; `Nvx3dValidateNvc0Batch()` remains preflight only. Any next implementation must bridge the user channel/object lifecycle to the existing RM channel and submit through a kernel-built GPFIFO stream with method-aware validation and per-BO ownership, while keeping Mesa pristine. The latest hardware run confirms this source boundary: `NOUVEAU_CHANNEL_ALLOC` fails before `nvc0_screen_init()`; no change to NVC0 method validation alone can make ordinary OpenGL render.
+The miniport owns one RM C56F channel and one kernel-bound C797 object for fixed diagnostic submits. The DRM shim has no GEM_PUSHBUF implementation; `Nvx3dValidateNvc0Batch()` remains preflight only. The historical run at the time of this audit failed before `nvc0_screen_init()` because `NOUVEAU_CHANNEL_ALLOC` was unsupported. The November 11, 2026 update below implements that lease path; ordinary OpenGL remains blocked at pushbuffer submission.
+
+## XP Nouveau OS channel lease implementation (November 11, 2026)
+
+Implemented the first real Nouveau OS-pipe channel operations without changing
+the Mesa submodule:
+
+- `DRM_NOUVEAU_CHANNEL_ALLOC/FREE` in `mesa_patches/nvx_xf86drm.c` map to a
+  session-owned exclusive lease of the miniport's existing RM C56F channel
+  and C797 object handles.
+- Added the miniport lease IOCTL and client-token ownership checks; closing a
+  client also releases its lease. The channel lease is independent of the
+  fixed-profile submit capability.
+- Wired `NVX_ESCAPE_3D_CHANNEL_LEASE` through `src_disp/DrvEscape`, including
+  `QUERYESCSUPPORT`, input validation, and forwarding to the miniport. This
+  missing XP display-driver dispatch had initially prevented the lease from
+  reaching the miniport.
+- Added channel allocation telemetry to the guest's `[NVX_XF86DRM]` status so
+  future runs show whether allocation was attempted, its result, and the RM
+  channel handle.
+
+Host checks passed: `make -C src_driver check`, `make -C src_disp check`, and
+the x64/x86 display and miniport builds. Hardware run
+`../test_logs/v3.0.0.8-20261111-213520.log` confirms
+`channel_allocs=1 channel_result=0 channel=c56f0002`. OpenGL still reports
+`SOFTWARE`; the next failure is `DRM_NOUVEAU_GEM_PUSHBUF` (`last_operation=0x41`),
+and the full test exits nonzero under the hardware-rendering gate. Independent
+C797 triangle/semaphore and 2D checks pass. One firmware assertion remains
+reported during guest startup.
+
+This completes only the XP display/miniport channel-lease portion of the OS
+pipe. Nouveau's full channel interface still needs a safe object/class
+contract, BO/notifier semantics, and kernel-validated pushbuffer submission.
+Do not implement generic `GEM_PUSHBUF` by forwarding Mesa command words to the
+RM-owned channel: `NVX_3D_VALIDATE_BATCH` only preflights framing and address
+pairs, while the existing submit IOCTL rebuilds a small fixed command set.
+Next work is an operation-specific validated submit path (including class,
+method, subchannel, relocation, and session-owned BO checks), then map Mesa's
+pushbuffer/fence operations onto that interface and rerun the real hardware
+OpenGL gate.

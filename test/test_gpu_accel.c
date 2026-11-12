@@ -138,6 +138,9 @@ static void DumpMesaBridgeTrace(void)
         DWORD xf86drmUnsupportedCount;
         DWORD xf86drmLastUnsupportedKind;
         DWORD xf86drmLastUnsupportedOperation;
+        DWORD xf86drmChannelAllocCount;
+        DWORD xf86drmLastChannelAllocResult;
+        DWORD xf86drmLastChannelHandle;
     } MESA_BRIDGE_STATUS;
     typedef BOOL (WINAPI *PFN_QUERY_BRIDGE_STATUS)(MESA_BRIDGE_STATUS *, DWORD);
     HMODULE icd = GetModuleHandleA("nvxogl64.dll");
@@ -164,10 +167,13 @@ static void DumpMesaBridgeTrace(void)
            (unsigned long)(DWORD)status.nouveauChipset,
            (unsigned long)(DWORD)status.nouveauApertureHigh,
            (unsigned long)(DWORD)status.nouveauApertureLow);
-    LogMsg("[NVX_XF86DRM] unsupported_count=%lu last_kind=%lu last_operation=%08lx%s\n",
+    LogMsg("[NVX_XF86DRM] unsupported_count=%lu last_kind=%lu last_operation=%08lx channel_allocs=%lu channel_result=%lu channel=%08lx%s\n",
            (unsigned long)status.xf86drmUnsupportedCount,
            (unsigned long)status.xf86drmLastUnsupportedKind,
            (unsigned long)status.xf86drmLastUnsupportedOperation,
+           (unsigned long)status.xf86drmChannelAllocCount,
+           (unsigned long)status.xf86drmLastChannelAllocResult,
+           (unsigned long)status.xf86drmLastChannelHandle,
            status.xf86drmLastUnsupportedKind == 2 &&
               status.xf86drmLastUnsupportedOperation == 2 ?
               " (NOUVEAU_CHANNEL_ALLOC)" : "");

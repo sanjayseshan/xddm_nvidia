@@ -452,6 +452,7 @@ typedef struct _NVX_DEVICE_EXTENSION {
     BOOLEAN GspGraphicsChannelFaulted;
     BOOLEAN GspGraphicsUserAllocReady;
     BOOLEAN GspGraphicsUserSubmitReady;
+    ULONG64 Nvx3dChannelOwnerToken;
     ULONG64 Nvx3dNextBufferId;
     ULONG64 Nvx3dLastSubmitToken;
     ULONG64 Nvx3dLastSubmitClientToken;

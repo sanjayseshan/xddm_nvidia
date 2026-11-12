@@ -92,6 +92,9 @@ typedef struct NVX_XF86DRM_STATUS {
    uint32_t UnsupportedCount;
    uint32_t LastUnsupportedKind;
    uint32_t LastUnsupportedOperation;
+   uint32_t ChannelAllocCount;
+   uint32_t LastChannelAllocResult;
+   uint32_t LastChannelHandle;
 } NVX_XF86DRM_STATUS;
 
 /* Register an already queried NVX adapter and obtain a process-local DRM

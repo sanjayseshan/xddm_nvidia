@@ -16,11 +16,15 @@ typedef struct NVX_WINSYS_DEVICE {
    uint64_t ClientToken;
    uint64_t NextAllocationToken;
    uint64_t NextRequestToken;
+   uint32_t NouveauChannelHandle;
+   uint32_t NouveauGraphicsObjectHandle;
 } NVX_WINSYS_DEVICE;
 
 int NvxWinsysInit(NVX_WINSYS_DEVICE *device, NVX_WINSYS_ESCAPE escape,
                   void *opaque);
 int NvxWinsysCloseClient(NVX_WINSYS_DEVICE *device);
+int NvxWinsysOpenNouveauChannel(NVX_WINSYS_DEVICE *device);
+int NvxWinsysCloseNouveauChannel(NVX_WINSYS_DEVICE *device);
 uint64_t NvxWinsysNextRequestToken(NVX_WINSYS_DEVICE *device);
 int NvxWinsysAllocBuffer(NVX_WINSYS_DEVICE *device,
                          const NVX_3D_ALLOC_BUFFER *request,

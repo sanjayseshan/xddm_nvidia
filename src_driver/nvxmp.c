@@ -1967,12 +1967,64 @@ BOOLEAN NTAPI HwVidStartIO(
                    engine->Nvx3dBuffers[j].ClientToken==request.ClientToken)
                     busy=TRUE;
         }
-        if(found&&!busy)
+        if(found&&!busy) {
+            if(engine->Nvx3dChannelOwnerToken==request.ClientToken)
+                engine->Nvx3dChannelOwnerToken=0;
             engine->Nvx3dClientSessions[i].ClientToken=0;
+        }
         Nvx3dUnlockBuffers();
         status=found&&!busy?NO_ERROR:ERROR_BUSY;
         if(status==NO_ERROR)
             LogStr("NVX [3D-SESSION]: closed client session.\n");
+        break;
+    }
+
+    case IOCTL_NVX_3D_CHANNEL_LEASE: {
+        PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
+        NVX_3D_CHANNEL_LEASE request;
+        if(!RequestPacket->InputBuffer||
+           RequestPacket->InputBufferLength!=sizeof(request)||
+           !RequestPacket->OutputBuffer||
+           RequestPacket->OutputBufferLength<sizeof(request)) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+        VideoPortMoveMemory(&request,RequestPacket->InputBuffer,sizeof(request));
+        if(!engine||!Nvx3dValidateChannelLease(&request,request.Operation)||
+           !Nvx3dLockBuffers()) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+        if(!Nvx3dClientSessionActiveLocked(engine,request.ClientToken)) {
+            Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
+        }
+        if(request.Operation==NVX_3D_CHANNEL_OPEN) {
+            if(!engine->GspGraphicsChannelReady||
+               !engine->GspGraphicsCommandVerified||
+               engine->GspGraphicsChannelFaulted||engine->GspMmuFaultQueued||
+               !engine->GspGraphicsChannelHandle||
+               !engine->GspGraphicsObjectHandle||
+               (engine->Nvx3dChannelOwnerToken&&
+                engine->Nvx3dChannelOwnerToken!=request.ClientToken)) {
+                Nvx3dUnlockBuffers();status=ERROR_BUSY;break;
+            }
+            engine->Nvx3dChannelOwnerToken=request.ClientToken;
+            request.ChannelHandle=engine->GspGraphicsChannelHandle;
+            request.GraphicsObjectHandle=engine->GspGraphicsObjectHandle;
+            status=NO_ERROR;
+        } else if(request.Operation==NVX_3D_CHANNEL_CLOSE) {
+            if(engine->Nvx3dChannelOwnerToken!=request.ClientToken||
+               request.ChannelHandle!=engine->GspGraphicsChannelHandle||
+               request.GraphicsObjectHandle!=engine->GspGraphicsObjectHandle) {
+                Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
+            }
+            engine->Nvx3dChannelOwnerToken=0;
+            status=NO_ERROR;
+        } else {
+            Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
+        }
+        Nvx3dUnlockBuffers();
+        VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,sizeof(request));
+        statusBlock->Information=sizeof(request);
         break;
     }
 

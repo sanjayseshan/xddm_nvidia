@@ -38,6 +38,20 @@ mock_escape(void *opaque, uint32_t escape, uint32_t input_bytes,
             const void *input, uint32_t output_bytes, void *output)
 {
    (void)opaque;
+   if (escape == NVX_ESCAPE_3D_CHANNEL_LEASE &&
+       input_bytes == sizeof(NVX_3D_CHANNEL_LEASE) &&
+       output_bytes == sizeof(NVX_3D_CHANNEL_LEASE)) {
+      const NVX_3D_CHANNEL_LEASE *request = input;
+      NVX_3D_CHANNEL_LEASE *result = output;
+      if (!Nvx3dValidateChannelLease(request, request->Operation))
+         return 0;
+      *result = *request;
+      if (request->Operation == NVX_3D_CHANNEL_OPEN) {
+         result->ChannelHandle = 0xc56f0002U;
+         result->GraphicsObjectHandle = 0xc6970001U;
+      }
+      return 1;
+   }
    if (escape == NVX_ESCAPE_3D_CLIENT_CLOSE &&
        input_bytes == sizeof(NVX_3D_CLIENT_SESSION) && output_bytes == 0)
       return 1;
@@ -156,7 +170,8 @@ main(void)
    winsys.caps.Features = NVX_3D_FEATURE_GR_CHANNEL |
                           NVX_3D_FEATURE_USER_ALLOC |
                           NVX_3D_FEATURE_UPLOAD |
-                          NVX_3D_FEATURE_DOWNLOAD;
+                          NVX_3D_FEATURE_DOWNLOAD |
+                          NVX_3D_FEATURE_FIXED_PROFILE_SUBMIT;
    winsys.caps.DeviceId = 0x2488U;
    winsys.caps.Chipset = 0x170U;
    winsys.caps.VramApertureBytes = 64U * 1024U * 1024U;
@@ -316,18 +331,17 @@ main(void)
       struct drm_nouveau_gem_pushbuf pushbuf = {0};
       NVX_XF86DRM_STATUS status;
       uint32_t previous_unsupported;
-      NvxXf86DrmGetStatus(&status);
-      previous_unsupported = status.UnsupportedCount;
+      channel.fb_ctxdma_handle = 0xffffffffU;
+      channel.tt_ctxdma_handle = NOUVEAU_FIFO_ENGINE_GR;
       assert(drmCommandWriteRead(fd, DRM_NOUVEAU_CHANNEL_ALLOC, &channel,
-                                 sizeof(channel)) == -1);
-      assert(errno == ENOSYS);
+                                 sizeof(channel)) == 0);
+      assert((uint32_t)channel.channel == 0xc56f0002U);
+      assert(channel.pushbuf_domains ==
+             (NOUVEAU_GEM_DOMAIN_VRAM | NOUVEAU_GEM_DOMAIN_GART));
+      assert(channel.notifier_handle == 0);
+
       memset(&status, 0, sizeof(status));
       NvxXf86DrmGetStatus(&status);
-      assert(status.UnsupportedCount == previous_unsupported + 1U);
-      assert(status.LastUnsupportedKind ==
-             NVX_XF86DRM_UNSUPPORTED_WRITE_READ);
-      assert(status.LastUnsupportedOperation == DRM_NOUVEAU_CHANNEL_ALLOC);
-
       previous_unsupported = status.UnsupportedCount;
       assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_PUSHBUF, &pushbuf,
                                  sizeof(pushbuf)) == -1);
@@ -337,6 +351,13 @@ main(void)
       assert(status.LastUnsupportedKind ==
              NVX_XF86DRM_UNSUPPORTED_WRITE_READ);
       assert(status.LastUnsupportedOperation == DRM_NOUVEAU_GEM_PUSHBUF);
+      {
+         struct drm_nouveau_channel_free channel_free = {
+            .channel = channel.channel
+         };
+         assert(drmCommandWrite(fd, DRM_NOUVEAU_CHANNEL_FREE, &channel_free,
+                                sizeof(channel_free)) == 0);
+      }
    }
 
    NvxXf86DrmUnregisterDevice(fd);
