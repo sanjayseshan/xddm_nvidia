@@ -1633,9 +1633,13 @@ static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
         Nvx3dUnlockBuffers();return FALSE;
     }
     /* The GPU VRAM mapping uses 64 KiB leaf PTEs. A depth target may change
-       the PTE kind for its entire leaf, so keep its buffer 64 KiB aligned and
-       reserve the depth page without sharing that leaf with the color target. */
-    candidate=start;
+       the PTE kind for its entire leaf, so keep all allocations at least
+       leaf-aligned and reserve the depth page without sharing the leaf. */
+    /* Nouveau's NVC0 screen requests 128 KiB aligned code/TLS BOs. Keep
+       every VRAM allocation at that alignment so the GEM shim can honor
+       those requests without inventing an offset inside a miniport BO. */
+    candidate=(start+(NVX_3D_VRAM_ALLOCATION_ALIGNMENT-1ULL))&
+        ~((ULONG64)NVX_3D_VRAM_ALLOCATION_ALIGNMENT-1ULL);
     for(;;) {
         BOOLEAN moved=FALSE;
         if(candidate>end||request->Bytes>end-candidate) {
@@ -1651,14 +1655,16 @@ static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
             entryStart=entry->GpuVa-engine->GspVramGpuVa;
             entryEnd=entryStart+entry->Bytes;
             if(candidate<entryEnd&&entryStart<candidate+request->Bytes) {
-                candidate=(entryEnd+0xffffULL)&~0xffffULL;
+                candidate=(entryEnd+(NVX_3D_VRAM_ALLOCATION_ALIGNMENT-1ULL))&
+                    ~((ULONG64)NVX_3D_VRAM_ALLOCATION_ALIGNMENT-1ULL);
                 moved=TRUE;break;
             }
         }
         if(!moved) break;
     }
     if(request->Usage&NVX_3D_USAGE_DEPTH_TARGET)
-        candidate=(candidate+0xffffULL)&~0xffffULL;
+        candidate=(candidate+(NVX_3D_VRAM_ALLOCATION_ALIGNMENT-1ULL))&
+            ~((ULONG64)NVX_3D_VRAM_ALLOCATION_ALIGNMENT-1ULL);
     if(candidate>end||request->Bytes>end-candidate) {
         LogStr("NVX [3D-ALLOC]: aligned VRAM range exhausted bytes=");
         LogHex(request->Bytes);LogStr(" candidate=");LogHex(candidate);

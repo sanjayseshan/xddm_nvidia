@@ -695,7 +695,9 @@ nvx_drm_gem_new(struct nvx_drm_device_slot *device,
    if (!device || !request || request->info.handle ||
        !request->info.size ||
        request->info.size > device->device.caps.MaxBufferBytes ||
-       request->info.size > UINT32_MAX || request->align > 0x10000U ||
+       request->info.size > UINT32_MAX ||
+       request->align > ((request->info.domain & NOUVEAU_GEM_DOMAIN_VRAM) ?
+                         NVX_3D_VRAM_ALLOCATION_ALIGNMENT : 0x10000U) ||
        (request->align &&
         (request->align & (request->align - 1U))) ||
        request->info.tile_mode ||
@@ -744,10 +746,10 @@ nvx_drm_gem_new(struct nvx_drm_device_slot *device,
                            device->client_token, &slot->bo))
       return 0;
 
-   /* Miniport allocations are 64 KiB aligned linear VRAM ranges. Never claim
-    * to have honored a Nouveau tiled/compressed layout that the NVX allocator
-    * and MMU have not created. The alignment limit above guarantees every
-    * accepted power-of-two request is met by the miniport's 64 KiB placement. */
+   /* The miniport places VRAM BOs at 128 KiB boundaries. GART BO alignment
+    * up to 64 KiB is accepted only when the returned VA actually satisfies
+    * it. Never claim that the NVX allocator/MMU created a Nouveau tiled or
+    * compressed layout. */
    if (request->align &&
        (slot->bo.allocation.GpuVa & (request->align - 1U))) {
       (void)NvxNouveauBoDestroy(&slot->bo);

@@ -1590,3 +1590,45 @@ the NTFS volume read-only and listed the Windows root (`WINDOWS`, `Program
 Files`, `ntldr`, `boot.ini`, and test directories). This verifies the disk
 container and basic filesystem readability, though it does not prove every
 file or filesystem structure is intact. No QEMU process remains active.
+
+## NVC0 TEXT BO alignment and VFIO register diagnosis (November 11, 2026)
+
+The `nvx_nouveau_trace.log` recovered read-only from the guest after run
+`../test_logs/v3.0.0.8-20261111-232157.log` gives the first concrete screen-init
+failure after NVIF setup. Channel SCLASS and RM-backed NVIF device, FIFO, DMA,
+and C797 graphics objects all succeeded. Mesa then reported
+`NVC0 init rc=-1: Error allocating TEXT area`. NVC0 allocates that area with
+`nouveau_bo_new(..., NV_VRAM_DOMAIN, 1 << 17, 1 << 19, ...)`: 128 KiB
+alignment and a 512 KiB VRAM BO. The external GEM shim rejected alignment over
+64 KiB, while the miniport VRAM allocator only guaranteed 64 KiB placement.
+This explains why no TEXT-area VRAM allocation was recorded and why the
+screen-init trace ended before any drawing.
+
+The external shim now accepts up to 128 KiB for VRAM GEMs (still only 64 KiB
+for GART, with returned-address alignment checked). Miniport VRAM placements
+are now 128 KiB aligned, including after occupied ranges. Host xf86drm tests
+cover accepting a 128 KiB-aligned VRAM BO and rejecting the same alignment for
+GART. `make -C src_driver check` passed with ASan/UBSan host tests and x86/x64
+MinGW compilation. The XP Mesa ICD rebuilt and passed its XP import/subsystem
+audit. This change has not yet reached NVC0 screen initialization on hardware.
+
+The rebuilt full test run `../test_logs/v3.0.0.8-20261111-232648.log` remained
+empty for the 300-second boot window; QEMU exited before its monitor sidecar
+could be collected. The QCOW2 check and read-only NTFS mount still pass. A
+subsequent VFIO-only boot `../test_logs/v3.0.0.8-20261111-regboot.log` also had
+no serial output. While that VM was running, QEMU HMP repeatedly reported
+`VM status: running`, CPU0 at `CS=C000:EIP=F2F0`, `CR0=0010` (real mode), and
+CPUs 1-3 halted at `EIP=FD09A`, `CR0=0011`; CPU0's sampled registers did not
+advance over roughly a minute. QEMU reported the IDE hard disk and driver ISO
+attached. Those samples place the guest in pre-OS BIOS execution, not in
+Windows/CHKDSK. The VM was then stopped through HMP `quit`.
+
+`./test/reset_test_gpu.sh --check` confirms the RTX 3070 functions form an
+isolated VFIO-only bridge and that `flr bus` reset methods are available. The
+actual bridge reset script requires root and was not run. Next: reset the
+isolated RTX bridge with `sudo ./test/reset_test_gpu.sh`, boot VFIO again, and
+capture HMP registers plus serial during startup. If XP reaches its graphics
+test, verify that the Nouveau trace advances beyond TEXT-area allocation and
+then inspect the next failure stage. Current OpenGL acceptance remains
+`[OPENGL_RESULT] RENDERED`; the earlier successful cube was still softpipe
+(`screens=0`, `gpu_batches=0`).
