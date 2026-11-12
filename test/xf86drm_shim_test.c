@@ -36,6 +36,9 @@ mock_escape(void *opaque, uint32_t escape, uint32_t input_bytes,
             const void *input, uint32_t output_bytes, void *output)
 {
    (void)opaque;
+   if (escape == NVX_ESCAPE_3D_CLIENT_CLOSE &&
+       input_bytes == sizeof(NVX_3D_CLIENT_SESSION) && output_bytes == 0)
+      return 1;
    if (escape == NVX_ESCAPE_3D_ALLOC &&
        input_bytes == sizeof(NVX_3D_ALLOC_BUFFER) &&
        output_bytes == sizeof(NVX_3D_ALLOC_BUFFER)) {
@@ -139,6 +142,7 @@ main(void)
    memset(&winsys, 0, sizeof(winsys));
    winsys.escape = mock_escape;
    winsys.opaque = &winsys;
+   winsys.ClientToken = 0x123400000001ULL;
    winsys.caps.Version = NVX_3D_ABI_VERSION;
    winsys.caps.Size = sizeof(winsys.caps);
    winsys.caps.GraphicsClass = 0xc797U;

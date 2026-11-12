@@ -10,12 +10,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifdef _WIN32
-#include <process.h>
-#else
-#include <unistd.h>
-#endif
-
 #include "xf86drm.h"
 #include "drm-uapi/nouveau_drm.h"
 #include "nvif/class.h"
@@ -42,7 +36,6 @@ struct nvx_drm_device_slot {
 static struct nvx_drm_device_slot nvx_drm_devices[NVX_DRM_DEVICE_SLOTS];
 static volatile int nvx_drm_lock;
 static NVX_XF86DRM_STATUS nvx_drm_status;
-static uint32_t nvx_drm_next_token;
 static int nvx_drm_unsupported(void);
 static int nvx_drm_unsupported_operation(uint32_t kind,
                                         unsigned long operation);
@@ -68,17 +61,6 @@ nvx_drm_find_bo_locked(struct nvx_drm_device_slot *device, uint32_t handle)
       if (device->buffers[i].handle == handle)
          return &device->buffers[i];
    return NULL;
-}
-
-static uint64_t
-nvx_drm_client_token(uint32_t sequence)
-{
-#ifdef _WIN32
-   uint64_t process = (uint64_t)_getpid();
-#else
-   uint64_t process = (uint64_t)getpid();
-#endif
-   return (process << 32) | sequence;
 }
 
 static int
@@ -244,7 +226,8 @@ NvxXf86DrmRegisterDevice(const NVX_WINSYS_DEVICE *device)
        device->caps.GraphicsClass != 0xc797U ||
        !device->caps.DeviceId || !device->caps.Chipset ||
        !(device->caps.PciLocation & NVX_3D_PCI_LOCATION_VALID) ||
-       !device->caps.VramApertureBytes || !device->caps.MaxBufferBytes)
+       !device->caps.VramApertureBytes || !device->caps.MaxBufferBytes ||
+       !device->ClientToken)
       return -1;
 
    nvx_drm_lock_acquire();
@@ -254,10 +237,7 @@ NvxXf86DrmRegisterDevice(const NVX_WINSYS_DEVICE *device)
          memset(&nvx_drm_devices[i], 0, sizeof(nvx_drm_devices[i]));
          nvx_drm_devices[i].fd = fd;
          nvx_drm_devices[i].device = *device;
-         if (++nvx_drm_next_token == 0)
-            ++nvx_drm_next_token;
-         nvx_drm_devices[i].client_token =
-            nvx_drm_client_token(nvx_drm_next_token);
+         nvx_drm_devices[i].client_token = device->ClientToken;
          nvx_drm_devices[i].next_handle = 1U;
          break;
       }
@@ -288,6 +268,8 @@ NvxXf86DrmUnregisterDevice(int fd)
             memset(buffer, 0, sizeof(*buffer));
          }
          if (!all_freed)
+            break;
+         if (!NvxWinsysCloseClient(&nvx_drm_devices[i].device))
             break;
          memset(&nvx_drm_devices[i], 0, sizeof(nvx_drm_devices[i]));
          break;

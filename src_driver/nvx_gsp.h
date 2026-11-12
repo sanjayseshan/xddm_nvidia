@@ -301,11 +301,16 @@ typedef struct _VIDEO_MODE_DEF {
 } VIDEO_MODE_DEF;
 
 #define NVX_3D_USER_BUFFER_SLOTS 64U
+#define NVX_3D_CLIENT_SESSION_SLOTS 32U
+typedef struct NVX_3D_CLIENT_SESSION_ENTRY {
+    ULONG64 ClientToken;
+} NVX_3D_CLIENT_SESSION_ENTRY;
 typedef struct _NVX_3D_USER_BUFFER_ENTRY {
     ULONG64 Id;
     ULONG64 GpuVa;
     ULONG64 DepthGpuVa;
     ULONG64 ClientToken;
+    ULONG64 AllocationToken;
     ULONG Bytes;
     ULONG Usage;
     ULONG Width;
@@ -443,9 +448,11 @@ typedef struct _NVX_DEVICE_EXTENSION {
     BOOLEAN GspGraphicsUserSubmitReady;
     ULONG64 Nvx3dNextBufferId;
     ULONG64 Nvx3dLastSubmitToken;
-    ULONG Nvx3dLastSubmitReply[18];
+    ULONG64 Nvx3dLastSubmitClientToken;
+    ULONG Nvx3dLastSubmitReply[20];
     ULONG64 Nvx3dLastFence;
     ULONG64 Nvx3dCompletedFence;
+    NVX_3D_CLIENT_SESSION_ENTRY Nvx3dClientSessions[NVX_3D_CLIENT_SESSION_SLOTS];
     NVX_3D_USER_BUFFER_ENTRY Nvx3dBuffers[NVX_3D_USER_BUFFER_SLOTS];
     BOOLEAN GspFbLayoutValid;
     ULONG GspFbRegionCount;

@@ -25,6 +25,7 @@ struct mock_buffer {
 };
 
 struct mock_state {
+   uint64_t client_token;
    uint64_t next_buffer;
    uint64_t freed_buffer;
    uint64_t waited_fence;
@@ -74,6 +75,22 @@ mock_escape(void *opaque, uint32_t escape, uint32_t input_bytes,
    struct mock_state *mock = opaque;
 
    switch (escape) {
+   case NVX_ESCAPE_3D_CLIENT_OPEN: {
+      NVX_3D_CLIENT_SESSION *session = output;
+      assert(input_bytes == sizeof(*session) && output_bytes == sizeof(*session));
+      *session = *(const NVX_3D_CLIENT_SESSION *)input;
+      assert(Nvx3dValidateClientSession(session, NVX_3D_CLIENT_OPEN));
+      session->ClientToken = mock->client_token = 0x123400000077ULL;
+      return 1;
+   }
+   case NVX_ESCAPE_3D_CLIENT_CLOSE: {
+      const NVX_3D_CLIENT_SESSION *session = input;
+      assert(input_bytes == sizeof(*session) && output_bytes == 0);
+      assert(Nvx3dValidateClientSession(session, NVX_3D_CLIENT_CLOSE));
+      assert(session->ClientToken == mock->client_token);
+      mock->client_token = 0;
+      return 1;
+   }
    case NVX_ESCAPE_3D_QUERY_CAPS: {
       NVX_3D_QUERY_CAPS *caps = output;
       assert(input_bytes == 0 && input == NULL);
@@ -248,6 +265,7 @@ main(void)
    const uint32_t bytes = NVX_3D_MAX_UPLOAD_BYTES * 2U + 8192U;
 
    assert(NvxWinsysInit(&device, mock_escape, &mock));
+   assert(device.ClientToken == mock.client_token);
    assert(device.caps.GraphicsClass == 0xc797);
    assert(NvxNouveauDeviceInitFromWinsys(&nouveau_device, &device));
    assert(NvxNouveauScreenInit(&nouveau_screen, &nouveau_device,
@@ -318,6 +336,15 @@ main(void)
    assert(NvxWinsysFreeBuffer(&device, result.BufferId));
    assert(mock.freed_buffer == result.BufferId);
 
+   {
+      NVX_3D_ALLOC_BUFFER second;
+      assert(NvxWinsysAllocBuffer(&device, &request, &second));
+      assert(second.BufferId != result.BufferId &&
+             second.ClientToken == result.ClientToken &&
+             second.AllocationToken != result.AllocationToken);
+      assert(NvxWinsysFreeBuffer(&device, second.BufferId));
+   }
+
    request.Bytes--;
    request.ClientToken++;
    assert(!NvxWinsysAllocBuffer(&device, &request, &result));
@@ -334,7 +361,7 @@ main(void)
       description.Bytes = 4096;
       assert(NvxNouveauBoCreate(&device, &description,
                                 0x123400000002ULL, &bo));
-      assert(bo.allocation.BufferId == 2 && bo.references == 1);
+      assert(bo.allocation.BufferId == 3 && bo.references == 1);
       assert(NvxNouveauBoMarkUsed(&bo, 77));
       assert(!NvxNouveauBoMarkUsed(&bo, 76));
       assert(NvxNouveauBoGetAddress(&bo, 16, 64,
@@ -457,16 +484,16 @@ main(void)
       NvxNouveauBoReference(&bo);
       assert(bo.references == 2);
       assert(NvxNouveauBoDestroy(&bo));
-      assert(bo.references == 1 && mock.freed_buffer == 1);
+      assert(bo.references == 1 && mock.freed_buffer == 2);
       mock.event_count = 0;
       mock.fail_wait = 1;
       assert(!NvxNouveauBoDestroy(&bo));
-      assert(bo.references == 1 && mock.freed_buffer == 1);
+      assert(bo.references == 1 && mock.freed_buffer == 2);
       assert(mock.event_count == 1 && mock.events[0] == MOCK_EVENT_WAIT);
       mock.fail_wait = 0;
       mock.event_count = 0;
       assert(NvxNouveauBoDestroy(&bo));
-      assert(mock.freed_buffer == 2);
+      assert(mock.freed_buffer == 3);
       assert(mock.event_count == 2 &&
              mock.events[0] == MOCK_EVENT_WAIT &&
              mock.events[1] == MOCK_EVENT_FREE);
@@ -578,6 +605,8 @@ main(void)
       assert(NvxNouveauBoDestroy(&target));
    }
 
+   assert(NvxWinsysCloseClient(&device));
+   assert(device.ClientToken == 0 && mock.client_token == 0);
    {
       uint32_t i;
       for (i = 0; i < MOCK_MAX_BUFFERS; i++)

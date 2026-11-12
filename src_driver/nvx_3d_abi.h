@@ -7,7 +7,7 @@
 
 /* Fixed-width ABI shared by XP x64/x86 clients and the miniport.  GPU VAs are
  * always 64-bit; no kernel pointers or RM handles cross this boundary. */
-#define NVX_3D_ABI_VERSION 14U
+#define NVX_3D_ABI_VERSION 16U
 #define NVX_3D_MAX_PUSH_DWORDS 4096U
 #define NVX_3D_MAX_BATCH_RELOCATIONS 256U
 #define NVX_3D_MAX_BATCH_BUFFERS 64U
@@ -105,6 +105,8 @@ Nvx3dDepthModeForOperation(uint32_t operation)
 #define NVX_ESCAPE_3D_DOWNLOAD    0x8009U
 #define NVX_ESCAPE_3D_VALIDATE_BATCH 0x800aU
 #define NVX_ESCAPE_3D_NVC0_NATIVE_CLEAR 0x800bU
+#define NVX_ESCAPE_3D_CLIENT_OPEN 0x800cU
+#define NVX_ESCAPE_3D_CLIENT_CLOSE 0x800dU
 #define NVX_3D_STATUS_SUCCESS            0U
 #define NVX_3D_STATUS_INVALID_PARAMETER 87U
 #define NVX_3D_STATUS_NOT_SUPPORTED     50U
@@ -237,6 +239,27 @@ typedef struct NVX_3D_QUERY_CAPS {
     uint64_t GartBytes;
 } NVX_3D_QUERY_CAPS;
 
+#define NVX_3D_CLIENT_OPEN  1U
+#define NVX_3D_CLIENT_CLOSE 2U
+typedef struct NVX_3D_CLIENT_SESSION {
+    uint32_t Size;
+    uint32_t Version;
+    uint32_t Operation;
+    uint32_t Reserved;
+    uint64_t ClientToken;
+} NVX_3D_CLIENT_SESSION;
+
+static inline int
+Nvx3dValidateClientSession(const NVX_3D_CLIENT_SESSION *request,
+                           uint32_t operation)
+{
+    return request && request->Size==sizeof(*request) &&
+        request->Version==NVX_3D_ABI_VERSION &&
+        request->Operation==operation && !request->Reserved &&
+        (operation==NVX_3D_CLIENT_OPEN ||
+         (operation==NVX_3D_CLIENT_CLOSE && request->ClientToken!=0));
+}
+
 #define NVX_3D_PCI_LOCATION_VALID 0x80000000U
 #define NVX_3D_PCI_LOCATION_BUS_MASK 0x000000ffU
 #define NVX_3D_PCI_LOCATION_SLOT_SHIFT 8U
@@ -274,6 +297,7 @@ typedef struct NVX_3D_ALLOC_BUFFER {
     uint32_t PitchBytes;
     uint32_t TileMode;
     uint64_t ClientToken;
+    uint64_t AllocationToken;
 } NVX_3D_ALLOC_BUFFER;
 
 /* Resource-relative address patch for a future validated NVC0 batch. This is
@@ -681,6 +705,7 @@ typedef struct NVX_3D_SUBMIT {
        buffer ID low/high for DRAW_COLOR_TARGET_DEPTH. */
     uint32_t Reserved[6];
     uint64_t ClientToken;
+    uint64_t RequestToken;
 } NVX_3D_SUBMIT;
 
 typedef struct NVX_3D_WAIT_FENCE {
@@ -881,7 +906,7 @@ Nvx3dValidateSubmit(const NVX_3D_SUBMIT *request, uint32_t inputBytes,
     int validOperation;
     if(!request || inputBytes!=sizeof(*request) || request->Size!=sizeof(*request) ||
        request->Version!=NVX_3D_ABI_VERSION ||
-       request->BufferId==0 ||
+       request->BufferId==0 || !request->RequestToken ||
        request->FenceValue || allocatedBytes<4096) return 0;
     validOperation=request->Operation==NVX_3D_SUBMIT_CLEAR_SURFACE ||
         request->Operation==NVX_3D_SUBMIT_TEST_TRIANGLE ||

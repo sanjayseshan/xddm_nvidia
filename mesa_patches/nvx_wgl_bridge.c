@@ -49,14 +49,12 @@ static volatile LONG nvx_bridge_last_clear_ms;
 static volatile LONG nvx_bridge_last_draw_ms;
 static volatile LONG nvx_bridge_last_readback_ms;
 static volatile LONG nvx_bridge_last_upload_bits[8];
-static volatile LONG nvx_bridge_alloc_token;
 static char nvx_bridge_last_message[96];
 static LONG nvx_bridge_depth_stage_count;
 static char nvx_bridge_depth_stages[3][96];
 static void nvx_bridge_trace(const char *message);
 static int nvx_bridge_is_enabled(void);
 static int nvx_pack_color(const float rgba[4], uint32_t *color);
-static uint64_t nvx_next_alloc_token(void);
 static int nvx_alloc(HDC hdc, const NVX_3D_ALLOC_BUFFER *request,
                      NVX_3D_ALLOC_BUFFER *result);
 void nvx_wgl_notify_clear(struct softpipe_context *sp, unsigned buffers,
@@ -274,7 +272,7 @@ nvx_wgl_nvx_adapter_create(void)
       return 0;
    ready = InterlockedCompareExchange(&nvx_bridge_nvx_adapter_ready, 0, 0);
    if (!ready) {
-      uint64_t token = nvx_next_alloc_token();
+      uint64_t token = nvx_bridge_winsys.ClientToken;
       ready = NvxNouveauScreenInit(&nvx_bridge_nouveau_screen,
                                    &nvx_bridge_nouveau_device, token);
       InterlockedExchange(&nvx_bridge_nvx_adapter_ready, ready);
@@ -323,13 +321,6 @@ static int
 nvx_float01(float value)
 {
    return value == value && value >= 0.0f && value <= 1.0f;
-}
-
-static uint64_t
-nvx_next_alloc_token(void)
-{
-   uint32_t sequence = (uint32_t)InterlockedIncrement(&nvx_bridge_alloc_token);
-   return ((uint64_t)GetCurrentProcessId() << 32) | sequence;
 }
 
 static void
@@ -438,7 +429,8 @@ nvx_clear_target(HDC hdc, uint64_t target_id, uint32_t color)
    memset(&submit, 0, sizeof(submit));
    submit.Size = sizeof(submit);
    submit.Version = NVX_3D_ABI_VERSION;
-   submit.ClientToken = nvx_next_alloc_token();
+   submit.ClientToken = nvx_bridge_winsys.ClientToken;
+   submit.RequestToken = NvxWinsysNextRequestToken(&nvx_bridge_winsys);
    submit.Operation = NVX_3D_SUBMIT_CLEAR_SURFACE;
    submit.Width = NVX_3D_TRIANGLE_WIDTH;
    submit.Height = NVX_3D_TRIANGLE_HEIGHT;
@@ -463,7 +455,8 @@ nvx_submit_triangle(HDC hdc, uint64_t target_id, uint64_t vbo_id,
    memset(&submit, 0, sizeof(submit));
    submit.Size = sizeof(submit);
    submit.Version = NVX_3D_ABI_VERSION;
-   submit.ClientToken = nvx_next_alloc_token();
+   submit.ClientToken = nvx_bridge_winsys.ClientToken;
+   submit.RequestToken = NvxWinsysNextRequestToken(&nvx_bridge_winsys);
    submit.Operation = depth_test ? NVX_3D_SUBMIT_DRAW_TRIANGLE_DEPTH :
                                    NVX_3D_SUBMIT_DRAW_TRIANGLE_PRESERVE;
    submit.Width = NVX_3D_TRIANGLE_WIDTH;
@@ -501,7 +494,8 @@ nvx_submit_triangles(HDC hdc, uint64_t target_id, uint64_t vbo_id,
    memset(&submitted, 0, sizeof(submitted));
    submit.Size = sizeof(submit);
    submit.Version = NVX_3D_ABI_VERSION;
-   submit.ClientToken = nvx_next_alloc_token();
+   submit.ClientToken = nvx_bridge_winsys.ClientToken;
+   submit.RequestToken = NvxWinsysNextRequestToken(&nvx_bridge_winsys);
    submit.Operation = NVX_3D_SUBMIT_DRAW_TRIANGLES;
    submit.Width = NVX_3D_TRIANGLE_WIDTH;
    submit.Height = vertex_count;
@@ -559,7 +553,8 @@ nvx_submit_dynamic_target_batch(HDC hdc, const NVX_3D_COLOR_SURFACE_LAYOUT *layo
    memset(&submit, 0, sizeof(submit));
    submit.Size = sizeof(submit);
    submit.Version = NVX_3D_ABI_VERSION;
-   submit.ClientToken = nvx_next_alloc_token();
+   submit.ClientToken = nvx_bridge_winsys.ClientToken;
+   submit.RequestToken = NvxWinsysNextRequestToken(&nvx_bridge_winsys);
    submit.Operation = !depth_target_id ? NVX_3D_SUBMIT_DRAW_COLOR_TARGET :
       depth_mode==2U ? NVX_3D_SUBMIT_DRAW_COLOR_TARGET_DEPTH_ATTACH :
       depth_mode==3U ? NVX_3D_SUBMIT_DRAW_COLOR_TARGET_DEPTH_TEST_ONLY :
@@ -590,7 +585,8 @@ nvx_clear_dynamic_depth_target(HDC hdc,
    memset(&submit, 0, sizeof(submit));
    submit.Size = sizeof(submit);
    submit.Version = NVX_3D_ABI_VERSION;
-   submit.ClientToken = nvx_next_alloc_token();
+   submit.ClientToken = nvx_bridge_winsys.ClientToken;
+   submit.RequestToken = NvxWinsysNextRequestToken(&nvx_bridge_winsys);
    submit.Operation = NVX_3D_SUBMIT_CLEAR_COLOR_TARGET_DEPTH;
    submit.Width = layout->Width;
    submit.Height = layout->Height;
@@ -786,7 +782,7 @@ nvx_bridge_full_target(struct softpipe_context *sp, HDC hdc,
    target.Height = layout.Height;
    target.PitchBytes = layout.PitchBytes;
    target.TileMode = layout.TileMode;
-   target.ClientToken = nvx_next_alloc_token();
+   target.ClientToken = nvx_bridge_winsys.ClientToken;
    if (!target_state->color_id) {
       stage = "color allocation";
       if (!NvxNouveauBoCreate(&nvx_bridge_nouveau_device.winsys, &target,
@@ -811,7 +807,7 @@ nvx_bridge_full_target(struct softpipe_context *sp, HDC hdc,
    vbo.Usage = 1;
    vbo.Bytes = 4096;
    if (!target_state->vbo_id) {
-      vbo.ClientToken = nvx_next_alloc_token();
+      vbo.ClientToken = nvx_bridge_winsys.ClientToken;
       stage = "vertex allocation";
       if (!nvx_alloc(hdc, &vbo, &vbo_result))
          goto done;
@@ -830,7 +826,7 @@ nvx_bridge_full_target(struct softpipe_context *sp, HDC hdc,
       depth_target.Width = depth_layout.Width;
       depth_target.Height = depth_layout.Height;
       depth_target.PitchBytes = depth_layout.PitchBytes;
-      depth_target.ClientToken = nvx_next_alloc_token();
+      depth_target.ClientToken = nvx_bridge_winsys.ClientToken;
       if (!nvx_alloc(hdc, &depth_target, &depth_result))
          goto done;
       target_state->depth_id = depth_result.BufferId;
@@ -1059,7 +1055,8 @@ nvx_clear_depth(HDC hdc, uint64_t target_id)
    memset(&submit, 0, sizeof(submit));
    submit.Size = sizeof(submit);
    submit.Version = NVX_3D_ABI_VERSION;
-   submit.ClientToken = nvx_next_alloc_token();
+   submit.ClientToken = nvx_bridge_winsys.ClientToken;
+   submit.RequestToken = NvxWinsysNextRequestToken(&nvx_bridge_winsys);
    submit.Operation = NVX_3D_SUBMIT_CLEAR_DEPTH;
    submit.Width = NVX_3D_TRIANGLE_WIDTH;
    submit.Height = NVX_3D_TRIANGLE_HEIGHT;
@@ -1470,7 +1467,7 @@ nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
       target.Usage |= NVX_3D_USAGE_DEPTH_TARGET;
    target.Bytes = depth_test ? NVX_3D_DEPTH_TARGET_TOTAL_BYTES :
                                NVX_3D_TRIANGLE_TARGET_BYTES;
-   target.ClientToken = nvx_next_alloc_token();
+   target.ClientToken = nvx_bridge_winsys.ClientToken;
    if (depth_test) {
       char message[96];
       char zf32_diagnostic[8];
@@ -1505,7 +1502,7 @@ nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
    vbo.Version = NVX_3D_ABI_VERSION;
    vbo.Usage = 1;
    vbo.Bytes = 4096;
-   vbo.ClientToken = nvx_next_alloc_token();
+   vbo.ClientToken = nvx_bridge_winsys.ClientToken;
    stage = "vertex buffer allocation";
    if (!nvx_alloc(hdc, &vbo, &vbo_result))
       goto done;

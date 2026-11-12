@@ -2,7 +2,7 @@
  * NVIDIA GeForce RTX 3070 (Ampere GA104) XDDM Video Miniport Driver
  * Target: Windows XP Professional x64 Edition / Server 2003 x64 (NT 5.2)
  *
- * Driver Version: 3.0.0.3
+ * Driver Version: 3.0.0.5
  */
 
 #include "miniport.h"
@@ -15,6 +15,7 @@
 /* Compare the video-port callback's process context with the user-mode NVX
  * client token during XP channel bring-up diagnostics. */
 extern HANDLE NTAPI PsGetCurrentProcessId(VOID);
+extern ULONG NTAPI RtlRandomEx(PULONG Seed);
 
 /* NT kernel file APIs used by the optional boot diagnostic log. */
 typedef struct _NVX_OBJECT_ATTRIBUTES {
@@ -1361,6 +1362,8 @@ BOOLEAN NTAPI HwVidInitialize(PVOID HwDeviceExtension) {
 
 static volatile ULONG g_Nvx3dBufferLock=0;
 static volatile LONG g_Nvx3dProcessContextLogged=0;
+static ULONG g_Nvx3dSessionSeed=0;
+static ULONG g_Nvx3dSessionSequence=0;
 
 static BOOLEAN Nvx3dLockBuffers(VOID)
 {
@@ -1375,6 +1378,17 @@ static BOOLEAN Nvx3dLockBuffers(VOID)
 static VOID Nvx3dUnlockBuffers(VOID)
 {
     __sync_lock_release(&g_Nvx3dBufferLock);
+}
+
+static BOOLEAN Nvx3dClientSessionActiveLocked(
+    PNVX_DEVICE_EXTENSION engine,ULONG64 clientToken)
+{
+    ULONG i;
+    if(!engine||!clientToken) return FALSE;
+    for(i=0;i<NVX_3D_CLIENT_SESSION_SLOTS;i++)
+        if(engine->Nvx3dClientSessions[i].ClientToken==clientToken)
+            return TRUE;
+    return FALSE;
 }
 
 static ULONG64 Nvx3dMaxSurfaceBytes(PNVX_DEVICE_EXTENSION dev)
@@ -1451,15 +1465,23 @@ static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
     ULONG i,slot=NVX_3D_USER_BUFFER_SLOTS;
     ULONG64 start,end,candidate;
     if(!engine||!request||!Nvx3dValidateAlloc(request)||
+       !request->AllocationToken||
        !engine->GspCopyVerified||engine->GspChannelFaulted||
        !Nvx3dHeapBounds(engine,&start,&end)||!Nvx3dLockBuffers()) {
         LogStr("NVX [3D-ALLOC]: request rejected before heap scan.\n");
         return FALSE;
     }
+    if(!Nvx3dClientSessionActiveLocked(engine,request->ClientToken)) {
+        LogStr("NVX [3D-ALLOC]: inactive client session token=");
+        LogHex(request->ClientToken);LogStr("\n");
+        Nvx3dUnlockBuffers();
+        return FALSE;
+    }
     if(request->ClientToken) {
         for(i=0;i<NVX_3D_USER_BUFFER_SLOTS;i++) {
             NVX_3D_USER_BUFFER_ENTRY *entry=&engine->Nvx3dBuffers[i];
-            if(entry->Id&&entry->ClientToken==request->ClientToken) {
+            if(entry->Id&&entry->ClientToken==request->ClientToken&&
+               entry->AllocationToken==request->AllocationToken) {
                 if(entry->Bytes!=request->Bytes||entry->Usage!=request->Usage||
                    entry->Width!=request->Width||entry->Height!=request->Height||
                    entry->PitchBytes!=request->PitchBytes||
@@ -1487,6 +1509,7 @@ static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
                    Busy protects an in-progress kernel operation; returning it
                    busy would make the caller's first submit fail validation. */
                 entry->ClientToken=request->ClientToken;
+                entry->AllocationToken=request->AllocationToken;
                 request->BufferId=entry->Id;request->GpuVa=entry->GpuVa;
                 LogStr("NVX [3D-ALLOC]: reused depth pool id=");
                 LogHex(entry->Id);LogStr(" va=");LogHex(entry->GpuVa);
@@ -1542,6 +1565,7 @@ static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
         (request->Usage&NVX_3D_USAGE_DEPTH_TARGET)?
         engine->GspVramGpuVa+candidate+NVX_3D_DEPTH_TARGET_OFFSET:0;
     engine->Nvx3dBuffers[slot].ClientToken=request->ClientToken;
+    engine->Nvx3dBuffers[slot].AllocationToken=request->AllocationToken;
     engine->Nvx3dBuffers[slot].Bytes=request->Bytes;
     engine->Nvx3dBuffers[slot].Usage=request->Usage;
     engine->Nvx3dBuffers[slot].Width=request->Width;
@@ -1612,6 +1636,10 @@ static BOOLEAN Nvx3dFreeBuffer(PNVX_DEVICE_EXTENSION engine,ULONG64 id)
     }
     if(entry->Usage&NVX_3D_USAGE_DEPTH_TARGET) {
         if(!entry->Busy) {
+            /* A pooled depth surface is no longer owned by the session that
+               released it; the next allocation assigns a fresh session. */
+            entry->ClientToken=0;
+            entry->AllocationToken=0;
             Nvx3dUnlockBuffers();return TRUE;
         }
         saved=*entry;Nvx3dUnlockBuffers();
@@ -1698,6 +1726,92 @@ BOOLEAN NTAPI HwVidStartIO(
     statusBlock->Information = 0;
 
     switch (RequestPacket->IoControlCode) {
+    case IOCTL_NVX_3D_CLIENT_OPEN: {
+        PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
+        NVX_3D_CLIENT_SESSION request;
+        ULONG i,attempt;
+        ULONG64 token=0;
+        if(!RequestPacket->InputBuffer||
+           RequestPacket->InputBufferLength!=sizeof(request)||
+           !RequestPacket->OutputBuffer||
+           RequestPacket->OutputBufferLength<sizeof(request)) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+        VideoPortMoveMemory(&request,RequestPacket->InputBuffer,sizeof(request));
+        if(!Nvx3dValidateClientSession(&request,NVX_3D_CLIENT_OPEN)||
+           request.ClientToken||
+           !engine||!Nvx3dLockBuffers()) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+        for(i=0;i<NVX_3D_CLIENT_SESSION_SLOTS;i++)
+            if(!engine->Nvx3dClientSessions[i].ClientToken) break;
+        if(i==NVX_3D_CLIENT_SESSION_SLOTS) {
+            Nvx3dUnlockBuffers();status=ERROR_TOO_MANY_OPEN_FILES;break;
+        }
+        if(!g_Nvx3dSessionSeed)
+            g_Nvx3dSessionSeed=0x4e565831U^engine->DeviceId^
+                (engine->PciBusNumber<<8)^engine->PciSlot;
+        for(attempt=0;attempt<32U;attempt++) {
+            ULONG high=RtlRandomEx(&g_Nvx3dSessionSeed);
+            ULONG low=++g_Nvx3dSessionSequence;
+            ULONG j;
+            BOOLEAN duplicate=FALSE;
+            if(!low) low=++g_Nvx3dSessionSequence;
+            token=((ULONG64)high<<32)|low;
+            for(j=0;j<NVX_3D_CLIENT_SESSION_SLOTS;j++)
+                if(engine->Nvx3dClientSessions[j].ClientToken==token)
+                    duplicate=TRUE;
+            if(token&&!duplicate) break;
+            token=0;
+        }
+        if(!token) {
+            Nvx3dUnlockBuffers();status=ERROR_DEVICE_NOT_READY;break;
+        }
+        engine->Nvx3dClientSessions[i].ClientToken=token;
+        Nvx3dUnlockBuffers();
+        request.ClientToken=token;
+        VideoPortMoveMemory(RequestPacket->OutputBuffer,&request,sizeof(request));
+        statusBlock->Information=sizeof(request);status=NO_ERROR;
+        LogStr("NVX [3D-SESSION]: opened token=");LogHex(token);LogStr("\n");
+        break;
+    }
+
+    case IOCTL_NVX_3D_CLIENT_CLOSE: {
+        PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
+        NVX_3D_CLIENT_SESSION request;
+        ULONG i,j;
+        BOOLEAN found=FALSE,busy=FALSE;
+        if(!RequestPacket->InputBuffer||
+           RequestPacket->InputBufferLength!=sizeof(request)||
+           RequestPacket->OutputBufferLength) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+        VideoPortMoveMemory(&request,RequestPacket->InputBuffer,sizeof(request));
+        if(!Nvx3dValidateClientSession(&request,NVX_3D_CLIENT_CLOSE)||
+           !engine||!Nvx3dLockBuffers()) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+        for(i=0;i<NVX_3D_CLIENT_SESSION_SLOTS;i++)
+            if(engine->Nvx3dClientSessions[i].ClientToken==request.ClientToken) {
+                found=TRUE;break;
+            }
+        if(found) {
+            for(j=0;j<NVX_3D_USER_BUFFER_SLOTS;j++)
+                if(engine->Nvx3dBuffers[j].Id&&
+                   engine->Nvx3dBuffers[j].ClientToken==request.ClientToken)
+                    busy=TRUE;
+        }
+        if(found&&!busy)
+            engine->Nvx3dClientSessions[i].ClientToken=0;
+        Nvx3dUnlockBuffers();
+        status=found&&!busy?NO_ERROR:ERROR_BUSY;
+        if(status==NO_ERROR)
+            LogStr("NVX [3D-SESSION]: closed client session.\n");
+        break;
+    }
+
     case IOCTL_VIDEO_QUERY_NUM_AVAIL_MODES: {
         PVIDEO_NUM_MODES numModes = (PVIDEO_NUM_MODES)RequestPacket->OutputBuffer;
         if (RequestPacket->OutputBufferLength < sizeof(VIDEO_NUM_MODES)) {
@@ -2572,6 +2686,10 @@ BOOLEAN NTAPI HwVidStartIO(
         if(!engine||!Nvx3dLockBuffers()) {
             status=ERROR_DEVICE_NOT_READY;goto validate_batch_done;
         }
+        if(!Nvx3dClientSessionActiveLocked(engine,header.ClientToken)) {
+            Nvx3dUnlockBuffers();
+            status=ERROR_INVALID_PARAMETER;goto validate_batch_done;
+        }
         for(i=0;i<NVX_3D_USER_BUFFER_SLOTS;i++) {
             NVX_3D_USER_BUFFER_ENTRY *entry=&engine->Nvx3dBuffers[i];
             NVX_3D_ALLOC_BUFFER *allocation;
@@ -2650,8 +2768,12 @@ validate_batch_done:
             }
             status=ERROR_INVALID_PARAMETER;break;
         }
-        if(request.ClientToken&&
-           request.ClientToken==engine->Nvx3dLastSubmitToken) {
+        if(!Nvx3dClientSessionActiveLocked(engine,request.ClientToken)) {
+            Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
+        }
+        if(request.ClientToken&&request.RequestToken==
+              engine->Nvx3dLastSubmitToken&&
+           request.ClientToken==engine->Nvx3dLastSubmitClientToken) {
             NVX_3D_SUBMIT replay;
             VideoPortMoveMemory(&replay,engine->Nvx3dLastSubmitReply,
                                 sizeof(replay));
@@ -2939,7 +3061,8 @@ validate_batch_done:
         }
         if(Nvx3dLockBuffers()) {
             if(status==NO_ERROR&&request.ClientToken) {
-                engine->Nvx3dLastSubmitToken=request.ClientToken;
+                engine->Nvx3dLastSubmitToken=request.RequestToken;
+                engine->Nvx3dLastSubmitClientToken=request.ClientToken;
                 VideoPortMoveMemory(engine->Nvx3dLastSubmitReply,&request,
                                     sizeof(request));
             }
@@ -3172,7 +3295,7 @@ ULONG NTAPI DriverEntry(PVOID Context1, PVOID Context2) {
     ULONG status;
 
     LogStr("\n========================================\n");
-    LogStr(" NVX Video Miniport Driver 3.0.0.3 (open-gpu-kernel-modules unified v2)\n");
+    LogStr(" NVX Video Miniport Driver 3.0.0.5 (open-gpu-kernel-modules unified v2)\n");
     LogStr("========================================\n");
 
     VideoPortZeroMemory(&hwInitData, sizeof(VIDEO_HW_INITIALIZATION_DATA));

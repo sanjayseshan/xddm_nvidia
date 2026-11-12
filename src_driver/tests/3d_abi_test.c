@@ -323,21 +323,33 @@ int main(void)
     NVX_3D_COLOR_SURFACE_LAYOUT surface;
     NVX_3D_DEPTH_SURFACE_LAYOUT depthSurface;
     NVX_3D_NVC0_CLEAR nvc0Clear, nvc0Bad;
+    NVX_3D_CLIENT_SESSION clientSession={0};
     uint32_t nvc0Color=0;
     uint32_t information=99;
 
     assert(sizeof(NVX_3D_QUERY_CAPS)==56);
     assert(Nvx3dPackPciLocation(0x2aU,0xabU)==
            (NVX_3D_PCI_LOCATION_VALID|0xab2aU));
-    assert(sizeof(NVX_3D_ALLOC_BUFFER)==56);
+    assert(sizeof(NVX_3D_ALLOC_BUFFER)==64);
     assert(sizeof(NVX_3D_BATCH_HEADER)==40);
     assert(sizeof(NVX_3D_RELOCATION)==40);
     assert(sizeof(NVX_3D_FREE_BUFFER)==16);
     assert(sizeof(NVX_3D_UPLOAD_BUFFER)==32);
     assert(sizeof(NVX_3D_DOWNLOAD_BUFFER)==32);
-    assert(sizeof(NVX_3D_SUBMIT)==72);
+    assert(sizeof(NVX_3D_SUBMIT)==80);
     assert(sizeof(NVX_3D_WAIT_FENCE)==24);
     assert(sizeof(NVX_3D_READBACK)==32);
+    assert(sizeof(NVX_3D_CLIENT_SESSION)==24);
+    clientSession.Size=sizeof(clientSession);
+    clientSession.Version=NVX_3D_ABI_VERSION;
+    clientSession.Operation=NVX_3D_CLIENT_OPEN;
+    assert(Nvx3dValidateClientSession(&clientSession,NVX_3D_CLIENT_OPEN));
+    clientSession.ClientToken=0x123400000001ULL;
+    assert(Nvx3dValidateClientSession(&clientSession,NVX_3D_CLIENT_OPEN));
+    clientSession.Operation=NVX_3D_CLIENT_CLOSE;
+    assert(Nvx3dValidateClientSession(&clientSession,NVX_3D_CLIENT_CLOSE));
+    clientSession.Reserved=1;
+    assert(!Nvx3dValidateClientSession(&clientSession,NVX_3D_CLIENT_CLOSE));
     assert(sizeof(NVX_3D_COLOR_SURFACE_LAYOUT)==24);
     assert(sizeof(NVX_3D_NVC0_CLEAR)==152);
     test_nvc0_batch_validator();
@@ -555,6 +567,7 @@ int main(void)
     upload.Reserved[0]=0;
 
     submit.Size=sizeof(submit);submit.Version=NVX_3D_ABI_VERSION;
+    submit.RequestToken=1;
     submit.Operation=NVX_3D_SUBMIT_CLEAR_SURFACE;
     submit.Width=64;submit.Height=16;submit.BufferId=1;
     assert(Nvx3dValidateSubmit(&submit,sizeof(submit),65536));

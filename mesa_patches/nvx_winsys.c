@@ -30,7 +30,51 @@ NvxWinsysInit(NVX_WINSYS_DEVICE *device, NVX_WINSYS_ESCAPE escape,
       memset(device, 0, sizeof(*device));
       return 0;
    }
+   {
+      NVX_3D_CLIENT_SESSION session;
+      memset(&session, 0, sizeof(session));
+      session.Size = sizeof(session);
+      session.Version = NVX_3D_ABI_VERSION;
+      session.Operation = NVX_3D_CLIENT_OPEN;
+      if (!escape(opaque, NVX_ESCAPE_3D_CLIENT_OPEN, sizeof(session),
+                  &session, sizeof(session), &session) ||
+          !Nvx3dValidateClientSession(&session, NVX_3D_CLIENT_OPEN) ||
+          !session.ClientToken) {
+         memset(device, 0, sizeof(*device));
+         return 0;
+      }
+      device->ClientToken = session.ClientToken;
+   }
    return 1;
+}
+
+int
+NvxWinsysCloseClient(NVX_WINSYS_DEVICE *device)
+{
+   NVX_3D_CLIENT_SESSION session;
+   int ok;
+   if (!nvx_winsys_ready(device) || !device->ClientToken)
+      return 0;
+   memset(&session, 0, sizeof(session));
+   session.Size = sizeof(session);
+   session.Version = NVX_3D_ABI_VERSION;
+   session.Operation = NVX_3D_CLIENT_CLOSE;
+   session.ClientToken = device->ClientToken;
+   ok = device->escape(device->opaque, NVX_ESCAPE_3D_CLIENT_CLOSE,
+                       sizeof(session), &session, 0, NULL);
+   if (ok)
+      device->ClientToken = 0;
+   return ok;
+}
+
+uint64_t
+NvxWinsysNextRequestToken(NVX_WINSYS_DEVICE *device)
+{
+   if (!device || !device->ClientToken)
+      return 0;
+   if (++device->NextRequestToken == 0)
+      ++device->NextRequestToken;
+   return device->NextRequestToken;
 }
 
 int
@@ -42,10 +86,14 @@ NvxWinsysAllocBuffer(NVX_WINSYS_DEVICE *device,
    NVX_3D_ALLOC_BUFFER output;
 
    if (!nvx_winsys_ready(device) || !request || !result ||
-       !Nvx3dValidateAlloc(request) || !request->ClientToken)
+       !Nvx3dValidateAlloc(request) || !device->ClientToken)
       return 0;
 
    input = *request;
+   input.ClientToken = device->ClientToken;
+   if (++device->NextAllocationToken == 0)
+      ++device->NextAllocationToken;
+   input.AllocationToken = device->NextAllocationToken;
    memset(&output, 0, sizeof(output));
    if (!device->escape(device->opaque, NVX_ESCAPE_3D_ALLOC,
                        sizeof(input), &input, sizeof(output), &output) ||
@@ -56,7 +104,8 @@ NvxWinsysAllocBuffer(NVX_WINSYS_DEVICE *device,
        output.Width != request->Width || output.Height != request->Height ||
        output.PitchBytes != request->PitchBytes ||
        output.TileMode != request->TileMode ||
-       output.ClientToken != request->ClientToken)
+       output.ClientToken != input.ClientToken ||
+       output.AllocationToken != input.AllocationToken)
       return 0;
 
    *result = output;

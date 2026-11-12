@@ -2,6 +2,38 @@
 
 Updated November 11, 2026, after the XP-backed `xf86drm` BO shim and VFIO run.
 
+## ABI 16 session and request identity (November 11, 2026)
+
+Version 3.0.0.5 adds fixed-width OPEN/CLOSE session escapes and separates three
+identities: `ClientToken` groups a client's BOs; `AllocationToken` makes one
+allocation idempotent across retries; `RequestToken` makes one submit
+idempotent across retries. ABI 15's first session-only test exposed that the
+old `ClientToken` had also been the allocation retry key, limiting a session to
+one BO and causing `[NVX_3D_RESULT] FAIL` in
+`../test_logs/v3.0.0.4-20261111-190604.log`. ABI 16 gives allocations and
+submits separate request keys. The hardware test client and WGL bridge now
+issue unique keys for each operation.
+
+Host ABI/winsys/DRM tests, XP x86/x64 builds, and the Nouveau+softpipe Mesa
+package passed. The full RTX 3070 run
+`../test_logs/v3.0.0.5-20261111-191355.log` reports `[NVX_3D_RESULT] PASS`,
+successful Nouveau pushbuffer serialization/preflight and native clear, and
+successful independent GR and 2D tests. OpenGL still reports
+`[OPENGL_RESULT] SOFTWARE`; the shim still reports
+`DRM_NOUVEAU_CHANNEL_ALLOC` unsupported (`ENOSYS`). There was one startup
+firmware assertion and no MMU fault. Session tokens are kernel-issued but not
+bound to the originating process because the video-port callback runs in a
+different PID. This bookkeeping and retry identity groundwork does not create
+a Nouveau channel or execute Gallium rendering. Phase 2C remains incomplete.
+
+Next: define and implement the client channel/object/pushbuffer/fence contract
+through the miniport before returning success from `DRM_NOUVEAU_CHANNEL_ALLOC`.
+The native Nouveau screen must complete its zero-dword initialization kick
+and setup methods, then accept bounded NVC0 submissions with kernel validation
+of BO references, direct addresses, and C797 methods. Re-run the full hardware
+suite and require a non-softpipe renderer plus verified GPU-rendered pixels.
+All Mesa edits remain in `mesa_patches/`; keep `mesa/` clean.
+
 ## Normal XP ICD package now includes Gallium Nouveau (November 11, 2026)
 
 Changed `test/build_mesa_xp64.sh` to default to `nouveau,softpipe` rather than

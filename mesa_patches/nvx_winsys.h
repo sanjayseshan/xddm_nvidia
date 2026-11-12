@@ -13,10 +13,15 @@ typedef struct NVX_WINSYS_DEVICE {
    NVX_WINSYS_ESCAPE escape;
    void *opaque;
    NVX_3D_QUERY_CAPS caps;
+   uint64_t ClientToken;
+   uint64_t NextAllocationToken;
+   uint64_t NextRequestToken;
 } NVX_WINSYS_DEVICE;
 
 int NvxWinsysInit(NVX_WINSYS_DEVICE *device, NVX_WINSYS_ESCAPE escape,
                   void *opaque);
+int NvxWinsysCloseClient(NVX_WINSYS_DEVICE *device);
+uint64_t NvxWinsysNextRequestToken(NVX_WINSYS_DEVICE *device);
 int NvxWinsysAllocBuffer(NVX_WINSYS_DEVICE *device,
                          const NVX_3D_ALLOC_BUFFER *request,
                          NVX_3D_ALLOC_BUFFER *result);

@@ -31,7 +31,9 @@ DrvEscape(SURFOBJ *pso,ULONG iEsc,ULONG cjIn,PVOID pvIn,
             requested==NVX_ESCAPE_3D_READBACK ||
             requested==NVX_ESCAPE_3D_NVC0_CLEAR ||
             requested==NVX_ESCAPE_3D_NVC0_NATIVE_CLEAR ||
-            requested==NVX_ESCAPE_3D_VALIDATE_BATCH;
+            requested==NVX_ESCAPE_3D_VALIDATE_BATCH ||
+            requested==NVX_ESCAPE_3D_CLIENT_OPEN ||
+            requested==NVX_ESCAPE_3D_CLIENT_CLOSE;
         if(requested==OPENGL_GETINFO)
             NvxDispLogEvent(0x200,iEsc,requested,returned);
         return returned;
@@ -51,6 +53,13 @@ DrvEscape(SURFOBJ *pso,ULONG iEsc,ULONG cjIn,PVOID pvIn,
     ppdev=(PPDEV)pso->dhpdev;
     if(!ppdev->hDriver) return 0;
     switch(iEsc) {
+    case NVX_ESCAPE_3D_CLIENT_OPEN:
+        if(cjIn!=sizeof(NVX_3D_CLIENT_SESSION)||!pvIn||
+           cjOut<sizeof(NVX_3D_CLIENT_SESSION)||!pvOut) return 0;
+        code=IOCTL_NVX_3D_CLIENT_OPEN;break;
+    case NVX_ESCAPE_3D_CLIENT_CLOSE:
+        if(cjIn!=sizeof(NVX_3D_CLIENT_SESSION)||!pvIn||cjOut) return 0;
+        code=IOCTL_NVX_3D_CLIENT_CLOSE;break;
     case NVX_ESCAPE_3D_QUERY_CAPS:
         if(cjIn||cjOut<sizeof(NVX_3D_QUERY_CAPS)||!pvOut) return 0;
         code=IOCTL_NVX_3D_QUERY_CAPS;break;

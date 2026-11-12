@@ -40,6 +40,64 @@ static int mesaGpuBridgeProbe = 0;
 #endif
 static unsigned openGlTraceCount;
 static void LogMsg(const char *fmt, ...);
+static uint64_t nvx_test_client_token;
+static uint64_t nvx_test_allocation_token;
+static uint64_t nvx_test_request_token;
+
+static uint64_t
+NvxTestGetClientToken(HDC hdc)
+{
+    NVX_3D_CLIENT_SESSION session={0};
+    if(nvx_test_client_token) return nvx_test_client_token;
+    session.Size=sizeof(session);
+    session.Version=NVX_3D_ABI_VERSION;
+    session.Operation=NVX_3D_CLIENT_OPEN;
+    if(!ExtEscape(hdc,NVX_ESCAPE_3D_CLIENT_OPEN,sizeof(session),
+                  (LPCSTR)&session,sizeof(session),(LPSTR)&session)||
+       !Nvx3dValidateClientSession(&session,NVX_3D_CLIENT_OPEN)||
+       !session.ClientToken)
+        return 0;
+    nvx_test_client_token=session.ClientToken;
+    return nvx_test_client_token;
+}
+
+static void
+NvxTestCloseClient(HDC hdc)
+{
+    NVX_3D_CLIENT_SESSION session={0};
+    if(!nvx_test_client_token) return;
+    session.Size=sizeof(session);
+    session.Version=NVX_3D_ABI_VERSION;
+    session.Operation=NVX_3D_CLIENT_CLOSE;
+    session.ClientToken=nvx_test_client_token;
+    if(ExtEscape(hdc,NVX_ESCAPE_3D_CLIENT_CLOSE,sizeof(session),
+                 (LPCSTR)&session,0,NULL))
+        nvx_test_client_token=0;
+}
+
+static int
+NvxTestExtEscape(HDC hdc, int escape, int input_bytes, LPCSTR input,
+                 int output_bytes, LPSTR output)
+{
+    if(escape==NVX_ESCAPE_3D_ALLOC && input &&
+       input_bytes==(int)sizeof(NVX_3D_ALLOC_BUFFER)) {
+        NVX_3D_ALLOC_BUFFER *request=(NVX_3D_ALLOC_BUFFER *)input;
+        request->ClientToken=NvxTestGetClientToken(hdc);
+        if(!request->ClientToken) return 0;
+        if(++nvx_test_allocation_token==0) ++nvx_test_allocation_token;
+        request->AllocationToken=nvx_test_allocation_token;
+    } else if(escape==NVX_ESCAPE_3D_SUBMIT && input &&
+              input_bytes>=(int)sizeof(NVX_3D_SUBMIT)) {
+        NVX_3D_SUBMIT *request=(NVX_3D_SUBMIT *)input;
+        request->ClientToken=NvxTestGetClientToken(hdc);
+        if(!request->ClientToken) return 0;
+        if(++nvx_test_request_token==0) ++nvx_test_request_token;
+        request->RequestToken=nvx_test_request_token;
+    }
+    return ExtEscape(hdc,escape,input_bytes,input,output_bytes,output);
+}
+
+#define ExtEscape NvxTestExtEscape
 
 static void DumpMesaBridgeTrace(void)
 {
@@ -2202,6 +2260,12 @@ static int TestNvc0ClearEscape(HDC hdc)
         } else if(ok)
             LogMsg("[NVX_3D_STAGE] resource-release PASS\n");
     }
+#if defined(NVX_TEST_NOUVEAU_PUSHBUF)
+    if(winsys.ClientToken && !NvxWinsysCloseClient(&winsys)) {
+        LogMsg("-> [WARN] Nouveau adapter session close failed\n");
+        ok=0;
+    }
+#endif
     LogMsg("[NVX_NVC0_CLEAR_RESULT] %s\n",ok?"PASS":"FAIL");
     return ok;
 }
@@ -3192,6 +3256,7 @@ int main(int argc, char **argv)
         int result=(TestNvxBufferRoundTrip(hdc)&&
                     TestNvc0ClearEscape(hdc)&&
                     TestNativeNvc0FullSizeClear(hdc))?0:1;
+        NvxTestCloseClient(hdc);
         ReleaseDC(hwnd,hdc);
         DestroyWindow(hwnd);
         LogMsg("[NVX_3D_RAPID_RESULT] %s\n",result?"FAIL":"PASS");
@@ -3226,6 +3291,8 @@ int main(int argc, char **argv)
         TestDirect3D9(hwnd);
         LogMsg("[D3D9_RESULT] %s\n", failures != before ? "FAIL" : d3dUnavailable ? "UNAVAILABLE (no Direct3D HAL)" : "RENDERED (see device type)");
     }
+
+    NvxTestCloseClient(hdc);
 
     ReleaseDC(hwnd, hdc);
     DestroyWindow(hwnd);
