@@ -51,6 +51,13 @@ ordinary OpenGL reports `[OPENGL_RESULT] FAIL` / SOFTWARE. Separate NVX
 triangle and native-clear diagnostics passed. This verifies package build/load
 and the failure boundary, not accelerated OpenGL.
 
+After making HDC setup idempotent and adding client/resource teardown before
+adapter rebinding, rebuilt and reran the full package at
+`../test_logs/v3.0.0.8-20261111-210029.log`. The XP package/import checks and
+hardware 3D tests still pass. Ordinary OpenGL still fails at
+`NOUVEAU_CHANNEL_ALLOC`; `screens=0`, confirming the lifecycle fix did not
+create a native screen or claim acceleration.
+
 ## Existing driver assessment
 
 Mesa's NVC0 Gallium driver contains the relevant C797 command construction,

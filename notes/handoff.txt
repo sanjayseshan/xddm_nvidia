@@ -1269,6 +1269,23 @@ then copies/rebuilds an approved command stream on the RM-managed channel and
 returns a fence. Only after that contract is proven should the DRM wrapper
 expose a channel/pushbuf interface to Mesa.
 
+## Windows WGL client lifecycle and rerun (November 11, 2026)
+
+`nvx_wgl_set_hdc()` runs from both context creation and context activation.
+Before this change it opened a new NVX client session for every call, even
+when the HDC was unchanged. The bridge now serializes setup, reuses the session
+for repeated calls on the same HDC, releases its diagnostic targets before
+rebinding, and preserves the adapter transport after a native Mesa screen has
+been created. The changed XP ICD cross-builds and passes the XP package audit.
+
+Full hardware rerun:
+`../test_logs/v3.0.0.8-20261111-210029.log`. The ordinary Mesa path remains
+unavailable: the trace still records `screens=0` and
+`NOUVEAU_CHANNEL_ALLOC` unsupported, followed by `[OPENGL_RESULT] FAIL`.
+Independent native NVC0 clear and 3D triangle/semaphore tests pass. The WGL
+lifecycle change is therefore a resource/session fix only; it does not provide
+the missing kernel-backed Gallium channel and submission interface.
+
 ## Full XP Mesa Nouveau/WGL hardware run (November 11, 2026)
 
 Ran the full hardware test with a freshly configured Mesa XP x64 ICD:

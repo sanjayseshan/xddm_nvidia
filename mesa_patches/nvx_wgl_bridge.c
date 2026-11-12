@@ -36,6 +36,8 @@ static volatile LONG nvx_bridge_nouveau_device_id;
 static volatile LONG nvx_bridge_nouveau_chipset;
 static volatile LONG nvx_bridge_nouveau_aperture_low;
 static volatile LONG nvx_bridge_nouveau_aperture_high;
+static volatile LONG nvx_bridge_wgl_lock;
+static HDC nvx_bridge_bound_hdc;
 static volatile LONG nvx_bridge_trace_count;
 static volatile LONG nvx_bridge_screen_count;
 static volatile LONG nvx_bridge_screen_active;
@@ -57,6 +59,7 @@ static int nvx_bridge_is_enabled(void);
 static int nvx_pack_color(const float rgba[4], uint32_t *color);
 static int nvx_alloc(HDC hdc, const NVX_3D_ALLOC_BUFFER *request,
                      NVX_3D_ALLOC_BUFFER *result);
+static int nvx_bridge_release_targets(HDC hdc);
 void nvx_wgl_notify_clear(struct softpipe_context *sp, unsigned buffers,
                           const union pipe_color_union *color, double depth);
 
@@ -208,10 +211,54 @@ nvx_wgl_set_hdc(HDC hdc)
 {
    LONG ready;
    LONG old_fd;
+
+   if (!hdc)
+      return;
+   while (InterlockedCompareExchange(&nvx_bridge_wgl_lock, 1, 0) != 0)
+      Sleep(0);
+
+   /* DrvSetContext calls this again for every context switch. Reopening the
+    * NVX client on the same DC leaked one miniport client session per switch. */
+   if (hdc == nvx_bridge_bound_hdc &&
+       InterlockedCompareExchange(&nvx_bridge_winsys_ready, 0, 0)) {
+      InterlockedExchange(&nvx_bridge_wgl_lock, 0);
+      return;
+   }
+
+   /* Mesa owns one WGL pipe_screen for the ICD process. Keep its adapter
+    * transport alive after the first native screen is created; rebinding the
+    * fd would invalidate BOs and channel state still owned by that screen. */
+   if (nvx_bridge_bound_hdc && hdc != nvx_bridge_bound_hdc &&
+       InterlockedCompareExchange(&nvx_bridge_screen_count, 0, 0) != 0) {
+      InterlockedExchange(&nvx_bridge_wgl_lock, 0);
+      return;
+   }
+
    InterlockedExchange(&nvx_bridge_screen_active, 0);
-   old_fd = InterlockedExchange(&nvx_bridge_drm_fd, 0);
-   if (old_fd > 0)
+   old_fd = InterlockedCompareExchange(&nvx_bridge_drm_fd, 0, 0);
+   if (old_fd > 0) {
+      if (!nvx_bridge_release_targets(nvx_bridge_bound_hdc)) {
+         nvx_bridge_trace("NVX bridge HDC switch deferred: a render target is still busy");
+         InterlockedExchange(&nvx_bridge_wgl_lock, 0);
+         return;
+      }
+      InterlockedExchange(&nvx_bridge_drm_fd, 0);
+      if (InterlockedCompareExchange(&nvx_bridge_nvx_adapter_ready, 0, 0)) {
+         NvxNouveauScreenDestroy(&nvx_bridge_nouveau_screen);
+         InterlockedExchange(&nvx_bridge_nvx_adapter_ready, 0);
+      }
       NvxXf86DrmUnregisterDevice(old_fd);
+      /* Unregister closes the session through the device copy it owns. */
+      nvx_bridge_winsys.ClientToken = 0;
+   } else if (nvx_bridge_winsys.ClientToken) {
+      if (!nvx_bridge_release_targets(nvx_bridge_bound_hdc)) {
+         nvx_bridge_trace("NVX bridge HDC switch deferred: a render target is still busy");
+         InterlockedExchange(&nvx_bridge_wgl_lock, 0);
+         return;
+      }
+      (void)NvxWinsysCloseClient(&nvx_bridge_winsys);
+   }
+   nvx_bridge_bound_hdc = hdc;
    InterlockedExchangePointer((PVOID volatile *)&nvx_wgl_hdc, hdc);
    ready = NvxWinsysInitHdc(&nvx_bridge_winsys, hdc);
    if (ready) {
@@ -241,6 +288,7 @@ nvx_wgl_set_hdc(HDC hdc)
       InterlockedExchange(&nvx_bridge_nouveau_aperture_high, 0);
    }
    nvx_bridge_trace("NVX bridge device probe completed");
+   InterlockedExchange(&nvx_bridge_wgl_lock, 0);
 }
 
 int
@@ -413,6 +461,29 @@ nvx_free(HDC hdc, uint64_t buffer_id)
    if (hdc && buffer_id &&
        InterlockedCompareExchange(&nvx_bridge_winsys_ready, 0, 0))
       NvxWinsysFreeBuffer(&nvx_bridge_winsys, buffer_id);
+}
+
+static int
+nvx_bridge_release_targets(HDC hdc)
+{
+   unsigned i;
+
+   for (i = 0; i < NVX_BRIDGE_TARGET_SLOTS; i++) {
+      struct nvx_bridge_target_state *target = &nvx_bridge_targets[i];
+
+      if (target->color_bo.references) {
+         if (!NvxNouveauBoDestroy(&target->color_bo))
+            return 0;
+      } else if (target->color_id) {
+         nvx_free(hdc, target->color_id);
+      }
+      if (target->depth_id)
+         nvx_free(hdc, target->depth_id);
+      if (target->vbo_id)
+         nvx_free(hdc, target->vbo_id);
+      memset(target, 0, sizeof(*target));
+   }
+   return 1;
 }
 
 static int
