@@ -15,7 +15,8 @@ $repo_root/mesa_patches/0009-nouveau-xp-mmap-unsupported.patch
 $repo_root/mesa_patches/0010-nouveau-xp-disable-drm-sharing.patch
 $repo_root/mesa_patches/0011-nouveau-use-os-mman.patch
 $repo_root/mesa_patches/0012-nouveau-xp-nvx-bo-map.patch
-$repo_root/mesa_patches/0013-nouveau-xp-flush-mapped-pushbuf.patch"
+$repo_root/mesa_patches/0013-nouveau-xp-flush-mapped-pushbuf.patch
+$repo_root/mesa_patches/0014-nouveau-xp-screen-failure-trace.patch"
 expected_revision=cc2dcf9abdc6afc093e85d48e4cfa34eed60a01e
 
 actual_revision=$(git -C "$mesa_dir" rev-parse HEAD)

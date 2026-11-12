@@ -358,7 +358,7 @@ main(void)
          } query = {0};
          query.ioctl.type = NVIF_IOCTL_V0_SCLASS;
          query.ioctl.route = NVIF_IOCTL_V0_ROUTE_HIDDEN;
-         query.ioctl.token = (uint32_t)channel.channel;
+         query.ioctl.token = channel.channel;
          query.sclass.count = 16;
          assert(drmCommandWriteRead(fd, DRM_NOUVEAU_NVIF, &query,
                                     sizeof(query)) == 0);
@@ -376,7 +376,7 @@ main(void)
          struct nvif_ioctl_v0 destroy = {0};
 
          create.ioctl.route = NVIF_IOCTL_V0_ROUTE_HIDDEN;
-         create.ioctl.token = (uint32_t)channel.channel;
+         create.ioctl.token = channel.channel;
          create.ioctl.type = NVIF_IOCTL_V0_NEW;
          create.create.handle = 0xbeef323fU;
          create.create.object = 0x12345678U;

@@ -1461,3 +1461,33 @@ classes; current success only establishes RM class allocation, not valid
 NVC0 engine objects. Continue implementing truthful channel object, mapped BO,
 fence/notifier, and operation-specific submit semantics. No full OS pipe or
 Gallium acceleration is complete yet.
+
+## Nouveau SCLASS sign-extension fix and next screen-init state (November 11, 2026)
+
+The new NVC0 failure trace showed `No supported m2mf class` with return
+`-1`. SCLASS telemetry on hardware run
+`../test_logs/v3.0.0.8-20261111-222328.log` then proved the shim rejected the
+SCLASS parent token before listing classes: `calls=1 result=1 count=0`. The
+cause was signed promotion of the RM channel ID. Mesa receives C56F0002 in
+the signed 32-bit `drm_nouveau_channel_alloc.channel`, assigns it to a 64-bit
+object handle, and sends the resulting sign-extended token. The shim compared
+it against a zero-extended 32-bit handle. `nvx_drm_channel_token_matches()`
+now accepts the exact zero-extended or valid sign-extended representation,
+for both SCLASS and NVIF channel-object creation. Host tests now exercise the
+sign-extended value and pass.
+
+The first hardware rerun with the fix did not finish the OpenGL test: the guest
+serial log `../test_logs/v3.0.0.8-20261111-222611.log` stops during OpenGL
+context startup after a Copy Engine timeout. It does not contain a final
+SCLASS status, so the fix is not yet proven on hardware. The subsequent retry
+`../test_logs/v3.0.0.8-20261111-222923.log` has the same early stop. The OS
+pipe remains incomplete and OpenGL is not verified accelerated.
+
+An external patch `0014-nouveau-xp-screen-failure-trace.patch` sends NVC0
+screen init failure stage/error into the WGL bridge log; it exposed the
+pre-fix SCLASS failure. Patch apply and reverse are wired into the XP Mesa
+scripts, and the Mesa submodule is clean. Current diagnostic additions include
+SCLASS result/count/classes and GEM_NEW request details. Next: obtain a clean
+guest run proving SCLASS returns A040/C7B5/902D/C797, then trace the first
+nonempty pushbuf and implement it only through validated operation-specific
+miniport semantics.

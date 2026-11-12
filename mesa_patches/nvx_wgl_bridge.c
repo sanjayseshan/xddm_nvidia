@@ -39,6 +39,7 @@ static volatile LONG nvx_bridge_nouveau_aperture_high;
 static volatile LONG nvx_bridge_wgl_lock;
 static HDC nvx_bridge_bound_hdc;
 static volatile LONG nvx_bridge_trace_count;
+static volatile LONG nvx_bridge_nouveau_init_failed;
 static volatile LONG nvx_bridge_screen_count;
 static volatile LONG nvx_bridge_screen_active;
 static volatile LONG nvx_bridge_callback_count;
@@ -55,6 +56,7 @@ static char nvx_bridge_last_message[96];
 static LONG nvx_bridge_depth_stage_count;
 static char nvx_bridge_depth_stages[3][96];
 static void nvx_bridge_trace(const char *message);
+void NvxWglRecordMesaInitFailure(const char *stage, int error);
 static int nvx_bridge_is_enabled(void);
 static int nvx_pack_color(const float rgba[4], uint32_t *color);
 static int nvx_alloc(HDC hdc, const NVX_3D_ALLOC_BUFFER *request,
@@ -340,12 +342,14 @@ nvx_wgl_create_native_nouveau_screen(void)
 
    if (fd <= 0 || !NvxXf86DrmIsRegistered(fd))
       return NULL;
+   InterlockedExchange(&nvx_bridge_nouveau_init_failed, 0);
    screen = nouveau_drm_screen_create(fd);
    if (screen) {
       nvx_bridge_trace("Native Nouveau Gallium pipe_screen created");
       InterlockedIncrement(&nvx_bridge_screen_count);
    } else {
-      nvx_bridge_trace("Native Nouveau screen creation failed; see DRM boundary");
+      if (!InterlockedCompareExchange(&nvx_bridge_nouveau_init_failed, 0, 0))
+         nvx_bridge_trace("Native Nouveau screen creation failed; see DRM boundary");
    }
    return screen;
 }
@@ -384,7 +388,7 @@ nvx_bridge_trace(const char *message)
    memcpy(nvx_bridge_last_message, message, length);
    nvx_bridge_last_message[length] = '\0';
 
-   if (count > 32)
+   if (count > 32 && strncmp(message, "NVC0 init rc=", 13) != 0)
       return;
    file = CreateFileA("C:\\test_accel\\mesa_bridge.log", FILE_APPEND_DATA,
                       FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS,
@@ -394,6 +398,31 @@ nvx_bridge_trace(const char *message)
    WriteFile(file, message, (DWORD)strlen(message), &written, NULL);
    WriteFile(file, "\r\n", 2, &written, NULL);
    CloseHandle(file);
+}
+
+/* Called by the external NVC0 patch to identify screen-init failure stages. */
+void
+NvxWglRecordMesaInitFailure(const char *stage, int error)
+{
+   char message[96];
+   char prefix[32];
+   size_t prefix_length, stage_length, copy_length;
+
+   if (!stage)
+      stage = "unknown stage";
+   wsprintfA(prefix, "NVC0 init rc=%d: ", error);
+   prefix_length = strlen(prefix);
+   if (prefix_length >= sizeof(message))
+      prefix_length = sizeof(message) - 1U;
+   memcpy(message, prefix, prefix_length);
+   stage_length = strlen(stage);
+   copy_length = sizeof(message) - prefix_length - 1U;
+   if (stage_length > copy_length)
+      stage_length = copy_length;
+   memcpy(message + prefix_length, stage, stage_length);
+   message[prefix_length + stage_length] = '\0';
+   InterlockedExchange(&nvx_bridge_nouveau_init_failed, 1);
+   nvx_bridge_trace(message);
 }
 
 /* Use the bounded NVX bridge by default on the NVX WGL screen. An explicit

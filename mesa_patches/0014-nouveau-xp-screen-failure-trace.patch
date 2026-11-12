@@ -1,0 +1,26 @@
+diff --git a/src/gallium/drivers/nouveau/nvc0/nvc0_screen.c b/src/gallium/drivers/nouveau/nvc0/nvc0_screen.c
+index 07fa13d0fd4a..2ff074996934 100644
+--- a/src/gallium/drivers/nouveau/nvc0/nvc0_screen.c
++++ b/src/gallium/drivers/nouveau/nvc0/nvc0_screen.c
+@@ -760,11 +760,21 @@ nvc0_screen_bind_cb_3d(struct nvc0_screen *screen, struct nouveau_pushbuf *push,
+    IMMED_NVC0(push, NVC0_3D(CB_BIND(stage)), (index << 4) | (size >= 0));
+ }
+ 
++#ifdef NVX_XP_WIN32_SHIMS
++extern void NvxWglRecordMesaInitFailure(const char *stage, int error);
+ #define FAIL_SCREEN_INIT(str, err)                    \
+    do {                                               \
++      NvxWglRecordMesaInitFailure(str, err);           \
+       NOUVEAU_ERR(str, err);                          \
+       goto fail;                                      \
+    } while(0)
++#else
++#define FAIL_SCREEN_INIT(str, err)                    \
++   do {                                               \
++      NOUVEAU_ERR(str, err);                          \
++      goto fail;                                      \
++   } while(0)
++#endif
+ 
+ struct nouveau_screen *
+ nvc0_screen_create(struct nouveau_device *dev)

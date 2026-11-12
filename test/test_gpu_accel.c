@@ -147,6 +147,10 @@ static void DumpMesaBridgeTrace(void)
         DWORD xf86drmLastGemNewTileMode;
         DWORD xf86drmLastGemNewTileFlags;
         uint64_t xf86drmLastGemNewSize;
+        DWORD xf86drmSclassCalls;
+        DWORD xf86drmLastSclassResult;
+        DWORD xf86drmLastSclassCount;
+        DWORD xf86drmLastSclass[4];
     } MESA_BRIDGE_STATUS;
     typedef BOOL (WINAPI *PFN_QUERY_BRIDGE_STATUS)(MESA_BRIDGE_STATUS *, DWORD);
     HMODULE icd = GetModuleHandleA("nvxogl64.dll");
@@ -191,6 +195,14 @@ static void DumpMesaBridgeTrace(void)
            (unsigned long)status.xf86drmLastGemNewDomain,
            (unsigned long)status.xf86drmLastGemNewTileMode,
            (unsigned long)status.xf86drmLastGemNewTileFlags);
+    LogMsg("[NVX_XF86DRM_SCLASS] calls=%lu result=%lu count=%lu classes=%08lx,%08lx,%08lx,%08lx\n",
+           (unsigned long)status.xf86drmSclassCalls,
+           (unsigned long)status.xf86drmLastSclassResult,
+           (unsigned long)status.xf86drmLastSclassCount,
+           (unsigned long)status.xf86drmLastSclass[0],
+           (unsigned long)status.xf86drmLastSclass[1],
+           (unsigned long)status.xf86drmLastSclass[2],
+           (unsigned long)status.xf86drmLastSclass[3]);
     LogMsg("[MESA_BRIDGE_UPLOAD_BITS] %08lx %08lx %08lx %08lx %08lx %08lx %08lx %08lx\n",
            (unsigned long)(DWORD)status.lastUploadBits[0],
            (unsigned long)(DWORD)status.lastUploadBits[1],

@@ -52,6 +52,7 @@ PY
 restore_mesa_sources() {
     rm -f "$ROOT/mesa/src/gallium/winsys/nouveau/drm/nvx_xf86drm.c"
     for patch_file in \
+        "$ROOT/mesa_patches/0014-nouveau-xp-screen-failure-trace.patch" \
         "$ROOT/mesa_patches/0013-nouveau-xp-flush-mapped-pushbuf.patch" \
         "$ROOT/mesa_patches/0012-nouveau-xp-nvx-bo-map.patch" \
         "$ROOT/mesa_patches/0011-nouveau-use-os-mman.patch" \

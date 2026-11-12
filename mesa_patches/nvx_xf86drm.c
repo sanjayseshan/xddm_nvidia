@@ -84,6 +84,18 @@ nvx_drm_find_bo_locked(struct nvx_drm_device_slot *device, uint32_t handle)
    return NULL;
 }
 
+/* nouveau_object_channel_new stores the signed drm_nouveau_channel_alloc
+ * channel field in a 64-bit object handle. RM handles such as C56Fxxxx have
+ * bit 31 set and therefore arrive in NVIF tokens sign-extended. */
+static int
+nvx_drm_channel_token_matches(uint64_t token, uint32_t channel)
+{
+   uint32_t high = (uint32_t)(token >> 32);
+
+   return (uint32_t)token == channel &&
+          (high == 0U || ((channel & 0x80000000U) && high == UINT32_MAX));
+}
+
 static int
 nvx_drm_getparam(int fd, void *data, unsigned long size)
 {
@@ -199,8 +211,14 @@ nvx_drm_nvif_sclass(int fd, void *data, unsigned long size)
 
    nvx_drm_lock_acquire();
    device = nvx_drm_find_device_locked(fd);
+   nvx_drm_status.SclassCalls++;
+   nvx_drm_status.LastSclassResult = 1U;
+   nvx_drm_status.LastSclassCount = 0;
+   memset(nvx_drm_status.LastSclass, 0,
+          sizeof(nvx_drm_status.LastSclass));
    if (device && device->device.NouveauChannelHandle &&
-       ioctl->token == device->device.NouveauChannelHandle &&
+       nvx_drm_channel_token_matches(
+          ioctl->token, device->device.NouveauChannelHandle) &&
        device->device.NouveauGraphicsObjectHandle) {
       found = 1;
       if (device->device.caps.Features & NVX_3D_FEATURE_NVC0_M2MF_OBJECT)
@@ -210,6 +228,10 @@ nvx_drm_nvif_sclass(int fd, void *data, unsigned long size)
       if (device->device.caps.Features & NVX_3D_FEATURE_NVC0_2D_OBJECT)
          classes[class_count++] = NVX_RM_CLASS_FERMI_2D_A;
       classes[class_count++] = device->device.caps.GraphicsClass;
+      nvx_drm_status.LastSclassResult = 0;
+      nvx_drm_status.LastSclassCount = class_count;
+      for (i = 0; i < class_count; i++)
+         nvx_drm_status.LastSclass[i] = classes[i];
    }
    if (found && capacity) {
       struct nvif_ioctl_sclass_oclass_v0 *entry =
@@ -285,7 +307,8 @@ nvx_drm_nvif_channel_object_new(int fd, void *data, unsigned long size)
 
    nvx_drm_lock_acquire();
    device = nvx_drm_find_device_locked(fd);
-   if (!device || ioctl->token != device->device.NouveauChannelHandle) {
+   if (!device || !nvx_drm_channel_token_matches(
+                     ioctl->token, device->device.NouveauChannelHandle)) {
       nvx_drm_lock_release();
       errno = device ? EINVAL : ENODEV;
       return -1;
