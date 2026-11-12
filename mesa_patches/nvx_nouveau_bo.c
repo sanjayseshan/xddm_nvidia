@@ -10,12 +10,15 @@ NvxNouveauBoCreate(NVX_WINSYS_DEVICE *device,
 {
    NVX_3D_ALLOC_BUFFER request;
 
-   if (!device || !description || !bo || !client_token ||
+   if (!bo)
+      return 0;
+
+   memset(bo, 0, sizeof(*bo));
+   if (!device || !description || !client_token ||
        client_token != device->ClientToken ||
        description->Bytes > device->caps.MaxBufferBytes)
       return 0;
 
-   memset(bo, 0, sizeof(*bo));
    request = *description;
    request.Size = sizeof(request);
    request.Version = NVX_3D_ABI_VERSION;
