@@ -5,11 +5,24 @@ Current ABI 16 work (version 3.0.0.5): `ClientToken` owns BOs within a
 kernel-issued session; `AllocationToken` and `RequestToken` provide separate
 retry identities for allocations and submits. Host checks, XP x86/x64 builds,
 the Nouveau+softpipe Mesa package, and real RTX 3070 test
-`../test_logs/v3.0.0.5-20261111-191355.log` passed, including
+`../test_logs/v3.0.0.5-20261111-192551.log` passed, including
 `[NVX_3D_RESULT] PASS` and the independent GR/2D checks. OpenGL still reports
 softpipe because `DRM_NOUVEAU_CHANNEL_ALLOC` returns `ENOSYS`. The session
 token is not bound to the original process; the video-port callback runs in a
-different PID. No Nouveau channel or Gallium GPU rendering is implemented.
+different PID. The test confirms the WGL Nouveau attempt reaches the expected
+first blocker, `DRM_NOUVEAU_CHANNEL_ALLOC` (`ENOSYS`), then falls back to
+softpipe. No Nouveau channel or Gallium GPU rendering is implemented.
+
+The November 11 `192551` WGL selection correction removed the `nvx` pseudo
+driver path that could return a softpipe screen while looking like an NVX
+screen. WGL now requests the actual `nouveau` driver first, then uses normal
+fallback ordering. The XP ICD cross-build completed (1072 Ninja steps), package
+import/subsystem audits passed, and the real RTX 3070 guest shut down cleanly.
+The log reports `softpipe`, `screens=0`, `gpu_batches=0`, and one unsupported
+`NOUVEAU_CHANNEL_ALLOC`; independent `[NVX_3D_RESULT] PASS` and 2D checks still
+pass. Thus this corrects driver selection and makes the failure observable;
+Phase 2C remains incomplete until Nouveau can create its channel and submit
+NVC0-generated work.
 
 Current Phase 2C status (verified November 11, 2026):
 - The standard optional Mesa ICD test build now defaults to Gallium

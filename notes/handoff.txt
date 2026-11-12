@@ -1024,6 +1024,36 @@ The XP `ExtEscape` ABI does not provide those interfaces today. Keep the
 renderer label truthful; do not report Nouveau or hardware OpenGL until WGL
 returns a genuine Nouveau `pipe_screen` and an NVC0 shader draw is verified.
 
+## WGL Nouveau selection and hardware retest (November 11, 2026)
+
+Corrected `mesa_patches/0002-nvx-gallium-bridge.patch`: WGL now asks for the
+actual `nouveau` Gallium driver name and falls through to the regular software
+driver list when native screen construction fails. Removed the `nvx` branch
+that could return a softpipe screen after only initializing the NVX adapter,
+which made the selected driver name misleading. Mesa remains a clean pinned
+submodule; all changes are in the external patch directory.
+
+Full test command used Meson 1.12.1 from `/tmp/nvx-meson-venv`, with Mesa
+`mako`/`pyyaml` installed in that temporary environment, then ran
+`NVX_AUTO_RETRY=1 NVX_BUILD_MESA_ICD=1 NVX_MESA_GALLIUM_DRIVERS=nouveau,softpipe NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROBE=1 NVX_GR_SUBMISSION_PROBE=1 JOBS=4 ./test/test_full_driver.sh`.
+The XP ICD cross-build completed; its PE imports/subsystem checks passed. The
+real RTX 3070 guest run is `../test_logs/v3.0.0.5-20261111-192551.log`.
+WGL opened the adapter and detected PCI `2488`/GA104, attempted Nouveau, and
+recorded `NOUVEAU_CHANNEL_ALLOC` as the first unsupported DRM operation. Native
+screen count and OpenGL bridge batches were both zero; the app correctly
+reported `Mesa / softpipe`, `[OPENGL_RESULT] SOFTWARE`, and rendered 100 frames.
+The independent `[NVX_3D_RESULT] PASS`, GR triangle/semaphore check, and 2D
+checks passed. Firmware assertion count remained at its startup value of one;
+no MMU fault was logged. This verifies truthful fallback and isolates the next
+blocker; it does not satisfy Phase 2C.
+
+Next implementation work remains kernel-owned Nouveau channel/context
+bootstrap, engine-object binding, BO semantics, validated NVC0 command
+submission and fences, followed by connecting WGL presentation to the real
+Nouveau screen and verifying an NVC0 shader draw. `DRM_NOUVEAU_CHANNEL_ALLOC`
+cannot return a fabricated handle: screen creation immediately depends on
+channel, NVIF objects, fence BO mapping, initialization methods, and submission.
+
 ## Direct Nouveau WGL build probe (November 11, 2026)
 
 Attempted an XP x64 Mesa build with Nouveau enabled:
