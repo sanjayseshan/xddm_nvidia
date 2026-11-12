@@ -5,6 +5,7 @@ NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
 NVX_TEST_VERSION="3.0.0.8"
+NVX_REQUIRE_HW_OPENGL="${NVX_REQUIRE_HW_OPENGL:-1}"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 NVX_TEST_FLAGS=()
 NVX_MESA_TEST_FLAGS=()
@@ -258,4 +259,10 @@ else
     NVX_DRIVER_ISO="${NVX_DRIVER_ISO:-$NVX_ROOT/nvx_driver_full.iso}" \
     NVX_SERIAL_LOG="$NVX_RUN_LOG" \
         "$NVX_ROOT/test/run_vfio_vm.sh"
+fi
+
+if [ "$NVX_REQUIRE_HW_OPENGL" = "1" ] &&
+   ! grep -q '\[OPENGL_RESULT\] RENDERED' "$NVX_RUN_LOG"; then
+    echo "ERROR: hardware OpenGL was not proven; see $NVX_RUN_LOG" >&2
+    exit 1
 fi
