@@ -1435,3 +1435,29 @@ teardown; connect Mesa BO mmap to NVX staging (the Mesa winsys currently calls
 NVC0 operations to miniport submission. Do not advertise the current RM object
 probe as a complete Nouveau OS pipe or a working Gallium screen. The hardware
 success gate remains `[OPENGL_RESULT] RENDERED`.
+
+## XP OS-pipe failure telemetry (November 11, 2026)
+
+Added last GEM_NEW request telemetry to the xf86drm shim and GPU test log:
+request count, result class, size, domain, tile mode, and tile flags. The full
+hardware run `../test_logs/v3.0.0.8-20261111-221008.log` built and loaded the
+updated Mesa package. The native screen still fails (`screens=0`,
+`[OPENGL_RESULT] SOFTWARE`), while all five GEM_NEW allocations made during
+screen initialization succeeded. The last was 4 KiB, domain `0xC` (GART plus
+mappable), tile mode zero, flags `0x8`. `unsupported_count=1` remains the
+optional GETPARAM query; no nonempty pushbuf rejection was recorded. The
+failure is likely during the shimmed NVIF object lifecycle or a Mesa init
+return before its first nonempty kick, but current telemetry cannot
+distinguish those cases.
+
+`make -C src_driver check` passed, including host sanitizers and x86/x64 MinGW
+compiles; the full driver test rebuilt the XP package and booted the guest.
+The hardware gate correctly rejected this as non-accelerated OpenGL.
+
+Next, record NVIF object create/delete counts and per-class failures plus the
+last Nouveau pushbuf request shape/result. Verify RM resources are true
+channel-child objects with valid subchannel binding before exposing their
+classes; current success only establishes RM class allocation, not valid
+NVC0 engine objects. Continue implementing truthful channel object, mapped BO,
+fence/notifier, and operation-specific submit semantics. No full OS pipe or
+Gallium acceleration is complete yet.

@@ -976,7 +976,13 @@ drmCommandWriteRead(int fd, unsigned long command, void *data,
       nvx_drm_lock_acquire();
       device = nvx_drm_find_device_locked(fd);
       found = device != NULL;
+      nvx_drm_status.GemNewCount++;
+      nvx_drm_status.LastGemNewSize = request->info.size;
+      nvx_drm_status.LastGemNewDomain = request->info.domain;
+      nvx_drm_status.LastGemNewTileMode = request->info.tile_mode;
+      nvx_drm_status.LastGemNewTileFlags = request->info.tile_flags;
       ok = nvx_drm_gem_new(device, request);
+      nvx_drm_status.LastGemNewResult = ok ? 0U : (found ? 1U : 2U);
       nvx_drm_lock_release();
       if (ok)
          return 0;

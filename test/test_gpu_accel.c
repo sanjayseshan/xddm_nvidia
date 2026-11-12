@@ -141,6 +141,12 @@ static void DumpMesaBridgeTrace(void)
         DWORD xf86drmChannelAllocCount;
         DWORD xf86drmLastChannelAllocResult;
         DWORD xf86drmLastChannelHandle;
+        DWORD xf86drmGemNewCount;
+        DWORD xf86drmLastGemNewResult;
+        DWORD xf86drmLastGemNewDomain;
+        DWORD xf86drmLastGemNewTileMode;
+        DWORD xf86drmLastGemNewTileFlags;
+        uint64_t xf86drmLastGemNewSize;
     } MESA_BRIDGE_STATUS;
     typedef BOOL (WINAPI *PFN_QUERY_BRIDGE_STATUS)(MESA_BRIDGE_STATUS *, DWORD);
     HMODULE icd = GetModuleHandleA("nvxogl64.dll");
@@ -177,6 +183,14 @@ static void DumpMesaBridgeTrace(void)
            status.xf86drmLastUnsupportedKind == 2 &&
               status.xf86drmLastUnsupportedOperation == 2 ?
               " (NOUVEAU_CHANNEL_ALLOC)" : "");
+    LogMsg("[NVX_XF86DRM_GEM_NEW] count=%lu result=%lu size=%08lx%08lx domain=%08lx tile_mode=%08lx tile_flags=%08lx\n",
+           (unsigned long)status.xf86drmGemNewCount,
+           (unsigned long)status.xf86drmLastGemNewResult,
+           (unsigned long)(DWORD)(status.xf86drmLastGemNewSize >> 32),
+           (unsigned long)(DWORD)status.xf86drmLastGemNewSize,
+           (unsigned long)status.xf86drmLastGemNewDomain,
+           (unsigned long)status.xf86drmLastGemNewTileMode,
+           (unsigned long)status.xf86drmLastGemNewTileFlags);
     LogMsg("[MESA_BRIDGE_UPLOAD_BITS] %08lx %08lx %08lx %08lx %08lx %08lx %08lx %08lx\n",
            (unsigned long)(DWORD)status.lastUploadBits[0],
            (unsigned long)(DWORD)status.lastUploadBits[1],

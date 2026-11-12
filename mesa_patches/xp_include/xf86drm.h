@@ -96,6 +96,12 @@ typedef struct NVX_XF86DRM_STATUS {
    uint32_t ChannelAllocCount;
    uint32_t LastChannelAllocResult;
    uint32_t LastChannelHandle;
+   uint32_t GemNewCount;
+   uint32_t LastGemNewResult;
+   uint32_t LastGemNewDomain;
+   uint32_t LastGemNewTileMode;
+   uint32_t LastGemNewTileFlags;
+   uint64_t LastGemNewSize;
 } NVX_XF86DRM_STATUS;
 
 /* Register an already queried NVX adapter and obtain a process-local DRM
