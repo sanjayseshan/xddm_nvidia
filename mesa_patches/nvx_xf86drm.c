@@ -22,6 +22,13 @@ void NvxWglRecordNouveauSclass(uint32_t token_low, uint32_t token_high,
                               const uint32_t *classes);
 void NvxWglRecordNouveauPushbuf(uint32_t channel, uint32_t nr_push,
                                uint32_t nr_buffers, uint32_t nr_relocs);
+void NvxWglRecordNouveauPushbufItem(uint32_t kind, uint32_t index,
+                                   uint32_t a, uint32_t b, uint32_t c,
+                                   uint32_t d, uint32_t e, uint32_t f);
+void NvxWglRecordNouveauPushbufDwords(uint32_t push_index,
+                                     uint32_t first_word,
+                                     const uint32_t *dwords,
+                                     uint32_t count);
 void NvxWglRecordNouveauObject(uint32_t token_low, uint32_t token_high,
                               uint32_t user_class, uint32_t user_handle,
                               uint32_t rm_class, uint32_t rm_handle,
@@ -71,6 +78,7 @@ struct nvx_drm_device_slot {
 
 static struct nvx_drm_device_slot nvx_drm_devices[NVX_DRM_DEVICE_SLOTS];
 static volatile int nvx_drm_lock;
+static volatile uint32_t nvx_drm_pushbuf_validation_count;
 static NVX_XF86DRM_STATUS nvx_drm_status;
 static int nvx_drm_unsupported(void);
 static int nvx_drm_unsupported_operation(uint32_t kind,
@@ -79,6 +87,211 @@ static int nvx_drm_lookup(int fd, NVX_WINSYS_DEVICE *device);
 static void nvx_drm_lock_acquire(void);
 static void nvx_drm_lock_release(void);
 static int nvx_drm_nvif_object_del(int fd, void *data, unsigned long size);
+static struct nvx_drm_device_slot *nvx_drm_find_device_locked(int fd);
+static struct nvx_drm_bo_slot *nvx_drm_find_bo_locked(
+   struct nvx_drm_device_slot *device, uint32_t handle);
+
+#if defined(_WIN32) || defined(_WIN64)
+/* Diagnostic-only validation of a few simple Mesa batches. This intentionally
+ * does not turn a DRM pushbuf into a GPU kick. */
+static void
+nvx_drm_validate_pushbuf(int fd,
+                         struct drm_nouveau_gem_pushbuf *request)
+{
+   struct nvx_drm_device_slot *device;
+   struct drm_nouveau_gem_pushbuf_bo *buffers;
+   struct drm_nouveau_gem_pushbuf_push *pushes;
+   NVX_WINSYS_DEVICE winsys;
+   NVX_3D_BATCH_HEADER header;
+   NVX_3D_BUFFER_REFERENCE references[NVX_3D_MAX_BATCH_BUFFERS];
+   NVX_3D_RELOCATION translated_relocations[NVX_3D_MAX_BATCH_RELOCATIONS];
+   uint8_t batch[NVX_3D_MAX_BATCH_BYTES];
+   uint32_t dword_count = 0, reference_count = 0, relocation_count = 0, i;
+   uint32_t reference_bytes, dword_bytes, relocation_bytes, batch_bytes;
+   uint64_t client_token;
+   int valid = 0;
+
+   if (!request || !request->nr_push ||
+       request->nr_push > NOUVEAU_GEM_MAX_PUSH || !request->nr_buffers ||
+       request->nr_buffers > NVX_3D_MAX_BATCH_BUFFERS ||
+       request->nr_relocs > NVX_3D_MAX_BATCH_RELOCATIONS ||
+       !request->buffers || !request->push ||
+       (request->nr_relocs && !request->relocs) ||
+       __sync_fetch_and_add(&nvx_drm_pushbuf_validation_count, 1U) >= 8U)
+      return;
+
+   buffers = (struct drm_nouveau_gem_pushbuf_bo *)(uintptr_t)request->buffers;
+   pushes = (struct drm_nouveau_gem_pushbuf_push *)(uintptr_t)request->push;
+   memset(translated_relocations, 0, sizeof(translated_relocations));
+   memset(references, 0, sizeof(references));
+   nvx_drm_lock_acquire();
+   device = nvx_drm_find_device_locked(fd);
+   if (!device || !device->device.NouveauChannelHandle ||
+       request->channel != device->device.NouveauChannelHandle)
+      goto done;
+
+   for (i = 0; i < request->nr_buffers; i++) {
+      struct nvx_drm_bo_slot *slot =
+         nvx_drm_find_bo_locked(device, buffers[i].handle);
+      uint32_t access = 0, j;
+      if (buffers[i].read_domains)
+         access |= NVX_3D_RELOC_READ;
+      if (buffers[i].write_domains)
+         access |= NVX_3D_RELOC_WRITE;
+      if (!slot || !access || !slot->bo.allocation.BufferId ||
+          slot->bo.allocation.ClientToken != device->client_token)
+         goto done;
+      for (j = 0; j < reference_count; j++)
+         if (references[j].BufferId == slot->bo.allocation.BufferId)
+            break;
+      if (j == reference_count) {
+         if (reference_count >= NVX_3D_MAX_BATCH_BUFFERS)
+            goto done;
+         references[j].BufferId = slot->bo.allocation.BufferId;
+         references[j].Access = access;
+         references[j].Reserved = 0;
+         reference_count++;
+      } else {
+         references[j].Access |= access;
+      }
+   }
+
+   for (i = 0; i < request->nr_push; i++) {
+      struct nvx_drm_bo_slot *slot;
+      uint64_t bytes = pushes[i].length &
+                        ~((uint64_t)NOUVEAU_GEM_PUSHBUF_NO_PREFETCH);
+      uint32_t handle;
+      if (pushes[i].bo_index >= request->nr_buffers || !bytes ||
+          (bytes & 3U) || bytes > UINT32_MAX ||
+          pushes[i].offset > UINT32_MAX)
+         goto done;
+      handle = buffers[pushes[i].bo_index].handle;
+      slot = nvx_drm_find_bo_locked(device, handle);
+      if (!slot || !slot->bo.shadow || !slot->bo.map_count ||
+          pushes[i].offset > slot->bo.allocation.Bytes ||
+          bytes > slot->bo.allocation.Bytes - pushes[i].offset ||
+          bytes / sizeof(uint32_t) > NVX_3D_MAX_PUSH_DWORDS - dword_count)
+         goto done;
+      memcpy(batch + sizeof(header) +
+             (size_t)NVX_3D_MAX_BATCH_BUFFERS * sizeof(references[0]) +
+             (size_t)dword_count * sizeof(uint32_t),
+             slot->bo.shadow + (uint32_t)pushes[i].offset, (size_t)bytes);
+      dword_count += (uint32_t)(bytes / sizeof(uint32_t));
+   }
+
+   /* Translate Nouveau's source-BO relocation into a relocation against an
+    * owned NVX allocation. Preserve the GPU address in the copied batch and
+    * reject OR/domain relocations until allocation domains are represented in
+    * the NVX ABI. */
+   for (i = 0; i < request->nr_relocs; i++) {
+      const struct drm_nouveau_gem_pushbuf_reloc *reloc =
+         (const struct drm_nouveau_gem_pushbuf_reloc *)(uintptr_t)request->relocs + i;
+      struct nvx_drm_bo_slot *target_slot;
+      struct nvx_drm_bo_slot *source_slot;
+      uint64_t address;
+      uint32_t push_index, command_word = 0, preceding_words = 0;
+      uint32_t access = 0, flags = reloc->flags;
+      uint32_t *source_dwords;
+      int source_found = 0;
+
+      if (reloc->bo_index >= request->nr_buffers ||
+          reloc->reloc_bo_index >= request->nr_buffers ||
+          (flags != NOUVEAU_GEM_RELOC_LOW &&
+           flags != NOUVEAU_GEM_RELOC_HIGH))
+         goto done;
+      target_slot = nvx_drm_find_bo_locked(device,
+                            buffers[reloc->bo_index].handle);
+      source_slot = nvx_drm_find_bo_locked(device,
+                            buffers[reloc->reloc_bo_index].handle);
+      if (!target_slot || !source_slot || !source_slot->bo.shadow ||
+          !target_slot->bo.allocation.BufferId ||
+          target_slot->bo.allocation.ClientToken != device->client_token ||
+          reloc->data >= target_slot->bo.allocation.Bytes ||
+          (uint64_t)reloc->reloc_bo_offset + sizeof(uint32_t) >
+             source_slot->bo.allocation.Bytes || (reloc->reloc_bo_offset & 3U))
+         goto done;
+      if (buffers[reloc->bo_index].read_domains)
+         access |= NVX_3D_RELOC_READ;
+      if (buffers[reloc->bo_index].write_domains)
+         access |= NVX_3D_RELOC_WRITE;
+      if (!access || target_slot->bo.allocation.GpuVa >
+                     UINT64_MAX - reloc->data)
+         goto done;
+      address = target_slot->bo.allocation.GpuVa + reloc->data;
+
+      for (push_index = 0; push_index < request->nr_push; push_index++) {
+         uint64_t push_bytes = pushes[push_index].length &
+                               ~((uint64_t)NOUVEAU_GEM_PUSHBUF_NO_PREFETCH);
+         if (pushes[push_index].bo_index == reloc->reloc_bo_index &&
+             reloc->reloc_bo_offset >= pushes[push_index].offset &&
+             (uint64_t)reloc->reloc_bo_offset + sizeof(uint32_t) <=
+                pushes[push_index].offset + push_bytes) {
+            command_word = preceding_words + (uint32_t)(
+               (reloc->reloc_bo_offset - pushes[push_index].offset) / 4U);
+            source_found = 1;
+            break;
+         }
+         if (!push_bytes || (push_bytes & 3U) ||
+             push_bytes / 4U > NVX_3D_MAX_PUSH_DWORDS - preceding_words)
+            goto done;
+         preceding_words += (uint32_t)(push_bytes / 4U);
+      }
+      if (!source_found || command_word >= dword_count ||
+          (flags == NOUVEAU_GEM_RELOC_HIGH && (address >> 32) > 0xffU))
+         goto done;
+      source_dwords = (uint32_t *)(void *)(batch + sizeof(header) +
+         (size_t)NVX_3D_MAX_BATCH_BUFFERS * sizeof(references[0]));
+      source_dwords[command_word] = flags == NOUVEAU_GEM_RELOC_LOW ?
+                                     (uint32_t)address :
+                                     (uint32_t)(address >> 32);
+      translated_relocations[relocation_count].CommandWord = command_word;
+      translated_relocations[relocation_count].BufferId =
+                                      target_slot->bo.allocation.BufferId;
+      translated_relocations[relocation_count].BufferOffset = reloc->data;
+      translated_relocations[relocation_count].Bytes =
+         target_slot->bo.allocation.Bytes - reloc->data;
+      translated_relocations[relocation_count].Access = access;
+      relocation_count++;
+   }
+
+   winsys = device->device;
+   client_token = device->client_token;
+   nvx_drm_lock_release();
+
+   memset(&header, 0, sizeof(header));
+   header.Size = sizeof(header);
+   header.Version = NVX_3D_ABI_VERSION;
+   header.DwordCount = dword_count;
+   header.BufferReferenceCount = reference_count;
+   header.RelocationCount = relocation_count;
+   header.ClientToken = client_token;
+   reference_bytes = reference_count * (uint32_t)sizeof(references[0]);
+   dword_bytes = dword_count * (uint32_t)sizeof(uint32_t);
+   relocation_bytes = relocation_count * (uint32_t)sizeof(translated_relocations[0]);
+   batch_bytes = (uint32_t)sizeof(header) + reference_bytes + dword_bytes +
+                 relocation_bytes;
+   memmove(batch + sizeof(header) + reference_bytes,
+           batch + sizeof(header) +
+              (size_t)NVX_3D_MAX_BATCH_BUFFERS * sizeof(references[0]),
+           dword_bytes);
+   memcpy(batch, &header, sizeof(header));
+   memcpy(batch + sizeof(header), references, reference_bytes);
+   if (relocation_bytes)
+      memcpy(batch + sizeof(header) + reference_bytes + dword_bytes,
+             translated_relocations, relocation_bytes);
+   valid = NvxWinsysValidateBatch(&winsys, batch, batch_bytes);
+   NvxWglRecordNouveauPushbufItem(6U, 0U, valid ? 1U : 0U,
+                                  dword_count, reference_count,
+                                  request->nr_relocs, relocation_count, 0U);
+   return;
+
+done:
+   nvx_drm_lock_release();
+   NvxWglRecordNouveauPushbufItem(6U, 0U, 0U,
+                                  dword_count, reference_count,
+                                  request->nr_relocs, 0U, 0U);
+}
+#endif
 
 static struct nvx_drm_device_slot *
 nvx_drm_find_device_locked(int fd)
@@ -534,8 +747,95 @@ nvx_drm_pushbuf_nop(int fd, struct drm_nouveau_gem_pushbuf *request,
        request->suffix0 || request->suffix1)
 #if defined(_WIN32) || defined(_WIN64)
    {
+      const struct drm_nouveau_gem_pushbuf_bo *buffers =
+         (const struct drm_nouveau_gem_pushbuf_bo *)(uintptr_t)request->buffers;
+      const struct drm_nouveau_gem_pushbuf_push *pushes =
+         (const struct drm_nouveau_gem_pushbuf_push *)(uintptr_t)request->push;
+      const struct drm_nouveau_gem_pushbuf_reloc *relocs =
+         (const struct drm_nouveau_gem_pushbuf_reloc *)(uintptr_t)request->relocs;
+      uint32_t i;
+
       NvxWglRecordNouveauPushbuf(request->channel, request->nr_push,
                                  request->nr_buffers, request->nr_relocs);
+      if (buffers && request->nr_buffers <= NOUVEAU_GEM_MAX_BUFFERS) {
+         for (i = 0; i < request->nr_buffers && i < 16U; i++) {
+            NvxWglRecordNouveauPushbufItem(1U, i, buffers[i].handle,
+               buffers[i].read_domains, buffers[i].write_domains,
+               buffers[i].valid_domains, buffers[i].presumed.valid,
+               buffers[i].presumed.domain);
+         }
+      }
+      if (pushes && request->nr_push <= NOUVEAU_GEM_MAX_PUSH) {
+         for (i = 0; i < request->nr_push && i < 16U; i++) {
+            NvxWglRecordNouveauPushbufItem(2U, i, pushes[i].bo_index,
+               (uint32_t)pushes[i].offset, (uint32_t)(pushes[i].offset >> 32),
+               (uint32_t)pushes[i].length,
+               (uint32_t)(pushes[i].length >> 32), pushes[i].pad);
+            if (buffers && pushes[i].bo_index < request->nr_buffers &&
+                pushes[i].length && pushes[i].length <= UINT32_MAX &&
+                pushes[i].offset <= UINT32_MAX) {
+               struct nvx_drm_device_slot *map_device;
+               struct nvx_drm_bo_slot *map_slot;
+               uint32_t allocation_bytes = 0;
+               uint32_t word_count = 0;
+               uint32_t command_words[NVX_3D_MAX_PUSH_DWORDS];
+               uint32_t map_result;
+               uint32_t map_count_snap = 0, map_access_snap = 0;
+               uint32_t handle = buffers[pushes[i].bo_index].handle;
+
+               /* Read the existing CPU shadow directly under the DRM lock
+                * instead of taking a new map.  Mesa already holds the BO
+                * mapped WRITE-only for building commands; reading the
+                * shadow is safe because the pushbuf is fully built before
+                * this ioctl and no concurrent writer exists. */
+               nvx_drm_lock_acquire();
+               map_device = nvx_drm_find_device_locked(fd);
+               map_slot = nvx_drm_find_bo_locked(map_device, handle);
+               if (map_slot && map_slot->bo.allocation.Bytes <= UINT32_MAX)
+                  allocation_bytes = (uint32_t)map_slot->bo.allocation.Bytes;
+               if (map_slot) {
+                  map_count_snap = map_slot->bo.map_count;
+                  map_access_snap = map_slot->bo.map_access;
+               }
+               if (!allocation_bytes || pushes[i].offset > allocation_bytes ||
+                   pushes[i].length > allocation_bytes - pushes[i].offset) {
+                  map_result = 1U;
+               } else if (map_slot && map_slot->bo.shadow &&
+                          map_slot->bo.map_count) {
+                  /* Copy the bounded command prefix while holding the lock:
+                   * another thread may unmap/free the shadow after unlock. */
+                  word_count = (uint32_t)(pushes[i].length /
+                                          sizeof(uint32_t));
+                  if (word_count > NVX_3D_MAX_PUSH_DWORDS)
+                     word_count = NVX_3D_MAX_PUSH_DWORDS;
+                  memcpy(command_words, map_slot->bo.shadow +
+                         (uint32_t)pushes[i].offset,
+                         (size_t)word_count * sizeof(command_words[0]));
+                  map_result = 0U;
+               } else {
+                  map_result = 2U;
+               }
+               nvx_drm_lock_release();
+
+               NvxWglRecordNouveauPushbufItem(5U, i, handle,
+                  allocation_bytes, (uint32_t)pushes[i].offset,
+                  (uint32_t)pushes[i].length, map_result,
+                  (map_count_snap << 16) | map_access_snap);
+               if (!map_result) {
+                  NvxWglRecordNouveauPushbufDwords(i, 0U, command_words,
+                                                   word_count);
+               }
+            }
+         }
+      }
+      if (relocs && request->nr_relocs <= NOUVEAU_GEM_MAX_RELOCS) {
+         for (i = 0; i < request->nr_relocs && i < 16U; i++) {
+            NvxWglRecordNouveauPushbufItem(3U, i, relocs[i].reloc_bo_index,
+               relocs[i].reloc_bo_offset, relocs[i].bo_index,
+               relocs[i].flags, relocs[i].data, relocs[i].vor);
+         }
+      }
+      nvx_drm_validate_pushbuf(fd, request);
       return nvx_drm_unsupported_operation(
          NVX_XF86DRM_UNSUPPORTED_WRITE_READ, DRM_NOUVEAU_GEM_PUSHBUF);
    }

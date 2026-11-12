@@ -81,6 +81,11 @@ test_nvc0_batch_validator(void)
     inputBytes=build_test_batch(input,&allocation);
     assert(Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
 
+    inputBytes=build_test_batch(input,&allocation);
+    dword=Nvx3dNvc0IncOnceHeader(0x0100U,2U);
+    memcpy(input+sizeof(header)+sizeof(reference),&dword,sizeof(dword));
+    assert(Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token));
+
     assert(!Nvx3dValidateNvc0Batch(input,inputBytes-1,&allocation,1,token));
     assert(!Nvx3dValidateNvc0Batch(input,inputBytes,&allocation,1,token+1));
 
@@ -230,6 +235,10 @@ test_nvc0_direct_address_validation(void)
     bytes=(uint32_t)(sizeof(header)+sizeof(reference)+3*sizeof(uint32_t));
     memcpy(input,&header,sizeof(header));
     memcpy(input+sizeof(header),&reference,sizeof(reference));
+    memcpy(input+sizeof(header)+sizeof(reference),dwords,3*sizeof(uint32_t));
+    assert(Nvx3dValidateNvc0Batch(input,bytes,&allocation,1,token));
+
+    dwords[0]=Nvx3dNvc0IncOnceHeader(0x0800U,2U);
     memcpy(input+sizeof(header)+sizeof(reference),dwords,3*sizeof(uint32_t));
     assert(Nvx3dValidateNvc0Batch(input,bytes,&allocation,1,token));
 

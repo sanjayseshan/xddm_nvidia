@@ -64,6 +64,13 @@ void NvxWglRecordNouveauSclass(uint32_t token_low, uint32_t token_high,
                                const uint32_t *classes);
 void NvxWglRecordNouveauPushbuf(uint32_t channel, uint32_t nr_push,
                                 uint32_t nr_buffers, uint32_t nr_relocs);
+void NvxWglRecordNouveauPushbufItem(uint32_t kind, uint32_t index,
+                                    uint32_t a, uint32_t b, uint32_t c,
+                                    uint32_t d, uint32_t e, uint32_t f);
+void NvxWglRecordNouveauPushbufDwords(uint32_t push_index,
+                                      uint32_t first_word,
+                                      const uint32_t *dwords,
+                                      uint32_t count);
 void NvxWglRecordNouveauObject(uint32_t token_low, uint32_t token_high,
                                uint32_t user_class, uint32_t user_handle,
                                uint32_t rm_class, uint32_t rm_handle,
@@ -477,6 +484,69 @@ NvxWglRecordNouveauPushbuf(uint32_t channel, uint32_t nr_push,
              (unsigned long)channel, (unsigned long)nr_push,
              (unsigned long)nr_buffers, (unsigned long)nr_relocs);
    nvx_bridge_nouveau_trace(message);
+}
+
+void
+NvxWglRecordNouveauPushbufItem(uint32_t kind, uint32_t index,
+                               uint32_t a, uint32_t b, uint32_t c,
+                               uint32_t d, uint32_t e, uint32_t f)
+{
+   char message[112];
+
+   wsprintfA(message,
+             "Nouveau pushbuf item kind=%lu index=%lu a=%08lx b=%08lx c=%08lx d=%08lx e=%08lx f=%08lx",
+             (unsigned long)kind, (unsigned long)index,
+             (unsigned long)a, (unsigned long)b, (unsigned long)c,
+             (unsigned long)d, (unsigned long)e, (unsigned long)f);
+   nvx_bridge_nouveau_trace(message);
+}
+
+void
+NvxWglRecordNouveauPushbufDwords(uint32_t push_index, uint32_t first_word,
+                                 const uint32_t *dwords, uint32_t count)
+{
+   static volatile LONG captured_pushes;
+   char output[48U * 1024U];
+   char line[128];
+   uint32_t i, used = 0;
+   LONG capture_index;
+   HANDLE file;
+   DWORD written;
+
+   if (!dwords || !count || count > 4096U)
+      return;
+   capture_index = InterlockedIncrement(&captured_pushes);
+   /* Capture the first few complete streams without flooding the guest disk. */
+   if (capture_index > 4)
+      return;
+   for (i = 0; i < count; i += 8U) {
+      uint32_t j, end = count - i;
+      int length;
+      if (end > 8U)
+         end = 8U;
+      length = wsprintfA(line, "Nouveau dwords push=%lu capture=%lu offset=%lu:",
+                         (unsigned long)push_index,
+                         (unsigned long)capture_index,
+                         (unsigned long)(first_word + i));
+      for (j = 0; j < end && length < (int)sizeof(line) - 10; j++)
+         length += wsprintfA(line + length, " %08lx",
+                             (unsigned long)dwords[i + j]);
+      if (length + 2 >= (int)sizeof(output) - (int)used)
+         break;
+      memcpy(output + used, line, (size_t)length);
+      used += (uint32_t)length;
+      output[used++] = '\r';
+      output[used++] = '\n';
+   }
+   if (!used)
+      return;
+   file = CreateFileA("C:\\test_accel\\nvx_nouveau_trace.log",
+                      FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                      NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+   if (file == INVALID_HANDLE_VALUE)
+      return;
+   WriteFile(file, output, used, &written, NULL);
+   CloseHandle(file);
 }
 
 void

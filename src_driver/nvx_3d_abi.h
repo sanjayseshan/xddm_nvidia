@@ -521,7 +521,8 @@ Nvx3dValidateNvc0AddressMethods(const uint8_t *dwords,
             uint32_t method=(header&0x1fffU)<<2;
             uint32_t i;
             for(i=0;i<count;i++) {
-                uint32_t currentMethod=packetType==0x20000000U?
+                uint32_t currentMethod=(packetType==0x20000000U ||
+                                        packetType==0xa0000000U)?
                     method+i*4U:method;
                 uint32_t pairIndex,arrayIndex;
                 int kind=Nvx3dNvc0AddressMethodKind(subchannel,currentMethod,
@@ -532,7 +533,8 @@ Nvx3dValidateNvc0AddressMethods(const uint8_t *dwords,
                         &Nvx3dNvc0AddressPairs[pairIndex];
                     uint32_t high,low,expectedLow;
                     uint64_t address;
-                    if(packetType!=0x20000000U||i+1U>=count)
+                    if((packetType!=0x20000000U &&
+                        packetType!=0xa0000000U)||i+1U>=count)
                         return 0;
                     expectedLow=pair->LowMethod+arrayIndex*pair->IndexStride;
                     if(currentMethod>0x1ffbU||currentMethod+4U!=expectedLow)
@@ -564,7 +566,8 @@ Nvx3dBatchWordIsPayload(const uint8_t *dwords, uint32_t dwordCount,
         uint32_t packetType=header&0xe0000000U;
         if(packetType==0x80000000U)
             cursor++;
-        else if(packetType==0x20000000U||packetType==0x60000000U) {
+        else if(packetType==0x20000000U||packetType==0x60000000U||
+                packetType==0xa0000000U) {
             uint32_t count=(header>>16)&0x1fffU;
             if(!count||count>dwordCount-cursor-1U) return 0;
             if(targetWord>cursor&&targetWord<=cursor+count) return 1;
@@ -640,7 +643,8 @@ Nvx3dValidateNvc0Batch(const void *input, uint32_t inputBytes,
         if(packetType==0x80000000U) {
             /* Type-8 immediate methods encode their value in the header. */
             cursor++;
-        } else if(packetType==0x20000000U||packetType==0x60000000U) {
+        } else if(packetType==0x20000000U||packetType==0x60000000U||
+                  packetType==0xa0000000U) {
             uint32_t count=(packetHeader>>16)&0x1fffU;
             uint32_t method=packetHeader&0x1fffU;
             if(!count||count>header.DwordCount-cursor-1U)
@@ -648,7 +652,8 @@ Nvx3dValidateNvc0Batch(const void *input, uint32_t inputBytes,
             /* Incrementing packets must not roll the 13-bit method field
              * into the subchannel bits. Non-incrementing packets repeatedly
              * address one method and therefore do not advance this field. */
-            if(packetType==0x20000000U&&count>0x2000U-method)
+            if((packetType==0x20000000U||packetType==0xa0000000U)&&
+               count>0x2000U-method)
                 return 0;
             cursor+=count+1U;
         } else return 0;
@@ -787,6 +792,12 @@ static inline uint32_t
 Nvx3dNvc0SeqHeader(uint32_t method, uint32_t count)
 {
     return 0x20000000U | (count << 16) | (method >> 2);
+}
+
+static inline uint32_t
+Nvx3dNvc0IncOnceHeader(uint32_t method, uint32_t count)
+{
+    return 0xa0000000U | (count << 16) | (method >> 2);
 }
 
 static inline uint32_t

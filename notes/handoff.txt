@@ -1,74 +1,121 @@
 # Phase 2C handoff: XP x64 OpenGL on GA104
 
-Updated November 12, 2026 after hardware run `.31`.
+Updated November 12, 2026 after hardware test `.37`.
 
-## Current status
+## Status
 
-The Windows XP x64 package builds and passes the XP import/subsystem audit.
-The native Mesa WGL ICD selects Nouveau and creates a Gallium `pipe_screen` and
-NVC0 context on the RTX 3070. The `.31` run also completes NVC0 TSC uploads and
-context creation without the previous Windows hang. That confirms the earlier
-hang was caused by Mesa accepting zero VRAM/GART limits and suffix values from
-failed `DRM_NOUVEAU_GEM_PUSHBUF` requests.
+The XP x64 package builds, passes the XP import/subsystem audit, and boots on
+RTX 3070 VFIO. Mesa WGL selects Nouveau and creates a Gallium `pipe_screen` and
+NVC0 context. TSC0 uploads and context setup complete. The 2D path and the
+standalone NVX 3D clear/draw/semaphore tests pass.
 
-Hardware OpenGL is still **not working**. The XP test reports
-`[OPENGL_RESULT] FAIL`, `SwapBuffers failed: 183`, a black center pixel, GL
-error `0x502`, and Nouveau status `unsupported_count=5 last_operation=00000041`
-(`DRM_NOUVEAU_GEM_PUSHBUF`). The DRM shim still rejects nonempty pushbufs; Mesa
-therefore does not submit its NVC0 state or draw commands. The bridge status
-reports `screens=1 callbacks=0 gpu_batches=0 nvc0_clears=0`. Do not describe
-this as accelerated OpenGL or a working cube.
+Hardware OpenGL is **not working yet**. Test `.37` reports
+`[OPENGL_RESULT] FAIL`, `SwapBuffers failed: 183`, 0 rendered frames, a black
+center pixel, and GL error `0x502`. Nouveau reports
+`unsupported_count=5 last_operation=0x41` (`DRM_NOUVEAU_GEM_PUSHBUF`). The shim
+still rejects nonempty pushbuf submissions; the Mesa Nouveau path therefore
+executes no GPU batches. The shim now has an initial bounded translator for push entries, BO references,
+and LOW/HIGH relocations; it is still diagnostic-only and does not translate
+object bindings/method policy or submit commands. Do not describe this as working accelerated OpenGL
+or a working cube.
 
-The independent NVX NVC0 clear/semaphore test passes, and 2D fills/copies pass.
-GART round trips and a 60 KiB upload to a fresh VA pass. GART freeing currently
-quarantines each 2 MiB VA slice to avoid the stale-translation fault; this is a
-temporary workaround that consumes VA space.
+Latest full log: `test_logs/v3.0.0.37-20261112-143958.log`
+Latest guest trace: `notes/nouveau-trace-latest.txt`, copied after shutdown from
+`C:\test_accel\nvx_nouveau_trace.log`.
 
-## Latest hardware evidence
+## Issues that still need fixing
 
-- Full run: `../test_logs/v3.0.0.31-20261112-135448.log`
-- Current guest Nouveau trace: `nouveau-trace-latest.txt` (copied read-only
-  from `C:\test_accel\nvx_nouveau_trace.log` after the guest shut down)
-- `.31` first VFIO attempt hit a pre-OS KVM BIOS emulation error; the configured
-  retry booted XP and reached the test sequence.
-- `[2D_RESULT] PASS`; `[NVX_3D_RESULT] PASS`; OpenGL failed as described above.
-- Native Nouveau screen and NVC0 context creation completed. TSC0 upload
-  returned and `NVC0: context_create complete` appeared in the trace.
+1. **Build the batch translator and submission route.** The XP
+   `DRM_NOUVEAU_GEM_PUSHBUF` shim rejects every nonempty request. The shim now concatenates bounded push entries, maps BO handles to owned
+   BufferIds, and translates LOW/HIGH relocations into NVX relocation records.
+   It rejects domain-dependent OR relocations because NVX does not carry enough
+   allocation-domain data to reproduce them. This code only feeds structural
+   validation; it does not translate object bindings, enforce a method policy,
+   or submit. Add those steps through a kernel-owned submit ABI and C56F GPFIFO
+   route. Keep an explicit class/method allowlist and kernel-owned fence; never
+   forward arbitrary user pushbuffers directly to the channel.
 
-## Recent fixes
+2. **Resolve current batch validation failures.** `.37` records full dword
+   captures and validates the assembled batches. Initialization and upload
+   streams fail validation while a short setup stream passes. Add a validator
+   failure stage/reason to distinguish reference, framing, direct GPU address,
+   and relocation failures. All observed requests currently report zero
+   relocations. Finish packet/method and BO-role inventory before enabling
+   execution.
 
-- `.28`: quarantine freed GART VA slices. Verified the standalone 32 KiB
-  transfer and 60 KiB fresh-VA upload; retained address-space exhaustion risk.
-- `.29`: added detailed pushbuf validation trace. The run still froze during
-  the second TSC0 upload; this trace patch was initially missing from the old
-  DLL because the test had not rebuilt Mesa.
-- `.30`: trace showed `PBK: memory domain limit`; failed pushbuf requests were
-  setting Mesa's GART limit to zero. The build first failed because the new
-  trace patch was based on the wrong patch state; the patch sequence was fixed.
-- `.31`: external patch `0019` preserves suffix/aperture state when the shim
-  rejects a pushbuf. The hang is gone and NVC0 context setup completes, but
-  real pushbuf submission remains unsupported.
+3. **Add kernel-side validation and execution for the accepted method set.**
+   Validate client/session ownership, every referenced BO, GPU address range,
+   access type, packet/method allowlist, ordering, and fence behavior. Translate
+   only the supported operations into the existing kernel-owned channel,
+   CE/GR, and semaphore machinery. Cover initialization uploads, state setup,
+   render-target clear, and draw submissions.
 
-## Next work
+4. **Render and verify an actual Mesa draw.** After submission works, verify
+   shader/state upload, render-target contents, fence completion, and pixel
+   readback using the WGL test. The current independent NVX triangle test does
+   not prove Mesa's Nouveau path works.
 
-1. Implement a validated submission path for the Mesa/Nouveau operations needed
-   by GA104 initialization and drawing. Do not pass arbitrary application
-   pushbuffers to the miniport. Start by inventorying the exact `.31` push,
-   buffer, relocation and method shapes and map each accepted operation to
-   kernel-owned objects, address checks, fences and existing CE/GR machinery.
-2. Route a bounded Gallium/NVC0 clear through that path and verify GPU readback.
-   Then add a shader-backed draw and verify pixels, fence completion and
-   presentation. Track `SwapBuffers`/frontbuffer presentation separately from
-   rendering; current failure code is 183.
-3. Replace GART VA quarantine with correct translation invalidation or a
-   reusable page-granular allocator before repeated application workloads.
-4. Keep every Mesa customization in `mesa_patches/`; the Mesa submodule should
-   be clean outside the build script's temporary patch application. Increment
-   the minor version before every hardware test.
+5. **Fix or isolate WGL presentation.** `SwapBuffers` returns false and the
+   test prints Windows error 183 (`ERROR_ALREADY_EXISTS`). This may be a
+   downstream symptom of missing GPU execution; determine whether it persists
+   after Mesa submits and renders successfully, then fix front/back-buffer
+   presentation separately if needed. The GL error `0x502` also needs to be
+   rechecked after GPU command execution is available.
 
-## Build and test
+6. **Replace GART VA quarantine.** Freed 2 MiB VA slices are currently
+   quarantined to avoid stale-translation faults. Implement correct translation
+   invalidation or safe VA reuse before repeated workloads; the current policy
+   consumes address space.
 
-Build Mesa with the installed Meson 1.12.1:
+7. **Measure stability and performance.** Once real OpenGL rendering works,
+   run repeated draws/swaps and the cube workload, check for freezes or resource
+   exhaustion, and measure frame rate. No hardware-accelerated cube has been
+   verified.
+
+## Verified fixes and current test results
+
+- `.31` preserves Nouveau aperture/suffix state after rejected pushbuf requests;
+  NVC0 context setup no longer hangs during TSC uploads.
+- `.35` fixes BO map access widening. The push BO trace reports
+  `map_count=1`, `map_access=WRITE`; adding READ now succeeds for the existing
+  shadow.
+- `.37` diagnostics copy complete bounded command streams directly from the existing
+  CPU shadow under the DRM lock, avoiding an extra map/readback request. Trace
+  entries show map result 0 and captured dwords.
+- `.37`: XP import/subsystem audit passed; `[2D_RESULT] PASS`;
+  `[NVX_3D_RESULT] PASS`; `[OPENGL_RESULT] FAIL`. The full test script exits
+  nonzero because it requires hardware OpenGL success.
+- `HwVidStartIO` code `0x230830` is `IOCTL_NVX_3D_UPLOAD_BUFFER`; `0x23083c`
+  is `IOCTL_NVX_3D_DOWNLOAD_BUFFER`. Repeated upload lines are expected buffer
+  traffic, not the cause of `SwapBuffers` failure.
+
+## Relevant files
+
+- DRM pushbuf rejection and bounded descriptors/command trace:
+  `mesa_patches/nvx_xf86drm.c`
+- Nouveau BO access widening and CPU shadow:
+  `mesa_patches/nvx_nouveau_bo.c`, `mesa_patches/nvx_nouveau_bo.h`
+- Nouveau device, pushbuf and screen layers:
+  `mesa_patches/nvx_nouveau_device.c`, `mesa_patches/nvx_nouveau_pushbuf.c`,
+  `mesa_patches/nvx_nouveau_pushbuf.h`, `mesa_patches/nvx_nouveau_screen.c`
+- WGL bridge and trace output: `mesa_patches/nvx_wgl_bridge.c`
+- Shared ABI, validation-only batch parser, and IOCTL dispatch:
+  `src_driver/nvx_3d_abi.h`, `src_driver/nvxmp.c`
+- GSP/CE/GR and generated NVC0 address-method checks:
+  `src_driver/nvx_gsp.c`, `src_driver/nvx_gsp.h`, `src_driver/nvx_ce.c`,
+  `src_driver/nvx_nvc0_address_pairs.h`,
+  `test/generate_nvc0_address_pairs.py`
+- Hardware and host tests: `test/test_gpu_accel.c`,
+  `test/test_full_driver.sh`, `test/nvx_winsys_test.c`,
+  `test/xf86drm_shim_test.c`
+- Mesa external patch application/build: `test/apply_mesa_xp_patches.sh`,
+  `test/build_mesa_xp64.sh`, `mesa_patches/0001`–`0019`
+- Current evidence: `test_logs/v3.0.0.35-20261112-142149.log`,
+  `notes/nouveau-trace-latest.txt`
+
+## Build and full hardware test
+
+Build Mesa with installed Meson 1.12.1:
 
 ```sh
 MESON=/tmp/nvx-meson-venv/bin/meson ./test/build_mesa_xp64.sh
@@ -82,18 +129,6 @@ NVX_GR_SUBMISSION_PROBE=1 NVX_BUILD_MESA_ICD=1 \
 MESON=/tmp/nvx-meson-venv/bin/meson ./test/test_full_driver.sh
 ```
 
-`test_full_driver.sh` enforces hardware OpenGL by default and exits nonzero
-until `[OPENGL_RESULT] RENDERED` is recorded.
-
-## Relevant files
-
-- Nouveau/Gallium external patches: `mesa_patches/0001`–`0019`
-- XP patch application/build: `test/apply_mesa_xp_patches.sh`,
-  `test/build_mesa_xp64.sh`
-- WGL bridge and Nouveau DRM shim: `mesa_patches/nvx_wgl_bridge.c`,
-  `mesa_patches/nvx_xf86drm.c`, `mesa_patches/nvx_nouveau_{device,bo,pushbuf,screen}.c`
-- Miniport GART/3D and validation: `src_driver/nvxmp.c`, `src_driver/nvx_gsp.c`,
-  `src_driver/nvx_ce.c`, `src_driver/nvx_3d_abi.h`
-- OpenGL/2D hardware harness: `test/test_gpu_accel.c`
-- Latest run and trace: `../test_logs/v3.0.0.31-20261112-135448.log`,
-  `nouveau-trace-latest.txt`
+Increment the minor version in `test/test_full_driver.sh` and `dist_full/nvx.inf`
+before each hardware test. Keep all Mesa changes external in `mesa_patches/`;
+the submodule must be restored clean after builds.

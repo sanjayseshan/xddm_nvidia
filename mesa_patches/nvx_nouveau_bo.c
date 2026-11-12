@@ -110,8 +110,12 @@ NvxNouveauBoMap(NVX_NOUVEAU_BO *bo, uint32_t access)
       return NULL;
 
    if (bo->map_count) {
-      if (access & ~bo->map_access)
-         return NULL;
+      /* Widen the access flags if the caller requests permissions the
+       * current mapping does not have. The shadow is an ordinary malloc'd
+       * CPU buffer, so READ and WRITE are always physically possible once
+       * the shadow exists. Widening avoids failing a diagnostic READ map
+       * on a BO that Mesa already holds mapped WRITE-only. */
+      bo->map_access |= access;
       bo->map_count++;
       return bo->shadow;
    }
