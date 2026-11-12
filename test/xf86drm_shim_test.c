@@ -167,11 +167,26 @@ main(void)
       create.info.domain = NOUVEAU_GEM_DOMAIN_GART;
       assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_NEW, &create,
                                  sizeof(create)) == -1);
+      create.info.domain = NOUVEAU_GEM_DOMAIN_VRAM;
+      create.align = 3U;
+      assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_NEW, &create,
+                                 sizeof(create)) == -1);
+      create.align = 0;
+      create.info.tile_mode = 0x10U;
+      assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_NEW, &create,
+                                 sizeof(create)) == -1);
+      create.info.tile_mode = 0;
+      create.info.tile_flags = 0x100U;
+      assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_NEW, &create,
+                                 sizeof(create)) == -1);
+      create.info.tile_flags = 0;
       create.info.domain = NOUVEAU_GEM_DOMAIN_VRAM |
                            NOUVEAU_GEM_DOMAIN_GART;
+      create.align = 0x10000U;
       assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_NEW, &create,
                                  sizeof(create)) == 0);
       assert(create.info.handle != 0 && create.info.offset == 0x10000000ULL);
+      assert((create.info.offset & 0xffffU) == 0);
       assert(create.info.domain & NOUVEAU_GEM_DOMAIN_MAPPABLE);
       info.handle = create.info.handle;
       assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_INFO, &info,

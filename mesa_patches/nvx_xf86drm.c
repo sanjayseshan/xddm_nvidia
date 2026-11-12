@@ -309,6 +309,10 @@ nvx_drm_gem_new(struct nvx_drm_device_slot *device,
        !request->info.size ||
        request->info.size > device->device.caps.MaxBufferBytes ||
        request->info.size > UINT32_MAX || request->align > 0x10000U ||
+       (request->align &&
+        (request->align & (request->align - 1U))) ||
+       request->info.tile_mode ||
+       (request->info.tile_flags & ~NOUVEAU_GEM_TILE_NONCONTIG) ||
        (request->info.domain & (NOUVEAU_GEM_DOMAIN_CPU |
                                 NOUVEAU_GEM_DOMAIN_COHERENT)) ||
        (request->info.domain &&
@@ -343,6 +347,17 @@ nvx_drm_gem_new(struct nvx_drm_device_slot *device,
    if (!NvxNouveauBoCreate(&device->device, &description,
                            device->client_token, &slot->bo))
       return 0;
+
+   /* Miniport allocations are 64 KiB aligned linear VRAM ranges. Never claim
+    * to have honored a Nouveau tiled/compressed layout that the NVX allocator
+    * and MMU have not created. The alignment limit above guarantees every
+    * accepted power-of-two request is met by the miniport's 64 KiB placement. */
+   if (request->align &&
+       (slot->bo.allocation.GpuVa & (request->align - 1U))) {
+      (void)NvxNouveauBoDestroy(&slot->bo);
+      memset(&slot->bo, 0, sizeof(slot->bo));
+      return 0;
+   }
 
    slot->handle = handle;
    request->info.handle = handle;

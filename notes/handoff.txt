@@ -2,6 +2,27 @@
 
 Updated November 11, 2026, after the XP-backed `xf86drm` BO shim and VFIO run.
 
+## Linear VRAM GEM allocation contract (November 11, 2026)
+
+The `DRM_NOUVEAU_GEM_NEW` compatibility path now rejects unsupported tiled or
+compressed layout requests instead of silently returning linear VRAM while
+claiming Nouveau tile metadata. It accepts only linear allocations in the
+miniport's 64 KiB-aligned VRAM heap, checks requested alignment is a power of
+two no larger than 64 KiB, verifies the returned GPU VA meets it, and preserves
+the existing read/write map staging behavior. GART-only, coherent, tiled, and
+compressed requests remain unsupported until the miniport creates those memory
+types and GPU mappings.
+
+Host `xf86drm_shim_test` now checks rejection of GART-only, invalid alignment,
+and tile metadata, plus successful 64 KiB aligned VRAM allocation/map/free.
+`make -C src_driver check` passed, including x86/x64 XP shim compiles. Full
+hardware package run: `../test_logs/v3.0.0.7-20261111-200604.log`. XP import
+audits, `[NVX_3D_RESULT] PASS`, GR C797 clear/semaphore, 2D, and display checks
+passed. OpenGL remains `[OPENGL_RESULT] SOFTWARE`; the shim still stops at
+`NOUVEAU_CHANNEL_ALLOC` (`ENOSYS`), so this run does not exercise GEM_NEW from
+Gallium and does not prove accelerated OpenGL. One firmware assertion was
+logged; no MMU fault appeared. The Mesa submodule was restored clean.
+
 ## ABI 17 clear ownership and current hardware result (November 11, 2026)
 
 Version 3.0.0.6 adds the owning `ClientToken` to the fixed-profile NVC0 clear

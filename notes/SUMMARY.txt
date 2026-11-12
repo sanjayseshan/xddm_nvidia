@@ -1,5 +1,15 @@
 NVIDIA GA104 Display Driver — cumulative development summary
-Updated: November 11, 2026 (version 3.0.0.6, clear ownership identity)
+Updated: November 11, 2026 (version 3.0.0.7, truthful GEM allocation contract)
+
+Latest full hardware check: `../test_logs/v3.0.0.7-20261111-200604.log`.
+The XP Nouveau GEM shim now rejects tiled/compressed metadata it cannot
+actually allocate and validates power-of-two alignment up to the miniport's
+64 KiB VRAM alignment. Host tests cover unsupported GART-only/tiled requests
+and successful aligned linear VRAM allocation, map, and free. Host suite and
+XP package/import audit passed; RTX 3070 GR clear/semaphore, independent 3D,
+2D, and display checks passed. OpenGL remains software because native screen
+startup stops at `NOUVEAU_CHANNEL_ALLOC` (`ENOSYS`), before Mesa can exercise
+GEM allocation. Phase 2C remains incomplete.
 
 Latest full hardware test: `../test_logs/v3.0.0.6-20261111-200043.log`.
 ABI 17 binds the native NVC0 clear request to the owning client session; the
