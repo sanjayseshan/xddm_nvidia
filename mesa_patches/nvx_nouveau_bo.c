@@ -11,6 +11,7 @@ NvxNouveauBoCreate(NVX_WINSYS_DEVICE *device,
    NVX_3D_ALLOC_BUFFER request;
 
    if (!device || !description || !bo || !client_token ||
+       client_token != device->ClientToken ||
        description->Bytes > device->caps.MaxBufferBytes)
       return 0;
 

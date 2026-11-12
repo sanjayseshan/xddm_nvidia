@@ -9,6 +9,7 @@ NvxNouveauScreenInit(NVX_NOUVEAU_SCREEN *screen,
 {
    if (!screen || !device || !client_token ||
        device->class_3d != 0xc797U ||
+       device->winsys.ClientToken != client_token ||
        !(device->winsys.caps.Features &
          NVX_3D_FEATURE_FIXED_PROFILE_SUBMIT))
       return 0;
@@ -23,6 +24,50 @@ NvxNouveauScreenInit(NVX_NOUVEAU_SCREEN *screen,
    screen->graphics_class = device->class_3d;
    screen->initialized = 1;
    return 1;
+}
+
+int
+NvxNouveauScreenAllocBuffer(NVX_NOUVEAU_SCREEN *screen,
+                            const NVX_3D_ALLOC_BUFFER *description,
+                            NVX_NOUVEAU_BO *buffer)
+{
+   if (!screen || !screen->initialized || !description || !buffer)
+      return 0;
+   return NvxNouveauBoCreate(&screen->device->winsys, description,
+                             screen->client_token, buffer);
+}
+
+void *
+NvxNouveauScreenMapBuffer(NVX_NOUVEAU_SCREEN *screen,
+                          NVX_NOUVEAU_BO *buffer, uint32_t access)
+{
+   if (!screen || !screen->initialized || !buffer ||
+       buffer->device != &screen->device->winsys ||
+       buffer->allocation.ClientToken != screen->client_token)
+      return NULL;
+   return NvxNouveauBoMap(buffer, access);
+}
+
+int
+NvxNouveauScreenUnmapBuffer(NVX_NOUVEAU_SCREEN *screen,
+                            NVX_NOUVEAU_BO *buffer)
+{
+   if (!screen || !screen->initialized || !buffer ||
+       buffer->device != &screen->device->winsys ||
+       buffer->allocation.ClientToken != screen->client_token)
+      return 0;
+   return NvxNouveauBoUnmap(buffer);
+}
+
+int
+NvxNouveauScreenFreeBuffer(NVX_NOUVEAU_SCREEN *screen,
+                           NVX_NOUVEAU_BO *buffer)
+{
+   if (!screen || !screen->initialized || !buffer ||
+       buffer->device != &screen->device->winsys ||
+       buffer->allocation.ClientToken != screen->client_token)
+      return 0;
+   return NvxNouveauBoDestroy(buffer);
 }
 
 void

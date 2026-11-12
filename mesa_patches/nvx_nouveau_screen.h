@@ -18,6 +18,17 @@ typedef struct NVX_NOUVEAU_SCREEN {
 int NvxNouveauScreenInit(NVX_NOUVEAU_SCREEN *screen,
                          NVX_NOUVEAU_DEVICE *device,
                          uint64_t client_token);
+/* OS resource interface used by the XP winsys: allocations are session-owned,
+ * mappings are staged and fence-synchronized by NVX_NOUVEAU_BO. */
+int NvxNouveauScreenAllocBuffer(NVX_NOUVEAU_SCREEN *screen,
+                                const NVX_3D_ALLOC_BUFFER *description,
+                                NVX_NOUVEAU_BO *buffer);
+void *NvxNouveauScreenMapBuffer(NVX_NOUVEAU_SCREEN *screen,
+                                NVX_NOUVEAU_BO *buffer, uint32_t access);
+int NvxNouveauScreenUnmapBuffer(NVX_NOUVEAU_SCREEN *screen,
+                                NVX_NOUVEAU_BO *buffer);
+int NvxNouveauScreenFreeBuffer(NVX_NOUVEAU_SCREEN *screen,
+                                NVX_NOUVEAU_BO *buffer);
 void NvxNouveauScreenDestroy(NVX_NOUVEAU_SCREEN *screen);
 int NvxNouveauScreenSubmitNvc0Clear(NVX_NOUVEAU_SCREEN *screen,
                                     NVX_NOUVEAU_BO *target,

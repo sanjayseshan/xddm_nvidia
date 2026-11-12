@@ -86,6 +86,7 @@ NvxWinsysAllocBuffer(NVX_WINSYS_DEVICE *device,
    NVX_3D_ALLOC_BUFFER output;
 
    if (!nvx_winsys_ready(device) || !request || !result ||
+       !device->ClientToken || request->ClientToken != device->ClientToken ||
        !Nvx3dValidateAlloc(request) || !device->ClientToken)
       return 0;
 

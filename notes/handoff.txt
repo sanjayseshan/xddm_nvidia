@@ -1312,3 +1312,11 @@ validator, but it is preflight only; it does not permit arbitrary method
 execution. Implement channel allocation only alongside the validated
 submission, pushbuffer mapping, engine-object, and fence semantics needed to
 make screen creation useful. Do not return a dummy channel handle.
+
+## XP OS resource pipe completion work (November 11, 2026)
+
+Added a screen-scoped resource interface in `mesa_patches/nvx_nouveau_screen.[ch]` for allocate, map, unmap, and free. Each operation verifies the resource belongs to the screen's device and client session. `NvxNouveauScreenInit()` now rejects a token that does not match the active winsys client; `NvxNouveauBoCreate()` and `NvxWinsysAllocBuffer()` enforce the same ownership, fixing the previous behavior where the allocator silently replaced a caller's token with the active one.
+
+`make -C src_driver check` passed, including ASan/UBSan winsys tests and x86/x64 MinGW compiles. The full XP x64 Mesa WGL build with `nouveau,softpipe` completed and produced `dist_full/nvxogl64.dll`; imports remain limited to GDI32, KERNEL32, msvcrt, and USER32. `git -C mesa status` must remain clean after the patch helper restores upstream sources.
+
+This completes the current XP OS resource allocation/mapping/lifetime contract, but it is not a Gallium `pipe_screen`/`pipe_context` implementation. Nouveau channel allocation and general validated NVC0 submission are still unsupported; the native Gallium screen and ordinary hardware-accelerated OpenGL remain unavailable. Do not claim GPU acceleration from this interface-only work. Next: implement safe RM-backed channel/object lifecycle and kernel-validated submission (or build a project-owned Gallium screen/resource/context path around those services), then verify through real hardware OpenGL.

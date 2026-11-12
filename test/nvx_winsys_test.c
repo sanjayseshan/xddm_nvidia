@@ -275,6 +275,12 @@ main(void)
           nouveau_screen.graphics_class == 0xc797 &&
           nouveau_screen.pushbuf.device == &nouveau_device.winsys &&
           nouveau_screen.pushbuf.client_token == 0x123400000077ULL);
+   {
+      NVX_NOUVEAU_SCREEN rejected_screen = {0};
+      assert(!NvxNouveauScreenInit(&rejected_screen, &nouveau_device,
+                                   0x123400000078ULL));
+      assert(!rejected_screen.initialized);
+   }
    NvxNouveauScreenDestroy(&nouveau_screen);
    assert(!nouveau_screen.initialized);
    assert(nouveau_device.chipset == 0x170 &&
@@ -299,7 +305,7 @@ main(void)
    request.Version = NVX_3D_ABI_VERSION;
    request.Usage = 1;
    request.Bytes = bytes;
-   request.ClientToken = 0x123400000001ULL;
+   request.ClientToken = device.ClientToken;
    assert(NvxWinsysAllocBuffer(&device, &request, &result));
    assert(result.BufferId == 1 && result.GpuVa != 0);
 
@@ -361,8 +367,14 @@ main(void)
       description.Usage = 1;
       description.Bytes = 4096;
       assert(NvxNouveauBoCreate(&device, &description,
-                                0x123400000002ULL, &bo));
+                                device.ClientToken, &bo));
       assert(bo.allocation.BufferId == 3 && bo.references == 1);
+      {
+         NVX_NOUVEAU_BO rejected;
+         assert(!NvxNouveauBoCreate(&device, &description,
+                                    device.ClientToken + 1U, &rejected));
+         assert(!rejected.references);
+      }
       assert(NvxNouveauBoMarkUsed(&bo, 77));
       assert(!NvxNouveauBoMarkUsed(&bo, 76));
       assert(NvxNouveauBoGetAddress(&bo, 16, 64,
@@ -509,10 +521,10 @@ main(void)
       description.Usage = 1;
       description.Bytes = 4096;
       assert(NvxNouveauBoCreate(&device, &description,
-                                0x123400000003ULL, &first));
+                                device.ClientToken, &first));
       description.Bytes = 8192;
       assert(NvxNouveauBoCreate(&device, &description,
-                                0x123400000004ULL, &second));
+                                device.ClientToken, &second));
       assert(first.allocation.BufferId != second.allocation.BufferId);
       assert(first.allocation.GpuVa != second.allocation.GpuVa);
 
@@ -564,9 +576,17 @@ main(void)
       description.Height = layout.Height;
       description.PitchBytes = layout.PitchBytes;
       description.TileMode = layout.TileMode;
-      assert(NvxNouveauBoCreate(&device, &description,
-                                0x123400000005ULL, &target));
-      target.device = &nouveau_device.winsys;
+      assert(NvxNouveauScreenInit(&nouveau_screen, &nouveau_device,
+                                  device.ClientToken));
+      assert(NvxNouveauScreenAllocBuffer(&nouveau_screen, &description,
+                                         &target));
+      {
+         uint8_t *mapped = NvxNouveauScreenMapBuffer(
+            &nouveau_screen, &target, NVX_NOUVEAU_BO_WRITE);
+         assert(mapped);
+         mapped[0] = 0x5c;
+         assert(NvxNouveauScreenUnmapBuffer(&nouveau_screen, &target));
+      }
       d[0] = Nvx3dNvc0SeqHeader(0x0d80U, 4U);
       for (i = 0; i < 4; i++) d[1 + i] = color_bits[i];
       d[5] = Nvx3dNvc0SeqHeader(0x0ff4U, 2U);
@@ -583,8 +603,6 @@ main(void)
       d[23] = layout.Bytes / 4U;
       d[25] = Nvx3dNvc0ImmediateHeader(0x15d0U, 0U);
       d[26] = Nvx3dNvc0NonIncHeader(0x19d0U, 1U); d[27] = 0x3cU;
-      assert(NvxNouveauScreenInit(&nouveau_screen, &nouveau_device,
-                                  target.allocation.ClientToken));
       mock.event_count = 0;
       assert(NvxNouveauScreenSubmitNvc0Clear(&nouveau_screen, &target, d,
                                              NVX_3D_NVC0_CLEAR_DWORDS,
@@ -602,8 +620,10 @@ main(void)
       assert(submitted_fence == 0);
       assert(mock.event_count == 1 &&
              mock.events[0] == MOCK_EVENT_VALIDATE);
+      /* Free before destroying screen state so the resource still has a
+       * live session and device through its final fence wait. */
+      assert(NvxNouveauScreenFreeBuffer(&nouveau_screen, &target));
       NvxNouveauScreenDestroy(&nouveau_screen);
-      assert(NvxNouveauBoDestroy(&target));
    }
 
    assert(NvxWinsysCloseClient(&device));
