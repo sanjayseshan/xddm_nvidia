@@ -124,14 +124,21 @@ NvxNouveauBoMap(NVX_NOUVEAU_BO *bo, uint32_t access)
    if (!bo->shadow)
       return NULL;
 
-   /* The legacy nouveau_bo_map API has no discard range. Preserve untouched
-    * bytes even for write-only mappings by staging the current BO contents. */
-   if (!NvxWinsysDownloadBuffer(bo->device, bo->allocation.BufferId,
-                                bo->allocation.Bytes, 0, bo->shadow,
-                                bo->allocation.Bytes)) {
-      free(bo->shadow);
-      bo->shadow = NULL;
-      return NULL;
+   /* Nouveau BO allocation leaves contents undefined. A never-used BO has
+    * nothing to preserve, so start its shadow at zero instead of forcing a
+    * synchronous CE readback (the NVX bridge copies through 4 KiB windows).
+    * Once the BO has been uploaded or used by the GPU, preserve its contents
+    * with a readback before allowing a partial CPU update. */
+   if (bo->contents_valid || bo->last_fence) {
+      if (!NvxWinsysDownloadBuffer(bo->device, bo->allocation.BufferId,
+                                   bo->allocation.Bytes, 0, bo->shadow,
+                                   bo->allocation.Bytes)) {
+         free(bo->shadow);
+         bo->shadow = NULL;
+         return NULL;
+      }
+   } else {
+      memset(bo->shadow, 0, bo->allocation.Bytes);
    }
 
    bo->map_access = access;
@@ -150,9 +157,12 @@ NvxNouveauBoFlush(NVX_NOUVEAU_BO *bo)
       return 0;
    if (!(bo->map_access & NVX_NOUVEAU_BO_WRITE))
       return 1;
-   return NvxWinsysUploadBuffer(bo->device, bo->allocation.BufferId,
-                                bo->allocation.Bytes, 0, bo->shadow,
-                                bo->allocation.Bytes);
+   if (!NvxWinsysUploadBuffer(bo->device, bo->allocation.BufferId,
+                              bo->allocation.Bytes, 0, bo->shadow,
+                              bo->allocation.Bytes))
+      return 0;
+   bo->contents_valid = 1;
+   return 1;
 }
 
 int
@@ -165,11 +175,14 @@ NvxNouveauBoUnmap(NVX_NOUVEAU_BO *bo)
    if (--bo->map_count)
       return 1;
 
-   if ((bo->map_access & NVX_NOUVEAU_BO_WRITE) &&
-       !NvxWinsysUploadBuffer(bo->device, bo->allocation.BufferId,
-                             bo->allocation.Bytes, 0, bo->shadow,
-                             bo->allocation.Bytes))
-      result = 0;
+   if (bo->map_access & NVX_NOUVEAU_BO_WRITE) {
+      if (!NvxWinsysUploadBuffer(bo->device, bo->allocation.BufferId,
+                                 bo->allocation.Bytes, 0, bo->shadow,
+                                 bo->allocation.Bytes))
+         result = 0;
+      else
+         bo->contents_valid = 1;
+   }
 
    free(bo->shadow);
    bo->shadow = NULL;

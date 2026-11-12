@@ -14,6 +14,7 @@ typedef struct NVX_NOUVEAU_BO {
    uint32_t references;
    uint32_t map_access;
    uint32_t map_count;
+   uint32_t contents_valid;
 } NVX_NOUVEAU_BO;
 
 /* User-mode description of one NVC0 address relocation. The kernel batch ABI

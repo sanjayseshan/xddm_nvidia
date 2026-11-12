@@ -1532,3 +1532,30 @@ fallbacks after its bounded graceful-exit attempts, so a future hung QEMU
 process cannot keep the runner waiting indefinitely. The root cause of the
 missing serial output remains unresolved; do not treat these attempts as
 OpenGL or NVIF-object test results.
+
+## Fresh Nouveau BO map optimization (November 11, 2026)
+
+Closer inspection of `../test_logs/v3.0.0.8-20261111-224407.log` identified
+the last calls before the WGL stall as `IOCTL_NVX_3D_DOWNLOAD_BUFFER`
+(`0x23083C`). The shim's `NvxNouveauBoMap()` downloaded every freshly
+allocated BO through the CE in 4 KiB chunks, even though Nouveau allocation
+does not define initial BO contents. The log shows several successful 4 KiB
+transfers and then a CE timeout on the next request, with fence `0x…9B` still
+at `0x…9A` and GPGet equal to GPPut.
+
+The external BO object now tracks whether contents became defined through CPU
+upload. Its first map before any GPU fence or upload returns a zero-filled
+shadow instead of reading undefined VRAM. BOs that have been uploaded or used
+by the GPU retain the previous fence-wait and readback behavior, preserving
+partial CPU updates. The winsys test checks that fresh mapping makes no
+download and that a partial write uploads the expected shadow contents.
+
+`make -C src_driver check` passed after the change. The XP x64 ICD also rebuilt
+successfully with `MESON=/tmp/nvx-meson-venv/bin/meson`; imports remain limited
+to GDI32, KERNEL32, MSVCRT, and USER32. The full test rebuilt and staged this
+ICD, but the bounded hardware run
+`../test_logs/v3.0.0.8-20261111-230256.log` again produced no guest serial
+activity. This means the fresh-map optimization has not yet been exercised on
+real hardware. Restore a known-good VFIO boot first, then verify the log
+contains fewer/no early DOWNLOAD_BUFFER calls and advances from SCLASS to NVIF
+NEW before assessing rendering.

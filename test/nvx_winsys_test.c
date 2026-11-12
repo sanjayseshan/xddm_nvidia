@@ -536,6 +536,7 @@ main(void)
       NVX_NOUVEAU_BO first, second;
       uint8_t *mapped;
       struct mock_buffer *first_storage, *second_storage;
+      uint32_t downloads_before;
 
       description.Usage = 1;
       description.Bytes = 4096;
@@ -547,12 +548,16 @@ main(void)
       assert(first.allocation.BufferId != second.allocation.BufferId);
       assert(first.allocation.GpuVa != second.allocation.GpuVa);
 
+      downloads_before = mock.download_count;
       mapped = NvxNouveauBoMap(&first, NVX_NOUVEAU_BO_WRITE);
-      assert(mapped);
+      assert(mapped && mapped[0] == 0 && mapped[1] == 0);
+      assert(mock.download_count == downloads_before);
       mapped[0] = 0x31;
       assert(NvxNouveauBoUnmap(&first));
+      assert(mock.download_count == downloads_before);
       mapped = NvxNouveauBoMap(&second, NVX_NOUVEAU_BO_WRITE);
-      assert(mapped);
+      assert(mapped && mapped[0] == 0);
+      assert(mock.download_count == downloads_before);
       mapped[0] = 0x72;
       assert(NvxNouveauBoUnmap(&second));
 
