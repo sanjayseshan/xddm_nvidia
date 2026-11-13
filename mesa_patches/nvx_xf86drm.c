@@ -336,8 +336,8 @@ nvx_drm_submit_pushbuf(int fd,
    uint64_t fence_value = 0;
    int valid = 0, translated = 0;
 #if defined(_WIN32) || defined(_WIN64)
-   struct nvx_drm_vertex_dump vertex_dump;
-   int have_vertex_dump = 0;
+   struct nvx_drm_vertex_dump vertex_dumps[NVX_DRM_VERTEX_DUMP_LIMIT];
+   uint32_t vertex_dump_count = 0;
 #endif
 
    if (!request || !request->nr_push ||
@@ -415,15 +415,19 @@ nvx_drm_submit_pushbuf(int fd,
           dword_count, references, &reference_count))
       goto done;
 #if defined(_WIN32) || defined(_WIN64)
-   if (nvx_drm_vertex_dump_count < NVX_DRM_VERTEX_DUMP_LIMIT &&
-       nvx_drm_capture_vertex_shadow_locked(device,
-          batch + sizeof(header) +
-             (size_t)NVX_3D_MAX_BATCH_BUFFERS * sizeof(references[0]),
-          dword_count, nvx_drm_vertex_dump_addresses,
-          nvx_drm_vertex_dump_count, &vertex_dump)) {
+   while (nvx_drm_vertex_dump_count < NVX_DRM_VERTEX_DUMP_LIMIT &&
+          vertex_dump_count < NVX_DRM_VERTEX_DUMP_LIMIT) {
+      struct nvx_drm_vertex_dump *dump =
+         &vertex_dumps[vertex_dump_count];
+      if (!nvx_drm_capture_vertex_shadow_locked(device,
+             batch + sizeof(header) +
+                (size_t)NVX_3D_MAX_BATCH_BUFFERS * sizeof(references[0]),
+             dword_count, nvx_drm_vertex_dump_addresses,
+             nvx_drm_vertex_dump_count, dump))
+         break;
       nvx_drm_vertex_dump_addresses[nvx_drm_vertex_dump_count++] =
-         vertex_dump.gpu_va;
-      have_vertex_dump = 1;
+         dump->gpu_va;
+      vertex_dump_count++;
    }
 #endif
 
@@ -507,17 +511,20 @@ nvx_drm_submit_pushbuf(int fd,
    nvx_drm_lock_release();
 
 #if defined(_WIN32) || defined(_WIN64)
-   if (have_vertex_dump) {
-      uint32_t result = vertex_dump.copied_from_shadow ? 1U : 0U;
-      if (!vertex_dump.copied_from_shadow &&
-          !NvxWinsysDownloadBuffer(&winsys, vertex_dump.buffer_id,
-                                  vertex_dump.allocation_bytes,
-                                  vertex_dump.offset, vertex_dump.dwords,
-                                  vertex_dump.bytes))
-         result = 2U;
-      NvxWglRecordNouveauBufferDwords((uint32_t)vertex_dump.buffer_id,
-         vertex_dump.gpu_va, vertex_dump.offset, vertex_dump.dwords,
-         vertex_dump.bytes / sizeof(uint32_t), result);
+   {
+      uint32_t dump_index;
+      for (dump_index = 0; dump_index < vertex_dump_count; dump_index++) {
+         struct nvx_drm_vertex_dump *dump = &vertex_dumps[dump_index];
+         uint32_t result = dump->copied_from_shadow ? 1U : 0U;
+         if (!dump->copied_from_shadow &&
+             !NvxWinsysDownloadBuffer(&winsys, dump->buffer_id,
+                                     dump->allocation_bytes, dump->offset,
+                                     dump->dwords, dump->bytes))
+            result = 2U;
+         NvxWglRecordNouveauBufferDwords((uint32_t)dump->buffer_id,
+            dump->gpu_va, dump->offset, dump->dwords,
+            dump->bytes / sizeof(uint32_t), result);
+      }
    }
 #endif
 
