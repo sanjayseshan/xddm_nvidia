@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 12, 2026 after VFIO run `.106`.
+Updated November 12, 2026 after VFIO run `.107`.
 
 ## Current status
 
@@ -198,6 +198,27 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
   reached `PB_HEADER=0x21401b0c`, `PB_COUNT=0`; firmware assertions reached 3.
   `notes/nouveau-trace-latest.txt` has been refreshed with the `.106` data.
 
+## `.107` implementation and results
+
+- Host checks, XP x64 Mesa build/import audit, VFIO boot, and normal guest
+  shutdown passed. Full log: `test_logs/v3.0.0.107-20261112-233608.log`.
+  The runner exited 1 because OpenGL rendering remains unproven.
+- Tracing found shader address bindings for stages 1, 2, and 5 in the upload
+  batch. Their logged dwords are zero, but the download happened before that
+  same batch was submitted, so those bytes are stale pre-upload contents and
+  cannot be used to judge shader code. `notes/nouveau-trace-latest.txt` marks
+  this limitation.
+- Cube/no-depth results remain black, with clear readback passing. No frame is
+  proven. The late PBDMA stall and firmware assertions remain unresolved.
+
+## Current revision `.108` (pending test)
+
+- Moved shader BO readback until after its containing batch is accepted and
+  its completion fence is observed. If the fence does not complete, the trace
+  records that result instead of misreporting pre-upload bytes as shader data.
+- Host checks and the `.108` VFIO test are pending. Expected log:
+  `test_logs/v3.0.0.108-<timestamp>.log`.
+
 ## Next work
 
 1. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
@@ -215,7 +236,8 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Relevant files
 
-- Latest completed full VFIO log: `test_logs/v3.0.0.106-20261112-232600.log`
+- Latest completed full VFIO log: `test_logs/v3.0.0.107-20261112-233608.log`
+- Pending `.108` run: `test_logs/v3.0.0.108-<timestamp>.log`
 - Latest extracted Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest Mesa/Nouveau bridge excerpt: `notes/mesa-bridge-latest.txt`
 - GPFIFO submission and diagnostics: `src_driver/nvx_gsp.c`,

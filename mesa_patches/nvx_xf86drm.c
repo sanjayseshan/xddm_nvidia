@@ -32,6 +32,10 @@ void NvxWglRecordNouveauPushbufDwords(uint32_t push_index,
 void NvxWglRecordNouveauBufferDwords(uint32_t buffer_id, uint64_t gpu_va,
                                     uint32_t offset, const uint32_t *dwords,
                                     uint32_t count, uint32_t result);
+void NvxWglRecordNouveauShaderDwords(uint32_t stage, uint32_t buffer_id,
+                                    uint64_t gpu_va, uint32_t offset,
+                                    const uint32_t *dwords, uint32_t count,
+                                    uint32_t result);
 void NvxWglRecordNouveauObject(uint32_t token_low, uint32_t token_high,
                               uint32_t user_class, uint32_t user_handle,
                               uint32_t rm_class, uint32_t rm_handle,
@@ -89,6 +93,9 @@ static uint32_t nvx_drm_prep_call_trace_count;
 #define NVX_DRM_VERTEX_DUMP_LIMIT 16U
 static uint64_t nvx_drm_vertex_dump_addresses[NVX_DRM_VERTEX_DUMP_LIMIT];
 static uint32_t nvx_drm_vertex_dump_count;
+#define NVX_DRM_SHADER_DUMP_LIMIT 6U
+#define NVX_DRM_SHADER_DUMP_BYTES 512U
+static uint32_t nvx_drm_shader_dump_mask;
 #endif
 static int nvx_drm_unsupported(void);
 static int nvx_drm_unsupported_operation(uint32_t kind,
@@ -114,6 +121,101 @@ struct nvx_drm_vertex_dump {
    uint32_t dwords[NVX_DRM_VERTEX_DUMP_MAX_BYTES / sizeof(uint32_t)];
    uint32_t copied_from_shadow;
 };
+
+struct nvx_drm_shader_dump {
+   uint64_t buffer_id;
+   uint64_t gpu_va;
+   uint32_t stage;
+   uint32_t allocation_bytes;
+   uint32_t offset;
+   uint32_t bytes;
+   uint32_t dwords[NVX_DRM_SHADER_DUMP_BYTES / sizeof(uint32_t)];
+   uint32_t copied_from_shadow;
+};
+
+static uint32_t
+nvx_drm_capture_shader_addresses_locked(
+   struct nvx_drm_device_slot *device, const uint8_t *dword_data,
+   uint32_t dword_count, struct nvx_drm_shader_dump *dumps,
+   uint32_t dump_count, uint32_t *stage_mask)
+{
+   uint32_t cursor = 0, captured = 0;
+
+   while (cursor < dword_count && dump_count + captured < NVX_DRM_SHADER_DUMP_LIMIT) {
+      uint32_t header, packet_type, count, method, subchannel, i;
+      memcpy(&header, dword_data + (size_t)cursor * 4U, sizeof(header));
+      packet_type = header & 0xe0000000U;
+      if (packet_type == 0x80000000U) {
+         cursor++;
+         continue;
+      }
+      if (packet_type != 0x20000000U && packet_type != 0x60000000U &&
+          packet_type != 0xa0000000U)
+         break;
+      count = (header >> 16) & 0x1fffU;
+      method = (header & 0x1fffU) << 2;
+      subchannel = (header >> 13) & 7U;
+      if (!count || count > dword_count - cursor - 1U)
+         break;
+      for (i = 0; i < count && dump_count + captured < NVX_DRM_SHADER_DUMP_LIMIT; i++) {
+         uint32_t current_method, pair_index, stage, high, low, slot_index;
+         uint64_t address;
+         const NVX_3D_NVC0_ADDRESS_PAIR *pair;
+         if (packet_type == 0x20000000U)
+            current_method = method + i * 4U;
+         else if (packet_type == 0xa0000000U && i)
+            current_method = method + 4U;
+         else
+            current_method = method;
+         if (subchannel != 0U ||
+             Nvx3dNvc0AddressMethodKind(subchannel, current_method,
+                                        &pair_index, &stage) != 1)
+            continue;
+         pair = &Nvx3dNvc0AddressPairs[pair_index];
+         if (pair->HighMethod != 0x2014U || pair->IndexStride != 0x40U ||
+             stage >= NVX_DRM_SHADER_DUMP_LIMIT || i + 1U >= count ||
+             packet_type != 0x20000000U || (*stage_mask & (1U << stage)))
+            continue;
+         high = Nvx3dBatchReadDword(dword_data, cursor + 1U + i);
+         low = Nvx3dBatchReadDword(dword_data, cursor + 2U + i);
+         if (high > 0xffU)
+            continue;
+         address = ((uint64_t)high << 32) | low;
+         for (slot_index = 0; slot_index < NVX_DRM_BUFFER_SLOTS; slot_index++) {
+            struct nvx_drm_bo_slot *slot = &device->buffers[slot_index];
+            uint64_t base = slot->bo.allocation.GpuVa;
+            uint64_t allocation_bytes = slot->bo.allocation.Bytes;
+            uint64_t offset;
+            struct nvx_drm_shader_dump *dump;
+            if (!slot->handle || !slot->bo.allocation.BufferId || !base ||
+                address < base || address - base >= allocation_bytes)
+               continue;
+            offset = address - base;
+            if (offset > UINT32_MAX || allocation_bytes > UINT32_MAX)
+               break;
+            dump = &dumps[captured++];
+            memset(dump, 0, sizeof(*dump));
+            dump->buffer_id = slot->bo.allocation.BufferId;
+            dump->gpu_va = address;
+            dump->stage = stage;
+            dump->allocation_bytes = (uint32_t)allocation_bytes;
+            dump->offset = (uint32_t)offset;
+            dump->bytes = NVX_DRM_SHADER_DUMP_BYTES;
+            if (dump->bytes > allocation_bytes - offset)
+               dump->bytes = (uint32_t)(allocation_bytes - offset) & ~3U;
+            if (slot->bo.shadow && slot->bo.map_count) {
+               memcpy(dump->dwords, slot->bo.shadow + dump->offset,
+                      dump->bytes);
+               dump->copied_from_shadow = 1U;
+            }
+            *stage_mask |= 1U << stage;
+            break;
+         }
+      }
+      cursor += count + 1U;
+   }
+   return captured;
+}
 
 /* Capture the first enabled NVC0 vertex array from this batch while BO
  * metadata and persistent CPU shadows are protected by nvx_drm_lock. */
@@ -338,6 +440,8 @@ nvx_drm_submit_pushbuf(int fd,
 #if defined(_WIN32) || defined(_WIN64)
    struct nvx_drm_vertex_dump vertex_dumps[NVX_DRM_VERTEX_DUMP_LIMIT];
    uint32_t vertex_dump_count = 0;
+   struct nvx_drm_shader_dump shader_dumps[NVX_DRM_SHADER_DUMP_LIMIT];
+   uint32_t shader_dump_count = 0;
 #endif
 
    if (!request || !request->nr_push ||
@@ -415,6 +519,10 @@ nvx_drm_submit_pushbuf(int fd,
           dword_count, references, &reference_count))
       goto done;
 #if defined(_WIN32) || defined(_WIN64)
+   shader_dump_count = nvx_drm_capture_shader_addresses_locked(device,
+       batch + sizeof(header) +
+          (size_t)NVX_3D_MAX_BATCH_BUFFERS * sizeof(references[0]),
+       dword_count, shader_dumps, 0U, &nvx_drm_shader_dump_mask);
    while (nvx_drm_vertex_dump_count < NVX_DRM_VERTEX_DUMP_LIMIT &&
           vertex_dump_count < NVX_DRM_VERTEX_DUMP_LIMIT) {
       struct nvx_drm_vertex_dump *dump =
@@ -513,6 +621,18 @@ nvx_drm_submit_pushbuf(int fd,
 #if defined(_WIN32) || defined(_WIN64)
    {
       uint32_t dump_index;
+      for (dump_index = 0; dump_index < shader_dump_count; dump_index++) {
+         struct nvx_drm_shader_dump *dump = &shader_dumps[dump_index];
+         uint32_t result = dump->copied_from_shadow ? 1U : 0U;
+         if (!dump->copied_from_shadow &&
+             !NvxWinsysDownloadBuffer(&winsys, dump->buffer_id,
+                                     dump->allocation_bytes, dump->offset,
+                                     dump->dwords, dump->bytes))
+            result = 2U;
+         NvxWglRecordNouveauShaderDwords(dump->stage,
+            (uint32_t)dump->buffer_id, dump->gpu_va, dump->offset,
+            dump->dwords, dump->bytes / sizeof(uint32_t), result);
+      }
       for (dump_index = 0; dump_index < vertex_dump_count; dump_index++) {
          struct nvx_drm_vertex_dump *dump = &vertex_dumps[dump_index];
          uint32_t result = dump->copied_from_shadow ? 1U : 0U;

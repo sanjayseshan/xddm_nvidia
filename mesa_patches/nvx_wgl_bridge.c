@@ -81,6 +81,10 @@ void NvxWglRecordNouveauPushbufDwords(uint32_t push_index,
 void NvxWglRecordNouveauBufferDwords(uint32_t buffer_id, uint64_t gpu_va,
                                      uint32_t offset, const uint32_t *dwords,
                                      uint32_t count, uint32_t result);
+void NvxWglRecordNouveauShaderDwords(uint32_t stage, uint32_t buffer_id,
+                                     uint64_t gpu_va, uint32_t offset,
+                                     const uint32_t *dwords, uint32_t count,
+                                     uint32_t result);
 void NvxWglRecordNouveauObject(uint32_t token_low, uint32_t token_high,
                                uint32_t user_class, uint32_t user_handle,
                                uint32_t rm_class, uint32_t rm_handle,
@@ -599,6 +603,59 @@ NvxWglRecordNouveauBufferDwords(uint32_t buffer_id, uint64_t gpu_va,
          end = 6U;
       length = _snprintf(line, sizeof(line) - 1U,
                          "Nouveau vertex data offset=%lu:",
+                         (unsigned long)(offset + i * sizeof(uint32_t)));
+      if (length < 0)
+         break;
+      for (j = 0; j < end && length < (int)sizeof(line) - 10; j++)
+         length += _snprintf(line + length, sizeof(line) - (size_t)length - 1U,
+                             " %08lx", (unsigned long)dwords[i + j]);
+      if (length <= 0 || (uint32_t)length + 2U > sizeof(output) - used)
+         break;
+      memcpy(output + used, line, (size_t)length);
+      used += (uint32_t)length;
+      output[used++] = '\r';
+      output[used++] = '\n';
+   }
+   file = CreateFileA("C:\\test_accel\\nvx_nouveau_trace.log",
+                      FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                      NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+   if (file == INVALID_HANDLE_VALUE)
+      return;
+   WriteFile(file, output, used, &written, NULL);
+   CloseHandle(file);
+}
+
+void
+NvxWglRecordNouveauShaderDwords(uint32_t stage, uint32_t buffer_id,
+                                uint64_t gpu_va, uint32_t offset,
+                                const uint32_t *dwords, uint32_t count,
+                                uint32_t result)
+{
+   char output[24U * 192U];
+   char line[192];
+   uint32_t i, used = 0;
+   HANDLE file;
+   DWORD written;
+
+   if (!dwords || !count || count > 128U)
+      return;
+   _snprintf(line, sizeof(line) - 1U,
+      "Nouveau shader dump stage=%lu buffer=%08lx gpu=%08lx:%08lx offset=%lu dwords=%lu source=%lu\r\n",
+      (unsigned long)stage, (unsigned long)buffer_id,
+      (unsigned long)(gpu_va >> 32), (unsigned long)gpu_va,
+      (unsigned long)offset, (unsigned long)count, (unsigned long)result);
+   line[sizeof(line) - 1U] = '\0';
+   used = (uint32_t)strlen(line);
+   if (used >= sizeof(output))
+      return;
+   memcpy(output, line, used);
+   for (i = 0; i < count && used < sizeof(output); i += 6U) {
+      uint32_t j, end = count - i;
+      int length;
+      if (end > 6U)
+         end = 6U;
+      length = _snprintf(line, sizeof(line) - 1U,
+                         "Nouveau shader data offset=%lu:",
                          (unsigned long)(offset + i * sizeof(uint32_t)));
       if (length < 0)
          break;
