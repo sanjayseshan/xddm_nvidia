@@ -1428,6 +1428,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             unsigned int vertexShader = 0, fragmentShader = 0, program = 0;
             unsigned int fixedVertexProgram = 0;
             unsigned int samplesQuery = 0, samplesPassed = 0;
+            unsigned int generatedQuery = 0, primitivesGenerated = 0;
             int queryApiReady = genQueries && beginQuery && endQuery &&
                 getQueryObjectuiv && deleteQueries;
             int vertexCompiled = 0, fragmentCompiled = 0, linked = 0;
@@ -1457,8 +1458,10 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                    shaderApiReady ? "ready" : "missing");
             LogMsg("[MESA_GLSL_TRIANGLE] occlusion_query_api=%s\n",
                    queryApiReady ? "ready" : "missing");
-            if (queryApiReady)
+            if (queryApiReady) {
                 genQueries(1, &samplesQuery);
+                genQueries(1, &generatedQuery);
+            }
             if (shaderApiReady) {
                 const char *source = vertexSource;
                 char shaderLog[512];
@@ -1528,17 +1531,24 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                         shaderError = glGetError();
                     if (samplesQuery)
                         beginQuery(0x8914U, samplesQuery); /* SAMPLES_PASSED */
+                    if (generatedQuery)
+                        beginQuery(0x8C87U, generatedQuery); /* PRIMITIVES_GENERATED */
                     glBegin(GL_TRIANGLES);
                     glVertex3f(-0.8f, -0.8f, 0.0f);
                     glVertex3f( 0.8f, -0.8f, 0.0f);
                     glVertex3f( 0.0f,  0.8f, 0.0f);
                     glEnd();
+                    if (generatedQuery)
+                        endQuery(0x8C87U);
                     if (samplesQuery)
                         endQuery(0x8914U);
                     glFinish();
                     if (samplesQuery)
                         getQueryObjectuiv(samplesQuery, 0x8866U,
                                           &samplesPassed); /* QUERY_RESULT */
+                    if (generatedQuery)
+                        getQueryObjectuiv(generatedQuery, 0x8866U,
+                                          &primitivesGenerated);
                     if (shaderError == GL_NO_ERROR)
                         shaderError = glGetError();
                     rawTargetGreen = ReadRawMesaTargetGreenPixels(
@@ -1665,6 +1675,8 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                 if (fixedVertexProgram) deleteProgram(fixedVertexProgram);
                 if (deleteQueries && samplesQuery)
                     deleteQueries(1, &samplesQuery);
+                if (deleteQueries && generatedQuery)
+                    deleteQueries(1, &generatedQuery);
             }
             if (pixels) free(pixels);
             int glslPass = shaderApiReady && vertexCompiled &&
@@ -1674,9 +1686,10 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                            baselinePixel[1] < 32U &&
                            baselinePixel[2] > 150U;
             glslPass = glslPass && baselinePass;
-            LogMsg("[MESA_GLSL_TRIANGLE_RESULT] %s compiled=%d/%d linked=%d baseline_pass=%d samples_passed=%u green_pixels=%u bbox=%d,%d-%d,%d readback=%dx%d baseline=%u,%u,%u,%u post_center=%u,%u,%u,%u error=0x%X\n",
+            LogMsg("[MESA_GLSL_TRIANGLE_RESULT] %s compiled=%d/%d linked=%d baseline_pass=%d primitives_generated=%u samples_passed=%u green_pixels=%u bbox=%d,%d-%d,%d readback=%dx%d baseline=%u,%u,%u,%u post_center=%u,%u,%u,%u error=0x%X\n",
                    glslPass ? "PASS" : "FAIL", vertexCompiled,
-                   fragmentCompiled, linked, baselinePass, samplesPassed,
+                   fragmentCompiled, linked, baselinePass,
+                   primitivesGenerated, samplesPassed,
                    greenPixels,
                    greenMinX, greenMinY, greenMaxX, greenMaxY, w, h,
                    baselinePixel[0], baselinePixel[1], baselinePixel[2],
