@@ -1230,6 +1230,15 @@ Relevant files: `mesa_patches/nvx_xf86drm.c`,
 - Relevant files: `mesa_patches/nvx_xf86drm.c`,
   `mesa_patches/nvx_nouveau_bo.c`, `test/test_full_driver.sh`,
   `dist_full/nvx.inf`, this log, and this handoff.
+- The captured RT0 state is linear (`RT_TILE_MODE=0x1000`) with pitch
+  `0x0a00` and dimensions 632x453. Its clear reads back correctly, but the
+  green GL_QUADS draw and cube do not. Revision 3.0.0.160 adds an equivalent
+  two-triangle draw/readback on the same full-size back buffer after the quad
+  comparison. A passing triangle control would isolate the failure to quad
+  primitive handling; a failure would point to broader vertex/shader/target
+  state. Hardware run pending.
+- Relevant files: `test/test_gpu_accel.c`, `test/test_full_driver.sh`,
+  `dist_full/nvx.inf`, and this handoff.
 - Relevant files: `mesa_patches/nvx_nouveau_bo.c`,
   `mesa_patches/nvx_nouveau_bo.h`, `mesa_patches/nvx_xf86drm.c`,
   `test/test_full_driver.sh`, and `dist_full/nvx.inf`.

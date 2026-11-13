@@ -2014,6 +2014,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
         {
             BYTE fullTargetCenter[4]={0,0,0,0},fullTargetCorner[4]={0,0,0,0};
             BYTE fullTargetBackCenter[4]={0,0,0,0};
+            BYTE fullTargetTrianglesBack[4]={0,0,0,0};
             BYTE mesaClearBackCenter[4]={0,0,0,0};
             GLenum fullTargetError;
             unsigned batchesBefore=mesaGpuBridgeBatchCount;
@@ -2087,6 +2088,45 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                     fullTargetCenter[2],fullTargetCorner[0],
                     fullTargetCorner[1],fullTargetCorner[2],fullTargetError,
                     batchesBefore,mesaGpuBridgeBatchCount);
+                failures++;
+            }
+            /* Compare the failing GL_QUADS draw with equivalent triangles on
+             * the same full-size back buffer. This isolates primitive
+             * handling from target format, viewport, and readback setup. */
+            glViewport(0,0,w,h);
+            glDisable(GL_DEPTH_TEST);
+            glDisable(GL_CULL_FACE);
+            glDisable(GL_BLEND);
+            glDisable(GL_SCISSOR_TEST);
+            glClearColor(0.0f,0.0f,0.0f,1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glBegin(GL_TRIANGLES);
+            glColor4f(0.0f,1.0f,0.0f,1.0f);
+            glVertex3f(-0.9f,-0.9f,0.0f);
+            glVertex3f( 0.9f,-0.9f,0.0f);
+            glVertex3f( 0.9f, 0.9f,0.0f);
+            glVertex3f(-0.9f,-0.9f,0.0f);
+            glVertex3f( 0.9f, 0.9f,0.0f);
+            glVertex3f(-0.9f, 0.9f,0.0f);
+            glEnd();
+            glFinish();
+            fullTargetError=glGetError();
+            if(fullTargetError==GL_NO_ERROR) {
+                glReadBuffer(GL_BACK);
+                glReadPixels(w/2,h/2,1,1,GL_RGBA,GL_UNSIGNED_BYTE,
+                             fullTargetTrianglesBack);
+                fullTargetError=glGetError();
+            }
+            LogMsg("[MESA_GPU_FULL_TARGET_TRIANGLES_BACK] center=%u,%u,%u error=0x%X\n",
+                   fullTargetTrianglesBack[0],fullTargetTrianglesBack[1],
+                   fullTargetTrianglesBack[2],fullTargetError);
+            if(fullTargetError==GL_NO_ERROR &&
+               fullTargetTrianglesBack[1]>200 &&
+               fullTargetTrianglesBack[0]<32 &&
+               fullTargetTrianglesBack[2]<32) {
+                LogMsg("[MESA_GPU_FULL_TARGET_TRIANGLES_RESULT] PASS\n");
+            } else {
+                LogMsg("[MESA_GPU_FULL_TARGET_TRIANGLES_RESULT] FAIL\n");
                 failures++;
             }
         }
