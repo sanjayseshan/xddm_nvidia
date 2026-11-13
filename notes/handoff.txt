@@ -1,35 +1,34 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.146`; preparing `.147`.
+Updated November 13, 2026 after VFIO run `.147`; preparing `.148`.
 
 ## Current status
 
-The latest completed VFIO run `.144` booted and shut down normally. The
-standalone GLSL triangle now passes on the hardware path: transform feedback
-captured all three intended positions, the sample query returned 1,352, and
-both `glReadPixels` and direct CE readback found 1,352 green pixels on the
-exact 632x453 target. This confirms shader execution, rasterization, color
-write, and readback for an explicit attribute array. Run `.143` shows the
-fixed-function shader path also draws correctly from a client vertex array
-(1,352 green pixels), while the same draw using `glBegin`/`glVertex3f` produces
-zero pixels. The cube uses immediate mode and remains black, with and without
-depth. Revision `.144` flushes referenced writable BO shadows before batch
-submission. Its trace confirms the flush path runs, but the immediate-mode
-triangle and cube remain black, so flushing alone does not resolve the
-failure. Run `.145` also captures `(0,0,0,1)` for all immediate-mode shader
-vertices, with one generated primitive, zero samples, and no GL error. The
-same GLSL shader receives the correct positions and renders through
-`glDrawArrays`. This narrows the fault to the `glVertex3f`/Begin-End input
-dispatch or its vertex staging. Run `.146` returns the same zero positions and
-zero samples through both normal opengl32 calls and pointers resolved directly
-from the ICD, ruling out a difference between those dispatch paths. Revision
-`.147` records `GL_CURRENT_VERTEX` and generic attribute 0 after End to see
-whether the API updates current state before draw staging. Full `.146` log:
-`test_logs/v3.0.0.146-20261113-032426.log`.
+The latest completed VFIO run `.147` booted and shut down normally. The
+standalone GLSL triangle passes on hardware: transform feedback captured all
+three intended positions, the sample query returned 1,352, and both
+`glReadPixels` and direct CE readback found 1,352 green pixels on the exact
+632x453 target. The fixed-function shader path also draws correctly from a
+client vertex array (1,352 green pixels). In contrast, GLSL and fixed-function
+Begin/End input still produce zero positions/samples, and the immediate-mode
+cube remains black with and without depth.
+
+The `.147` current-state query did not answer the intended question. The enum
+used as `GL_CURRENT_VERTEX` (`0x0B02`) is actually `GL_CURRENT_NORMAL`, and
+`glGetVertexAttribfv(0, GL_CURRENT_VERTEX_ATTRIB)` is invalid in this Mesa
+compatibility context because attribute zero aliases the current vertex. The
+resulting `0x502` is from the diagnostic query, not proof that the draw itself
+raised an error. Remove/fix these queries and inspect Mesa's Begin/End staging
+buffer at `vbo_exec_vtx_flush()` to find why the shader receives zero input.
+The `.144` submit-time writable-shadow flush is active (trace kind 13) but did
+not fix it; `.146` already showed opengl32 and direct-ICD dispatch behave the
+same. Full `.147` log: `test_logs/v3.0.0.147-20261113-032753.log`.
 
 The cube test had no colored pixels in its depth or no-depth draw. Animation
-reached 100 frames at 18.2 FPS, then timed out at FIFO index/fence `0x101`;
-firmware assertions reached 3. The callback type warning has been fixed.
+reached 100 frames at 25.4 FPS, then timed out at FIFO index/fence `0x81`;
+firmware assertion count reached 3. The separate Ampere GR triangle and
+semaphore probe still completes. The OpenGL suite remains failed and no cube
+frame is proven. Next test version is `.148`.
 
 The XP x64 Mesa ICD builds and selects Mesa / NV170 (OpenGL 4.3 Compatibility
 Profile, Mesa 27.0.0-devel). The run creates a native Nouveau Gallium
@@ -967,7 +966,16 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
 
 ### Revision 3.0.0.147 — inspect immediate current vertex state
 
-- After each immediate-mode draw, queries `GL_CURRENT_VERTEX` and generic
-  attribute 0's `GL_CURRENT_VERTEX_ATTRIB`. The values will tell whether
-  `glVertex3f` updates Mesa's current state before the Begin/End buffer is
-  submitted. Full VFIO result is pending.
+- Added post-draw queries for current vertex state and generic attribute 0.
+- Full VFIO log: `test_logs/v3.0.0.147-20261113-032753.log`. The GLSL array
+  triangle and fixed-function client-array triangle pass with 1,352 green
+  pixels. Immediate GLSL transform feedback remains `(0,0,0,1)` for all three
+  vertices; both normal dispatch and direct ICD dispatch match. The cube and
+  no-depth cube each return zero colored pixels. Animation reaches 100 frames
+  in 3.9433 s (25.4 FPS), then FIFO/fence `0x81` times out; assertions reach 3.
+- The current-state diagnostic is invalid: `0x0B02` is `GL_CURRENT_NORMAL`,
+  not current vertex, and generic attribute query index 0 raises `GL_INVALID_OPERATION`
+  because compatibility attribute zero aliases the vertex. The `0x502` in the
+  probe result belongs to this query. Correct/remove it before the next test.
+  Inspect Begin/End buffer contents at `vbo_exec_vtx_flush()`; that is the next
+  concrete diagnostic. `.148` is the next test revision.
