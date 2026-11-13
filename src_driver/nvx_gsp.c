@@ -3414,11 +3414,48 @@ BOOLEAN NvxGspSubmitNvc0NativeClear(PVOID HwDeviceExtension,
     return FALSE;
 }
 
+static BOOLEAN NvxGspFindNvc0Draw(const ULONG *dwords,ULONG dwordCount,
+    ULONG *primitive,ULONG *vertexStart,ULONG *vertexCount)
+{
+    ULONG cursor=0,found=0;
+    if(!dwords||!primitive||!vertexStart||!vertexCount) return FALSE;
+    *primitive=0xffffffffU;*vertexStart=0xffffffffU;*vertexCount=0;
+    while(cursor<dwordCount) {
+        ULONG header=dwords[cursor],type=header&0xe0000000U;
+        ULONG count,method,subchannel,j;
+        if(type==0x80000000U) { cursor++;continue; }
+        if(type!=0x20000000U&&type!=0x60000000U&&type!=0xa0000000U)
+            break;
+        count=(header>>16)&0x1fffU;
+        method=(header&0x1fffU)<<2;
+        subchannel=(header>>13)&7U;
+        if(!count||count>dwordCount-cursor-1U) break;
+        if(subchannel==0U) {
+            for(j=0;j<count;j++) {
+                ULONG current=method;
+                if(type==0x20000000U) current+=j*4U;
+                else if(type==0xa0000000U&&j) current+=4U;
+                if(current==0x1618U) {
+                    *primitive=dwords[cursor+1U+j];found=1U;
+                } else if(current==0x0d74U) {
+                    *vertexStart=dwords[cursor+1U+j];
+                } else if(current==0x0d78U) {
+                    *vertexCount=dwords[cursor+1U+j];
+                }
+            }
+        }
+        cursor+=count+1U;
+    }
+    return found?TRUE:FALSE;
+}
+
 BOOLEAN NvxGspSubmitNvc0Batch(PVOID HwDeviceExtension,
     const uint32_t *nvc0Dwords,ULONG dwordCount,
     PVOID pushVirtual,ULONG64 pushGpuVa,ULONG pushBytes,ULONG64 fenceValue)
 {
     static ULONG successTraceCount=0;
+    static ULONG drawTraceCount=0;
+    static ULONG cubeDrawTraceCount=0;
     PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
     PUCHAR scratch;
     volatile ULONG *userd,*fence;
@@ -3486,6 +3523,33 @@ BOOLEAN NvxGspSubmitNvc0Batch(PVOID HwDeviceExtension,
         if(fence[0]==(ULONG)fenceValue) {
             __sync_synchronize();
             dev->Nvx3dCompletedFence=fenceValue;
+            if(drawTraceCount<8U) {
+                ULONG primitive,vertexStart,vertexCount;
+                if(NvxGspFindNvc0Draw(nvc0Dwords,dwordCount,&primitive,
+                                      &vertexStart,&vertexCount)) {
+                    LogStr("NVX [NVC0-DRAW]: completed index=");
+                    LogHex(drawTraceCount++);LogStr(" sourceVA=");
+                    LogHex(pushGpuVa);LogStr(" dwords=");LogHex(dwordCount);
+                    LogStr(" primitive=");LogHex(primitive);
+                    LogStr(" start=");LogHex(vertexStart);
+                    LogStr(" count=");LogHex(vertexCount);
+                    LogStr(" fence=");LogHex(fenceValue);
+                    LogStr(" observed=");LogHex(fence[0]);LogStr("\n");
+                }
+            }
+            if(cubeDrawTraceCount<4U) {
+                ULONG primitive,vertexStart,vertexCount;
+                if(NvxGspFindNvc0Draw(nvc0Dwords,dwordCount,&primitive,
+                                      &vertexStart,&vertexCount)&&
+                   primitive==7U&&vertexCount==24U) {
+                    LogStr("NVX [NVC0-CUBE-DRAW]: completed index=");
+                    LogHex(cubeDrawTraceCount++);LogStr(" sourceVA=");
+                    LogHex(pushGpuVa);LogStr(" start=");LogHex(vertexStart);
+                    LogStr(" count=");LogHex(vertexCount);
+                    LogStr(" fence=");LogHex(fenceValue);
+                    LogStr(" observed=");LogHex(fence[0]);LogStr("\n");
+                }
+            }
             if(successTraceCount==0) {
                 ULONG traceIndex;
                 successTraceCount++;

@@ -290,13 +290,12 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Next work
 
-1. Resolve the black output despite coherent state: `.118` confirms both
-   polygon MME inputs request GL_FILL, VP_B/FP are selected with the captured
-   program addresses, and vertex start/fetch are coherent. Isolate the first
-   triangle batch that does not complete and identify the first method/state
-   where PGRAPH stops. The later timeout has PBDMA at end-of-buffer, no PGRAPH
-   trap, and no MMU fault; determine whether that timeout follows the black
-   draw or is a later independent queue stall.
+1. Explain the missing raster output even though cube draw submissions complete:
+   `.120` completed two 24-vertex QUADS batches with matching fences (`0x3f`,
+   `0x40`, then `0x4b`, `0x4c`), but depth and no-depth cube readbacks were
+   still black. Clear readback passes. Review cull state and the captured
+   vertex/shader inputs against a working NVC0 draw; then isolate vertex shader,
+   rasterization, and fragment shader output with minimal GPU tests.
 2. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
    The failed stream is decoded above; trace the Mesa semaphore release and
    miniport completion fence through PBDMA progress, and correlate with the
@@ -312,7 +311,7 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Relevant files
 
-- Latest completed full VFIO log: `test_logs/v3.0.0.118-20261113-003924.log`
+- Latest completed full VFIO log: `test_logs/v3.0.0.120-20261113-005115.log`
 - Latest extracted Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest Mesa/Nouveau bridge excerpt: `notes/mesa-bridge-latest.txt`
 - GPFIFO submission and diagnostics: `src_driver/nvx_gsp.c`,
@@ -434,3 +433,45 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   buffer, no PGRAPH trap, and no MMU fault. Next identify the first triangle
   submission that fails to complete and correlate its fence with the zero-pixel
   readback; do not assume this later timeout caused the earlier cube failure.
+
+### Revision 3.0.0.119 — early draw fences confirmed
+
+- Full VFIO log: `test_logs/v3.0.0.119-20261113-004647.log`. XP booted, ran
+  the guest suite, and shut down normally. Cube readback remains black; 100
+  frames took 8.1621 s (12.3 FPS); `[OPENGL_RESULT] FAIL`.
+- Eight early diagnostic draws completed with matching release fences: QUADS
+  with 8 and 4 vertices, and TRIANGLES with 12 and 9 vertices. This proves
+  those batches completed through the miniport fence path, but does not yet
+  correlate completion to the 24-vertex cube. The later FIFO `0x3b` timeout is
+  separate until its relation is established.
+- `.120` will log completion for QUADS/24 specifically and add actual NVC0 cull
+  state (`0x1918/0x191c/0x1920`), which was missing from prior snapshots.
+
+### Revision 3.0.0.120 — correlate cube completion and cull state
+
+- Added a separate bounded trace for completed QUADS draws with 24 vertices,
+  to match the cube batch rather than earlier diagnostic geometry. Added NVC0
+  cull enable/front-face/cull-face methods (`0x1918/0x191c/0x1920`) to the
+  persistent state snapshot.
+- `make -C src_driver check` passed. The XP x64 Mesa ICD and package passed XP
+  subsystem/import audits. VFIO booted on attempt 1; guest tests completed and
+  Windows shut down normally. Full log:
+  `test_logs/v3.0.0.120-20261113-005115.log`.
+- The two 24-vertex cube QUADS batches completed with matching release fences:
+  `0x3f/0x3f`, `0x40/0x40`; later animation cube batches also completed at
+  `0x4b/0x4b`, `0x4c/0x4c`. Thus the earlier gap in evidence was not a missing
+  cube submission or semaphore completion.
+- Both depth and no-depth cube tests still return zero colored pixels; clear
+  readback returns `(32,64,191)`. `[OPENGL_RESULT] FAIL`, and the center pixel
+  remains black. 100 frames took 7.6547 s (13.1 FPS). Bridge reports one
+  Nouveau screen, `gpu_batches=212`; that is submission evidence, not successful
+  rendering. The independent GR hardware triangle readback passes. Firmware
+  assertion count reaches 3 during later animation.
+- State trace revision 120 now includes cull fields: method decimal 6424
+  (`0x1918`) is 0; methods `0x191c`/`0x1920` are `0x901`/`0x405`. Their
+  hardware semantics still need confirmation, but the observed enable value is
+  zero. Cull is unlikely to explain the no-depth failure by itself.
+- Next: compare vertex fetch, shader inputs/output declarations, and stage
+  program contents to a known working NVC0 sequence, then run a minimal shader
+  and raster test that writes a solid color without Mesa's fixed-function
+  shader. Keep the later FIFO stall as a separate issue until correlated.

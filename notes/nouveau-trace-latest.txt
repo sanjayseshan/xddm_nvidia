@@ -1,12 +1,22 @@
-Latest Nouveau/OpenGL diagnostic excerpt from test_logs/v3.0.0.118-20261113-003924.log
-The `.118` VFIO run booted, completed the guest suite, and shut down normally. Cube readback remains zero; 100 frames took 8.1246 s (12.3 FPS); `[OPENGL_RESULT] FAIL`.
-Both polygon MME inputs are GL_FILL: front `0x3818=0x1b02`, back `0x3820=0x1b02`. VP_B/FP selectors and shader addresses are consistent; vertex start is zero and fetches are coherent. A later batch fence stalls with PBDMA having consumed the full stream, no PGRAPH trap, and no MMU fault; see `.118` full log around timeout.
-All three stage program snapshots below are associated with the first draw after cached SP_ADDRESS binds were observed; each was downloaded after its submission fence.
+Latest Nouveau/OpenGL diagnostic excerpt from test_logs/v3.0.0.120-20261113-005115.log
+The `.120` VFIO run booted on attempt 1, completed the guest suite, and shut down normally. The 24-vertex cube batches completed with matching release fences, but color readback remains black; 100 frames took 7.6547 s (13.1 FPS); `[OPENGL_RESULT] FAIL`.
+The cube QUADS batch fences were `0x3f/0x3f` and `0x40/0x40`; later cube batches completed at `0x4b/0x4b` and `0x4c/0x4c`. Depth and no-depth cube readbacks both found zero colored pixels. The clear readback and independent GR hardware triangle readback pass. Firmware assertion count reaches 3 during the later animation.
+The state snapshot now includes cull fields: method `0x1918` is 0, `0x191c` is `0x901`, and `0x1920` is `0x405`. Semantics still require comparison against known NVC0 setup. All three stage program snapshots below are associated with the first draw after cached SP_ADDRESS binds were observed; each was downloaded after its submission fence.
 [MESA_GPU_CLEAR_BACK_READBACK] pixel=32,64,191 error=0x0
 [MESA_GPU_CLEAR_BACK_RESULT] PASS
 [MESA_GPU_CUBE_RESULT] FAIL colored_pixels=0 bbox=632,453-0,0 faces=0 rgb_counts=0,0,0,0,0,0 gpu_batches=6 error=0x0
 [MESA_GPU_CUBE_NODEPTH] FAIL colored_pixels=0 error=0x0 new_gpu_batches=5 hardware_rendered=1
--> Rendered 100 frames in 7.7937 s (12.8 FPS)
+[MESA_GPU_DEPTH_RESULT] FAIL gpu_batches=30 front_pixel=0,0,0 error=0x0
+NVX [NVC0-CUBE-DRAW]: completed index=0 sourceVA=0x16730000 start=0 count=24 fence=0x3f observed=0x3f
+NVX [NVC0-CUBE-DRAW]: completed index=1 sourceVA=0x16730000 start=0 count=24 fence=0x40 observed=0x40
+NVX [NVC0-CUBE-DRAW]: completed index=2 sourceVA=0x16a40000 start=0 count=24 fence=0x4b observed=0x4b
+NVX [NVC0-CUBE-DRAW]: completed index=3 sourceVA=0x16a40000 start=0 count=24 fence=0x4c observed=0x4c
+Nouveau cube draw state trace_rev=120 entries=55
+Nouveau cube draw state index=33 method_dec=6424 value=00000000
+Nouveau cube draw state index=34 method_dec=6428 value=00000901
+Nouveau cube draw state index=35 method_dec=6432 value=00000405
+[MESA_GPU_CUBE_NODEPTH] FAIL colored_pixels=0 error=0x0 new_gpu_batches=5 hardware_rendered=1
+-> Rendered 100 frames in 7.6547 s (13.1 FPS)
 [OPENGL_RESULT] FAIL
 Nouveau shader dump stage=1 buffer=00000009 gpu=00000000:22e9f3c0 offset=521152 dwords=128 source=0 draw_snapshot=1
 Nouveau shader dump stage=2 buffer=00000009 gpu=00000000:22e9f2c0 offset=520896 dwords=128 source=0 draw_snapshot=1
@@ -97,3 +107,13 @@ Nouveau cube draw state index=48 method_dec=8532 value=00000000
 Nouveau cube draw state index=49 method_dec=8536 value=22e9f100
 Nouveau cube draw state index=50 method_dec=14360 value=00001b02
 Nouveau cube draw state index=51 method_dec=14368 value=00001b02
+
+Completed draw fence records `.119`:
+NVX [NVC0-DRAW]: completed index=0x0000000000000000 sourceVA=0x0000000016290000 dwords=0x0000000000000221 primitive=0x0000000000000007 start=0x0000000000000000 count=0x0000000000000008 fence=0x0000000000000005 observed=0x0000000000000005
+NVX [NVC0-DRAW]: completed index=0x0000000000000001 sourceVA=0x0000000016290000 dwords=0x0000000000000221 primitive=0x0000000000000007 start=0x0000000000000000 count=0x0000000000000008 fence=0x0000000000000006 observed=0x0000000000000006
+NVX [NVC0-DRAW]: completed index=0x0000000000000002 sourceVA=0x00000000164C0000 dwords=0x000000000000006F primitive=0x0000000000000007 start=0x0000000000000000 count=0x0000000000000004 fence=0x0000000000000015 observed=0x0000000000000015
+NVX [NVC0-DRAW]: completed index=0x0000000000000003 sourceVA=0x00000000164C0000 dwords=0x000000000000006F primitive=0x0000000000000007 start=0x0000000000000000 count=0x0000000000000004 fence=0x0000000000000016 observed=0x0000000000000016
+NVX [NVC0-DRAW]: completed index=0x0000000000000004 sourceVA=0x0000000016590000 dwords=0x0000000000000066 primitive=0x0000000000000004 start=0x0000000000000000 count=0x000000000000000C fence=0x0000000000000023 observed=0x0000000000000023
+NVX [NVC0-DRAW]: completed index=0x0000000000000005 sourceVA=0x0000000016590000 dwords=0x0000000000000066 primitive=0x0000000000000004 start=0x0000000000000000 count=0x000000000000000C fence=0x0000000000000024 observed=0x0000000000000024
+NVX [NVC0-DRAW]: completed index=0x0000000000000006 sourceVA=0x00000000166A0000 dwords=0x0000000000000085 primitive=0x0000000000000004 start=0x0000000000000000 count=0x0000000000000009 fence=0x0000000000000035 observed=0x0000000000000035
+NVX [NVC0-DRAW]: completed index=0x0000000000000007 sourceVA=0x00000000166A0000 dwords=0x0000000000000085 primitive=0x0000000000000004 start=0x0000000000000000 count=0x0000000000000009 fence=0x0000000000000036 observed=0x0000000000000036
