@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.149`; `.150` captures the immediate draw state.
+Updated November 13, 2026 after VFIO run `.150`; `.151` reads immediate vertices back from GPU memory.
 
 ## Current status
 
@@ -8,20 +8,20 @@ The latest completed VFIO run `.149` booted and shut down normally. The
 explicit GLSL client-array triangle passes on the RTX 3070 with 1,352 green
 pixels, confirmed by query, `glReadPixels`, and direct CE readback. CPU tracing
 now proves that the Begin/End path stages the expected three positions and
-that those bytes are present in the GPU-visible BO shadow at VA `0x160900e0`
-(offset 224). Yet transform feedback receives `(0,0,0,1)` for each vertex.
-The remaining fault is downstream in Gallium vertex-element or buffer binding,
-addressing, or GPU fetch. The `.149` trace captured NVC0 state only for the
-passing array control, not the following immediate draw.
+that those bytes are present in the CPU BO shadow at VA `0x160900e0` (offset
+224). The `.150` NVC0 snapshot matches the passing array draw in captured
+vertex formats, strides, shader bindings, and other state; only the position
+array base differs (`0x16090010` for array input, `0x160900e0` for immediate).
+Transform feedback still receives `(0,0,0,1)`. Since `.150`'s buffer capture
+read the CPU shadow, it does not establish what the GPU fetched. Revision
+`.151` performs a direct buffer download after the immediate draw's fence to
+compare GPU memory with the shadow.
 
-The `.150` revision adds a separately labeled NVC0 snapshot for the immediate
-GLSL triangle, including vertex formats, array addresses, strides, target, and
-shader bindings for comparison with the array draw. Full `.149` log:
-`test_logs/v3.0.0.149-20261113-033901.log`; `.150` hardware result is pending.
-The depth and no-depth cube remain black. In `.149`, animation reached 100
-frames in 5.1758 seconds (19.3 FPS), then timed out at FIFO/fence `0xdf`;
-firmware assertions reached 3. The separate GR triangle and semaphore probe
-passed. `[OPENGL_RESULT]` remains FAIL and no cube frame is proven.
+Full `.150` log: `test_logs/v3.0.0.150-20261113-034515.log`. XP booted and
+shut down normally; explicit GLSL array draw passed with 1,352 pixels. The cube
+remains black. Animation reached 100 frames in 5.2591 seconds (19.0 FPS), then
+timed out at FIFO/fence `0xdb`; firmware assertions reached 3. The GR triangle
+and semaphore passed. `[OPENGL_RESULT]` remains FAIL and no cube frame is proven.
 
 The XP x64 Mesa ICD builds and selects Mesa / NV170 (OpenGL 4.3 Compatibility
 Profile, Mesa 27.0.0-devel). The run creates a native Nouveau Gallium
@@ -1028,3 +1028,16 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   bindings, allowing direct comparison to the passing draw. All custom changes
   remain in `mesa_patches/`; the Mesa submodule is unchanged.
 - Test/package version is bumped to `3.0.0.150`; VFIO result pending.
+
+
+### Revision 3.0.0.151 — read immediate vertex data from GPU memory
+
+- `.150` compared the two NVC0 states: all captured values match except the
+  position array start (`0x16090010` versus `0x160900e0`). Its vertex dump came
+  from the CPU shadow (`source=1`), so it was not proof of physical GPU memory.
+- For the immediate triangle's position BO only, defers the diagnostic dump
+  until after submission and its fence, then uses `NvxWinsysDownloadBuffer` to
+  read the actual GPU allocation. Trace result `source=0` means successful GPU
+  download; `source=2` means download failure; `source=3` means fence timeout.
+  This directly tests whether persistent CPU shadow writes reached VRAM/GART.
+- Version bumped to `3.0.0.151`; VFIO result pending.

@@ -91,6 +91,7 @@ struct nvx_drm_device_slot {
    uint32_t shader_draw_snapshot_done;
    uint32_t shader_triangle_snapshot_done;
    uint32_t shader_triangle_input_snapshot_done;
+   uint32_t shader_triangle_input_readback_scheduled;
    uint32_t shader_ffvs_snapshot_done;
    uint32_t gr_state[0x4000U / sizeof(uint32_t)];
    uint32_t gr_draw_state_snapshot_done;
@@ -137,6 +138,7 @@ struct nvx_drm_vertex_dump {
    uint32_t bytes;
    uint32_t dwords[NVX_DRM_VERTEX_DUMP_MAX_BYTES / sizeof(uint32_t)];
    uint32_t copied_from_shadow;
+   uint32_t force_gpu_readback;
 };
 
 struct nvx_drm_shader_dump {
@@ -386,6 +388,14 @@ nvx_drm_capture_vertex_shadow_locked(
          if (high > 0xffU)
             continue;
          address = ((uint64_t)high << 32) | low;
+         {
+            uint64_t immediate_position_address =
+               ((uint64_t)device->gr_state[0x1c04U / 4U] << 32) |
+               device->gr_state[0x1c08U / 4U];
+            uint32_t force_gpu_readback =
+               device->shader_triangle_input_snapshot_done &&
+               !device->shader_triangle_input_readback_scheduled &&
+               address == immediate_position_address;
          for (slot_index = 0; slot_index < captured_count; slot_index++)
             if (captured_addresses[slot_index] == address)
                goto next_address;
@@ -414,11 +424,16 @@ nvx_drm_capture_vertex_shadow_locked(
             dump->allocation_bytes = (uint32_t)allocation_bytes;
             dump->offset = (uint32_t)offset;
             dump->bytes = bytes;
-            if (slot->bo.shadow && slot->bo.map_count) {
+            dump->force_gpu_readback = force_gpu_readback;
+            if (force_gpu_readback)
+               device->shader_triangle_input_readback_scheduled = 1U;
+            if (slot->bo.shadow && slot->bo.map_count &&
+                !force_gpu_readback) {
                memcpy(dump->dwords, slot->bo.shadow + dump->offset, bytes);
                dump->copied_from_shadow = 1U;
             }
             return 1;
+         }
          }
          goto next_address;
 next_address:
@@ -762,6 +777,8 @@ nvx_drm_submit_pushbuf(int fd,
       for (dump_index = 0; dump_index < vertex_dump_count; dump_index++) {
          struct nvx_drm_vertex_dump *dump = &vertex_dumps[dump_index];
          uint32_t result = dump->copied_from_shadow ? 1U : 0U;
+         if (dump->force_gpu_readback)
+            continue;
          if (!dump->copied_from_shadow &&
              !NvxWinsysDownloadBuffer(&winsys, dump->buffer_id,
                                      dump->allocation_bytes, dump->offset,
@@ -839,6 +856,30 @@ nvx_drm_submit_pushbuf(int fd,
       nvx_drm_lock_release();
    }
 #if defined(_WIN32) || defined(_WIN64)
+   if (valid && fence_value) {
+      uint32_t dump_index;
+      int has_forced_dump = 0;
+      int completed = 0;
+      for (dump_index = 0; dump_index < vertex_dump_count; dump_index++)
+         if (vertex_dumps[dump_index].force_gpu_readback)
+            has_forced_dump = 1;
+      if (has_forced_dump)
+         completed = NvxWinsysWaitFence(&winsys, fence_value, 5000U);
+      for (dump_index = 0; dump_index < vertex_dump_count; dump_index++) {
+         struct nvx_drm_vertex_dump *dump = &vertex_dumps[dump_index];
+         uint32_t result;
+         if (!dump->force_gpu_readback)
+            continue;
+         result = completed ? 0U : 3U;
+         if (completed && !NvxWinsysDownloadBuffer(&winsys, dump->buffer_id,
+               dump->allocation_bytes, dump->offset, dump->dwords,
+               dump->bytes))
+            result = 2U;
+         NvxWglRecordNouveauBufferDwords((uint32_t)dump->buffer_id,
+            dump->gpu_va, dump->offset, dump->dwords,
+            dump->bytes / sizeof(uint32_t), result);
+      }
+   }
    if (valid && fence_value && shader_dump_count) {
       uint32_t dump_index;
       int completed = NvxWinsysWaitFence(&winsys, fence_value, 5000U);
