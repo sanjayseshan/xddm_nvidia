@@ -2824,7 +2824,13 @@ BOOLEAN NTAPI HwVidStartIO(
         }
         entry->Busy=TRUE;saved=*entry;
         Nvx3dUnlockBuffers();
-        if(NvxGspUpload(engine,saved.GpuVa+upload.Offset,
+        if((saved.Usage&NVX_3D_USAGE_GART_BUFFER)&&saved.SystemVirtual) {
+            VideoPortMoveMemory((PUCHAR)saved.SystemVirtual+upload.Offset,
+                                (PUCHAR)RequestPacket->InputBuffer+headerBytes,
+                                upload.Bytes);
+            status=NO_ERROR;
+            statusBlock->Information=inputBytes;
+        } else if(NvxGspUpload(engine,saved.GpuVa+upload.Offset,
                 (PUCHAR)RequestPacket->InputBuffer+headerBytes,upload.Bytes)) {
             status=NO_ERROR;
             statusBlock->Information=inputBytes;
@@ -2861,7 +2867,13 @@ BOOLEAN NTAPI HwVidStartIO(
         }
         entry->Busy=TRUE;saved=*entry;
         Nvx3dUnlockBuffers();
-        if(NvxGspReadUserBuffer(engine,saved.GpuVa+download.Offset,
+        if((saved.Usage&NVX_3D_USAGE_GART_BUFFER)&&saved.SystemVirtual) {
+            VideoPortMoveMemory(RequestPacket->OutputBuffer,
+                                (PUCHAR)saved.SystemVirtual+download.Offset,
+                                download.Bytes);
+            status=NO_ERROR;
+            statusBlock->Information=download.Bytes;
+        } else if(NvxGspReadUserBuffer(engine,saved.GpuVa+download.Offset,
                 RequestPacket->OutputBuffer,download.Bytes)) {
             status=NO_ERROR;
             statusBlock->Information=download.Bytes;

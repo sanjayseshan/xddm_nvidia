@@ -3932,6 +3932,8 @@ static BOOLEAN NvxGspUserAllocationContains(PNVX_DEVICE_EXTENSION dev,
     return FALSE;
 }
 
+#define NVX_GSP_READ_SCRATCH_BYTES 0x1000U
+
 /* Read one dword-aligned raw BO range through the CE. The 4 KiB staging
    window is private miniport DMA memory; caller pointers are never mapped
    into the GPU address space. Larger BO maps must be assembled in chunks. */
@@ -3941,6 +3943,7 @@ BOOLEAN NvxGspReadUserBuffer(PVOID HwDeviceExtension,ULONG64 srcVa,
     PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
     PUCHAR scratch;
     ULONG wait;
+    ULONG remaining, offset;
 
     if(!dev||!output||!bytes||bytes>NVX_3D_MAX_DOWNLOAD_BYTES||
        (bytes&3U)||(srcVa&3ULL)||
@@ -3951,22 +3954,33 @@ BOOLEAN NvxGspReadUserBuffer(PVOID HwDeviceExtension,ULONG64 srcVa,
     if(!NvxGspUserAllocationContains(dev,srcVa,bytes,FALSE))
         return FALSE;
 
-    for(wait=0;wait<20000;wait++) {
-        if(!__sync_lock_test_and_set(&NvxGrUserSubmitBusy,1)) break;
-        VideoPortStallExecution(10);
-    }
-    if(wait==20000) return FALSE;
-
     scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET+0xe000;
-    VideoPortZeroMemory(scratch,NVX_3D_MAX_DOWNLOAD_BYTES);
-    if(!NvxGspSubmitCopy2DLocked(dev,dev->GspScratchGpuVa+0xe000,
-                                 srcVa,bytes,bytes,bytes,1U)) {
+    remaining=bytes;
+    offset=0;
+
+    while(remaining>0) {
+        ULONG chunk=(remaining>NVX_GSP_READ_SCRATCH_BYTES)?
+                     NVX_GSP_READ_SCRATCH_BYTES:remaining;
+
+        for(wait=0;wait<20000;wait++) {
+            if(!__sync_lock_test_and_set(&NvxGrUserSubmitBusy,1)) break;
+            VideoPortStallExecution(10);
+        }
+        if(wait==20000) return FALSE;
+
+        VideoPortZeroMemory(scratch,NVX_GSP_READ_SCRATCH_BYTES);
+        if(!NvxGspSubmitCopy2DLocked(dev,dev->GspScratchGpuVa+0xe000,
+                                     srcVa+offset,chunk,chunk,chunk,1U)) {
+            __sync_lock_release(&NvxGrUserSubmitBusy);
+            return FALSE;
+        }
+        __sync_synchronize();
+        VideoPortMoveMemory((PUCHAR)output+offset,scratch,chunk);
         __sync_lock_release(&NvxGrUserSubmitBusy);
-        return FALSE;
+
+        offset+=chunk;
+        remaining-=chunk;
     }
-    __sync_synchronize();
-    VideoPortMoveMemory(output,scratch,bytes);
-    __sync_lock_release(&NvxGrUserSubmitBusy);
     return TRUE;
 }
 

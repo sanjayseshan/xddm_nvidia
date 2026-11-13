@@ -1,0 +1,52 @@
+diff --git a/src/gallium/drivers/nouveau/nvc0/nvc0_transfer.c b/src/gallium/drivers/nouveau/nvc0/nvc0_transfer.c
+index 7a2531e68e17..3ab39373de56 100644
+--- a/src/gallium/drivers/nouveau/nvc0/nvc0_transfer.c
++++ b/src/gallium/drivers/nouveau/nvc0/nvc0_transfer.c
+@@ -351,7 +351,8 @@ nvc0_mt_transfer_can_map_directly(struct nv50_miptree *mt)
+ {
+    if (mt->base.domain == NOUVEAU_BO_VRAM)
+       return false;
+-   if (mt->base.base.usage != PIPE_USAGE_STAGING)
++   if (mt->base.base.usage != PIPE_USAGE_STAGING &&
++       !(mt->base.base.bind & (PIPE_BIND_SHARED | PIPE_BIND_LINEAR)))
+       return false;
+    return !nouveau_bo_memtype(mt->base.bo);
+ }
+@@ -387,8 +388,13 @@ nvc0_miptree_transfer_map(struct pipe_context *pctx,
+ 
+    if (nvc0_mt_transfer_can_map_directly(mt)) {
+       ret = !nvc0_mt_sync(nvc0, mt, usage);
+-      if (!ret)
+-         ret = BO_MAP(nvc0->base.screen, mt->base.bo, 0, NULL);
++      if (!ret) {
++         if (usage & PIPE_MAP_READ)
++            flags |= NOUVEAU_BO_RD;
++         if (usage & PIPE_MAP_WRITE)
++            flags |= NOUVEAU_BO_WR;
++         ret = BO_MAP(nvc0->base.screen, mt->base.bo, flags, nvc0->base.client);
++      }
+       if (ret &&
+           (usage & PIPE_MAP_DIRECTLY))
+          return NULL;
+diff --git a/src/gallium/winsys/nouveau/drm/nouveau.c b/src/gallium/winsys/nouveau/drm/nouveau.c
+index a942cff18633..31c9046a1fe4 100644
+--- a/src/gallium/winsys/nouveau/drm/nouveau.c
++++ b/src/gallium/winsys/nouveau/drm/nouveau.c
+@@ -865,6 +865,8 @@ nouveau_bo_set_prime(struct nouveau_bo *bo, int *prime_fd)
+ static inline struct nouveau_pushbuf *
+ cli_push_get(struct nouveau_client *client, struct nouveau_bo *bo)
+ {
++   if (!client)
++      return NULL;
+    struct nouveau_client_priv *pcli = nouveau_client(client);
+    struct nouveau_pushbuf *push = NULL;
+    if (pcli->kref_nr > bo->handle)
+@@ -875,6 +877,8 @@ cli_push_get(struct nouveau_client *client, struct nouveau_bo *bo)
+ static inline struct drm_nouveau_gem_pushbuf_bo *
+ cli_kref_get(struct nouveau_client *client, struct nouveau_bo *bo)
+ {
++   if (!client)
++      return NULL;
+    struct nouveau_client_priv *pcli = nouveau_client(client);
+    struct drm_nouveau_gem_pushbuf_bo *kref = NULL;
+    if (pcli->kref_nr > bo->handle)

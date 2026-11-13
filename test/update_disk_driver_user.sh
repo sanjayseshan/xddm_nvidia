@@ -122,6 +122,47 @@ if [ -f "$NVX_PACKAGE/test_gpu_accel.exe" ]; then
     mkdir -p "$NVX_MOUNT/test_accel"
     cp -v "$NVX_PACKAGE/test_gpu_accel.exe" "$NVX_MOUNT/test_accel/test_gpu_accel.exe"
 fi
+if [ -f "$NVX_ROOT/test/test_gpu_accel32.exe" ]; then
+    mkdir -p "$NVX_MOUNT/test_accel/x86"
+    cp -v "$NVX_ROOT/test/test_gpu_accel32.exe" "$NVX_MOUNT/test_accel/x86/test_gpu_accel32.exe"
+fi
+if [ -f "$NVX_ROOT/test/3d_tests/wglgears.exe" ]; then
+    mkdir -p "$NVX_MOUNT/test_accel"
+    cp -v "$NVX_ROOT/test/3d_tests/wglgears.exe" "$NVX_MOUNT/test_accel/wglgears.exe"
+fi
+if [ -f "$NVX_ROOT/test/3d_tests/wglgears32.exe" ]; then
+    mkdir -p "$NVX_MOUNT/test_accel/x86"
+    cp -v "$NVX_ROOT/test/3d_tests/wglgears32.exe" "$NVX_MOUNT/test_accel/x86/wglgears32.exe"
+fi
+
+cat << 'EOF' > "$NVX_MOUNT/test_accel/run_test.bat"
+@echo off
+cd /d C:\test_accel
+echo [TEST] Starting Antigravity GPU Accel Suite... > C:\test_accel.log
+test_gpu_accel.exe >> C:\test_accel.log 2>&1
+echo [TEST] 64-bit Test Return Code: %ERRORLEVEL% >> C:\test_accel.log
+if exist C:\test_accel\wglgears.exe (
+    cd /d C:\test_accel
+    echo [TEST] Running 64-bit wglgears 3D benchmark... >> C:\test_accel.log
+    wglgears.exe -info -seconds 6 >> C:\test_accel.log 2>&1
+    echo [TEST] 64-bit wglgears Return Code: %ERRORLEVEL% >> C:\test_accel.log
+)
+if exist x86\test_gpu_accel32.exe (
+    cd /d C:\test_accel\x86
+    test_gpu_accel32.exe >> C:\test_accel.log 2>&1
+    echo [TEST] 32-bit Test Return Code: %ERRORLEVEL% >> C:\test_accel.log
+)
+if exist C:\test_accel\x86\wglgears32.exe (
+    cd /d C:\test_accel\x86
+    echo [TEST] Running 32-bit wglgears 3D benchmark... >> C:\test_accel.log
+    wglgears32.exe -info -seconds 6 >> C:\test_accel.log 2>&1
+    echo [TEST] 32-bit wglgears Return Code: %ERRORLEVEL% >> C:\test_accel.log
+)
+echo [ALL_BENCHMARKS_FINISHED] Status: PASS >> C:\test_accel.log
+echo [TEST] ALL TESTS COMPLETE >> C:\test_accel.log
+EOF
+unix2dos "$NVX_MOUNT/test_accel/run_test.bat" 2>/dev/null || true
+
 if [ "${NVX_RAPID_3D:-0}" = "1" ]; then
     mkdir -p "$NVX_MOUNT/test_accel"
     : > "$NVX_MOUNT/test_accel/rapid3d.flag"

@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="3.0.0.167"
+NVX_TEST_VERSION="3.0.0.173"
 NVX_REQUIRE_HW_OPENGL="${NVX_REQUIRE_HW_OPENGL:-1}"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 NVX_TEST_FLAGS=()
@@ -151,8 +151,10 @@ finish() {
     echo
     echo "==> Result log: $NVX_RUN_LOG"
     if [ -f "$NVX_ROOT/winxp_x64.qcow2" ] && command -v guestfish >/dev/null 2>&1; then
-        for guest_log in mesa_bridge.log nvx_nouveau_trace.log; do
+        for guest_log in mesa_bridge.log nvx_nouveau_trace.log test_accel.log wglgears.log; do
             echo "==> Guest OpenGL trace: $guest_log"
+            guestfish --ro -a "$NVX_ROOT/winxp_x64.qcow2" -i cat "/$guest_log" \
+                >> "$NVX_RUN_LOG" 2>/dev/null || \
             guestfish --ro -a "$NVX_ROOT/winxp_x64.qcow2" -i cat "/test_accel/$guest_log" \
                 >> "$NVX_RUN_LOG" 2>/dev/null || true
         done
@@ -165,6 +167,10 @@ finish() {
         else
             echo "DISPLAY RESULT: No display verification recorded; monitor activation is unverified."
         fi
+        if grep -q '\[OPENGL_FRAME_PROGRESS\]' "$NVX_RUN_LOG"; then
+            echo "==> OpenGL Frame Progress:"
+            grep '\[OPENGL_FRAME_PROGRESS\]' "$NVX_RUN_LOG" | tail -6 || true
+        fi
         if grep -q '\[OPENGL_RESULT\]' "$NVX_RUN_LOG"; then
             grep '\[OPENGL_RESULT\]' "$NVX_RUN_LOG" | tail -1
             if grep -q '\[OPENGL_RESULT\] RENDERED' "$NVX_RUN_LOG"; then
@@ -176,6 +182,10 @@ finish() {
             fi
         else
             echo "OPENGL RESULT: no current renderer classification was recorded."
+        fi
+        if grep -q '\[WGLGEARS\]' "$NVX_RUN_LOG"; then
+            echo "==> Wglgears 3D Benchmark:"
+            grep -E '\[WGLGEARS\]|GL_RENDERER|GL_VENDOR|GL_VERSION' "$NVX_RUN_LOG" | tail -10 || true
         fi
         if grep -q '\[NVX_3D_RESULT\]' "$NVX_RUN_LOG"; then
             grep '\[NVX_3D_RESULT\]' "$NVX_RUN_LOG" | tail -1

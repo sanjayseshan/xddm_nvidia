@@ -1,11 +1,34 @@
+diff --git a/src/gallium/drivers/softpipe/sp_clear.c b/src/gallium/drivers/softpipe/sp_clear.c
+index feed7c2ab0d8..5d6e74598f86 100644
+--- a/src/gallium/drivers/softpipe/sp_clear.c
++++ b/src/gallium/drivers/softpipe/sp_clear.c
+@@ -41,6 +41,9 @@
+ #include "sp_query.h"
+ #include "sp_tile_cache.h"
+ 
++extern void nvx_wgl_notify_clear(struct softpipe_context *sp, unsigned buffers,
++                                const union pipe_color_union *color,
++                                double depth);
+ 
+ /**
+  * Clear the given buffers to the specified values.
+@@ -65,6 +68,8 @@ softpipe_clear(struct pipe_context *pipe, unsigned buffers,
+    if (!softpipe_check_render_cond(softpipe))
+       return;
+ 
++   nvx_wgl_notify_clear(softpipe, buffers, color, depth);
++
+ #if 0
+    softpipe_update_derived(softpipe, MESA_PRIM_TRIANGLES); /* not needed?? */
+ #endif
 diff --git a/src/gallium/drivers/softpipe/sp_prim_vbuf.c b/src/gallium/drivers/softpipe/sp_prim_vbuf.c
-index d91946377d9..6f07fc59186 100644
+index d91946377d9f..6f07fc591862 100644
 --- a/src/gallium/drivers/softpipe/sp_prim_vbuf.c
 +++ b/src/gallium/drivers/softpipe/sp_prim_vbuf.c
 @@ -45,6 +45,13 @@
  #include "util/u_memory.h"
  #include "util/u_prim.h"
-
+ 
 +extern int nvx_wgl_try_softpipe_triangle(struct softpipe_context *sp,
 +                                         const void *vertices,
 +                                         const uint16_t *indices,
@@ -13,13 +36,13 @@ index d91946377d9..6f07fc59186 100644
 +                                         unsigned primitive,
 +                                         unsigned count);
 +
-
+ 
  #define SP_MAX_VBUF_INDEXES 1024
  #define SP_MAX_VBUF_SIZE    4096
 @@ -167,6 +174,10 @@ sp_vbuf_draw_elements(struct vbuf_render *vbr, const uint16_t *indices, uint nr)
     const bool flatshade_first = softpipe->rasterizer->flatshade_first;
     unsigned i;
-
+ 
 +   if (nvx_wgl_try_softpipe_triangle(softpipe, vertex_buffer, indices, stride,
 +                                     cvbr->prim, nr))
 +      return;
@@ -30,7 +53,7 @@ index d91946377d9..6f07fc59186 100644
 @@ -364,6 +375,10 @@ sp_vbuf_draw_arrays(struct vbuf_render *vbr, uint start, uint nr)
     const bool flatshade_first = softpipe->rasterizer->flatshade_first;
     unsigned i;
-
+ 
 +   if (nvx_wgl_try_softpipe_triangle(softpipe, vertex_buffer, NULL, stride,
 +                                     cvbr->prim, nr))
 +      return;
@@ -39,43 +62,64 @@ index d91946377d9..6f07fc59186 100644
     case MESA_PRIM_POINTS:
        for (i = 0; i < nr; i++) {
 diff --git a/src/gallium/targets/wgl/wgl.c b/src/gallium/targets/wgl/wgl.c
-index 100753a18bf7..7e4257a71914 100644
+index 100753a18bf7..ae560910c9d9 100644
 --- a/src/gallium/targets/wgl/wgl.c
 +++ b/src/gallium/targets/wgl/wgl.c
-@@ -50,0 +51 @@
+@@ -48,6 +48,7 @@
+ #include "softpipe/sp_texture.h"
+ #include "softpipe/sp_screen.h"
+ #include "softpipe/sp_public.h"
 +static bool use_softpipe = false;
-@@ -78,0 +80,3 @@ static const char *created_driver_name = NULL;
+ #endif
+ 
+ #ifdef GALLIUM_LLVMPIPE
+@@ -76,6 +77,9 @@ static bool use_zink = false;
+ 
+ static const char *created_driver_name = NULL;
+ 
 +extern void nvx_wgl_set_hdc(HDC hdc);
 +extern struct pipe_screen *nvx_wgl_create_native_nouveau_screen(void);
 +
-@@ -108,5 +112,14 @@ wgl_screen_create_by_name(HDC hDC, const char* driver, struct sw_winsys *winsys)
+ /* this must outlive later option lookups, which reuse the getenv buffer on windows */
+ DEBUG_GET_ONCE_OPTION(gallium_driver, "GALLIUM_DRIVER", "")
+ 
+@@ -108,7 +112,16 @@ wgl_screen_create_by_name(HDC hDC, const char* driver, struct sw_winsys *winsys)
  #ifdef GALLIUM_SOFTPIPE
     if (strcmp(driver, "softpipe") == 0) {
        screen = softpipe_create_screen(winsys);
 +      if (screen)
 +         use_softpipe = true;
-    }
++   }
 +#ifdef GALLIUM_NOUVEAU
 +   if (strcmp(driver, "nouveau") == 0) {
 +      screen = nvx_wgl_create_native_nouveau_screen();
 +      if (screen)
 +         return screen;
-+   }
+    }
 +#endif
  #endif
-@@ -117,4 +132,6 @@
+ 
+    return screen;
+@@ -117,6 +130,8 @@ wgl_screen_create_by_name(HDC hDC, const char* driver, struct sw_winsys *winsys)
  static struct pipe_screen *
  wgl_screen_create(HDC hDC)
  {
 +   nvx_wgl_set_hdc(hDC);
 +
     struct sw_winsys *winsys;
-@@ -127,3 +146,4 @@ wgl_screen_create(HDC hDC)
+    UNUSED bool sw_only = debug_get_bool_option("LIBGL_ALWAYS_SOFTWARE", false);
+ 
+@@ -126,6 +141,7 @@ wgl_screen_create(HDC hDC)
+ 
     const char *const drivers[] = {
        debug_get_option_gallium_driver(),
 +      sw_only ? "" : "nouveau",
  #ifdef GALLIUM_D3D12
-@@ -205,6 +225,11 @@ wgl_present(struct pipe_screen *screen,
+       sw_only ? "" : "d3d12",
+ #endif
+@@ -203,10 +219,41 @@ wgl_present(struct pipe_screen *screen,
+ #endif
+ 
  #ifdef GALLIUM_SOFTPIPE
 -   winsys = softpipe_screen(screen)->winsys,
 -   dt = softpipe_resource(res)->dt,
@@ -87,28 +131,34 @@ index 100753a18bf7..7e4257a71914 100644
 +      return;
 +   }
  #endif
-+   if (screen->flush_frontbuffer)
++   if (screen->flush_frontbuffer) {
 +      screen->flush_frontbuffer(screen, ctx, res, 0, 0, hDC, 0, NULL);
++      return;
++   }
++   if (ctx && res && hDC && ctx->texture_map && ctx->texture_unmap) {
++      struct pipe_box box;
++      memset(&box, 0, sizeof(box));
++      box.width = res->width0;
++      box.height = res->height0;
++      box.depth = 1;
++      struct pipe_transfer *transfer = NULL;
++      void *map = ctx->texture_map(ctx, res, 0, PIPE_MAP_READ, &box, &transfer);
++      if (map && transfer) {
++         BITMAPINFO bmi;
++         memset(&bmi, 0, sizeof(bmi));
++         bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
++         bmi.bmiHeader.biWidth = transfer->stride ? (transfer->stride / 4) : res->width0;
++         bmi.bmiHeader.biHeight = -(LONG)res->height0;
++         bmi.bmiHeader.biPlanes = 1;
++         bmi.bmiHeader.biBitCount = 32;
++         bmi.bmiHeader.biCompression = BI_RGB;
++         bmi.bmiHeader.biSizeImage = transfer->stride * res->height0;
++         StretchDIBits(hDC, 0, 0, res->width0, res->height0,
++                       0, 0, res->width0, res->height0,
++                       map, &bmi, DIB_RGB_COLORS, SRCCOPY);
++         ctx->texture_unmap(ctx, transfer);
++      }
++   }
  }
-diff --git a/src/gallium/drivers/softpipe/sp_clear.c b/src/gallium/drivers/softpipe/sp_clear.c
---- a/src/gallium/drivers/softpipe/sp_clear.c
-+++ b/src/gallium/drivers/softpipe/sp_clear.c
-@@ -18,6 +18,9 @@
- #include "sp_query.h"
- #include "sp_tile_cache.h"
-
-+extern void nvx_wgl_notify_clear(struct softpipe_context *sp, unsigned buffers,
-+                                const union pipe_color_union *color,
-+                                double depth);
-
- /**
-  * Clear the given buffers to the specified values.
-@@ -65,6 +68,8 @@ softpipe_clear(struct pipe_context *pipe, unsigned buffers,
-    if (!softpipe_check_render_cond(softpipe))
-       return;
-
-+   nvx_wgl_notify_clear(softpipe, buffers, color, depth);
-+
- #if 0
-    softpipe_update_derived(softpipe, MESA_PRIM_TRIANGLES); /* not needed?? */
- #endif
+ 
+ 

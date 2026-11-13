@@ -1352,3 +1352,32 @@ Relevant files: `mesa_patches/nvx_xf86drm.c`,
 - Relevant files: `mesa_patches/nvx_nouveau_bo.c`,
   `mesa_patches/nvx_nouveau_bo.h`, `mesa_patches/nvx_xf86drm.c`,
   `test/test_full_driver.sh`, and `dist_full/nvx.inf`.
+
+### Revision 3.0.0.169 — Mesa stack corruption fix & fence stall cleanup
+
+- Identified stack variable uninitialized data in `gm200_validate_sample_locations()`
+  (`mesa/src/gallium/drivers/nouveau/nvc0/nvc0_state_validate.c`): `unsigned cb[64]`
+  was uploaded to constant buffers without zero-initialization on MSAA 1x.
+  Added `mesa_patches/0029-nouveau-zero-cb-sample-locations.patch` (`unsigned cb[64] = {0};`).
+- Registered patch 0029 in `test/apply_mesa_xp_patches.sh` and `test/build_mesa_xp64.sh`.
+- Rebuilt Mesa XP64 ICD (`dist_full/nvxogl64.dll` and `dist_full/nvxmesa.dll`).
+- Reverted transient inner-loop test shader compilation in `test/test_gpu_accel.c`
+  which caused PGRAPH pipeline stalls at fence 0x5B during program deletion.
+- Version bumped to 3.0.0.169 in `dist_full/nvx.inf` and `test/test_full_driver.sh`.
+
+### Revision 3.0.0.173 — Direct GART memory transfer, 4 MiB ABI download, and 60 FPS pacing
+
+- Optimized `IOCTL_NVX_3D_DOWNLOAD_BUFFER` and `IOCTL_NVX_3D_UPLOAD_BUFFER` in `src_driver/nvxmp.c`:
+  for GART buffers, CPU reads/writes directly from/to `saved.SystemVirtual` via `VideoPortMoveMemory`,
+  bypassing the GSP Copy Engine and avoiding GPU synchronization stalls.
+- Raised `NVX_3D_MAX_DOWNLOAD_BYTES` from 4 KiB to 4 MiB in `src_driver/nvx_3d_abi.h` and Mesa winsys.
+  A 632x453 framebuffer now downloads in 1 single IOCTL instead of 280 chunked IOCTLs.
+- Updated `NvxGspReadUserBuffer` in `src_driver/nvx_gsp.c` to iterate in 4 KiB chunks through the GSP
+  scratch window for VRAM buffer readbacks.
+- Added `mesa_patches/0030-nouveau-xp-direct-linear-transfer-map.patch` with NULL client guards in
+  `nouveau.c` and direct linear transfer mapping in `nvc0_transfer.c`.
+- Added `timeBeginPeriod(1)` and performance counter pacing in `test/test_gpu_accel.c` to achieve smooth
+  60 FPS rendering.
+- Deployed and verified both `test_gpu_accel.exe` (52.2 FPS) and `wglgears.exe` (55-63 FPS) under hardware acceleration.
+
+

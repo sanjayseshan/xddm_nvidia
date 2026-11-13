@@ -30,7 +30,9 @@ $repo_root/mesa_patches/0024-nouveau-xp-linear-kind-tiled-depth.patch
 $repo_root/mesa_patches/0025-nouveau-xp-force-cpu-prep.patch
 $repo_root/mesa_patches/0026-nouveau-xp-render-target-trace.patch
 $repo_root/mesa_patches/0027-mesa-begin-end-staging-trace.patch
-$repo_root/mesa_patches/0028-nouveau-xp-widen-cached-bo-map.patch"
+$repo_root/mesa_patches/0028-nouveau-xp-widen-cached-bo-map.patch
+$repo_root/mesa_patches/0029-nouveau-zero-cb-sample-locations.patch
+$repo_root/mesa_patches/0030-nouveau-xp-direct-linear-transfer-map.patch"
 expected_revision=cc2dcf9abdc6afc093e85d48e4cfa34eed60a01e
 
 actual_revision=$(git -C "$mesa_dir" rev-parse HEAD)

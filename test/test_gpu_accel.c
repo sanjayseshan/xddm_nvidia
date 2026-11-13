@@ -2534,7 +2534,8 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
 #endif
     glEnable(GL_DEPTH_TEST);
 
-    const int GL_FRAMES = 100;
+    const char *envFrames = getenv("NVX_OPENGL_FRAMES");
+    const int GL_FRAMES = (envFrames && atoi(envFrames) > 0) ? atoi(envFrames) : 300;
     LogMsg("-> Rendering %d 3D animated cube frames with SwapBuffers...\n", GL_FRAMES);
 
     int framesRendered = 0;
@@ -2542,12 +2543,24 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
     double intervalStart = tStart;
     unsigned intervalBatches = mesaGpuBridgeBatchCount;
     for (int frame = 0; frame < GL_FRAMES; frame++) {
+        double tFrameStart = GetTimeSeconds();
+        MSG msg;
+        while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
+            if (msg.message == WM_QUIT) goto end_gl_loop;
+            TranslateMessage(&msg);
+            DispatchMessageA(&msg);
+        }
+
+        if (GetAsyncKeyState(VK_ESCAPE) & 0x8000)
+            break;
+
         if (frame == 0) LogMsg("[OPENGL_FRAME0] clear begin\n");
         glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         if (frame == 0) LogMsg("[OPENGL_FRAME0] clear complete; cube draw begin\n");
 
-        DrawCube((float)frame * 3.6f);
+        float angle = (float)((GetTimeSeconds() - tStart) * 90.0);
+        DrawCube(angle);
         if (frame == 0) LogMsg("[OPENGL_FRAME0] cube draw complete; swap begin\n");
 
         BOOL swapResult = directDdiCurrent ? directSwapBuffers(hdc) : SwapBuffers(hdc);
@@ -2560,18 +2573,29 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             break;
         }
         framesRendered++;
-        if ((framesRendered % 10) == 0 || framesRendered == GL_FRAMES) {
+        if ((framesRendered % 30) == 0 || framesRendered == GL_FRAMES) {
             DumpMesaBridgeTrace();
             double intervalEnd = GetTimeSeconds();
+            double intervalFrames = (framesRendered % 30) == 0 ? 30.0 : (double)(framesRendered % 30);
             LogMsg("[OPENGL_FRAME_PROGRESS] frames=%d/%d interval_s=%.3f interval_fps=%.1f gpu_batches=%u\n",
                    framesRendered, GL_FRAMES, intervalEnd - intervalStart,
                    intervalEnd > intervalStart ?
-                       10.0 / (intervalEnd - intervalStart) : 0.0,
+                       intervalFrames / (intervalEnd - intervalStart) : 0.0,
                    mesaGpuBridgeBatchCount - intervalBatches);
             intervalStart = intervalEnd;
             intervalBatches = mesaGpuBridgeBatchCount;
         }
+
+        /* Smooth 60 FPS pacing */
+        double tFrameEnd = GetTimeSeconds();
+        double frameElapsed = tFrameEnd - tFrameStart;
+        if (frameElapsed < 0.0166) {
+            DWORD sleepMs = (DWORD)((0.0166 - frameElapsed) * 1000.0);
+            if (sleepMs > 0)
+                Sleep(sleepMs);
+        }
     }
+end_gl_loop:
     double tEnd = GetTimeSeconds();
 
     double dt = tEnd - tStart;
@@ -4365,6 +4389,15 @@ int main(int argc, char **argv)
 {
     InitLogging();
     LogMsg("[CLIENT_PROCESS] pid=%lu\n", (unsigned long)GetCurrentProcessId());
+
+    HMODULE hWinmm = LoadLibraryA("winmm.dll");
+    if (hWinmm) {
+        typedef UINT (WINAPI *PFN_timeBeginPeriod)(UINT);
+        PFN_timeBeginPeriod pfnTimeBeginPeriod =
+            (PFN_timeBeginPeriod)(void *)GetProcAddress(hWinmm, "timeBeginPeriod");
+        if (pfnTimeBeginPeriod)
+            pfnTimeBeginPeriod(1);
+    }
 
     LogMsg("\n==================================================================\n");
     LogMsg(" NVX XP Graphics Verification Suite (2D correctness and 3D renderer audit)\n");
