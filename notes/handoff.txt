@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.150`; `.151` reads immediate vertices back from GPU memory.
+Updated November 13, 2026 after VFIO run `.151`; `.152` flushes direct-address vertex BOs.
 
 ## Current status
 
@@ -12,15 +12,18 @@ that those bytes are present in the CPU BO shadow at VA `0x160900e0` (offset
 224). The `.150` NVC0 snapshot matches the passing array draw in captured
 vertex formats, strides, shader bindings, and other state; only the position
 array base differs (`0x16090010` for array input, `0x160900e0` for immediate).
-Transform feedback still receives `(0,0,0,1)`. Since `.150`'s buffer capture
-read the CPU shadow, it does not establish what the GPU fetched. Revision
-`.151` performs a direct buffer download after the immediate draw's fence to
-compare GPU memory with the shadow.
+The `.151` post-fence GPU download then showed that allocation range contains
+only zeros on the GPU, while the CPU shadow contains the expected triangle.
+This confirms the immediate vertex buffer was not uploaded before submission.
+The cause is now identified: `nvx_drm_submit_pushbuf` flushed writable shadows
+before resolving direct NVC0 vertex-address references, so BO `0x16` was omitted.
+Revision `.152` resolves references first, then flushes every referenced BO that
+is GPU-readable and has a writable CPU shadow.
 
-Full `.150` log: `test_logs/v3.0.0.150-20261113-034515.log`. XP booted and
+Full `.151` log: `test_logs/v3.0.0.151-20261113-034958.log`. XP booted and
 shut down normally; explicit GLSL array draw passed with 1,352 pixels. The cube
-remains black. Animation reached 100 frames in 5.2591 seconds (19.0 FPS), then
-timed out at FIFO/fence `0xdb`; firmware assertions reached 3. The GR triangle
+remains black. Animation reached 100 frames in 3.7978 seconds (26.3 FPS), then
+timed out at FIFO/fence `0x81`; firmware assertions reached 3. The GR triangle
 and semaphore passed. `[OPENGL_RESULT]` remains FAIL and no cube frame is proven.
 
 The XP x64 Mesa ICD builds and selects Mesa / NV170 (OpenGL 4.3 Compatibility
@@ -1041,3 +1044,15 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   download; `source=2` means download failure; `source=3` means fence timeout.
   This directly tests whether persistent CPU shadow writes reached VRAM/GART.
 - Version bumped to `3.0.0.151`; VFIO result pending.
+
+
+### Revision 3.0.0.152 — flush direct-address vertex BOs
+
+- The `.151` GPU readback of vertex BO `0x16` at `0x160900e0` returned zeros
+  (`source=0`), while the CPU shadow held the expected `(-0.8,-0.8,0)`,
+  `(0.8,-0.8,0)`, `(0,0.8,0)` values.
+- Moves writable-shadow upload until after NVC0 direct GPU-address references
+  are resolved, then flushes all referenced read-domain BOs with writable
+  mappings. This includes vertex BOs that are absent from Nouveau's explicit
+  `request->buffers` list.
+- Test/package version is bumped to `3.0.0.152`; VFIO result pending.

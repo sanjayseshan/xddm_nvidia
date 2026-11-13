@@ -614,30 +614,6 @@ nvx_drm_submit_pushbuf(int fd,
       }
    }
 
-   /* Mesa's glBegin/glEnd vertex buffer may remain persistently mapped until
-    * context destruction. The XP Winsys exposes CPU shadow memory for mapped
-    * BOs, so persistent writes are not visible to the GPU until uploaded.
-    * Publish referenced writable shadows before translating/submitting the
-    * batch. */
-   for (i = 0; i < request->nr_buffers; i++) {
-      struct nvx_drm_bo_slot *slot =
-         nvx_drm_find_bo_locked(device, buffers[i].handle);
-      if (!slot)
-         goto done;
-      if (!buffers[i].read_domains || !slot->bo.map_count ||
-          !(slot->bo.map_access & NVX_NOUVEAU_BO_WRITE))
-         continue;
-      if (!NvxNouveauBoFlush(&slot->bo))
-         goto done;
-      flushed_shadow_count++;
-      if (nvx_drm_shadow_flush_trace_count < 16U) {
-         uint32_t trace_index = nvx_drm_shadow_flush_trace_count++;
-         NvxWglRecordNouveauPushbufItem(13U, trace_index,
-            buffers[i].handle, (uint32_t)slot->bo.allocation.Bytes,
-            buffers[i].read_domains, buffers[i].write_domains,
-            slot->bo.map_count, slot->bo.map_access);
-      }
-   }
 
    for (i = 0; i < request->nr_push; i++) {
       struct nvx_drm_bo_slot *slot;
@@ -669,6 +645,39 @@ nvx_drm_submit_pushbuf(int fd,
              (size_t)NVX_3D_MAX_BATCH_BUFFERS * sizeof(references[0]),
           dword_count, references, &reference_count))
       goto done;
+
+   /* Flush after direct NVC0 addresses have been resolved. Nouveau vertex BOs
+    * can be referenced only by VERTEX_ARRAY_START, so they are absent from
+    * request->buffers and were missed by an earlier flush pass. */
+   for (i = 0; i < reference_count; i++) {
+      struct nvx_drm_bo_slot *slot = NULL;
+      uint32_t slot_index;
+      if (!(references[i].Access & NVX_3D_RELOC_READ))
+         continue;
+      for (slot_index = 0; slot_index < NVX_DRM_BUFFER_SLOTS; slot_index++) {
+         if (device->buffers[slot_index].handle &&
+             device->buffers[slot_index].bo.allocation.BufferId ==
+                references[i].BufferId) {
+            slot = &device->buffers[slot_index];
+            break;
+         }
+      }
+      if (!slot)
+         goto done;
+      if (!slot->bo.map_count ||
+          !(slot->bo.map_access & NVX_NOUVEAU_BO_WRITE))
+         continue;
+      if (!NvxNouveauBoFlush(&slot->bo))
+         goto done;
+      flushed_shadow_count++;
+      if (nvx_drm_shadow_flush_trace_count < 16U) {
+         uint32_t trace_index = nvx_drm_shadow_flush_trace_count++;
+         NvxWglRecordNouveauPushbufItem(13U, trace_index,
+            (uint32_t)references[i].BufferId,
+            (uint32_t)slot->bo.allocation.Bytes, references[i].Access,
+            slot->bo.map_count, slot->bo.map_access, 1U);
+      }
+   }
 #if defined(_WIN32) || defined(_WIN64)
    if (shader_dump_count < NVX_DRM_SHADER_DUMP_LIMIT) {
       shader_dump_count = nvx_drm_capture_shader_addresses_locked(device,
