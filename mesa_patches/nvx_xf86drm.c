@@ -201,6 +201,7 @@ nvx_drm_capture_shader_addresses_locked(
             dump->bytes = NVX_DRM_SHADER_DUMP_BYTES;
             if (dump->bytes > allocation_bytes - offset)
                dump->bytes = (uint32_t)(allocation_bytes - offset) & ~3U;
+            captured++;
             break;
          }
       }
