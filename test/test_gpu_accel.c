@@ -655,13 +655,14 @@ static unsigned ReadRawMesaTargetGreenPixels(uint32_t draw_kind,
 {
     typedef int (WINAPI *PFN_READ_TARGET_RAW)(uint32_t, uint32_t *,
                                                uint32_t *, uint32_t *,
+                                               uint32_t *,
                                                uint64_t *, uint64_t *);
     HMODULE icd = GetModuleHandleA("nvxogl64.dll");
     PFN_READ_TARGET_RAW readTarget = icd ?
         (PFN_READ_TARGET_RAW)GetProcAddress(
             icd, "NvxXf86DrmReadDrawTargetRaw") : NULL;
     unsigned green = 0;
-    unsigned blue = 0;
+    unsigned blueRgba = 0, blueBgra = 0;
 
     if (buffer_id) *buffer_id = 0;
     if (target_va) *target_va = 0;
@@ -670,10 +671,10 @@ static unsigned ReadRawMesaTargetGreenPixels(uint32_t draw_kind,
     if (blue_pixels) *blue_pixels = 0;
     if (!readTarget)
         return 0;
-    if (!readTarget(draw_kind, &green, &blue, buffer_bytes, target_va,
-                    buffer_id))
+    if (!readTarget(draw_kind, &green, &blueRgba, &blueBgra, buffer_bytes,
+                    target_va, buffer_id))
         return 0;
-    if (blue_pixels) *blue_pixels = blue;
+    if (blue_pixels) *blue_pixels = blueRgba + blueBgra;
     return green;
 }
 

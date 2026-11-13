@@ -1,19 +1,19 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.134`; preparing `.135`.
+Updated November 13, 2026 after VFIO run `.135`; preparing `.136`.
 
 ## Current status
 
-The latest completed VFIO run `.134` booted on retry attempt 3 and shut down
-normally, but `[OPENGL_RESULT] FAIL`; both triangle probes remain black. The
-raw diagnostic captured the draw's exact RT VA `0x162e0000`, matching the
-NVC0 draw-state trace, downloaded 1,310,720 bytes through miniport CE, and
-found zero green pixels. The test still needs a raw count of the blue clear
-pixels to establish that the same target contains the expected pre-draw clear.
-Full log: `test_logs/v3.0.0.134-20261113-022650.log`.
+The latest completed VFIO run `.135` booted and shut down normally, but
+`[OPENGL_RESULT] FAIL`; both triangle probes remain black. The raw diagnostic
+captured exact draw target VA `0x162e0000` and downloaded 1,310,720 bytes, but
+found neither the expected green output nor the blue clear pattern in RGBA
+byte order. `glReadPixels` reports the blue clear as `(0,0,191,255)`, so revision
+`.136` also checks the equivalent BGRA memory encoding. Full log:
+`test_logs/v3.0.0.135-20261113-023147.log`.
 
-The cube ran 100 frames at 16.6 FPS, then the animation path timed out waiting
-for fence `0x1e5` at FIFO index `0x1e5`; the channel faulted and firmware
+The cube ran 100 frames at 17.0 FPS, then the animation path timed out waiting
+for fence `0x15b` at FIFO index `0x15b`; the channel faulted and firmware
 assertions rose to 3. This recurring submission fault remains separate from
 the initial triangle's zero pixels. The callback type warning has been fixed.
 
@@ -813,4 +813,15 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
 ### Revision 3.0.0.135 — verify clear bytes in captured target
 
 - Counts the expected RGBA8 blue clear color in the same exact target BO after
-  each triangle, in addition to green pixels. Full VFIO result is pending.
+  each triangle, in addition to green pixels.
+- Full VFIO log: `test_logs/v3.0.0.135-20261113-023147.log`. The exact target
+  VA matched `0x162e0000`, but raw CE data had zero green pixels and zero pixels
+  matching RGBA byte order `(0,0,191,255)`. GL readback returned the blue clear
+  and no green pixels. The cube reached 100 frames at 17.0 FPS before timeout
+  at FIFO/fence `0x15b`; firmware assertions reached 3.
+
+### Revision 3.0.0.136 — check BGRA target encoding
+
+- Counts both RGBA and BGRA byte-order encodings of the blue clear in the exact
+  target BO. This checks whether the RT format's channel order explains the
+  missing raw clear pattern. Full VFIO result is pending.
