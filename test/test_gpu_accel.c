@@ -1705,6 +1705,65 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                             if ((int)x > greenMaxX) greenMaxX = (int)x;
                             if ((int)y > greenMaxY) greenMaxY = (int)y;
                         }
+                    {
+                        unsigned immediateSamples = 0;
+                        unsigned immediatePrimitives = 0;
+                        GLfloat immediatePositions[12] = {0};
+                        unsigned immediateGreen = 0;
+                        GLenum immediateError = GL_NO_ERROR;
+                        glClearColor(0.0f, 0.0f, 0.75f, 1.0f);
+                        glClear(GL_COLOR_BUFFER_BIT);
+                        if (samplesQuery)
+                            beginQuery(0x8914U, samplesQuery);
+                        if (generatedQuery)
+                            beginQuery(0x8C87U, generatedQuery);
+                        if (transformFeedbackReady)
+                            beginTransformFeedback(GL_TRIANGLES);
+                        glBegin(GL_TRIANGLES);
+                        glVertex3f(-0.8f, -0.8f, 0.0f);
+                        glVertex3f( 0.8f, -0.8f, 0.0f);
+                        glVertex3f( 0.0f,  0.8f, 0.0f);
+                        glEnd();
+                        if (transformFeedbackReady)
+                            endTransformFeedback();
+                        if (generatedQuery)
+                            endQuery(0x8C87U);
+                        if (samplesQuery)
+                            endQuery(0x8914U);
+                        glFinish();
+                        if (samplesQuery)
+                            getQueryObjectuiv(samplesQuery, 0x8866U,
+                                              &immediateSamples);
+                        if (generatedQuery)
+                            getQueryObjectuiv(generatedQuery, 0x8866U,
+                                              &immediatePrimitives);
+                        if (transformFeedbackReady)
+                            getBufferSubData(0x8C8EU, 0,
+                                sizeof(immediatePositions), immediatePositions);
+                        if (pixels)
+                            glReadPixels(0, 0, w, h, GL_RGBA,
+                                         GL_UNSIGNED_BYTE, pixels);
+                        else
+                            immediateError = 0x0505U;
+                        if (immediateError == GL_NO_ERROR)
+                            immediateError = glGetError();
+                        for (pixel = 0; immediateError == GL_NO_ERROR && pixels &&
+                             pixel < (unsigned)w * (unsigned)h; pixel++)
+                            if (pixels[pixel * 4U + 1U] > 200U &&
+                                pixels[pixel * 4U] < 32U &&
+                                pixels[pixel * 4U + 2U] < 32U)
+                                immediateGreen++;
+                        LogMsg("[MESA_GLSL_IMMEDIATE_RESULT] primitives_generated=%u samples_passed=%u green_pixels=%u tf=%d p0=%.6f,%.6f,%.6f,%.6f p1=%.6f,%.6f,%.6f,%.6f p2=%.6f,%.6f,%.6f,%.6f error=0x%X\n",
+                            immediatePrimitives, immediateSamples,
+                            immediateGreen, transformFeedbackReady,
+                            immediatePositions[0], immediatePositions[1],
+                            immediatePositions[2], immediatePositions[3],
+                            immediatePositions[4], immediatePositions[5],
+                            immediatePositions[6], immediatePositions[7],
+                            immediatePositions[8], immediatePositions[9],
+                            immediatePositions[10], immediatePositions[11],
+                            immediateError);
+                    }
                     useProgram(0);
 
                     /* Reuse the constant-green fragment shader with Mesa's
