@@ -1,123 +1,154 @@
-Latest Nouveau/OpenGL diagnostic excerpt from test_logs/v3.0.0.123-20261113-011259.log
-The `.123` VFIO run booted on attempt 1 and shut down normally. The new programmable GLSL 1.10 probe resolved its shader API, compiled vertex and fragment shaders, linked, and submitted two NVC0 TRIANGLES batches (count 3). Their release fences completed: `0x0f/0x0f` and `0x10/0x10`. Yet the 64x64 back-buffer read found zero green pixels with `GL error=0`. Bridge `gpu_batches` increased 6 to 10. The cube still reads black; 100 frames took 8.2030 s (12.2 FPS); `[OPENGL_RESULT] FAIL`. Firmware assertion count reaches 3 during later animation.
-This proves the black-output failure also affects explicit programmable shaders, not only fixed-function-generated shaders. The actual-cube `.122` state still shows identity viewport swizzle, depth range 0..1, all target-0 color channels enabled, blend and logic-op disabled, and valid target/fetch state. The programmable triangle's own target, viewport, vertex input and shader state are not captured yet; add a separate triangle-specific trace before concluding which shared stage is at fault.
-[MESA_GLSL_TRIANGLE] shader_api=ready
-NVX [NVC0-DRAW]: completed index=2 sourceVA=0x16460000 dwords=0x107 primitive=4 start=0 count=3 fence=0x0f observed=0x0f
-NVX [NVC0-DRAW]: completed index=3 sourceVA=0x16460000 dwords=0x107 primitive=4 start=0 count=3 fence=0x10 observed=0x10
+Latest Nouveau/OpenGL trace excerpt: test_logs/v3.0.0.124-20261113-011908.log
 [MESA_GLSL_TRIANGLE_RESULT] FAIL compiled=1/1 linked=1 green_pixels=0 error=0x0
-
-[MESA_GPU_CLEAR_BACK_READBACK] pixel=32,64,191 error=0x0
-[MESA_GPU_CLEAR_BACK_RESULT] PASS
-[MESA_GPU_CUBE_RESULT] FAIL colored_pixels=0 bbox=632,453-0,0 faces=0 rgb_counts=0,0,0,0,0,0 gpu_batches=6 error=0x0
-[MESA_GPU_CUBE_NODEPTH] FAIL colored_pixels=0 error=0x0 new_gpu_batches=5 hardware_rendered=1
-[MESA_GPU_DEPTH_RESULT] FAIL gpu_batches=30 front_pixel=0,0,0 error=0x0
-NVX [NVC0-CUBE-DRAW]: completed index=0 sourceVA=0x16730000 start=0 count=24 fence=0x3f observed=0x3f
-NVX [NVC0-CUBE-DRAW]: completed index=1 sourceVA=0x16730000 start=0 count=24 fence=0x40 observed=0x40
-NVX [NVC0-CUBE-DRAW]: completed index=2 sourceVA=0x16a40000 start=0 count=24 fence=0x4b observed=0x4b
-NVX [NVC0-CUBE-DRAW]: completed index=3 sourceVA=0x16a40000 start=0 count=24 fence=0x4c observed=0x4c
-Nouveau cube draw state trace_rev=120 entries=55
-Nouveau cube draw state index=33 method_dec=6424 value=00000000
-Nouveau cube draw state index=34 method_dec=6428 value=00000901
-Nouveau cube draw state index=35 method_dec=6432 value=00000405
-[MESA_GPU_CUBE_NODEPTH] FAIL colored_pixels=0 error=0x0 new_gpu_batches=5 hardware_rendered=1
--> Rendered 100 frames in 7.6547 s (13.1 FPS)
-[OPENGL_RESULT] FAIL
-Nouveau shader dump stage=1 buffer=00000009 gpu=00000000:22e9f3c0 offset=521152 dwords=128 source=0 draw_snapshot=1
-Nouveau shader dump stage=2 buffer=00000009 gpu=00000000:22e9f2c0 offset=520896 dwords=128 source=0 draw_snapshot=1
-Nouveau shader dump stage=5 buffer=00000009 gpu=00000000:22e9f100 offset=520448 dwords=128 source=0 draw_snapshot=1
-Nouveau dwords push=0 capture=31 offset=0: 20030283 439e0000 43628000 3f000000 20030280 439e0000 c3628000 3f000000
-Nouveau dwords push=0 capture=31 offset=8: 20020300 02780000 01c50000 20020302 00000000 3f800000 20010286 00006420
-Nouveau dwords push=0 capture=31 offset=16: 200308e0 00010000 00000000 22ea0000 a01108e3 00000000 3f337c1a 3cb2f9bf
-Nouveau dwords push=0 capture=31 offset=24: 3e57f9fa 3e53b320 3c8048e2 3f7a6832 be57f9fa be53b320 3e17bd8e be53b320
-Nouveau dwords push=0 capture=31 offset=32: bf79c280 bf74d064 00000000 00000000 40452bf7 40a00000 20020458 38400000
-Nouveau dwords push=0 capture=31 offset=40: 38400001 20030700 00001018 00000000 160903a8 20020180 00000000 1610ffff
-Nouveau dwords push=0 capture=31 offset=48: 20030704 00001018 00000000 1609039c 20020182 00000000 1610ffff 200308e0
-Nouveau dwords push=0 capture=31 offset=56: 00010000 00000000 22f40000 a04108e3 000001a0 80008000 00000000 00000201
-Nouveau dwords push=0 capture=31 offset=64: 00000000 00225f10 00000000 00249b90 00000000 80008000 00000000 00000201
-Nouveau dwords push=0 capture=31 offset=72: 00000000 00249b00 0000039c 00000000 00000000 80008000 00000000 00000000
-Nouveau dwords push=0 capture=31 offset=80: 00000000 00000000 00000000 00000001 00000000 80008000 00000000 01bd7f90
-Nouveau dwords push=0 capture=31 offset=88: 00000000 01c025d8 00000000 469a8f62 00000002 80008000 00000000 01bd7f90
-Nouveau dwords push=0 capture=31 offset=96: 00000000 00000002 00000000 000001c5 00000000 80008000 c7970000 00000000
-Nouveau dwords push=0 capture=31 offset=104: 00000002 01c01f30 00000000 00000000 00000000 80008000 00000000 469d61ee
-Nouveau dwords push=0 capture=31 offset=112: 00000002 01bc8ec0 00000000 46d0eaad 00000002 80008000 000000a4 01bdec50
-Nouveau dwords push=0 capture=31 offset=120: 00000000 00000000 00000000 00000000 00000000 20040478 88888888 88888888
-Nouveau dwords push=0 capture=31 offset=128: 88888888 88888888 20010586 00000007 2002035d 00000000 00000018 80000585
-
-Cube draw state methods:
-
-Cube draw state methods:
-
-Cube draw state methods as logged in `.114` (start-method label is under investigation):
-
-Cube draw state methods as logged in `.114` (start-method label is unresolved):
-
-Cube draw state snapshot `.115`:
-
-Cube draw state snapshot `.116`:
-
-Cube draw state snapshot `.117`:
-
-Cube draw state snapshot `.118`:
-Nouveau cube draw state trace_rev=118 entries=52
-Nouveau cube draw state index=0 method_dec=892 value=00000001
-Nouveau cube draw state index=1 method_dec=2048 value=00000000
-Nouveau cube draw state index=2 method_dec=2052 value=15f40000
-Nouveau cube draw state index=3 method_dec=2056 value=00000a00
-Nouveau cube draw state index=4 method_dec=2060 value=000001c5
-Nouveau cube draw state index=5 method_dec=2064 value=000000cf
-Nouveau cube draw state index=6 method_dec=2068 value=00001000
-Nouveau cube draw state index=7 method_dec=2560 value=43900000
-Nouveau cube draw state index=8 method_dec=2564 value=c1000000
-Nouveau cube draw state index=9 method_dec=2568 value=3f000000
-Nouveau cube draw state index=10 method_dec=2572 value=43900000
-Nouveau cube draw state index=11 method_dec=2576 value=43de8000
-Nouveau cube draw state index=12 method_dec=2580 value=3f000000
-Nouveau cube draw state index=13 method_dec=3072 value=02400000
-Nouveau cube draw state index=14 method_dec=3076 value=001001b5
-Nouveau cube draw state index=15 method_dec=3584 value=00000001
-Nouveau cube draw state index=16 method_dec=3588 value=40000000
-Nouveau cube draw state index=17 method_dec=3592 value=40000000
-Nouveau cube draw state index=18 method_dec=4084 value=02780000
-Nouveau cube draw state index=19 method_dec=4088 value=01c50000
-Nouveau cube draw state index=20 method_dec=3500 value=00000000
-Nouveau cube draw state index=21 method_dec=3504 value=00000000
-Nouveau cube draw state index=22 method_dec=4448 value=38400000
-Nouveau cube draw state index=23 method_dec=4452 value=38200001
-Nouveau cube draw state index=24 method_dec=4636 value=0fac6881
-Nouveau cube draw state index=25 method_dec=4812 value=00000000
-Nouveau cube draw state index=26 method_dec=4816 value=00000000
-Nouveau cube draw state index=27 method_dec=4840 value=00000000
-Nouveau cube draw state index=28 method_dec=4872 value=00000000
-Nouveau cube draw state index=29 method_dec=4876 value=00000000
-Nouveau cube draw state index=30 method_dec=4956 value=00000000
-Nouveau cube draw state index=31 method_dec=4960 value=00000000
-Nouveau cube draw state index=32 method_dec=5656 value=00000007
-Nouveau cube draw state index=33 method_dec=7168 value=0000101c
-Nouveau cube draw state index=34 method_dec=7172 value=00000000
-Nouveau cube draw state index=35 method_dec=7176 value=16090010
-Nouveau cube draw state index=36 method_dec=7180 value=00000000
-Nouveau cube draw state index=37 method_dec=7184 value=0000101c
-Nouveau cube draw state index=38 method_dec=7188 value=00000000
-Nouveau cube draw state index=39 method_dec=7192 value=16090000
-Nouveau cube draw state index=40 method_dec=3444 value=00000000
-Nouveau cube draw state index=41 method_dec=8256 value=00000011
-Nouveau cube draw state index=42 method_dec=8276 value=00000000
-Nouveau cube draw state index=43 method_dec=8280 value=22e9f3c0
-Nouveau cube draw state index=44 method_dec=8320 value=00000020
-Nouveau cube draw state index=45 method_dec=8340 value=00000000
-Nouveau cube draw state index=46 method_dec=8344 value=22e9f2c0
-Nouveau cube draw state index=47 method_dec=8512 value=00000051
-Nouveau cube draw state index=48 method_dec=8532 value=00000000
-Nouveau cube draw state index=49 method_dec=8536 value=22e9f100
-Nouveau cube draw state index=50 method_dec=14360 value=00001b02
-Nouveau cube draw state index=51 method_dec=14368 value=00001b02
-
-Completed draw fence records `.119`:
-NVX [NVC0-DRAW]: completed index=0x0000000000000000 sourceVA=0x0000000016290000 dwords=0x0000000000000221 primitive=0x0000000000000007 start=0x0000000000000000 count=0x0000000000000008 fence=0x0000000000000005 observed=0x0000000000000005
-NVX [NVC0-DRAW]: completed index=0x0000000000000001 sourceVA=0x0000000016290000 dwords=0x0000000000000221 primitive=0x0000000000000007 start=0x0000000000000000 count=0x0000000000000008 fence=0x0000000000000006 observed=0x0000000000000006
-NVX [NVC0-DRAW]: completed index=0x0000000000000002 sourceVA=0x00000000164C0000 dwords=0x000000000000006F primitive=0x0000000000000007 start=0x0000000000000000 count=0x0000000000000004 fence=0x0000000000000015 observed=0x0000000000000015
-NVX [NVC0-DRAW]: completed index=0x0000000000000003 sourceVA=0x00000000164C0000 dwords=0x000000000000006F primitive=0x0000000000000007 start=0x0000000000000000 count=0x0000000000000004 fence=0x0000000000000016 observed=0x0000000000000016
-NVX [NVC0-DRAW]: completed index=0x0000000000000004 sourceVA=0x0000000016590000 dwords=0x0000000000000066 primitive=0x0000000000000004 start=0x0000000000000000 count=0x000000000000000C fence=0x0000000000000023 observed=0x0000000000000023
-NVX [NVC0-DRAW]: completed index=0x0000000000000005 sourceVA=0x0000000016590000 dwords=0x0000000000000066 primitive=0x0000000000000004 start=0x0000000000000000 count=0x000000000000000C fence=0x0000000000000024 observed=0x0000000000000024
-NVX [NVC0-DRAW]: completed index=0x0000000000000006 sourceVA=0x00000000166A0000 dwords=0x0000000000000085 primitive=0x0000000000000004 start=0x0000000000000000 count=0x0000000000000009 fence=0x0000000000000035 observed=0x0000000000000035
-NVX [NVC0-DRAW]: completed index=0x0000000000000007 sourceVA=0x00000000166A0000 dwords=0x0000000000000085 primitive=0x0000000000000004 start=0x0000000000000000 count=0x0000000000000009 fence=0x0000000000000036 observed=0x0000000000000036
+NVX [NVC0-DRAW]: completed index=2 primitive=4 start=0 count=3 fence=0x0f observed=0x0f
+NVX [NVC0-DRAW]: completed index=3 primitive=4 start=0 count=3 fence=0x10 observed=0x10
+GLSL triangle state:
+Nouveau draw state trace_rev=124 draw=GLSL_TRIANGLES/3 entries=64
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=0 method_dec=892 value=00000001
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=1 method_dec=2048 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=2 method_dec=2052 value=162e0000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=3 method_dec=2056 value=00000a00
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=4 method_dec=2060 value=000001c5
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=5 method_dec=2064 value=000000cf
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=6 method_dec=2068 value=00001000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=7 method_dec=2560 value=42000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=8 method_dec=2564 value=c2000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=9 method_dec=2568 value=3f000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=10 method_dec=2572 value=42000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=11 method_dec=2576 value=43d28000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=12 method_dec=2580 value=3f000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=13 method_dec=2584 value=00006420
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=14 method_dec=3072 value=00400000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=15 method_dec=3076 value=00400185
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=16 method_dec=3080 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=17 method_dec=3084 value=3f800000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=18 method_dec=3584 value=00000001
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=19 method_dec=3588 value=40000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=20 method_dec=3592 value=40000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=21 method_dec=3984 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=22 method_dec=4084 value=02780000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=23 method_dec=4088 value=01c50000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=24 method_dec=3500 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=25 method_dec=3504 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=26 method_dec=4448 value=38400000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=27 method_dec=4452 value=3a400040
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=28 method_dec=4636 value=0fac6881
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=29 method_dec=4812 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=30 method_dec=4816 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=31 method_dec=4836 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=32 method_dec=4840 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=33 method_dec=4872 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=34 method_dec=4876 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=35 method_dec=4956 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=36 method_dec=4960 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=37 method_dec=5436 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=38 method_dec=5656 value=00000004
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=39 method_dec=6424 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=40 method_dec=6428 value=00000901
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=41 method_dec=6432 value=00000405
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=42 method_dec=6596 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=43 method_dec=6656 value=00001111
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=44 method_dec=7168 value=0000100c
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=45 method_dec=7172 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=46 method_dec=7176 value=160900e0
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=47 method_dec=7180 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=48 method_dec=7184 value=0000101c
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=49 method_dec=7188 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=50 method_dec=7192 value=16090000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=51 method_dec=3444 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=52 method_dec=8256 value=00000011
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=53 method_dec=8276 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=54 method_dec=8280 value=22e9efc0
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=55 method_dec=8320 value=00000020
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=56 method_dec=8340 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=57 method_dec=8344 value=22e9f2c0
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=58 method_dec=8512 value=00000051
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=59 method_dec=8532 value=00000000
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=60 method_dec=8536 value=22e9ee80
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=61 method_dec=14360 value=00001b02
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=62 method_dec=14368 value=00001b02
+Nouveau draw state draw=GLSL_TRIANGLES/3 index=63 method_dec=14424 value=00000000
+GLSL triangle vertex input:
+Nouveau vertex dump buffer=00000016 gpu=00000000:160900e0 offset=224 dwords=72 source=1
+Nouveau vertex data offset=224: bf4ccccd bf4ccccd 00000000 3f4ccccd bf4ccccd 00000000
+Nouveau vertex data offset=248: 00000000 3f4ccccd 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=272: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=296: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=320: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=344: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=368: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=392: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=416: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=440: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=464: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=488: 00000000 00000000 00000000 00000000 00000000 00000000
+GLSL triangle shader stage dumps:
+Nouveau shader dump draw=GLSL_TRIANGLES/3 stage=1 buffer=00000009 gpu=00000000:22e9efc0 offset=520128 dwords=128 source=0 draw_snapshot=1
+Nouveau shader data offset=520128: 00020461 00000000 00000000 00000000 000ff000 00000000
+Nouveau shader data offset=520152: 0000000f 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520176: 00000000 0000f000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520200: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520224: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520248: 00000000 00000000 ff007321 000080ff 00000c00 000e1e00
+Nouveau shader data offset=520272: ff007322 00007000 00000cff 0011c400 0000794d 00000000
+Nouveau shader data offset=520296: 03800000 03ffde00 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520320: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520344: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520368: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520392: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520416: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520440: 00000000 00000000 00021462 00000000 00000000 00000000
+Nouveau shader data offset=520464: 00000000 80000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520488: 00000000 00000000 00000000 00000000 000000aa 00000000
+Nouveau shader data offset=520512: 00000000 00000000 0000000f 00000000 00000000 00000000
+Nouveau shader data offset=520536: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520560: 00000000 00000000 00000000 00000000 00007326 000000ff
+Nouveau shader data offset=520584: 000e001f 000e1e00 00037308 00000000 00001000 00120400
+Nouveau shader data offset=520608: 00007326 000000ff 000080a0 002e5e00 00008220 00000003
+Nouveau shader data offset=520632: 00410000 003fc200
+Nouveau shader dump draw=GLSL_TRIANGLES/3 stage=2 buffer=00000009 gpu=00000000:22e9f2c0 offset=520896 dwords=128 source=0 draw_snapshot=1
+Nouveau shader data offset=520896: 00020861 06000000 01000000 60000000 000ff000 00000000
+Nouveau shader data offset=520920: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520944: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520968: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520992: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=521016: 00000000 00000000 0000794d 00000000 03800000 03ffde00
+Nouveau shader data offset=521040: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=521064: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=521088: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=521112: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=521136: 00000000 00000000 00000000 00000000 00020461 00000000
+Nouveau shader data offset=521160: 00000000 00000000 000ff000 00000000 000000ff 00000000
+Nouveau shader data offset=521184: 00000000 00000000 00000000 00000000 00000000 0000f000
+Nouveau shader data offset=521208: 00000000 00000000 00000000 000f0000 00000000 00000000
+Nouveau shader data offset=521232: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=521256: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=521280: ff007321 000080ff 00000c00 000e1e00 00047a20 00000000
+Nouveau shader data offset=521304: 00410000 041fc200 00057a20 00000100 00410000 040fc200
+Nouveau shader data offset=521328: 00067a20 00000200 00410000 040fc200 00007a20 00000300
+Nouveau shader data offset=521352: 00410000 000fc600 01047a23 00000400 00010004 040fc200
+Nouveau shader data offset=521376: 01057a23 00000500 00010005 040fc200 01067a23 00000600
+Nouveau shader data offset=521400: 00010006 040fc200
+Nouveau shader dump draw=GLSL_TRIANGLES/3 stage=5 buffer=00000009 gpu=00000000:22e9ee80 offset=519808 dwords=128 source=0 draw_snapshot=1
+Nouveau shader data offset=519808: 00021462 00000000 00000000 00000000 00000000 80000000
+Nouveau shader data offset=519832: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519856: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519880: 0000000f 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519904: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519928: 00000000 00000000 00007802 00000000 00000f00 000fc200
+Nouveau shader data offset=519952: 00017802 3f800000 00000f00 000fc200 00027802 00000000
+Nouveau shader data offset=519976: 00000f00 000fc200 00037802 3f800000 00000f00 000fc200
+Nouveau shader data offset=520000: 0000794d 00000000 03800000 03ffde00 00000000 00000000
+Nouveau shader data offset=520024: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520048: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520072: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520096: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520120: 00000000 00000000 00020461 00000000 00000000 00000000
+Nouveau shader data offset=520144: 000ff000 00000000 0000000f 00000000 00000000 00000000
+Nouveau shader data offset=520168: 00000000 00000000 00000000 0000f000 00000000 00000000
+Nouveau shader data offset=520192: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520216: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520240: 00000000 00000000 00000000 00000000 ff007321 000080ff
+Nouveau shader data offset=520264: 00000c00 000e1e00 ff007322 00007000 00000cff 0011c400
+Nouveau shader data offset=520288: 0000794d 00000000 03800000 03ffde00 00000000 00000000
+Nouveau shader data offset=520312: 00000000 00000000

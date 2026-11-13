@@ -84,7 +84,7 @@ void NvxWglRecordNouveauBufferDwords(uint32_t buffer_id, uint64_t gpu_va,
 void NvxWglRecordNouveauShaderDwords(uint32_t stage, uint32_t buffer_id,
                                      uint64_t gpu_va, uint32_t offset,
                                      const uint32_t *dwords, uint32_t count,
-                                     uint32_t result);
+                                     uint32_t result, uint32_t draw_kind);
 void NvxWglRecordNouveauObject(uint32_t token_low, uint32_t token_high,
                                uint32_t user_class, uint32_t user_handle,
                                uint32_t rm_class, uint32_t rm_handle,
@@ -95,7 +95,8 @@ void NvxWglRecordNouveauIoctl(uint32_t type, uint32_t version,
 void NvxWglRecordNouveauGetparam(uint32_t param, uint32_t value,
                                  uint32_t result);
 void NvxWglRecordNouveauDrawState(const uint32_t *methods,
-                                 const uint32_t *values, uint32_t count);
+                                 const uint32_t *values, uint32_t count,
+                                 uint32_t draw_kind);
 static int nvx_bridge_is_enabled(void);
 static int nvx_pack_color(const float rgba[4], uint32_t *color);
 static int nvx_alloc(HDC hdc, const NVX_3D_ALLOC_BUFFER *request,
@@ -577,7 +578,7 @@ NvxWglRecordNouveauPushbufDwords(uint32_t push_index, uint32_t first_word,
 
 void
 NvxWglRecordNouveauDrawState(const uint32_t *methods, const uint32_t *values,
-                             uint32_t count)
+                             uint32_t count, uint32_t draw_kind)
 {
    char output[8192];
    char line[96];
@@ -588,9 +589,10 @@ NvxWglRecordNouveauDrawState(const uint32_t *methods, const uint32_t *values,
    if (!methods || !values || !count || count > 64U)
       return;
    {
+      const char *label = draw_kind == 2U ? "GLSL_TRIANGLES/3" : "QUADS/24";
       int length = wsprintfA(line,
-         "Nouveau cube draw state trace_rev=122 cube_draw=QUADS/24 entries=%lu\r\n",
-         (unsigned long)count);
+         "Nouveau draw state trace_rev=124 draw=%s entries=%lu\r\n",
+         label, (unsigned long)count);
       if (length > 0 && (uint32_t)length <= sizeof(output) - used) {
          memcpy(output + used, line, (size_t)length);
          used += (uint32_t)length;
@@ -598,7 +600,8 @@ NvxWglRecordNouveauDrawState(const uint32_t *methods, const uint32_t *values,
    }
    for (i = 0; i < count; i++) {
       int length = wsprintfA(line,
-         "Nouveau cube draw state index=%lu method_dec=%lu value=%08lx\r\n",
+         "Nouveau draw state draw=%s index=%lu method_dec=%lu value=%08lx\r\n",
+         draw_kind == 2U ? "GLSL_TRIANGLES/3" : "QUADS/24",
          (unsigned long)i, (unsigned long)methods[i],
          (unsigned long)values[i]);
       if (length <= 0 || (uint32_t)length > sizeof(output) - used)
@@ -673,7 +676,7 @@ void
 NvxWglRecordNouveauShaderDwords(uint32_t stage, uint32_t buffer_id,
                                 uint64_t gpu_va, uint32_t offset,
                                 const uint32_t *dwords, uint32_t count,
-                                uint32_t result)
+                                uint32_t result, uint32_t draw_kind)
 {
    char output[24U * 192U];
    char line[192];
@@ -684,7 +687,8 @@ NvxWglRecordNouveauShaderDwords(uint32_t stage, uint32_t buffer_id,
    if (!dwords || !count || count > 128U)
       return;
    _snprintf(line, sizeof(line) - 1U,
-      "Nouveau shader dump stage=%lu buffer=%08lx gpu=%08lx:%08lx offset=%lu dwords=%lu source=%lu draw_snapshot=%lu\r\n",
+      "Nouveau shader dump draw=%s stage=%lu buffer=%08lx gpu=%08lx:%08lx offset=%lu dwords=%lu source=%lu draw_snapshot=%lu\r\n",
+      draw_kind == 2U ? "GLSL_TRIANGLES/3" : "QUADS/24",
       (unsigned long)stage, (unsigned long)buffer_id,
       (unsigned long)(gpu_va >> 32), (unsigned long)gpu_va,
       (unsigned long)offset, (unsigned long)count,

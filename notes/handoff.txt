@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.123`.
+Updated November 13, 2026 after VFIO run `.124`.
 
 ## Current status
 
@@ -23,6 +23,14 @@ The `.123` programmable GLSL triangle also returns black despite successful
 shader compile/link and completed draw fences. This points to a common shader
 execution, vertex/raster, or render-target path rather than only the
 fixed-function-generated shaders.
+Revision `.124` tags draw-state and shader dumps by draw type and captures the
+first 3-vertex TRIANGLES draw independently from the 24-vertex cube. The
+capture confirms target `0x162e0000`, 64x64 viewport scale/translate, enabled
+RGBA writes, vertex input at `0x160900e0`, and stage bindings at
+`0x22e9efc0`, `0x22e9f2c0`, and `0x22e9ee80`. The captured input contains
+the expected `(-0.8,-0.8)`, `(0.8,-0.8)`, `(0,0.8)` positions. Draw fences
+complete, but green readback remains zero. Compare these bound stages and the
+viewport/target mapping against Mesa's NVC0 draw setup before changing state.
 The trace reports `screens=1 callbacks=0`; callbacks are the unused WGL hybrid
 path and do not represent the native Nouveau screen's activity.
 
@@ -326,7 +334,7 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Relevant files
 
-- Latest completed full VFIO log: `test_logs/v3.0.0.123-20261113-011259.log`
+- Latest completed full VFIO log: `test_logs/v3.0.0.124-20261113-011908.log`
 - Latest extracted Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest Mesa/Nouveau bridge excerpt: `notes/mesa-bridge-latest.txt`
 - GPFIFO submission and diagnostics: `src_driver/nvx_gsp.c`,
@@ -518,10 +526,14 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   `[OPENGL_RESULT] FAIL`. 100 animation frames took 8.4388 seconds (11.8 FPS).
   Firmware assertion count reaches 3 during the later animation.
 - Next, capture the programmable triangle's own command state and shader bytes,
-  then compare them to a working NVC0 programmable draw. `.123` shows the
-  failure also affects explicit GLSL, so prioritize common shader execution,
-  vertex input, rasterization, and target setup. Keep the later FIFO stall as a
-  separate issue unless evidence ties it to the black draws.
+  then compare them to a working NVC0 programmable draw. `.124` captured the
+  triangle separately: target `0x162e0000`, 64x64 viewport centered at hardware
+  coordinates `(32,421)`, valid input vertices at `0x160900e0`, and three
+  bound shader-stage addresses. The draw fence completes, but the 64x64 green
+  readback remains zero. Inspect whether these shader stages are valid for this
+  GLSL program and whether the viewport/target mapping matches readback. Keep
+  the later FIFO stall as a separate issue unless evidence ties it to the
+  black draws.
 
 ### Revision 3.0.0.122 — verify remaining raster output gates
 
@@ -561,3 +573,27 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   at fault. Next capture the programmable triangle's target, viewport, vertex
   input, and shader-stage state; the current snapshot is reserved for the cube
   and does not capture this triangle's shader bindings.
+
+### Revision 3.0.0.124 — capture GLSL triangle state
+
+- Captures the first three-vertex NVC0 TRIANGLES draw independently from the
+  later 24-vertex cube and tags the recorded state and shader dumps by draw.
+- Full VFIO log: `test_logs/v3.0.0.124-20261113-011908.log`. XP booted on the
+  first attempt, ran the full suite, and shut down normally. Host and XP package
+  audits passed. `[OPENGL_RESULT] FAIL`; the independent miniport GR triangle
+  readback still passes.
+- The GLSL shaders compile/link and their NVC0 draw fences complete, but
+  `green_pixels=0`, `GL error=0`. 100 cube frames took 8.1763 seconds
+  (12.2 FPS); cube pixels remain black and firmware assertions reach 3 during
+  later animation.
+- Triangle target is `0x162e0000` (pitch `0xa00`, height 453). Viewport state
+  represents a 64x64 viewport centered at hardware coordinates `(32,421)`;
+  swizzle is `0x6420`. RGBA target write mask is enabled. Vertex array 0 is
+  `FLOAT_3`, stride 32, at `0x160900e0`; its dump contains the expected three
+  positions. Captured shader-stage addresses are `0x22e9efc0`, `0x22e9f2c0`,
+  and `0x22e9ee80`. State and shader dumps are in
+  `notes/nouveau-trace-latest.txt`.
+- Next compare the enabled shader stages, shader headers/instructions and
+  viewport-to-readback mapping with upstream Nouveau's NVC0 draw emission.
+  Preserve these captures while narrowing the remaining common shader,
+  rasterization, or target path failure.

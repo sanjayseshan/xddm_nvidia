@@ -35,7 +35,7 @@ void NvxWglRecordNouveauBufferDwords(uint32_t buffer_id, uint64_t gpu_va,
 void NvxWglRecordNouveauShaderDwords(uint32_t stage, uint32_t buffer_id,
                                     uint64_t gpu_va, uint32_t offset,
                                     const uint32_t *dwords, uint32_t count,
-                                    uint32_t result);
+                                    uint32_t result, uint32_t draw_kind);
 void NvxWglRecordNouveauObject(uint32_t token_low, uint32_t token_high,
                               uint32_t user_class, uint32_t user_handle,
                               uint32_t rm_class, uint32_t rm_handle,
@@ -46,7 +46,8 @@ void NvxWglRecordNouveauIoctl(uint32_t type, uint32_t version,
 void NvxWglRecordNouveauGetparam(uint32_t param, uint32_t value,
                                  uint32_t result);
 void NvxWglRecordNouveauDrawState(const uint32_t *methods,
-                                const uint32_t *values, uint32_t count);
+                                const uint32_t *values, uint32_t count,
+                                uint32_t draw_kind);
 #endif
 
 #define NVX_DRM_DEVICE_SLOTS 8U
@@ -85,6 +86,7 @@ struct nvx_drm_device_slot {
    uint64_t shader_address[6];
    uint32_t shader_address_mask;
    uint32_t shader_draw_snapshot_done;
+   uint32_t shader_triangle_snapshot_done;
    uint32_t gr_state[0x4000U / sizeof(uint32_t)];
    uint32_t gr_draw_state_snapshot_done;
 #endif
@@ -134,6 +136,7 @@ struct nvx_drm_shader_dump {
    uint64_t buffer_id;
    uint64_t gpu_va;
    uint32_t stage;
+   uint32_t draw_kind;
    uint32_t allocation_bytes;
    uint32_t offset;
    uint32_t bytes;
@@ -158,7 +161,7 @@ nvx_drm_capture_shader_addresses_locked(
       0x0d74U, 0x2040U, 0x2054U, 0x2058U, 0x2080U, 0x2094U, 0x2098U,
       0x2140U, 0x2154U, 0x2158U, 0x3818U, 0x3820U, 0x3858U
    };
-   uint32_t cursor = 0, captured = 0, draw_seen = 0;
+   uint32_t cursor = 0, captured = 0, draw_seen = 0, draw_kind = 0;
    uint32_t draw_primitive = 0xffffffffU, draw_vertex_count = 0;
 
    while (cursor < dword_count) {
@@ -194,7 +197,7 @@ nvx_drm_capture_shader_addresses_locked(
                Nvx3dBatchReadDword(dword_data, cursor + 1U + i);
          if (current_method == 0x1618U) {
             draw_primitive = Nvx3dBatchReadDword(dword_data, cursor + 1U + i);
-            draw_seen = draw_primitive == 7U;
+            draw_seen = draw_primitive == 7U || draw_primitive == 4U;
          } else if (current_method == 0x0d78U) {
             draw_vertex_count = Nvx3dBatchReadDword(dword_data, cursor + 1U + i);
          }
@@ -217,28 +220,37 @@ nvx_drm_capture_shader_addresses_locked(
       cursor += count + 1U;
    }
 
-   /* The cube is specifically a 24-vertex QUADS draw. Earlier bridge probes
-    * issue smaller QUADS, so a primitive-only trigger snapshots unrelated
-    * persistent vertex state and mislabels it as the cube. */
-   if (draw_seen && draw_primitive == 7U && draw_vertex_count == 24U &&
+   /* Capture the standalone GLSL triangle and cube independently. The GLSL
+    * probe precedes the cube and must not consume its diagnostic snapshot. */
+   if (draw_seen && draw_primitive == 4U && draw_vertex_count == 3U &&
+       !device->shader_triangle_snapshot_done) {
+      draw_kind = 2U;
+      device->shader_triangle_snapshot_done = 1U;
+   } else if (draw_seen && draw_primitive == 7U && draw_vertex_count == 24U &&
        !device->gr_draw_state_snapshot_done &&
        (device->shader_address_mask & ((1U << 1) | (1U << 2) | (1U << 5))) ==
        ((1U << 1) | (1U << 2) | (1U << 5))) {
+      draw_kind = 1U;
+      device->gr_draw_state_snapshot_done = 1U;
+   }
+   if (draw_kind) {
       uint32_t values[sizeof(trace_methods) / sizeof(trace_methods[0])];
       uint32_t i;
       for (i = 0; i < sizeof(trace_methods) / sizeof(trace_methods[0]); i++)
          values[i] = device->gr_state[trace_methods[i] / sizeof(uint32_t)];
       NvxWglRecordNouveauDrawState(trace_methods, values,
-         (uint32_t)(sizeof(trace_methods) / sizeof(trace_methods[0])));
-      device->gr_draw_state_snapshot_done = 1U;
+         (uint32_t)(sizeof(trace_methods) / sizeof(trace_methods[0])),
+         draw_kind);
    }
 
    /* Program addresses are persistent 3D state. A later draw batch often
     * omits SP_ADDRESS writes, so snapshot the cached bindings at draw time. */
-   if (!draw_seen || draw_primitive != 7U || draw_vertex_count != 24U ||
-       device->shader_draw_snapshot_done ||
-       (device->shader_address_mask & ((1U << 1) | (1U << 2) | (1U << 5))) !=
-       ((1U << 1) | (1U << 2) | (1U << 5)))
+   if (!draw_kind ||
+       (draw_kind == 1U && device->shader_draw_snapshot_done) ||
+       (draw_kind == 2U && device->shader_triangle_snapshot_done == 0U) ||
+       (draw_kind == 1U &&
+        (device->shader_address_mask & ((1U << 1) | (1U << 2) | (1U << 5))) !=
+        ((1U << 1) | (1U << 2) | (1U << 5))))
       return 0;
    for (uint32_t stage = 0; stage < 6U && captured < NVX_DRM_SHADER_DUMP_LIMIT;
         stage++) {
@@ -263,6 +275,7 @@ nvx_drm_capture_shader_addresses_locked(
          dump->buffer_id = slot->bo.allocation.BufferId;
          dump->gpu_va = address;
          dump->stage = stage;
+         dump->draw_kind = draw_kind;
          dump->allocation_bytes = (uint32_t)allocation_bytes;
          dump->offset = (uint32_t)offset;
          dump->bytes = NVX_DRM_SHADER_DUMP_BYTES;
@@ -272,7 +285,7 @@ nvx_drm_capture_shader_addresses_locked(
          break;
       }
    }
-   if (captured >= 3U)
+   if (captured && draw_kind == 1U)
       device->shader_draw_snapshot_done = 1U;
    return captured;
 }
@@ -777,7 +790,7 @@ nvx_drm_submit_pushbuf(int fd,
          NvxWglRecordNouveauShaderDwords(dump->stage,
             (uint32_t)dump->buffer_id, dump->gpu_va, dump->offset,
             dump->dwords, dump->bytes / sizeof(uint32_t),
-            completed && result == 0U ? 4U : result);
+            completed && result == 0U ? 4U : result, dump->draw_kind);
       }
    }
 #endif
