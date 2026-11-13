@@ -86,7 +86,9 @@ static NVX_XF86DRM_STATUS nvx_drm_status;
 static uint32_t nvx_drm_fence_trace_count;
 static uint32_t nvx_drm_prep_trace_count;
 static uint32_t nvx_drm_prep_call_trace_count;
-static uint32_t nvx_drm_vertex_dump_attempted;
+#define NVX_DRM_VERTEX_DUMP_LIMIT 8U
+static uint64_t nvx_drm_vertex_dump_addresses[NVX_DRM_VERTEX_DUMP_LIMIT];
+static uint32_t nvx_drm_vertex_dump_count;
 #endif
 static int nvx_drm_unsupported(void);
 static int nvx_drm_unsupported_operation(uint32_t kind,
@@ -118,7 +120,8 @@ struct nvx_drm_vertex_dump {
 static int
 nvx_drm_capture_vertex_shadow_locked(
    struct nvx_drm_device_slot *device, const uint8_t *dword_data,
-   uint32_t dword_count, struct nvx_drm_vertex_dump *dump)
+   uint32_t dword_count, const uint64_t *captured_addresses,
+   uint32_t captured_count, struct nvx_drm_vertex_dump *dump)
 {
    uint32_t cursor = 0;
 
@@ -171,6 +174,9 @@ nvx_drm_capture_vertex_shadow_locked(
          if (high > 0xffU)
             continue;
          address = ((uint64_t)high << 32) | low;
+         for (slot_index = 0; slot_index < captured_count; slot_index++)
+            if (captured_addresses[slot_index] == address)
+               goto next_address;
          for (slot_index = 0; slot_index < NVX_DRM_BUFFER_SLOTS;
               slot_index++) {
             struct nvx_drm_bo_slot *slot = &device->buffers[slot_index];
@@ -202,7 +208,9 @@ nvx_drm_capture_vertex_shadow_locked(
             }
             return 1;
          }
-         return 0;
+         goto next_address;
+next_address:
+         ;
       }
       cursor += count + 1U;
    }
@@ -407,12 +415,14 @@ nvx_drm_submit_pushbuf(int fd,
           dword_count, references, &reference_count))
       goto done;
 #if defined(_WIN32) || defined(_WIN64)
-   if (!nvx_drm_vertex_dump_attempted &&
+   if (nvx_drm_vertex_dump_count < NVX_DRM_VERTEX_DUMP_LIMIT &&
        nvx_drm_capture_vertex_shadow_locked(device,
           batch + sizeof(header) +
              (size_t)NVX_3D_MAX_BATCH_BUFFERS * sizeof(references[0]),
-          dword_count, &vertex_dump)) {
-      nvx_drm_vertex_dump_attempted = 1U;
+          dword_count, nvx_drm_vertex_dump_addresses,
+          nvx_drm_vertex_dump_count, &vertex_dump)) {
+      nvx_drm_vertex_dump_addresses[nvx_drm_vertex_dump_count++] =
+         vertex_dump.gpu_va;
       have_vertex_dump = 1;
    }
 #endif

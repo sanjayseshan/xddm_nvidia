@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 12, 2026 after VFIO run `.103`.
+Updated November 12, 2026 after VFIO run `.104`.
 
 ## Current status
 
@@ -125,16 +125,39 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
   and passed its imported-DLL audit. Hardware testing confirmed the diagnostic
   works, but did not fix rendering.
 
+## `.104` implementation and results
+
+- Expanded the vertex diagnostic to capture up to eight unique enabled NVC0
+  vertex-array GPU addresses instead of stopping at the first address. In
+  `.103`, the first capture was an earlier probe buffer at `0x16090010`, while
+  the cube later used `0x160903a8` and `0x1609039c`; the address cap is intended
+  to include those later arrays and expose their BO contents.
+- `make -C src_driver check` passed. The full XP Mesa build, XP import audit,
+  VFIO boot, complete test run, and normal shutdown also passed.
+- Full VFIO log: `test_logs/v3.0.0.104-20261112-231922.log`; the runner exited
+  1 because the hardware OpenGL result is still failed.
+- The capture reached the cube's first array at GPU VA `0x160903a8`, BO id
+  `0x16`, byte offset 936, and recorded 144 dwords (576 bytes) from its mapped
+  shadow. The values contain plausible cube coordinates `-1` and `+1` plus
+  other float components. Its batch also sets the adjacent array at
+  `0x1609039c`, but that second address was not dumped: the capture helper
+  returns after one new address per submitted batch, and Mesa did not resend
+  the adjacent pointer in a later batch. This is the remaining diagnostic gap.
+- Cube and no-depth cube remain black with 0 colored pixels. The animation
+  completed 100 frames at 11.9 FPS, but output was black. PBDMA reached the
+  recurring `PB_HEADER=0x21401b0c`, `PB_COUNT=0` state and firmware assertions
+  rose to 3. There is no evidence that readback is fixed.
+- `notes/nouveau-trace-latest.txt` has been refreshed with `.104` evidence.
+
 ## Next work
 
 1. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
    The failed stream is decoded above; trace the Mesa semaphore release and
    miniport completion fence through PBDMA progress, and correlate with the
    first firmware assertion.
-2. Extend vertex capture to the cube's actual array address (`0x160903a8`, and
-   its adjacent array), then compare the vertex format, shader inputs, code,
-   and constants against a known working NVC0/NVK sequence. The `.103` dump is
-   from an earlier draw and does not cover the cube input.
+2. Inspect the `.104` dumps for the cube's actual array addresses
+   (`0x160903a8` and `0x1609039c`), then compare their vertex formats, shader
+   inputs, code, and constants against a known working NVC0/NVK sequence.
 3. Separate output stages with progressively smaller Nouveau GPU tests: first
    NVC0 clear, then a minimal supported triangle, then Mesa's shader draw.
    Read the same target after each fence to locate where output disappears.
@@ -144,6 +167,7 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 ## Relevant files
 
 - Latest completed full VFIO log: `test_logs/v3.0.0.103-20261112-231410.log`
+- Pending `.104` run: `test_logs/v3.0.0.104-<timestamp>.log`
 - Latest extracted Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest copied Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest Mesa/Nouveau bridge excerpt: `notes/mesa-bridge-latest.txt`
