@@ -42,6 +42,8 @@ static volatile LONG nvx_bridge_trace_count;
 static volatile LONG nvx_bridge_nouveau_init_failed;
 static volatile LONG nvx_bridge_screen_count;
 static volatile LONG nvx_bridge_screen_active;
+static volatile LONG nvx_bridge_render_target_seen;
+static struct pipe_screen *nvx_bridge_cached_nouveau_screen;
 static volatile LONG nvx_bridge_callback_count;
 static volatile LONG nvx_bridge_gpu_batch_count;
 static volatile LONG nvx_bridge_nvc0_clear_count;
@@ -59,6 +61,11 @@ static void nvx_bridge_trace(const char *message);
 static void nvx_bridge_nouveau_trace(const char *message);
 void NvxWglRecordMesaInitFailure(const char *stage, int error);
 void NvxWglRecordMesaInitStage(const char *stage);
+void NvxWglRecordMesaRenderTarget(uint32_t cbuf_count, uint32_t index,
+                                  uint32_t present, uint32_t address_low,
+                                  uint32_t address_high, uint32_t width,
+                                  uint32_t height, uint32_t format,
+                                  uint32_t memtype);
 void NvxWglRecordNouveauSclass(uint32_t token_low, uint32_t token_high,
                                uint32_t result, uint32_t count,
                                const uint32_t *classes);
@@ -268,6 +275,7 @@ nvx_wgl_set_hdc(HDC hdc)
          return;
       }
       InterlockedExchange(&nvx_bridge_drm_fd, 0);
+      nvx_bridge_cached_nouveau_screen = NULL;
       if (InterlockedCompareExchange(&nvx_bridge_nvx_adapter_ready, 0, 0)) {
          NvxNouveauScreenDestroy(&nvx_bridge_nouveau_screen);
          InterlockedExchange(&nvx_bridge_nvx_adapter_ready, 0);
@@ -363,6 +371,11 @@ nvx_wgl_create_native_nouveau_screen(void)
    int fd = nvx_wgl_xf86drm_fd();
    struct pipe_screen *screen;
 
+   if (nvx_bridge_cached_nouveau_screen) {
+      nvx_bridge_nouveau_trace("Returning cached native Nouveau Gallium pipe_screen");
+      return nvx_bridge_cached_nouveau_screen;
+   }
+
    InterlockedExchange(&nvx_bridge_nouveau_init_failed, 0);
    nvx_bridge_nouveau_trace("Nouveau screen create begin");
    if (fd <= 0 || !NvxXf86DrmIsRegistered(fd))
@@ -370,6 +383,7 @@ nvx_wgl_create_native_nouveau_screen(void)
    screen = nouveau_drm_screen_create(fd);
    if (screen) {
       nvx_bridge_nouveau_trace("Native Nouveau Gallium pipe_screen created");
+      nvx_bridge_cached_nouveau_screen = screen;
       InterlockedIncrement(&nvx_bridge_screen_count);
    } else {
       if (!InterlockedCompareExchange(&nvx_bridge_nouveau_init_failed, 0, 0))
@@ -480,6 +494,7 @@ NvxWglRecordNouveauPushbuf(uint32_t channel, uint32_t nr_push,
 {
    char message[96];
 
+   InterlockedIncrement(&nvx_bridge_gpu_batch_count);
    wsprintfA(message, "Nouveau pushbuf channel=%08lx pushes=%lu buffers=%lu relocs=%lu",
              (unsigned long)channel, (unsigned long)nr_push,
              (unsigned long)nr_buffers, (unsigned long)nr_relocs);
@@ -513,11 +528,13 @@ NvxWglRecordNouveauPushbufDwords(uint32_t push_index, uint32_t first_word,
    HANDLE file;
    DWORD written;
 
-   if (!dwords || !count || count > 4096U)
+   if (!dwords || !count || count > 4096U ||
+       !InterlockedCompareExchange(&nvx_bridge_render_target_seen, 0, 0))
       return;
    capture_index = InterlockedIncrement(&captured_pushes);
-   /* Capture the first few complete streams without flooding the guest disk. */
-   if (capture_index > 4)
+   /* Capture streams only after Mesa has bound a real framebuffer, and keep
+    * the sample bounded for offline packet decoding. */
+   if (capture_index > 32)
       return;
    for (i = 0; i < count; i += 8U) {
       uint32_t j, end = count - i;
@@ -596,6 +613,27 @@ NvxWglRecordMesaInitStage(const char *stage)
 {
    if (stage)
       nvx_bridge_nouveau_trace(stage);
+}
+
+void
+NvxWglRecordMesaRenderTarget(uint32_t cbuf_count, uint32_t index,
+                             uint32_t present, uint32_t address_low,
+                             uint32_t address_high, uint32_t width,
+                             uint32_t height, uint32_t format,
+                             uint32_t memtype)
+{
+   char message[176];
+
+   if (present)
+      InterlockedExchange(&nvx_bridge_render_target_seen, 1);
+   wsprintfA(message,
+      "NVC0 framebuffer cbufs=%lu index=%lu present=%lu address=%08lx:%08lx size=%lux%lu format=%08lx memtype=%08lx",
+      (unsigned long)cbuf_count, (unsigned long)index,
+      (unsigned long)present, (unsigned long)address_high,
+      (unsigned long)address_low, (unsigned long)width,
+      (unsigned long)height, (unsigned long)format,
+      (unsigned long)memtype);
+   nvx_bridge_nouveau_trace(message);
 }
 
 static void

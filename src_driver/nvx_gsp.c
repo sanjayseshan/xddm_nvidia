@@ -206,22 +206,60 @@ static VOID NvxGspLogPbdmaFault(PNVX_DEVICE_EXTENSION dev)
 {
     ULONG i;
     if(!dev||!dev->Bar0MmioVirtual||dev->Bar0Length<4) return;
-    for(i=0;i<NVX_PPBDMA_COUNT;i++) {
-        ULONG intrOffset=NVX_PPBDMA_INTR_0(i);
-        ULONG intr1Offset=NVX_PPBDMA_INTR_1(i);
-        ULONG methodOffset=NVX_PPBDMA_METHOD0(i);
-        ULONG dataOffset=NVX_PPBDMA_DATA0(i);
-        ULONG targetOffset=NVX_PPBDMA_TARGET(i);
-        ULONG gpBaseOffset=NVX_PPBDMA_GP_BASE(i);
-        ULONG gpBaseHiOffset=NVX_PPBDMA_GP_BASE_HI(i);
-        ULONG gpGetOffset=NVX_PPBDMA_GP_GET(i);
-        ULONG gpPutOffset=NVX_PPBDMA_GP_PUT(i);
-        ULONG intr,intr1,method,data,target,gpBase,gpBaseHi,gpGet,gpPut;
+    for(i=0;i<NVX_GR_RUNLIST_PBDMA_CONFIG_COUNT;i++) {
+        ULONG configOffset=dev->GspGraphicsRunlistBase+
+                           NVX_GR_RUNLIST_PBDMA_CONFIG(i);
+        ULONG config,pbdmaId,pbdmaBase;
+        ULONG intrOffset,intr1Offset,methodOffset,dataOffset,targetOffset;
+        ULONG gpBaseOffset,gpBaseHiOffset,gpGetOffset,gpPutOffset,gpFetchOffset;
+        ULONG statusOffset,topGetOffset,topGetHiOffset,pbFetchOffset,pbFetchHiOffset;
+        ULONG gpCrcOffset,pbCrcOffset;
+        ULONG pbGetOffset,pbGetHiOffset,pbPutOffset,pbPutHiOffset;
+        ULONG pbHeaderOffset,pbCountOffset;
+        ULONG intr,intr1,method,data,target,status,topGet,topGetHi;
+        ULONG gpBase,gpBaseHi,gpGet,gpPut,gpFetch,pbFetch,pbFetchHi,gpCrc,pbCrc;
+        ULONG pbGet,pbGetHi,pbPut,pbPutHi,pbHeader,pbCount;
+        if(configOffset>dev->Bar0Length-4) break;
+        config=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+
+                                                   configOffset));
+        if(!(config&NVX_GR_RUNLIST_PBDMA_CONFIG_VALID)) continue;
+        pbdmaId=config&0xffU;
+        pbdmaBase=((config>>10)&0xffffU)<<10;
+        intrOffset=pbdmaBase+NVX_PPBDMA_INTR_0_REL;
+        intr1Offset=pbdmaBase+NVX_PPBDMA_INTR_1_REL;
+        methodOffset=pbdmaBase+NVX_PPBDMA_METHOD0_REL;
+        dataOffset=pbdmaBase+NVX_PPBDMA_DATA0_REL;
+        targetOffset=pbdmaBase+NVX_PPBDMA_TARGET_REL;
+        statusOffset=pbdmaBase+NVX_PPBDMA_STATUS_REL;
+        topGetOffset=pbdmaBase+NVX_PPBDMA_TOP_LEVEL_GET_REL;
+        topGetHiOffset=pbdmaBase+NVX_PPBDMA_TOP_LEVEL_GET_HI_REL;
+        gpBaseOffset=pbdmaBase+NVX_PPBDMA_GP_BASE_REL;
+        gpBaseHiOffset=pbdmaBase+NVX_PPBDMA_GP_BASE_HI_REL;
+        gpGetOffset=pbdmaBase+NVX_PPBDMA_GP_GET_REL;
+        gpPutOffset=pbdmaBase+NVX_PPBDMA_GP_PUT_REL;
+        gpFetchOffset=pbdmaBase+NVX_PPBDMA_GP_FETCH_REL;
+        pbFetchOffset=pbdmaBase+NVX_PPBDMA_PB_FETCH_REL;
+        pbFetchHiOffset=pbdmaBase+NVX_PPBDMA_PB_FETCH_HI_REL;
+        gpCrcOffset=pbdmaBase+NVX_PPBDMA_GP_CRC_REL;
+        pbGetOffset=pbdmaBase+NVX_PPBDMA_PB_GET_REL;
+        pbGetHiOffset=pbdmaBase+NVX_PPBDMA_PB_GET_HI_REL;
+        pbPutOffset=pbdmaBase+NVX_PPBDMA_PB_PUT_REL;
+        pbPutHiOffset=pbdmaBase+NVX_PPBDMA_PB_PUT_HI_REL;
+        pbHeaderOffset=pbdmaBase+NVX_PPBDMA_PB_HEADER_REL;
+        pbCountOffset=pbdmaBase+NVX_PPBDMA_PB_COUNT_REL;
+        pbCrcOffset=pbdmaBase+NVX_PPBDMA_PB_CRC_REL;
         if(intrOffset>dev->Bar0Length-4||intr1Offset>dev->Bar0Length-4||
+           statusOffset>dev->Bar0Length-4||topGetOffset>dev->Bar0Length-4||
+           topGetHiOffset>dev->Bar0Length-4||
            methodOffset>dev->Bar0Length-4||dataOffset>dev->Bar0Length-4||
            targetOffset>dev->Bar0Length-4||gpBaseOffset>dev->Bar0Length-4||
            gpBaseHiOffset>dev->Bar0Length-4||gpGetOffset>dev->Bar0Length-4||
-           gpPutOffset>dev->Bar0Length-4) break;
+           gpPutOffset>dev->Bar0Length-4||gpFetchOffset>dev->Bar0Length-4||
+           pbFetchOffset>dev->Bar0Length-4||pbFetchHiOffset>dev->Bar0Length-4||
+           gpCrcOffset>dev->Bar0Length-4||pbCrcOffset>dev->Bar0Length-4||
+           pbGetOffset>dev->Bar0Length-4||pbGetHiOffset>dev->Bar0Length-4||
+           pbPutOffset>dev->Bar0Length-4||pbPutHiOffset>dev->Bar0Length-4||
+           pbHeaderOffset>dev->Bar0Length-4||pbCountOffset>dev->Bar0Length-4) break;
         intr=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+intrOffset));
         if((intr&0xffff0000U)==0xbadf0000U) {
             LogStr("NVX [PBDMA]: BAR0 register window is unreadable at index=");
@@ -229,6 +267,9 @@ static VOID NvxGspLogPbdmaFault(PNVX_DEVICE_EXTENSION dev)
             break;
         }
         intr1=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+intr1Offset));
+        status=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+statusOffset));
+        topGet=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+topGetOffset));
+        topGetHi=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+topGetHiOffset));
         method=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+methodOffset));
         data=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+dataOffset));
         target=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+targetOffset));
@@ -236,11 +277,33 @@ static VOID NvxGspLogPbdmaFault(PNVX_DEVICE_EXTENSION dev)
         gpBaseHi=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+gpBaseHiOffset));
         gpGet=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+gpGetOffset));
         gpPut=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+gpPutOffset));
-        LogStr("NVX [PBDMA]: index=");LogHex(i);LogStr(" INTR0=");LogHex(intr);
-        LogStr(" INTR1=");LogHex(intr1);LogStr(" TARGET=");LogHex(target);
+        gpFetch=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+gpFetchOffset));
+        pbFetch=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+pbFetchOffset));
+        pbFetchHi=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+pbFetchHiOffset));
+        gpCrc=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+gpCrcOffset));
+        pbGet=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+pbGetOffset));
+        pbGetHi=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+pbGetHiOffset));
+        pbPut=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+pbPutOffset));
+        pbPutHi=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+pbPutHiOffset));
+        pbHeader=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+pbHeaderOffset));
+        pbCount=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+pbCountOffset));
+        pbCrc=VideoPortReadRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+pbCrcOffset));
+        LogStr("NVX [PBDMA]: runlistIndex=");LogHex(i);
+        LogStr(" id=");LogHex(pbdmaId);LogStr(" base=");LogHex(pbdmaBase);
+        LogStr(" config=");LogHex(config);LogStr(" INTR0=");LogHex(intr);
+        LogStr(" INTR1=");LogHex(intr1);LogStr(" STATUS=");LogHex(status);
+        LogStr(" TARGET=");LogHex(target);
         LogStr(" METHOD0=");LogHex(method);LogStr(" DATA0=");LogHex(data);
         LogStr(" GP_BASE=");LogHex(gpBase);LogStr(" GP_BASE_HI=");LogHex(gpBaseHi);
         LogStr(" GP_GET=");LogHex(gpGet);LogStr(" GP_PUT=");LogHex(gpPut);LogStr("\n");
+        LogStr("NVX [PBDMA-PB]: id=");LogHex(pbdmaId);
+        LogStr(" TOP_GET=");LogHex(topGet);LogStr(" TOP_GET_HI=");LogHex(topGetHi);
+        LogStr(" GP_FETCH=");LogHex(gpFetch);LogStr(" GP_CRC=");LogHex(gpCrc);
+        LogStr(" PB_FETCH=");LogHex(pbFetch);LogStr(" PB_FETCH_HI=");LogHex(pbFetchHi);
+        LogStr(" PB_GET=");LogHex(pbGet);
+        LogStr(" PB_GET_HI=");LogHex(pbGetHi);LogStr(" PB_PUT=");LogHex(pbPut);
+        LogStr(" PB_PUT_HI=");LogHex(pbPutHi);LogStr(" PB_HEADER=");LogHex(pbHeader);
+        LogStr(" PB_COUNT=");LogHex(pbCount);LogStr(" PB_CRC=");LogHex(pbCrc);LogStr("\n");
     }
 }
 
@@ -390,6 +453,21 @@ static BOOLEAN NvxGspControl(PNVX_DEVICE_EXTENSION dev,ULONG object,ULONG cmd,
     return TRUE;
 }
 
+static BOOLEAN __attribute__((unused)) NvxGspGetClassEngineId(PNVX_DEVICE_EXTENSION dev,
+    ULONG channel,ULONG object,ULONG *classEngineId)
+{
+    NV906F_CTRL_GET_CLASS_ENGINEID_PARAMS params={0};
+    const NV906F_CTRL_GET_CLASS_ENGINEID_PARAMS *reply;
+    if(!dev||!channel||!object||!classEngineId) return FALSE;
+    params.hObject=object;
+    if(!NvxGspControl(dev,channel,NVA06F_CTRL_GET_CLASS_ENGINEID,
+                      &params,sizeof(params))) return FALSE;
+    reply=(const NV906F_CTRL_GET_CLASS_ENGINEID_PARAMS *)(dev->RpcRxRecord+104);
+    if(!reply->classEngineID) return FALSE;
+    *classEngineId=reply->classEngineID;
+    return TRUE;
+}
+
 /* Change the allocated depth page's existing 64KB leaf PTE to its zeta kind,
    so GR and CE use the same VA and the same mapping for that VRAM page. */
 BOOLEAN NvxGspSetDepthPageKind(PVOID HwDeviceExtension,ULONG64 gpuVa,
@@ -481,73 +559,88 @@ static VOID NvxGspUnlockGartPtes(VOID)
     __sync_lock_release(&g_NvxGartPteBusy);
 }
 
-BOOLEAN NvxGspMapGartRange(PVOID HwDeviceExtension,ULONG firstSlice,
-                           ULONG sliceCount,ULONG64 physical,ULONG bytes)
+BOOLEAN NvxGspMapGartRange(PVOID HwDeviceExtension,ULONG firstPage,
+                           ULONG pageCount,ULONG64 physical,ULONG bytes)
 {
     PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
     PULONG64 entries;
     ULONG capacity=NVX_GART_SLICE_COUNT*NVX_GART_PTES_PER_SLICE;
     ULONG clearBytes;
     if(!dev||!dev->GspGartReady||!dev->GspGartPteVirtual||
-       !sliceCount||firstSlice>=NVX_GART_SLICE_COUNT||
-       sliceCount>NVX_GART_SLICE_COUNT-firstSlice||
+       !pageCount||firstPage>=NVX_GART_PAGE_COUNT||
+       pageCount>NVX_GART_PAGE_COUNT-firstPage||
        !bytes||(bytes&0xfffU)||(physical&0xfffULL)||
        physical>0x100000000ULL-bytes||
-       (ULONG64)bytes>(ULONG64)sliceCount*NVX_GART_SLICE_BYTES)
+       (ULONG64)bytes>(ULONG64)pageCount*NVX_GART_PAGE_BYTES)
         return FALSE;
-    if(!NvxGspLockGartPtes()) return FALSE;
+    if(!NvxGspLockGartPtes()) {
+        LogStr("NVX [GART]: page-table lock timeout mapping page=");
+        LogHex(firstPage);LogStr(" count=");LogHex(pageCount);
+        LogStr(" bytes=");LogHex(bytes);LogStr("\n");
+        return FALSE;
+    }
     entries=(PULONG64)dev->GspGartPteVirtual;
-    clearBytes=sliceCount*NVX_GART_SLICE_BYTES/4096U*sizeof(ULONG64);
-    VideoPortZeroMemory(entries+firstSlice*NVX_GART_PTES_PER_SLICE,
-                        clearBytes);
-    if(!NvxGartBuildPtes((uint64_t *)entries,capacity,firstSlice,sliceCount,
+    clearBytes=pageCount*sizeof(ULONG64);
+    VideoPortZeroMemory(entries+firstPage,clearBytes);
+    if(!NvxGartBuildPtes((uint64_t *)entries,capacity,firstPage,pageCount,
                          physical,bytes,0)) {
+        LogStr("NVX [GART]: PTE build rejected page=");
+        LogHex(firstPage);LogStr(" count=");LogHex(pageCount);
+        LogStr(" physical=");LogHex(physical);LogStr(" bytes=");
+        LogHex(bytes);LogStr("\n");
         NvxGspUnlockGartPtes();
         return FALSE;
     }
-    LogStr("NVX [GART]: mapped slice=");LogHex(firstSlice);
-    LogStr(" count=");LogHex(sliceCount);
+    LogStr("NVX [GART]: mapped page=");LogHex(firstPage);
+    LogStr(" count=");LogHex(pageCount);
     LogStr(" gpuVa=");LogHex(NVX_GART_GPU_VA_BASE+
-                             (ULONG64)firstSlice*NVX_GART_SLICE_BYTES);
+                             (ULONG64)firstPage*NVX_GART_PAGE_BYTES);
     LogStr(" physical=");LogHex(physical);
     LogStr(" bytes=");LogHex(bytes);
     LogStr(" pteTable=");LogHex(dev->GspGartPtePhysical.QuadPart);
-    LogStr(" pte0=");LogHex(entries[firstSlice*NVX_GART_PTES_PER_SLICE]);
-    LogStr(" pte1=");LogHex(entries[firstSlice*NVX_GART_PTES_PER_SLICE+1U]);
-    LogStr(" pte2=");LogHex(entries[firstSlice*NVX_GART_PTES_PER_SLICE+2U]);
-    LogStr(" pte3=");LogHex(entries[firstSlice*NVX_GART_PTES_PER_SLICE+3U]);
-    LogStr(" pte4=");LogHex(entries[firstSlice*NVX_GART_PTES_PER_SLICE+4U]);
-    LogStr(" pte5=");LogHex(entries[firstSlice*NVX_GART_PTES_PER_SLICE+5U]);
-    LogStr(" pte6=");LogHex(entries[firstSlice*NVX_GART_PTES_PER_SLICE+6U]);
-    LogStr(" pte7=");LogHex(entries[firstSlice*NVX_GART_PTES_PER_SLICE+7U]);
-    LogStr(" pteLast=");LogHex(entries[firstSlice*NVX_GART_PTES_PER_SLICE+
-                                      (bytes>>12)-1U]);
+    LogStr(" pte0=");LogHex(entries[firstPage]);
+    LogStr(" pte1=");LogHex(pageCount>1?entries[firstPage+1U]:0);
+    LogStr(" pte2=");LogHex(pageCount>2?entries[firstPage+2U]:0);
+    LogStr(" pte3=");LogHex(pageCount>3?entries[firstPage+3U]:0);
+    LogStr(" pte4=");LogHex(pageCount>4?entries[firstPage+4U]:0);
+    LogStr(" pte5=");LogHex(pageCount>5?entries[firstPage+5U]:0);
+    LogStr(" pte6=");LogHex(pageCount>6?entries[firstPage+6U]:0);
+    LogStr(" pte7=");LogHex(pageCount>7?entries[firstPage+7U]:0);
+    LogStr(" pteLast=");LogHex(entries[firstPage+(bytes>>12)-1U]);
     LogStr("\n");
     __sync_synchronize();
     /* On an unconfirmed invalidate, the caller must retain the physical
      * backing and VA reservation; stale translations may still reference it. */
     {
         BOOLEAN ok=NvxGspInvalidateVaSpace(dev);
+        if(!ok) {
+            LogStr("NVX [GART]: TLB invalidate failed mapping page=");
+            LogHex(firstPage);LogStr(" count=");LogHex(pageCount);
+            LogStr("\n");
+        }
         NvxGspUnlockGartPtes();
         return ok;
     }
 }
 
-BOOLEAN NvxGspUnmapGartRange(PVOID HwDeviceExtension,ULONG firstSlice,
-                             ULONG sliceCount)
+BOOLEAN NvxGspUnmapGartRange(PVOID HwDeviceExtension,ULONG firstPage,
+                             ULONG pageCount)
 {
     PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
     PULONG64 entries;
     ULONG clearBytes;
-    if(!dev||!dev->GspGartReady||!dev->GspGartPteVirtual||!sliceCount||
-       firstSlice>=NVX_GART_SLICE_COUNT||
-       sliceCount>NVX_GART_SLICE_COUNT-firstSlice)
+    if(!dev||!dev->GspGartReady||!dev->GspGartPteVirtual||!pageCount||
+       firstPage>=NVX_GART_PAGE_COUNT||
+       pageCount>NVX_GART_PAGE_COUNT-firstPage)
         return FALSE;
-    if(!NvxGspLockGartPtes()) return FALSE;
+    if(!NvxGspLockGartPtes()) {
+        LogStr("NVX [GART]: page-table lock timeout unmapping page=");
+        LogHex(firstPage);LogStr(" count=");LogHex(pageCount);LogStr("\n");
+        return FALSE;
+    }
     entries=(PULONG64)dev->GspGartPteVirtual;
-    clearBytes=sliceCount*NVX_GART_SLICE_BYTES/4096U*sizeof(ULONG64);
-    VideoPortZeroMemory(entries+firstSlice*NVX_GART_PTES_PER_SLICE,
-                        clearBytes);
+    clearBytes=pageCount*sizeof(ULONG64);
+    VideoPortZeroMemory(entries+firstPage,clearBytes);
     __sync_synchronize();
     {
         BOOLEAN ok=NvxGspInvalidateVaSpace(dev);
@@ -1279,6 +1372,11 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
     dev->GspGraphicsCopyObjectHandle=0;
     dev->GspGraphics2dObjectHandle=0;
     dev->GspGraphicsComputeObjectHandle=0;
+    dev->GspGraphicsObjectClassEngineId=0;
+    dev->GspGraphicsComputeClassEngineId=0;
+    dev->GspGraphicsM2mfClassEngineId=0;
+    dev->GspGraphicsCopyClassEngineId=0;
+    dev->GspGraphics2dClassEngineId=0;
     grBufferInfo=&dev->GrContextInfoParams;
     scratchPhys=(ULONG64)dev->GspDmaPhysical.QuadPart+GSP_SCRATCH_OFFSET;
     instPhys=scratchPhys+0xa000;
@@ -1683,9 +1781,34 @@ static BOOLEAN NvxGspCreateGraphicsProbe(PNVX_DEVICE_EXTENSION dev)
         const NV906F_CTRL_GET_CLASS_ENGINEID_PARAMS *reply=
             (const NV906F_CTRL_GET_CLASS_ENGINEID_PARAMS *)(dev->RpcRxRecord+104);
         classEngineId=reply->classEngineID;
+        dev->GspGraphicsObjectClassEngineId=classEngineId;
         LogStr("NVX [GR]: object classEngineID=");LogHex(reply->classEngineID);
         LogStr(" classID=");LogHex(reply->classID);
         LogStr(" engineID=");LogHex(reply->engineID);LogStr("\n");
+    }
+    if(dev->GspGraphicsM2mfObjectHandle&&
+       !NvxGspGetClassEngineId(dev,channelHandle,
+            dev->GspGraphicsM2mfObjectHandle,
+            &dev->GspGraphicsM2mfClassEngineId)) {
+        LogStr("NVX [GR]: M2MF classEngineID lookup failed.\n");
+    }
+    if(dev->GspGraphicsCopyObjectHandle&&
+       !NvxGspGetClassEngineId(dev,channelHandle,
+            dev->GspGraphicsCopyObjectHandle,
+            &dev->GspGraphicsCopyClassEngineId)) {
+        LogStr("NVX [GR]: copy classEngineID lookup failed.\n");
+    }
+    if(dev->GspGraphics2dObjectHandle&&
+       !NvxGspGetClassEngineId(dev,channelHandle,
+            dev->GspGraphics2dObjectHandle,
+            &dev->GspGraphics2dClassEngineId)) {
+        LogStr("NVX [GR]: 2D classEngineID lookup failed.\n");
+    }
+    if(dev->GspGraphicsComputeObjectHandle&&
+       !NvxGspGetClassEngineId(dev,channelHandle,
+            dev->GspGraphicsComputeObjectHandle,
+            &dev->GspGraphicsComputeClassEngineId)) {
+        LogStr("NVX [GR]: compute classEngineID lookup failed.\n");
     }
 
     /* Prove the GR runlist consumes a harmless SET_OBJECT packet. This tests
@@ -3291,6 +3414,191 @@ BOOLEAN NvxGspSubmitNvc0NativeClear(PVOID HwDeviceExtension,
     return FALSE;
 }
 
+BOOLEAN NvxGspSubmitNvc0Batch(PVOID HwDeviceExtension,
+    const uint32_t *nvc0Dwords,ULONG dwordCount,
+    PVOID pushVirtual,ULONG64 pushGpuVa,ULONG pushBytes,ULONG64 fenceValue)
+{
+    static ULONG successTraceCount=0;
+    PNVX_DEVICE_EXTENSION dev=(PNVX_DEVICE_EXTENSION)HwDeviceExtension;
+    PUCHAR scratch;
+    volatile ULONG *userd,*fence;
+    volatile ULONG64 *fifo;
+    PULONG push;
+    ULONG put,wait,tailCount=7U,pushBytesNeeded,totalDwords,i;
+    ULONG64 fenceVa,pushVa,fifoEntry;
+    if(!dev||!nvc0Dwords||!dwordCount||dwordCount>NVX_3D_MAX_PUSH_DWORDS||
+       !pushVirtual||!pushGpuVa||!pushBytes||!dev->GspInitialized||
+       !dev->GspGraphicsChannelReady||!dev->GspGraphicsCommandVerified||
+       dev->GspGraphicsChannelFaulted||dev->GspMmuFaultQueued||
+       !dev->GspDmaVirtual||!dev->GspGraphicsRunlistBase||
+       !fenceValue||fenceValue>0xffffffffULL||
+       dwordCount>(0xffffffffU/sizeof(ULONG))-tailCount)
+        return FALSE;
+    pushBytesNeeded=(dwordCount+tailCount)*sizeof(ULONG);
+    if(pushBytesNeeded>pushBytes) return FALSE;
+    for(wait=0;wait<20000U;wait++) {
+        if(!__sync_lock_test_and_set(&NvxGrUserSubmitBusy,1)) break;
+        VideoPortStallExecution(10U);
+    }
+    if(wait==20000U) return FALSE;
+
+    scratch=(PUCHAR)dev->GspDmaVirtual+GSP_SCRATCH_OFFSET;
+    userd=(volatile ULONG *)(scratch+0xb400);
+    fence=(volatile ULONG *)(scratch+0x5000);
+    fifo=(volatile ULONG64 *)(scratch+0x9000);
+    push=(PULONG)pushVirtual;
+    pushVa=pushGpuVa;
+    fenceVa=dev->GspScratchGpuVa+0x5000;
+    VideoPortZeroMemory((PVOID)fence,16U*sizeof(ULONG));
+    VideoPortMoveMemory(push,(PVOID)nvc0Dwords,
+                        dwordCount*sizeof(ULONG));
+    __sync_synchronize();
+    push[dwordCount+0]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(1U<<16)|
+            (NVC797_WAIT_FOR_IDLE>>2);
+    push[dwordCount+1]=0U;
+    push[dwordCount+2]=(NVC56F_DMA_INCR_OPCODE_VALUE<<29)|(4U<<16)|
+            (NVC797_SET_REPORT_SEMAPHORE_A>>2);
+    push[dwordCount+3]=(ULONG)(fenceVa>>32);
+    push[dwordCount+4]=(ULONG)fenceVa;
+    push[dwordCount+5]=(ULONG)fenceValue;
+    push[dwordCount+6]=DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_OPERATION,_RELEASE)|
+            DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_RELEASE,_AFTER_ALL_PRECEEDING_WRITES_COMPLETE)|
+            DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_PIPELINE_LOCATION,_ALL)|
+            DRF_DEF(C797,_SET_REPORT_SEMAPHORE_D,_STRUCTURE_SIZE,_ONE_WORD);
+    totalDwords=dwordCount+tailCount;
+    __sync_synchronize();
+
+    put=dev->GspGraphicsGPPut%512U;
+    fifoEntry=(pushVa&0xfffffffcULL)|(((pushVa>>32)&0xffULL)<<32)|
+              ((ULONG64)totalDwords<<42);
+    fifo[put]=fifoEntry;
+    __sync_synchronize();
+    dev->GspGraphicsGPPut=(put+1U)%512U;
+    dev->Nvx3dLastFence=fenceValue;
+    userd[0x8c/4]=dev->GspGraphicsGPPut;
+    __sync_synchronize();
+    if(dev->Bar0Length>=0x30094)
+        VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+
+                                     0x30090),dev->GspGraphicsSubmitToken);
+    VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+
+                              dev->GspGraphicsRunlistBase+0x90),2U);
+    for(wait=0;wait<10000U;wait++) {
+        if(fence[0]==(ULONG)fenceValue) {
+            __sync_synchronize();
+            dev->Nvx3dCompletedFence=fenceValue;
+            if(successTraceCount==0) {
+                ULONG traceIndex;
+                successTraceCount++;
+                LogStr("NVX [NVC0-BATCH]: first completion sourceVA=");
+                LogHex(pushGpuVa);LogStr(" submittedVA=");LogHex(pushVa);
+                LogStr(" dwords=");LogHex(totalDwords);
+                LogStr(" gpGet=");LogHex(userd[0x88/4]);
+                LogStr(" gpPut=");LogHex(userd[0x8c/4]);
+                LogStr(" fence=");LogHex(fence[0]);LogStr("\n");
+                for(traceIndex=0;traceIndex<totalDwords;traceIndex++) {
+                    if((traceIndex&7U)==0) {
+                        LogStr("NVX [NVC0-BATCH]: stream[");
+                        LogHex(traceIndex);LogStr("]");
+                    }
+                    LogStr(" ");LogHex(push[traceIndex]);
+                    if((traceIndex&7U)==7U||traceIndex+1U==totalDwords)
+                        LogStr("\n");
+                }
+                NvxGspLogPbdmaFault(dev);
+            }
+            __sync_lock_release(&NvxGrUserSubmitBusy);
+            return TRUE;
+        }
+        if(dev->GspGraphicsChannelFaulted||dev->GspMmuFaultQueued) break;
+        VideoPortStallExecution(100U);
+    }
+    if(fence[0]!=(ULONG)fenceValue&&!dev->GspGraphicsChannelFaulted&&
+       !dev->GspMmuFaultQueued) {
+        ULONG64 visibleEntry=fifo[put];
+        LogStr("NVX [NVC0-BATCH]: retry doorbell fifoIndex=");LogHex(put);
+        LogStr(" expectedEntry=");LogHex(fifoEntry);
+        LogStr(" visibleEntry=");LogHex(visibleEntry);
+        LogStr(" USERD_GET=");LogHex(userd[0x88/4]);
+        LogStr(" USERD_PUT=");LogHex(userd[0x8c/4]);LogStr("\n");
+        __sync_synchronize();
+        if(dev->Bar0Length>=0x30094)
+            VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+
+                                         0x30090),dev->GspGraphicsSubmitToken);
+        VideoPortWriteRegisterUlong((PULONG)((PUCHAR)dev->Bar0MmioVirtual+
+                                  dev->GspGraphicsRunlistBase+0x90),2U);
+        for(wait=0;wait<10000U;wait++) {
+            if(fence[0]==(ULONG)fenceValue) {
+                __sync_synchronize();
+                dev->Nvx3dCompletedFence=fenceValue;
+                LogStr("NVX [NVC0-BATCH]: second doorbell completed fence=");
+                LogHex(fenceValue);LogStr(" wait=" );LogHex(wait);LogStr("\n");
+                __sync_lock_release(&NvxGrUserSubmitBusy);
+                return TRUE;
+            }
+            if(dev->GspGraphicsChannelFaulted||dev->GspMmuFaultQueued) break;
+            VideoPortStallExecution(100U);
+        }
+    }
+    LogStr("NVX [NVC0-BATCH]: timeout state fifoIndex=");LogHex(put);
+    LogStr(" fifoEntry=");LogHex(fifoEntry);LogStr(" pushVa=");LogHex(pushVa);
+    LogStr(" dwords=");LogHex(totalDwords);LogStr(" pushBytes=");LogHex(pushBytes);
+    LogStr(" userdGet=");LogHex(userd[0x88/4]);
+    LogStr(" userdPut=");LogHex(userd[0x8c/4]);
+    LogStr(" expectedPut=");LogHex(dev->GspGraphicsGPPut);LogStr(" fence=");
+    LogHex(fenceValue);LogStr(" observed=");LogHex(fence[0]);LogStr("\n");
+    /* Capture the exact translated stream that faulted. Earlier diagnostics
+       only logged its first eight words and depended on a bounded Mesa-side
+       trace, which often stopped before the failing draw. */
+    for(i=0;i<totalDwords&&i<256U;i++) {
+        if((i&7U)==0) {
+            LogStr("NVX [NVC0-BATCH]: failed-stream[");
+            LogHex(i);LogStr("]");
+        }
+        LogStr(" ");LogHex(push[i]);
+        if((i&7U)==7U||i+1U==totalDwords||i+1U==256U)
+            LogStr("\n");
+    }
+    for(i=0;i<tailCount;i++) {
+        LogStr("NVX [NVC0-BATCH]: tail[");LogHex(i);LogStr("]=");
+        LogHex(push[dwordCount+i]);LogStr("\n");
+    }
+    NvxGspLogPbdmaFault(dev);
+    if(dev->GspGraphicsRunlistBase&&dev->Bar0Length>=
+       dev->GspGraphicsRunlistBase+0x10U) {
+        ULONG channelConfig=VideoPortReadRegisterUlong((PULONG)
+            ((PUCHAR)dev->Bar0MmioVirtual+dev->GspGraphicsRunlistBase+4U));
+        ULONG chramBase=channelConfig&0xfffffff0U;
+        ULONG channelId=dev->GspGraphicsSubmitToken&0x7ffU;
+        ULONG chramOffset=chramBase+channelId*4U;
+        if(chramOffset<=dev->Bar0Length-4U) {
+            ULONG channelState=VideoPortReadRegisterUlong((PULONG)
+                ((PUCHAR)dev->Bar0MmioVirtual+chramOffset));
+            LogStr("NVX [CHRAM]: config=");LogHex(channelConfig);
+            LogStr(" base=");LogHex(chramBase);LogStr(" chid=");LogHex(channelId);
+            LogStr(" state=");LogHex(channelState);LogStr("\n");
+        }
+    }
+    if(dev->Bar0Length>=0x400140) {
+        ULONG graphIntr=VideoPortReadRegisterUlong((PULONG)
+            ((PUCHAR)dev->Bar0MmioVirtual+0x400100));
+        ULONG graphTrap=VideoPortReadRegisterUlong((PULONG)
+            ((PUCHAR)dev->Bar0MmioVirtual+0x400108));
+        ULONG graphTrapEnable=VideoPortReadRegisterUlong((PULONG)
+            ((PUCHAR)dev->Bar0MmioVirtual+0x400138));
+        ULONG graphIntrEnable=VideoPortReadRegisterUlong((PULONG)
+            ((PUCHAR)dev->Bar0MmioVirtual+0x40013c));
+        LogStr("NVX [PGRAPH]: INTR=");LogHex(graphIntr);
+        LogStr(" TRAP=");LogHex(graphTrap);
+        LogStr(" TRAP_EN=");LogHex(graphTrapEnable);
+        LogStr(" INTR_EN=");LogHex(graphIntrEnable);LogStr("\n");
+    }
+    dev->GspGraphicsChannelFaulted=TRUE;
+    LogStr("NVX [NVC0-BATCH]: submission did not complete; fence=");
+    LogHex(fenceValue);LogStr(" observed=");LogHex(fence[0]);LogStr("\n");
+    __sync_lock_release(&NvxGrUserSubmitBusy);
+    return FALSE;
+}
+
 BOOLEAN NvxGspSubmitUserColorTargetTriangles(PVOID HwDeviceExtension,
     ULONG64 dstVa,ULONG width,ULONG height,ULONG tileMode,ULONG64 vertexVa,
     ULONG vertexCount,ULONG color,ULONG64 fenceValue,BOOLEAN verifyFullTarget)
@@ -3551,7 +3859,7 @@ static BOOLEAN NvxGspUserAllocationContains(PNVX_DEVICE_EXTENSION dev,
         const NVX_3D_USER_BUFFER_ENTRY *entry=&dev->Nvx3dBuffers[i];
         BOOLEAN gart=(entry->Usage&NVX_3D_USAGE_GART_BUFFER)!=0;
         if(!entry->Id||!entry->Busy||(gartOnly&&!gart)||
-           (gart&&(!entry->SystemVirtual||!entry->GartSliceCount))||
+           (gart&&(!entry->SystemVirtual||!entry->GartPageCount))||
            gpuVa<entry->GpuVa||entry->GpuVa>~0ULL-entry->Bytes||
            gpuVa+bytes>entry->GpuVa+entry->Bytes)
             continue;

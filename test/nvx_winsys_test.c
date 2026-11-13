@@ -15,6 +15,7 @@ struct mock_buffer {
    uint64_t id;
    uint64_t gpu_va;
    uint64_t client_token;
+   uint64_t allocation_token;
    uint32_t bytes;
    uint32_t usage;
    uint32_t width;
@@ -100,6 +101,11 @@ mock_escape(void *opaque, uint32_t escape, uint32_t input_bytes,
          result->ChannelHandle = 0xc56f0002U;
          result->GraphicsObjectHandle = 0xc6970001U;
          result->ComputeObjectHandle = 0xc6970013U;
+         result->GraphicsClassEngineId = 0x10U;
+         result->ComputeClassEngineId = 0x50U;
+         result->M2mfClassEngineId = 0x20U;
+         result->CopyClassEngineId = 0x30U;
+         result->TwoDClassEngineId = 0x40U;
       }
       return 1;
    }
@@ -128,6 +134,21 @@ mock_escape(void *opaque, uint32_t escape, uint32_t input_bytes,
       assert(input_bytes == sizeof(*request));
       assert(output_bytes >= sizeof(*result));
       for (i = 0; i < MOCK_MAX_BUFFERS; i++) {
+         struct mock_buffer *existing = &mock->buffers[i];
+         if (existing->id && existing->client_token == request->ClientToken &&
+             existing->allocation_token == request->AllocationToken) {
+            if (existing->bytes != request->Bytes ||
+                existing->usage != request->Usage ||
+                existing->width != request->Width ||
+                existing->height != request->Height ||
+                existing->pitch_bytes != request->PitchBytes ||
+                existing->tile_mode != request->TileMode)
+               return 0;
+            *result = *request;
+            result->BufferId = existing->id;
+            result->GpuVa = existing->gpu_va;
+            return 1;
+         }
          if (!mock->buffers[i].id) {
             buffer = &mock->buffers[i];
             break;
@@ -140,6 +161,7 @@ mock_escape(void *opaque, uint32_t escape, uint32_t input_bytes,
       buffer->id = result->BufferId;
       buffer->gpu_va = result->GpuVa;
       buffer->client_token = result->ClientToken;
+      buffer->allocation_token = result->AllocationToken;
       buffer->bytes = request->Bytes;
       buffer->usage = request->Usage;
       buffer->width = request->Width;
@@ -284,6 +306,12 @@ main(void)
    assert(NvxWinsysOpenNouveauChannel(&device));
    assert(device.NouveauChannelHandle == 0xc56f0002U &&
           device.NouveauGraphicsObjectHandle == 0xc6970001U &&
+          device.NouveauObjectBindingCount == 5U &&
+          device.NouveauObjectBindings[0].ClassEngineId == 0x10U &&
+          device.NouveauObjectBindings[1].ClassEngineId == 0x50U &&
+          device.NouveauObjectBindings[2].ClassEngineId == 0x20U &&
+          device.NouveauObjectBindings[3].ClassEngineId == 0x40U &&
+          device.NouveauObjectBindings[4].ClassEngineId == 0x30U &&
           device.NouveauComputeObjectHandle == 0xc6970013U);
    assert(NvxWinsysCloseNouveauChannel(&device));
    assert(!device.NouveauChannelHandle &&
@@ -374,6 +402,24 @@ main(void)
       assert(NvxWinsysFreeBuffer(&device, second.BufferId));
    }
 
+   {
+      NVX_WINSYS_DEVICE clone = device;
+      NVX_3D_ALLOC_BUFFER original_result, clone_result;
+      NVX_3D_ALLOC_BUFFER original_request = request;
+      NVX_3D_ALLOC_BUFFER clone_request = request;
+      original_request.Bytes = 4096;
+      original_request.ClientToken = device.ClientToken;
+      clone_request.Bytes = 8192;
+      clone_request.ClientToken = clone.ClientToken;
+      assert(NvxWinsysAllocBuffer(&device, &original_request,
+                                  &original_result));
+      assert(NvxWinsysAllocBuffer(&clone, &clone_request, &clone_result));
+      assert(original_result.AllocationToken != clone_result.AllocationToken);
+      assert(original_result.Bytes == 4096 && clone_result.Bytes == 8192);
+      assert(NvxWinsysFreeBuffer(&device, original_result.BufferId));
+      assert(NvxWinsysFreeBuffer(&clone, clone_result.BufferId));
+   }
+
    request.Bytes--;
    request.ClientToken++;
    assert(!NvxWinsysAllocBuffer(&device, &request, &result));
@@ -390,7 +436,7 @@ main(void)
       description.Bytes = 4096;
       assert(NvxNouveauBoCreate(&device, &description,
                                 device.ClientToken, &bo));
-      assert(bo.allocation.BufferId == 3 && bo.references == 1);
+      assert(bo.allocation.BufferId == 5 && bo.references == 1);
       {
          NVX_NOUVEAU_BO rejected;
          assert(!NvxNouveauBoCreate(&device, &description,
@@ -510,6 +556,30 @@ main(void)
       assert(mock.event_count == 1 && mock.events[0] == MOCK_EVENT_UPLOAD);
       assert(find_buffer(&mock, bo.allocation.BufferId)->storage[2] == 0x3C);
       assert(bo.map_count == 1 && bo.shadow == mapped);
+      /* Simulate a render-target write by the GPU while Mesa keeps its CPU
+       * shadow mapped. A later read-prep must wait and refresh that shadow. */
+      find_buffer(&mock, bo.allocation.BufferId)->storage[0] = 0xD7;
+      assert(NvxNouveauBoMarkUsed(&bo, 78));
+      mock.event_count = 0;
+      assert(NvxNouveauBoRefreshRead(&bo));
+      assert(mapped[0] == 0xD7 && mock.waited_fence == 78);
+      assert(mock.event_count == 2 &&
+             mock.events[0] == MOCK_EVENT_WAIT &&
+             mock.events[1] == MOCK_EVENT_DOWNLOAD);
+      assert(NvxNouveauBoUnmap(&bo));
+      mapped = NvxNouveauBoMap(&bo, NVX_NOUVEAU_BO_READ);
+      assert(mapped);
+      find_buffer(&mock, bo.allocation.BufferId)->storage[1] = 0xE9;
+      assert(NvxNouveauBoMarkUsed(&bo, 79));
+      mock.event_count = 0;
+      assert(NvxNouveauBoRefreshReadIfStale(&bo));
+      assert(mapped[1] == 0xE9 && mock.waited_fence == 79);
+      assert(mock.event_count == 2 &&
+             mock.events[0] == MOCK_EVENT_WAIT &&
+             mock.events[1] == MOCK_EVENT_DOWNLOAD);
+      assert(NvxNouveauBoUnmap(&bo));
+      mapped = NvxNouveauBoMap(&bo, NVX_NOUVEAU_BO_WRITE);
+      assert(mapped);
       mapped[2] = 0xA4;
       assert(NvxNouveauBoFlush(&bo));
       assert(find_buffer(&mock, bo.allocation.BufferId)->storage[2] == 0xA4);
@@ -519,16 +589,16 @@ main(void)
       NvxNouveauBoReference(&bo);
       assert(bo.references == 2);
       assert(NvxNouveauBoDestroy(&bo));
-      assert(bo.references == 1 && mock.freed_buffer == 2);
+      assert(bo.references == 1 && mock.freed_buffer == 4);
       mock.event_count = 0;
       mock.fail_wait = 1;
       assert(!NvxNouveauBoDestroy(&bo));
-      assert(bo.references == 1 && mock.freed_buffer == 2);
+      assert(bo.references == 1 && mock.freed_buffer == 4);
       assert(mock.event_count == 1 && mock.events[0] == MOCK_EVENT_WAIT);
       mock.fail_wait = 0;
       mock.event_count = 0;
       assert(NvxNouveauBoDestroy(&bo));
-      assert(mock.freed_buffer == 3);
+      assert(mock.freed_buffer == 5);
       assert(mock.event_count == 2 &&
              mock.events[0] == MOCK_EVENT_WAIT &&
              mock.events[1] == MOCK_EVENT_FREE);

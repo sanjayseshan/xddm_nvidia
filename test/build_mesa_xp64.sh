@@ -2,7 +2,10 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MESON="${MESON:-meson}"
+MESON="${MESON:-/tmp/nvx-meson-venv/bin/meson}"
+if [ ! -x "$MESON" ] && command -v meson >/dev/null 2>&1; then
+    MESON="$(command -v meson)"
+fi
 NINJA="${NINJA:-ninja}"
 BUILD_DIR="${NVX_MESA_BUILD_DIR:-${TMPDIR:-/tmp}/nvx-mesa-xp64-build}"
 XP_CROSS_FILE="${BUILD_DIR}.ini"
@@ -52,6 +55,13 @@ PY
 restore_mesa_sources() {
     rm -f "$ROOT/mesa/src/gallium/winsys/nouveau/drm/nvx_xf86drm.c"
     for patch_file in \
+        "$ROOT/mesa_patches/0026-nouveau-xp-render-target-trace.patch" \
+        "$ROOT/mesa_patches/0025-nouveau-xp-force-cpu-prep.patch" \
+        "$ROOT/mesa_patches/0024-nouveau-xp-linear-kind-tiled-depth.patch" \
+        "$ROOT/mesa_patches/0023-nouveau-xp-wgl-gart-targets.patch" \
+        "$ROOT/mesa_patches/0022-nouveau-xp-miptree-allocation-trace.patch" \
+        "$ROOT/mesa_patches/0021-nouveau-xp-swap-path-diagnostics.patch" \
+        "$ROOT/mesa_patches/0020-nouveau-xp-async-swap.patch" \
         "$ROOT/mesa_patches/0019-nouveau-xp-preserve-pushbuf-limits-on-error.patch" \
         "$ROOT/mesa_patches/0018-nouveau-xp-pushbuf-validation-trace.patch" \
         "$ROOT/mesa_patches/0017-nouveau-xp-nvc0-tsc-stage-trace.patch" \

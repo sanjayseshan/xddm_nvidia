@@ -32,6 +32,7 @@ DrvEscape(SURFOBJ *pso,ULONG iEsc,ULONG cjIn,PVOID pvIn,
             requested==NVX_ESCAPE_3D_NVC0_CLEAR ||
             requested==NVX_ESCAPE_3D_NVC0_NATIVE_CLEAR ||
             requested==NVX_ESCAPE_3D_VALIDATE_BATCH ||
+            requested==NVX_ESCAPE_3D_SUBMIT_BATCH ||
             requested==NVX_ESCAPE_3D_CLIENT_OPEN ||
             requested==NVX_ESCAPE_3D_CLIENT_CLOSE ||
             requested==NVX_ESCAPE_3D_CHANNEL_LEASE;
@@ -128,6 +129,16 @@ DrvEscape(SURFOBJ *pso,ULONG iEsc,ULONG cjIn,PVOID pvIn,
         if(!Nvx3dBatchRequiredBytes(&header,&expectedBytes)||
            expectedBytes!=cjIn) return 0;
         code=IOCTL_NVX_3D_VALIDATE_BATCH;break;
+    }
+    case NVX_ESCAPE_3D_SUBMIT_BATCH: {
+        NVX_3D_BATCH_HEADER header;
+        uint32_t expectedBytes;
+        if(!pvIn||cjIn<sizeof(header)||!pvOut||
+           cjOut<sizeof(NVX_3D_BATCH_RESULT)) return 0;
+        memcpy(&header,pvIn,sizeof(header));
+        if(!Nvx3dBatchRequiredBytes(&header,&expectedBytes)||
+           expectedBytes!=cjIn) return 0;
+        code=IOCTL_NVX_3D_SUBMIT_BATCH;break;
     }
     default:
         return 0;

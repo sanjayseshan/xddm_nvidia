@@ -1,0 +1,42 @@
+diff --git a/src/gallium/frontends/wgl/stw_st.c b/src/gallium/frontends/wgl/stw_st.c
+index 14342d0..bccd597 100644
+--- a/src/gallium/frontends/wgl/stw_st.c
++++ b/src/gallium/frontends/wgl/stw_st.c
+@@ -42,6 +42,8 @@
+ #include "stw_pixelformat.h"
+ #include "stw_winsys.h"
+ 
++extern void NvxWglRecordMesaInitStage(const char *stage);
++
+ #ifdef GALLIUM_ZINK
+ #include <vulkan/vulkan.h>
+ #include "kopper_interface.h"
+@@ -165,6 +167,8 @@ stw_st_framebuffer_validate_locked(struct st_context *st,
+    struct pipe_resource templ;
+    unsigned i;
+ 
++   NvxWglRecordMesaInitStage("STW: drawable resource validation entry");
++
+    memset(&templ, 0, sizeof(templ));
+    templ.target = PIPE_TEXTURE_2D;
+    templ.width0 = width;
+@@ -256,6 +258,8 @@ stw_st_framebuffer_validate_locked(struct st_context *st,
+       }
+ 
+       if (format != PIPE_FORMAT_NONE) {
++         if (i == ST_ATTACHMENT_BACK_LEFT)
++            NvxWglRecordMesaInitStage("STW: creating back color resource");
+          templ.format = format;
+ 
+          if ((bind & PIPE_BIND_DEPTH_STENCIL) == 0 && stw_st_offscreen(stwfb)) {
+@@ -300,6 +304,10 @@ stw_st_framebuffer_validate_locked(struct st_context *st,
+ #ifdef GALLIUM_ZINK
+          }
+ #endif
++         if (i == ST_ATTACHMENT_BACK_LEFT)
++            NvxWglRecordMesaInitStage(stwfb->textures[i] ?
++               "STW: back color resource created" :
++               "STW: back color resource creation failed");
+       }
+    }
+ 

@@ -19,6 +19,9 @@ typedef struct NVX_WINSYS_DEVICE {
    uint32_t NouveauChannelHandle;
    uint32_t NouveauGraphicsObjectHandle;
    uint32_t NouveauComputeObjectHandle;
+   NVX_3D_ALLOC_BUFFER NouveauBatchPushBuffer;
+   NVX_3D_NVC0_OBJECT_BINDING NouveauObjectBindings[5];
+   uint32_t NouveauObjectBindingCount;
 } NVX_WINSYS_DEVICE;
 
 int NvxWinsysInit(NVX_WINSYS_DEVICE *device, NVX_WINSYS_ESCAPE escape,
@@ -41,5 +44,8 @@ int NvxWinsysWaitFence(NVX_WINSYS_DEVICE *device, uint64_t fence_value,
                        uint32_t timeout_ms);
 int NvxWinsysValidateBatch(NVX_WINSYS_DEVICE *device,
                            const void *batch, uint32_t batch_bytes);
+int NvxWinsysSubmitBatch(NVX_WINSYS_DEVICE *device,
+                         const void *batch, uint32_t batch_bytes,
+                         uint64_t *fence_value);
 
 #endif

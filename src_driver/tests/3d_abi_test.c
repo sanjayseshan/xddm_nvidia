@@ -57,6 +57,51 @@ build_test_batch(uint8_t *input, NVX_3D_ALLOC_BUFFER *allocation)
 }
 
 static void
+test_nvc0_object_binding_translation(void)
+{
+    uint32_t stream[6]={0x20014000U,0x0000a040U,
+                        0x20010000U,0x0000c797U,
+                        0x20012000U,0x0000c7c0U};
+    const NVX_3D_NVC0_OBJECT_BINDING bindings[3]={
+        {2U,0x0000a040U,0x00123456U},
+        {0U,0x0000c797U,0x00654321U},
+        {1U,0x0000c7c0U,0x00765432U}
+    };
+    uint32_t original[6];
+    memcpy(original,stream,sizeof(stream));
+    assert(Nvx3dTranslateNvc0ObjectBindings((uint8_t *)stream,6U,
+                                             bindings,3U));
+    {
+        uint32_t classIds[5]={0x00654321U,0x00765432U,
+                              0x00123456U,0x40U,0x30U};
+        assert(Nvx3dValidateNvc0ObjectBindings((const uint8_t *)stream,6U,
+                                               classIds,1));
+        assert(Nvx3dValidateNvc0ObjectBindings((const uint8_t *)stream,6U,
+                                               classIds,0));
+        classIds[0]=0x11U;
+        assert(!Nvx3dValidateNvc0ObjectBindings((const uint8_t *)stream,6U,
+                                                classIds,0));
+        classIds[0]=0x10U;
+    }
+    assert(stream[0]==original[0]&&stream[2]==original[2]&&
+           stream[4]==original[4]);
+    assert(stream[1]==bindings[0].ClassEngineId);
+    assert(stream[3]==bindings[1].ClassEngineId);
+    assert(stream[5]==bindings[2].ClassEngineId);
+    memcpy(stream,original,sizeof(stream));
+    stream[1]=0xdeadbeefU;
+    assert(!Nvx3dTranslateNvc0ObjectBindings((uint8_t *)stream,6U,
+                                             bindings,3U));
+    memcpy(stream,original,sizeof(stream));
+    assert(!Nvx3dTranslateNvc0ObjectBindings((uint8_t *)stream,6U,
+                                             bindings,2U));
+    memcpy(stream,original,sizeof(stream));
+    stream[0]=0x60014000U;
+    assert(!Nvx3dTranslateNvc0ObjectBindings((uint8_t *)stream,6U,
+                                             bindings,3U));
+}
+
+static void
 test_nvc0_batch_validator(void)
 {
     uint8_t input[sizeof(NVX_3D_BATCH_HEADER)+sizeof(NVX_3D_BUFFER_REFERENCE)+
@@ -242,6 +287,20 @@ test_nvc0_direct_address_validation(void)
     memcpy(input+sizeof(header)+sizeof(reference),dwords,3*sizeof(uint32_t));
     assert(Nvx3dValidateNvc0Batch(input,bytes,&allocation,1,token));
 
+    /* Captured Nouveau C797 selector B/C pair: 0x2384 is a byte method
+     * offset above 0x1fff and must still validate against a referenced BO. */
+    header.DwordCount=4;
+    dwords[0]=Nvx3dNvc0SeqHeader(0x2380U,3U);
+    dwords[1]=0x100U;
+    dwords[2]=(uint32_t)(allocation.GpuVa>>32);
+    dwords[3]=(uint32_t)allocation.GpuVa;
+    bytes=(uint32_t)(sizeof(header)+sizeof(reference)+4*sizeof(uint32_t));
+    memcpy(input,&header,sizeof(header));
+    memcpy(input+sizeof(header)+sizeof(reference),dwords,4*sizeof(uint32_t));
+    assert(Nvx3dValidateNvc0Batch(input,bytes,&allocation,1,token));
+    header.DwordCount=3;
+    bytes=(uint32_t)(sizeof(header)+sizeof(reference)+3*sizeof(uint32_t));
+
     dwords[2]=0;
     memcpy(input+sizeof(header)+sizeof(reference),dwords,3*sizeof(uint32_t));
     assert(!Nvx3dValidateNvc0Batch(input,bytes,&allocation,1,token));
@@ -341,7 +400,7 @@ int main(void)
     assert(sizeof(NVX_3D_QUERY_CAPS)==56);
     assert(Nvx3dPackPciLocation(0x2aU,0xabU)==
            (NVX_3D_PCI_LOCATION_VALID|0xab2aU));
-    assert(sizeof(NVX_3D_ALLOC_BUFFER)==64);
+    assert(sizeof(NVX_3D_ALLOC_BUFFER)==72);
     assert(sizeof(NVX_3D_BATCH_HEADER)==40);
     assert(sizeof(NVX_3D_RELOCATION)==40);
     assert(sizeof(NVX_3D_FREE_BUFFER)==24);
@@ -351,7 +410,7 @@ int main(void)
     assert(sizeof(NVX_3D_WAIT_FENCE)==24);
     assert(sizeof(NVX_3D_READBACK)==32);
     assert(sizeof(NVX_3D_CLIENT_SESSION)==24);
-    assert(sizeof(NVX_3D_CHANNEL_LEASE)==40);
+    assert(sizeof(NVX_3D_CHANNEL_LEASE)==56);
     channelLease.Size=sizeof(channelLease);
     channelLease.Version=NVX_3D_ABI_VERSION;
     channelLease.Operation=NVX_3D_CHANNEL_OPEN;
@@ -360,6 +419,11 @@ int main(void)
     channelLease.ChannelHandle=7;
     channelLease.GraphicsObjectHandle=8;
     channelLease.ComputeObjectHandle=9;
+    channelLease.GraphicsClassEngineId=10;
+    channelLease.ComputeClassEngineId=11;
+    channelLease.M2mfClassEngineId=12;
+    channelLease.CopyClassEngineId=13;
+    channelLease.TwoDClassEngineId=14;
     channelLease.Operation=NVX_3D_CHANNEL_CLOSE;
     assert(Nvx3dValidateChannelLease(&channelLease,NVX_3D_CHANNEL_CLOSE));
     channelLease.ComputeObjectHandle=0;
@@ -376,6 +440,7 @@ int main(void)
     assert(!Nvx3dValidateClientSession(&clientSession,NVX_3D_CLIENT_CLOSE));
     assert(sizeof(NVX_3D_COLOR_SURFACE_LAYOUT)==24);
     assert(sizeof(NVX_3D_NVC0_CLEAR)==152);
+    test_nvc0_object_binding_translation();
     test_nvc0_batch_validator();
     test_nvc0_direct_address_validation();
 

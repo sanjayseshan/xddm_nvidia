@@ -7,7 +7,7 @@
 
 /* Fixed-width ABI shared by XP x64/x86 clients and the miniport.  GPU VAs are
  * always 64-bit; no kernel pointers or RM handles cross this boundary. */
-#define NVX_3D_ABI_VERSION 19U
+#define NVX_3D_ABI_VERSION 21U
 #define NVX_3D_MAX_PUSH_DWORDS 4096U
 #define NVX_3D_MAX_BATCH_RELOCATIONS 256U
 #define NVX_3D_MAX_BATCH_BUFFERS 64U
@@ -113,6 +113,7 @@ Nvx3dDepthModeForOperation(uint32_t operation)
 #define NVX_ESCAPE_3D_CLIENT_OPEN 0x800cU
 #define NVX_ESCAPE_3D_CLIENT_CLOSE 0x800dU
 #define NVX_ESCAPE_3D_CHANNEL_LEASE 0x800eU
+#define NVX_ESCAPE_3D_SUBMIT_BATCH  0x800fU
 #define NVX_3D_STATUS_SUCCESS            0U
 #define NVX_3D_STATUS_INVALID_PARAMETER 87U
 #define NVX_3D_STATUS_NOT_SUPPORTED     50U
@@ -266,6 +267,11 @@ typedef struct NVX_3D_CHANNEL_LEASE {
     uint32_t ChannelHandle;
     uint32_t GraphicsObjectHandle;
     uint32_t ComputeObjectHandle;
+    uint32_t GraphicsClassEngineId;
+    uint32_t ComputeClassEngineId;
+    uint32_t M2mfClassEngineId;
+    uint32_t CopyClassEngineId;
+    uint32_t TwoDClassEngineId;
 } NVX_3D_CHANNEL_LEASE;
 
 static inline int
@@ -279,10 +285,13 @@ Nvx3dValidateChannelLease(const NVX_3D_CHANNEL_LEASE *request,
         return 0;
     if(operation==NVX_3D_CHANNEL_OPEN)
         return !request->ChannelHandle&&!request->GraphicsObjectHandle&&
-            !request->ComputeObjectHandle;
+            !request->ComputeObjectHandle&&!request->GraphicsClassEngineId&&
+            !request->ComputeClassEngineId&&!request->M2mfClassEngineId&&
+            !request->CopyClassEngineId&&
+            !request->TwoDClassEngineId;
     if(operation==NVX_3D_CHANNEL_CLOSE)
         return request->ChannelHandle&&request->GraphicsObjectHandle&&
-            request->ComputeObjectHandle;
+            request->ComputeObjectHandle&&request->GraphicsClassEngineId;
     return 0;
 }
 
@@ -335,6 +344,8 @@ typedef struct NVX_3D_ALLOC_BUFFER {
     uint32_t TileMode;
     uint64_t ClientToken;
     uint64_t AllocationToken;
+    uint32_t Alignment;
+    uint32_t Reserved;
 } NVX_3D_ALLOC_BUFFER;
 
 /* Resource-relative address patch for a future validated NVC0 batch. This is
@@ -368,6 +379,12 @@ typedef struct NVX_3D_BATCH_HEADER {
     uint64_t ClientToken;
     uint32_t Reserved[2];
 } NVX_3D_BATCH_HEADER;
+
+typedef struct NVX_3D_BATCH_RESULT {
+    uint32_t Size;
+    uint32_t Version;
+    uint64_t FenceValue;
+} NVX_3D_BATCH_RESULT;
 
 static inline int
 Nvx3dBatchRequiredBytes(const NVX_3D_BATCH_HEADER *header,
@@ -431,6 +448,107 @@ Nvx3dBatchReadDword(const uint8_t *dwords, uint32_t index)
     uint32_t value;
     memcpy(&value, dwords + (uint64_t)index * sizeof(value), sizeof(value));
     return value;
+}
+
+typedef struct NVX_3D_NVC0_OBJECT_BINDING {
+    uint32_t Subchannel;
+    uint32_t UserClass;
+    uint32_t ClassEngineId;
+} NVX_3D_NVC0_OBJECT_BINDING;
+
+/* Replace Nouveau's class-number SET_OBJECT payloads with the opaque RM
+ * classEngineID values required by the kernel-owned C56F channel. Accept only
+ * a one-value method-zero packet and a caller-provided class/subchannel pair. */
+static inline int
+Nvx3dTranslateNvc0ObjectBindings(uint8_t *dwords, uint32_t dwordCount,
+                                const NVX_3D_NVC0_OBJECT_BINDING *bindings,
+                                uint32_t bindingCount)
+{
+    uint32_t cursor=0;
+    if(!dwords||!dwordCount||!bindings||!bindingCount) return 0;
+    while(cursor<dwordCount) {
+        uint32_t header=Nvx3dBatchReadDword(dwords,cursor);
+        uint32_t packetType=header&0xe0000000U;
+        if(packetType==0x80000000U) {
+            cursor++;
+            continue;
+        }
+        if(packetType!=0x20000000U&&packetType!=0x60000000U&&
+           packetType!=0xa0000000U) return 0;
+        {
+            uint32_t count=(header>>16)&0x1fffU;
+            uint32_t method=header&0x1fffU;
+            uint32_t subchannel=(header>>13)&7U;
+            if(!count||count>dwordCount-cursor-1U) return 0;
+            if((packetType==0x20000000U&&count>0x2000U-method)||
+               (packetType==0xa0000000U&&count>1U&&method==0x1fffU))
+                return 0;
+            if(method==0U) {
+                uint32_t userClass,binding;
+                if(packetType!=0x20000000U||count!=1U) return 0;
+                userClass=Nvx3dBatchReadDword(dwords,cursor+1U);
+                for(binding=0;binding<bindingCount;binding++)
+                    if(bindings[binding].Subchannel==subchannel&&
+                       bindings[binding].UserClass==userClass&&
+                       bindings[binding].ClassEngineId)
+                        break;
+                if(binding==bindingCount) return 0;
+                memcpy(dwords+(uint64_t)(cursor+1U)*sizeof(uint32_t),
+                       &bindings[binding].ClassEngineId,sizeof(uint32_t));
+            }
+            cursor+=count+1U;
+        }
+    }
+    return 1;
+}
+
+static inline int
+Nvx3dValidateNvc0ObjectBindingsEx(const uint8_t *dwords, uint32_t dwordCount,
+                                  const uint32_t classEngineIds[5],
+                                  int requireGraphicsBinding,
+                                  uint32_t *failureSubchannel,
+                                  uint32_t *failureValue)
+{
+    uint32_t cursor=0, graphics=0;
+    if(failureSubchannel) *failureSubchannel=0xffffffffU;
+    if(failureValue) *failureValue=0;
+    if(!dwords||!dwordCount||!classEngineIds) return 0;
+    while(cursor<dwordCount) {
+        uint32_t header=Nvx3dBatchReadDword(dwords,cursor);
+        uint32_t type=header&0xe0000000U;
+        if(type==0x80000000U) { cursor++; continue; }
+        if(type!=0x20000000U&&type!=0x60000000U&&type!=0xa0000000U)
+            return 0;
+        {
+            uint32_t count=(header>>16)&0x1fffU;
+            uint32_t method=header&0x1fffU;
+            uint32_t subchannel=(header>>13)&7U;
+            if(!count||count>dwordCount-cursor-1U) return 0;
+            if(method==0U) {
+                uint32_t objectClass;
+                objectClass=Nvx3dBatchReadDword(dwords,cursor+1U);
+                if(type!=0x20000000U||count!=1U||subchannel>=5U||
+                   !classEngineIds[subchannel]||
+                   objectClass!=classEngineIds[subchannel]) {
+                    if(failureSubchannel) *failureSubchannel=subchannel;
+                    if(failureValue) *failureValue=objectClass;
+                    return 0;
+                }
+                if(subchannel==0U) graphics=1U;
+            }
+            cursor+=count+1U;
+        }
+    }
+    return !requireGraphicsBinding||graphics;
+}
+
+static inline int
+Nvx3dValidateNvc0ObjectBindings(const uint8_t *dwords, uint32_t dwordCount,
+                                const uint32_t classEngineIds[5],
+                                int requireGraphicsBinding)
+{
+    return Nvx3dValidateNvc0ObjectBindingsEx(dwords,dwordCount,
+            classEngineIds,requireGraphicsBinding,NULL,NULL);
 }
 
 static inline int
@@ -504,49 +622,77 @@ Nvx3dValidateNvc0AddressMethods(const uint8_t *dwords,
                                uint32_t referenceCount,
                                const NVX_3D_ALLOC_BUFFER *ownedAllocations,
                                uint32_t ownedAllocationCount,
-                               uint64_t clientToken)
+                               uint64_t clientToken,
+                               uint32_t *failureMethod,
+                               uint64_t *failureAddress)
 {
     uint32_t cursor=0;
+    if(failureMethod) *failureMethod=0xffffffffU;
+    if(failureAddress) *failureAddress=0;
     while(cursor<dwordCount) {
         uint32_t header=Nvx3dBatchReadDword(dwords,cursor);
         uint32_t packetType=header&0xe0000000U;
         uint32_t subchannel=(header>>13)&7U;
         if(packetType==0x80000000U) {
             uint32_t method=(header&0x1fffU)<<2;
-            if(Nvx3dNvc0AddressMethodKind(subchannel,method,NULL,NULL))
+            if(Nvx3dNvc0AddressMethodKind(subchannel,method,NULL,NULL)) {
+                if(failureMethod) *failureMethod=method;
                 return 0;
+            }
             cursor++;
         } else {
             uint32_t count=(header>>16)&0x1fffU;
             uint32_t method=(header&0x1fffU)<<2;
             uint32_t i;
             for(i=0;i<count;i++) {
-                uint32_t currentMethod=(packetType==0x20000000U ||
-                                        packetType==0xa0000000U)?
-                    method+i*4U:method;
+                /* NVC0 ONEINC advances from its header method only once;
+                 * every payload after the first targets method+4. */
+                uint32_t currentMethod=packetType==0x20000000U?
+                    method+i*4U:
+                    (packetType==0xa0000000U&&i?method+4U:method);
                 uint32_t pairIndex,arrayIndex;
                 int kind=Nvx3dNvc0AddressMethodKind(subchannel,currentMethod,
                                                    &pairIndex,&arrayIndex);
-                if(kind==2) return 0;
+                if(kind==2) {
+                    if(failureMethod) *failureMethod=currentMethod;
+                    if(failureAddress)
+                        *failureAddress=Nvx3dBatchReadDword(dwords,cursor+1U+i);
+                    return 0;
+                }
                 if(kind==1) {
                     const NVX_3D_NVC0_ADDRESS_PAIR *pair=
                         &Nvx3dNvc0AddressPairs[pairIndex];
                     uint32_t high,low,expectedLow;
                     uint64_t address;
                     if((packetType!=0x20000000U &&
-                        packetType!=0xa0000000U)||i+1U>=count)
+                        packetType!=0xa0000000U)||i+1U>=count) {
+                        if(failureMethod) *failureMethod=currentMethod;
                         return 0;
+                    }
                     expectedLow=pair->LowMethod+arrayIndex*pair->IndexStride;
-                    if(currentMethod>0x1ffbU||currentMethod+4U!=expectedLow)
+                    /* Methods are byte offsets, while the packet header
+                     * stores a 13-bit word index. 0x2384/0x2388 is a valid
+                     * C797 constant-buffer pair; the old 0x1ffb bound
+                     * accidentally compared byte offsets to word units. */
+                    if(currentMethod>0x7ff8U||currentMethod+4U!=expectedLow) {
+                        if(failureMethod) *failureMethod=currentMethod;
                         return 0;
+                    }
                     high=Nvx3dBatchReadDword(dwords,cursor+1U+i);
                     low=Nvx3dBatchReadDword(dwords,cursor+2U+i);
-                    if(high>0xffU) return 0;
+                    if(high>0xffU) {
+                        if(failureMethod) *failureMethod=currentMethod;
+                        if(failureAddress) *failureAddress=(uint64_t)high<<32;
+                        return 0;
+                    }
                     address=((uint64_t)high<<32)|low;
                     if(!Nvx3dNvc0AddressIsOwned(address,pair,references,
                             referenceCount,ownedAllocations,
-                            ownedAllocationCount,clientToken))
+                            ownedAllocationCount,clientToken)) {
+                        if(failureMethod) *failureMethod=currentMethod;
+                        if(failureAddress) *failureAddress=address;
                         return 0;
+                    }
                     i++;
                 }
             }
@@ -652,8 +798,8 @@ Nvx3dValidateNvc0Batch(const void *input, uint32_t inputBytes,
             /* Incrementing packets must not roll the 13-bit method field
              * into the subchannel bits. Non-incrementing packets repeatedly
              * address one method and therefore do not advance this field. */
-            if((packetType==0x20000000U||packetType==0xa0000000U)&&
-               count>0x2000U-method)
+            if((packetType==0x20000000U&&count>0x2000U-method)||
+               (packetType==0xa0000000U&&count>1U&&method==0x1fffU))
                 return 0;
             cursor+=count+1U;
         } else return 0;
@@ -661,7 +807,7 @@ Nvx3dValidateNvc0Batch(const void *input, uint32_t inputBytes,
 
     if(!Nvx3dValidateNvc0AddressMethods(dwords,header.DwordCount,
             references,header.BufferReferenceCount,ownedAllocations,
-            ownedAllocationCount,header.ClientToken))
+            ownedAllocationCount,header.ClientToken,NULL,NULL))
         return 0;
 
     for(i=0;i<header.RelocationCount;i++) {
@@ -1144,6 +1290,11 @@ Nvx3dValidateAlloc(const NVX_3D_ALLOC_BUFFER *request)
                          NVX_3D_USAGE_DEPTH_METHOD_S8Z24))) ||
        ((request->Usage&NVX_3D_USAGE_COLOR_TARGET) &&
         (request->Usage&NVX_3D_USAGE_DEPTH_TARGET)) ||
+       (request->Alignment &&
+        (request->Alignment<NVX_3D_PAGE_BYTES ||
+         request->Alignment>0x00200000U ||
+         (request->Alignment&(request->Alignment-1U)))) ||
+       request->Reserved ||
        !request->Bytes || request->Bytes>NVX_3D_MAX_BUFFER_BYTES ||
        (request->Bytes&(NVX_3D_PAGE_BYTES-1U)) ||
        request->BufferId || request->GpuVa)

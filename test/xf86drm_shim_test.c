@@ -50,6 +50,11 @@ mock_escape(void *opaque, uint32_t escape, uint32_t input_bytes,
          result->ChannelHandle = 0xc56f0002U;
          result->GraphicsObjectHandle = 0xc6970001U;
          result->ComputeObjectHandle = 0xc6970013U;
+         result->GraphicsClassEngineId = 0x10U;
+         result->ComputeClassEngineId = 0x50U;
+         result->M2mfClassEngineId = 0x20U;
+         result->CopyClassEngineId = 0x30U;
+         result->TwoDClassEngineId = 0x40U;
       }
       return 1;
    }
@@ -226,10 +231,19 @@ main(void)
       assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_NEW, &create,
                                  sizeof(create)) == -1);
       create.align = 0;
-      create.info.tile_mode = 0x10U;
+      create.info.tile_mode = 0x40U;
+      create.info.domain = NOUVEAU_GEM_DOMAIN_GART;
+      assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_NEW, &create,
+                                 sizeof(create)) == 0);
+      assert(create.info.handle != 0 && create.info.tile_mode == 0x40U);
+      assert(drmCloseBufferHandle(fd, create.info.handle) == 0);
+
+      create.info.handle = 0;
+      create.info.tile_mode = 0x80U;
       assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_NEW, &create,
                                  sizeof(create)) == -1);
       create.info.tile_mode = 0;
+      create.info.domain = NOUVEAU_GEM_DOMAIN_VRAM;
       create.info.tile_flags = 0x100U;
       assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_NEW, &create,
                                  sizeof(create)) == -1);
@@ -237,7 +251,14 @@ main(void)
       create.info.domain = NOUVEAU_GEM_DOMAIN_GART;
       create.align = 0x20000U;
       assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GEM_NEW, &create,
-                                 sizeof(create)) == -1);
+                                 sizeof(create)) == 0);
+      assert(create.info.handle != 0 &&
+             (create.info.offset & (create.align - 1U)) == 0);
+      assert(create.info.domain == (NOUVEAU_GEM_DOMAIN_GART |
+                                    NOUVEAU_GEM_DOMAIN_MAPPABLE));
+      assert(drmCloseBufferHandle(fd, create.info.handle) == 0);
+      memset(&create, 0, sizeof(create));
+      create.info.size = 4096;
       create.info.domain = NOUVEAU_GEM_DOMAIN_VRAM |
                            NOUVEAU_GEM_DOMAIN_GART;
       create.align = 0x20000U;
@@ -324,7 +345,9 @@ main(void)
       };
       assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GETPARAM, &getparam,
                                  sizeof(getparam)) == 0);
-      assert(getparam.value == winsys.caps.VramApertureBytes);
+      assert(getparam.value ==
+             (winsys.caps.VramApertureBytes > 0x02000000ULL ?
+              0x02000000ULL : winsys.caps.VramApertureBytes));
       getparam.param = NOUVEAU_GETPARAM_EXEC_PUSH_MAX;
       assert(drmCommandWriteRead(fd, DRM_NOUVEAU_GETPARAM, &getparam,
                                  sizeof(getparam)) == 0);

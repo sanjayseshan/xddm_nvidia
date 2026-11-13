@@ -22,12 +22,15 @@ int NvxGrBuildPtes(uint64_t *, uint32_t, uint64_t, uint64_t, int);
 #define NVX_GART_SLICE_BYTES UINT32_C(0x00200000)
 #define NVX_GART_SLICE_COUNT 115U
 #define NVX_GART_PTES_PER_SLICE 512U
+#define NVX_GART_PAGE_BYTES 4096U
+#define NVX_GART_MIN_VA_ALIGNMENT 0x10000U
+#define NVX_GART_PAGE_COUNT (NVX_GART_SLICE_COUNT * NVX_GART_PTES_PER_SLICE)
 #define NVX_GART_TOTAL_BYTES ((uint64_t)NVX_GART_SLICE_COUNT * NVX_GART_SLICE_BYTES)
-#define NVX_GART_BITMAP_WORDS ((NVX_GART_SLICE_COUNT + 31U) / 32U)
+#define NVX_GART_BITMAP_WORDS ((NVX_GART_PAGE_COUNT + 31U) / 32U)
 typedef struct NVX_GART_HEAP {
     uint32_t used[NVX_GART_BITMAP_WORDS];
 } NVX_GART_HEAP;
-int NvxGartReserve(NVX_GART_HEAP *, uint64_t, uint32_t *, uint32_t *, uint64_t *);
+int NvxGartReserve(NVX_GART_HEAP *, uint64_t, uint32_t, uint32_t *, uint32_t *, uint64_t *);
 int NvxGartRelease(NVX_GART_HEAP *, uint32_t, uint32_t);
 int NvxGartBuildPtes(uint64_t *, uint32_t, uint32_t, uint32_t,
                      uint64_t, uint64_t, int);

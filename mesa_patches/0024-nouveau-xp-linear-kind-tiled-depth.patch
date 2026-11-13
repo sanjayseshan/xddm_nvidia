@@ -1,0 +1,16 @@
+diff --git a/src/gallium/drivers/nouveau/nvc0/nvc0_miptree.c b/src/gallium/drivers/nouveau/nvc0/nvc0_miptree.c
+index 26c1df0222b8..8c657e34521f 100644
+--- a/src/gallium/drivers/nouveau/nvc0/nvc0_miptree.c
++++ b/src/gallium/drivers/nouveau/nvc0/nvc0_miptree.c
+@@ -528,6 +528,11 @@ nvc0_miptree_create(struct pipe_screen *pscreen,
+    }
+    bo_config.nvc0.tile_mode = mt->level[0].tile_mode;
+ 
++   /* XP's NVX allocator supplies normal, unmapped-kind memory. Preserve the
++    * NVC0 block-linear depth layout, but request the uncompressed memory kind. */
++   if (pt->bind & PIPE_BIND_DEPTH_STENCIL)
++      bo_config.nvc0.memtype = 0;
++
+    if (!bo_config.nvc0.memtype && (pt->usage == PIPE_USAGE_STAGING || pt->bind & PIPE_BIND_SHARED))
+       mt->base.domain = NOUVEAU_BO_GART;
+    else

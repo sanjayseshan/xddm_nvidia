@@ -42,19 +42,35 @@
 #include "swref/published/ampere/ga102/dev_riscv_pri.h"
 #include "swref/published/ampere/ga102/dev_sec_pri.h"
 
-/* PBDMA debug offsets are absent from the SDK's minimal dev_pbdma.h. Keep
- * these published register definitions in the shim for read-only fault logs. */
-#define NVX_PPBDMA_COUNT              12U
-#define NVX_PPBDMA_STRIDE             0x2000U
-#define NVX_PPBDMA_GP_BASE(i)          (0x00040048U + (i) * NVX_PPBDMA_STRIDE)
-#define NVX_PPBDMA_GP_BASE_HI(i)       (0x0004004cU + (i) * NVX_PPBDMA_STRIDE)
-#define NVX_PPBDMA_GP_GET(i)           (0x00040014U + (i) * NVX_PPBDMA_STRIDE)
-#define NVX_PPBDMA_GP_PUT(i)           (0x00040000U + (i) * NVX_PPBDMA_STRIDE)
-#define NVX_PPBDMA_INTR_0(i)           (0x00040108U + (i) * NVX_PPBDMA_STRIDE)
-#define NVX_PPBDMA_INTR_1(i)           (0x00040148U + (i) * NVX_PPBDMA_STRIDE)
-#define NVX_PPBDMA_METHOD0(i)          (0x000400c0U + (i) * NVX_PPBDMA_STRIDE)
-#define NVX_PPBDMA_DATA0(i)            (0x000400c4U + (i) * NVX_PPBDMA_STRIDE)
-#define NVX_PPBDMA_TARGET(i)           (0x000400acU + (i) * NVX_PPBDMA_STRIDE)
+/* PBDMA register offsets are relative to each BAR0 offset published by the
+ * graphics runlist's PBDMA_CONFIG table (see GA100 dev_runlist.h). */
+#define NVX_PPBDMA_REG_BASE            0x00040000U
+#define NVX_PPBDMA_GP_PUT_REL          0x00000000U
+#define NVX_PPBDMA_STATUS_REL          0x00000100U
+#define NVX_PPBDMA_GP_GET_REL          0x00000014U
+#define NVX_PPBDMA_TOP_LEVEL_GET_REL   0x00000020U
+#define NVX_PPBDMA_TOP_LEVEL_GET_HI_REL 0x00000024U
+#define NVX_PPBDMA_GP_FETCH_REL        0x00000050U
+#define NVX_PPBDMA_PB_FETCH_REL        0x00000054U
+#define NVX_PPBDMA_PB_FETCH_HI_REL     0x00000058U
+#define NVX_PPBDMA_GP_BASE_REL         0x00000048U
+#define NVX_PPBDMA_GP_BASE_HI_REL      0x0000004cU
+#define NVX_PPBDMA_GP_CRC_REL          0x00000074U
+#define NVX_PPBDMA_PB_GET_REL          0x00000018U
+#define NVX_PPBDMA_PB_GET_HI_REL       0x0000001cU
+#define NVX_PPBDMA_PB_PUT_REL          0x0000005cU
+#define NVX_PPBDMA_PB_PUT_HI_REL       0x00000060U
+#define NVX_PPBDMA_PB_HEADER_REL       0x00000084U
+#define NVX_PPBDMA_PB_COUNT_REL        0x00000088U
+#define NVX_PPBDMA_PB_CRC_REL          0x00000098U
+#define NVX_PPBDMA_TARGET_REL          0x000000acU
+#define NVX_PPBDMA_METHOD0_REL         0x000000c0U
+#define NVX_PPBDMA_DATA0_REL           0x000000c4U
+#define NVX_PPBDMA_INTR_0_REL          0x00000108U
+#define NVX_PPBDMA_INTR_1_REL          0x00000148U
+#define NVX_GR_RUNLIST_PBDMA_CONFIG_COUNT 2U
+#define NVX_GR_RUNLIST_PBDMA_CONFIG(i) (0x00000010U+(i)*4U)
+#define NVX_GR_RUNLIST_PBDMA_CONFIG_VALID (1U<<31)
 
 /* Published RAMFC_TARGET fields (Turing/GA10x compatible). PBDMA TARGET
  * mirrors these fields when a channel context is loaded. */

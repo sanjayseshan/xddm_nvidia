@@ -1,0 +1,40 @@
+diff --git a/src/gallium/frontends/wgl/stw_st.c b/src/gallium/frontends/wgl/stw_st.c
+index df2df57..4c0285a 100644
+--- a/src/gallium/frontends/wgl/stw_st.c
++++ b/src/gallium/frontends/wgl/stw_st.c
+@@ -259,6 +259,19 @@ stw_st_framebuffer_validate_locked(struct st_context *st,
+          break;
+       }
+ 
++      if ((i == ST_ATTACHMENT_BACK_LEFT ||
++           i == ST_ATTACHMENT_DEPTH_STENCIL) &&
++          stw_dev->screen->get_name) {
++         const char *driver_name = stw_dev->screen->get_name(stw_dev->screen);
++         if (driver_name && driver_name[0] == 'N' && driver_name[1] == 'V') {
++            /* The XP Nouveau bridge exposes linear GART allocations to the
++             * NVX RM. Keep both WGL color and depth targets in that layout. */
++            bind |= PIPE_BIND_SHARED | PIPE_BIND_LINEAR;
++            NvxWglRecordMesaInitStage(
++               "STW: Nouveau drawable target requested in shared linear memory");
++         }
++      }
++
+       if (format != PIPE_FORMAT_NONE) {
+          if (i == ST_ATTACHMENT_BACK_LEFT)
+             NvxWglRecordMesaInitStage("STW: creating back color resource");
+diff --git a/src/gallium/drivers/nouveau/nvc0/nvc0_miptree.c b/src/gallium/drivers/nouveau/nvc0/nvc0_miptree.c
+index fc8e848..d81aa9e 100644
+--- a/src/gallium/drivers/nouveau/nvc0/nvc0_miptree.c
++++ b/src/gallium/drivers/nouveau/nvc0/nvc0_miptree.c
+@@ -504,6 +504,11 @@ nvc0_miptree_create(struct pipe_screen *pscreen,
+       bo_config.nvc0.memtype = nvc0_mt_choose_storage_type(pscreen, mt, compressed);
+    }
+ 
++   if (count == 0 && (pt->bind & (PIPE_BIND_SHARED | PIPE_BIND_LINEAR))) {
++      bo_config.nvc0.memtype = 0;
++      pt->flags |= NOUVEAU_RESOURCE_FLAG_LINEAR;
++   }
++
+    if (!nvc0_miptree_init_ms_mode(mt)) {
+       NvxWglRecordMesaInitStage("NVC0: miptree sample layout failed");
+       FREE(mt);

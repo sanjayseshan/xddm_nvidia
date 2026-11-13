@@ -168,7 +168,8 @@ static void DumpMesaBridgeTrace(void)
     mesaGpuFramebufferVerified = mesaGpuBridgeBatchCount != 0;
     LogMsg("[MESA_BRIDGE_STATUS] screens=%ld callbacks=%ld gpu_batches=%ld nvc0_clears=%ld version=%lu last_primitive=%ld last_count=%ld last_triangles=%ld clear_ms=%ld draw_ms=%ld readback_ms=%ld last=%s\n",
            status.screenCount, status.callbackCount, status.gpuBatchCount,
-           status.nvc0ClearCount, (unsigned long)status.version, status.lastPrimitive,
+           status.nvc0ClearCount, (unsigned long)status.version,
+           status.lastPrimitive,
            status.lastCount, status.lastTriangleCount, status.lastClearMs,
            status.lastDrawMs, status.lastReadbackMs, status.lastMessage);
     LogMsg("[NVX_NOUVEAU_DEVICE] ready=%ld PCI=%04lx chipset=%04lx VRAM-aperture=%08lx%08lx\n",
@@ -649,7 +650,7 @@ static void ClearMesaIcdTrace(void)
 {
     DWORD deleteError;
     SetEnvironmentVariableA("NVX_MESA_ICD_TRACE", "1");
-    if (!DeleteFileA("C:\\test_accel\nvxogl_trace.txt"))
+    if (!DeleteFileA("C:\\test_accel\\nvxogl_trace.txt"))
         deleteError = GetLastError();
     else
         deleteError = ERROR_SUCCESS;
@@ -660,7 +661,7 @@ static void DumpMesaIcdTrace(void)
 {
     char buffer[4096];
     DWORD bytesRead = 0;
-    HANDLE file = CreateFileA("C:\\test_accel\nvxogl_trace.txt",
+    HANDLE file = CreateFileA("C:\\test_accel\\nvxogl_trace.txt",
                               GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
                               NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (file == INVALID_HANDLE_VALUE) {
@@ -827,6 +828,65 @@ static void Test2D(HWND hwnd, HDC hdc)
 }
 
 /* ---------------- OpenGL 3D Pipeline Tests ---------------- */
+/* Direct DrvSetContext calls bypass GDI's installation of opengl32's client
+ * dispatch table. Resolve GL entry points from the ICD for that diagnostic
+ * path; ordinary WGL continues through the system opengl32 imports. */
+typedef struct NVX_DIRECT_GL_API {
+    __typeof__(&glBegin) Begin;
+    __typeof__(&glEnd) End;
+    __typeof__(&glVertex3f) Vertex3f;
+    __typeof__(&glColor3f) Color3f;
+    __typeof__(&glColor4f) Color4f;
+    __typeof__(&glPushMatrix) PushMatrix;
+    __typeof__(&glPopMatrix) PopMatrix;
+    __typeof__(&glRotatef) Rotatef;
+    __typeof__(&glGetString) GetString;
+    __typeof__(&glViewport) Viewport;
+    __typeof__(&glMatrixMode) MatrixMode;
+    __typeof__(&glLoadIdentity) LoadIdentity;
+    __typeof__(&glDisable) Disable;
+    __typeof__(&glEnable) Enable;
+    __typeof__(&glClearColor) ClearColor;
+    __typeof__(&glClear) Clear;
+    __typeof__(&glGetError) GetError;
+    __typeof__(&glReadBuffer) ReadBuffer;
+    __typeof__(&glReadPixels) ReadPixels;
+    __typeof__(&glFinish) Finish;
+    __typeof__(&glClearDepth) ClearDepth;
+    __typeof__(&glDepthFunc) DepthFunc;
+    __typeof__(&glDepthMask) DepthMask;
+    __typeof__(&glFrustum) Frustum;
+    __typeof__(&glTranslatef) Translatef;
+} NVX_DIRECT_GL_API;
+
+static NVX_DIRECT_GL_API nvxDirectGl;
+
+#define glBegin(...)       (nvxDirectGl.Begin ? nvxDirectGl.Begin(__VA_ARGS__) : (glBegin)(__VA_ARGS__))
+#define glEnd(...)         (nvxDirectGl.End ? nvxDirectGl.End(__VA_ARGS__) : (glEnd)(__VA_ARGS__))
+#define glVertex3f(...)    (nvxDirectGl.Vertex3f ? nvxDirectGl.Vertex3f(__VA_ARGS__) : (glVertex3f)(__VA_ARGS__))
+#define glColor3f(...)     (nvxDirectGl.Color3f ? nvxDirectGl.Color3f(__VA_ARGS__) : (glColor3f)(__VA_ARGS__))
+#define glColor4f(...)     (nvxDirectGl.Color4f ? nvxDirectGl.Color4f(__VA_ARGS__) : (glColor4f)(__VA_ARGS__))
+#define glPushMatrix(...)  (nvxDirectGl.PushMatrix ? nvxDirectGl.PushMatrix(__VA_ARGS__) : (glPushMatrix)(__VA_ARGS__))
+#define glPopMatrix(...)   (nvxDirectGl.PopMatrix ? nvxDirectGl.PopMatrix(__VA_ARGS__) : (glPopMatrix)(__VA_ARGS__))
+#define glRotatef(...)     (nvxDirectGl.Rotatef ? nvxDirectGl.Rotatef(__VA_ARGS__) : (glRotatef)(__VA_ARGS__))
+#define glGetString(...)   (nvxDirectGl.GetString ? nvxDirectGl.GetString(__VA_ARGS__) : (glGetString)(__VA_ARGS__))
+#define glViewport(...)    (nvxDirectGl.Viewport ? nvxDirectGl.Viewport(__VA_ARGS__) : (glViewport)(__VA_ARGS__))
+#define glMatrixMode(...)  (nvxDirectGl.MatrixMode ? nvxDirectGl.MatrixMode(__VA_ARGS__) : (glMatrixMode)(__VA_ARGS__))
+#define glLoadIdentity(...) (nvxDirectGl.LoadIdentity ? nvxDirectGl.LoadIdentity(__VA_ARGS__) : (glLoadIdentity)(__VA_ARGS__))
+#define glDisable(...)     (nvxDirectGl.Disable ? nvxDirectGl.Disable(__VA_ARGS__) : (glDisable)(__VA_ARGS__))
+#define glEnable(...)      (nvxDirectGl.Enable ? nvxDirectGl.Enable(__VA_ARGS__) : (glEnable)(__VA_ARGS__))
+#define glClearColor(...)  (nvxDirectGl.ClearColor ? nvxDirectGl.ClearColor(__VA_ARGS__) : (glClearColor)(__VA_ARGS__))
+#define glClear(...)       (nvxDirectGl.Clear ? nvxDirectGl.Clear(__VA_ARGS__) : (glClear)(__VA_ARGS__))
+#define glGetError(...)    (nvxDirectGl.GetError ? nvxDirectGl.GetError(__VA_ARGS__) : (glGetError)(__VA_ARGS__))
+#define glReadBuffer(...)  (nvxDirectGl.ReadBuffer ? nvxDirectGl.ReadBuffer(__VA_ARGS__) : (glReadBuffer)(__VA_ARGS__))
+#define glReadPixels(...)  (nvxDirectGl.ReadPixels ? nvxDirectGl.ReadPixels(__VA_ARGS__) : (glReadPixels)(__VA_ARGS__))
+#define glFinish(...)      (nvxDirectGl.Finish ? nvxDirectGl.Finish(__VA_ARGS__) : (glFinish)(__VA_ARGS__))
+#define glClearDepth(...)  (nvxDirectGl.ClearDepth ? nvxDirectGl.ClearDepth(__VA_ARGS__) : (glClearDepth)(__VA_ARGS__))
+#define glDepthFunc(...)   (nvxDirectGl.DepthFunc ? nvxDirectGl.DepthFunc(__VA_ARGS__) : (glDepthFunc)(__VA_ARGS__))
+#define glDepthMask(...)   (nvxDirectGl.DepthMask ? nvxDirectGl.DepthMask(__VA_ARGS__) : (glDepthMask)(__VA_ARGS__))
+#define glFrustum(...)     (nvxDirectGl.Frustum ? nvxDirectGl.Frustum(__VA_ARGS__) : (glFrustum)(__VA_ARGS__))
+#define glTranslatef(...)  (nvxDirectGl.Translatef ? nvxDirectGl.Translatef(__VA_ARGS__) : (glTranslatef)(__VA_ARGS__))
+
 static void DrawCube(float angle)
 {
     glPushMatrix();
@@ -885,6 +945,23 @@ static void TestSelectedZetaFullSurface(HDC hdc);
 
 static void TestOpenGL(HWND hwnd, HDC hdc)
 {
+    typedef ULONG_PTR (APIENTRY *PFN_DIRECT_DRV_CREATE_CONTEXT)(HDC);
+    typedef BOOL (APIENTRY *PFN_DIRECT_DRV_DELETE_CONTEXT)(ULONG_PTR);
+    typedef PVOID (APIENTRY *PFN_DIRECT_DRV_SET_CONTEXT)(HDC, ULONG_PTR, PVOID);
+    typedef BOOL (APIENTRY *PFN_DIRECT_DRV_SET_PIXEL_FORMAT)(HDC, LONG);
+    typedef LONG (APIENTRY *PFN_DIRECT_DRV_DESCRIBE_PIXEL_FORMAT)(
+        HDC, INT, ULONG, PIXELFORMATDESCRIPTOR *);
+    typedef BOOL (APIENTRY *PFN_DIRECT_DRV_SWAP_BUFFERS)(HDC);
+    typedef PROC (APIENTRY *PFN_DIRECT_DRV_GET_PROC_ADDRESS)(LPCSTR);
+    ULONG_PTR directDdiHandle = 0;
+    HMODULE directIcdModule = NULL;
+    BOOL directDdiCurrent = FALSE;
+    PFN_DIRECT_DRV_DELETE_CONTEXT directDeleteContext = NULL;
+    PFN_DIRECT_DRV_SET_CONTEXT directSetContext = NULL;
+    PFN_DIRECT_DRV_SET_PIXEL_FORMAT directSetPixelFormat = NULL;
+    PFN_DIRECT_DRV_DESCRIBE_PIXEL_FORMAT directDescribePixelFormat = NULL;
+    PFN_DIRECT_DRV_SWAP_BUFFERS directSwapBuffers = NULL;
+    PFN_DIRECT_DRV_GET_PROC_ADDRESS directGetProcAddress = NULL;
     /* The bridge appends per-process results. Remove any prior guest run so
        batch-count deltas cannot be satisfied by stale hardware submissions. */
     BOOL bridgeTraceDeleted = DeleteFileA("C:\\test_accel\\mesa_bridge.log");
@@ -965,14 +1042,16 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
            (unsigned)actualPfd.cDepthBits);
 
     HGLRC hglrc = wglCreateContext(hdc);
+    DWORD wglCreateContextErr = GetLastError();
     DumpOpenGlTrace(wglTraceStart);
     DumpMesaIcdTrace();
     if (!hglrc) {
-        LogMsg("-> wglCreateContext failed (err=%lu)\n", GetLastError());
+        LogMsg("-> wglCreateContext failed (err=%lu)\n", wglCreateContextErr);
         DumpMesaRuntimeTraces();
         LogMsg("-> ICD already loaded by WGL: %s\n",
                GetModuleHandleA("nvxogl64.dll") ? "yes" : "no");
         HMODULE icd = LoadLibraryA("nvxogl64.dll");
+        directIcdModule = icd;
         LogMsg("-> Direct ICD LoadLibrary: %s (err=%lu)\n",
                icd ? "success" : "failed", GetLastError());
         if (icd) {
@@ -988,12 +1067,20 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             for (i = 0; i < sizeof(required) / sizeof(required[0]); ++i)
                 LogMsg("-> ICD export %s: %s\n", required[i],
                        GetProcAddress(icd, required[i]) ? "present" : "missing");
-            typedef ULONG_PTR (APIENTRY *PFN_DRV_CREATE_CONTEXT)(HDC);
-            typedef BOOL (APIENTRY *PFN_DRV_DELETE_CONTEXT)(ULONG_PTR);
-            PFN_DRV_CREATE_CONTEXT createContext =
-                (PFN_DRV_CREATE_CONTEXT)GetProcAddress(icd, "DrvCreateContext");
-            PFN_DRV_DELETE_CONTEXT deleteContext =
-                (PFN_DRV_DELETE_CONTEXT)GetProcAddress(icd, "DrvDeleteContext");
+            PFN_DIRECT_DRV_CREATE_CONTEXT createContext =
+                (PFN_DIRECT_DRV_CREATE_CONTEXT)GetProcAddress(icd, "DrvCreateContext");
+            directDeleteContext =
+                (PFN_DIRECT_DRV_DELETE_CONTEXT)GetProcAddress(icd, "DrvDeleteContext");
+            directSetContext =
+                (PFN_DIRECT_DRV_SET_CONTEXT)GetProcAddress(icd, "DrvSetContext");
+            directSetPixelFormat =
+                (PFN_DIRECT_DRV_SET_PIXEL_FORMAT)GetProcAddress(icd, "DrvSetPixelFormat");
+            directDescribePixelFormat =
+                (PFN_DIRECT_DRV_DESCRIBE_PIXEL_FORMAT)GetProcAddress(icd, "DrvDescribePixelFormat");
+            directSwapBuffers =
+                (PFN_DIRECT_DRV_SWAP_BUFFERS)GetProcAddress(icd, "DrvSwapBuffers");
+            directGetProcAddress =
+                (PFN_DIRECT_DRV_GET_PROC_ADDRESS)GetProcAddress(icd, "DrvGetProcAddress");
             LogMsg("-> Direct context probe relies on DrvCreateContext to initialize the Mesa screen\n");
             if (createContext) {
                 ULONG_PTR directContext;
@@ -1011,28 +1098,111 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
 #endif
                 LogMsg("-> Direct DrvCreateContext: %s (handle=%p)\n",
                        directContext ? "success" : "failed", (void *)(UINT_PTR)directContext);
-                if (directContext && deleteContext)
-                    deleteContext(directContext);
+                if (directContext && !hglrc && directSetContext) {
+                    LONG directFormatCount = directDescribePixelFormat ?
+                        directDescribePixelFormat(hdc, 0, 0, NULL) : 0;
+                    int directFormat = 0;
+                    for (LONG formatIndex = 1; formatIndex <= directFormatCount; ++formatIndex) {
+                        PIXELFORMATDESCRIPTOR directPfd;
+                        memset(&directPfd, 0, sizeof(directPfd));
+                        if (directDescribePixelFormat(hdc, formatIndex,
+                                sizeof(directPfd), &directPfd) > 0 &&
+                            (directPfd.dwFlags & (PFD_DRAW_TO_WINDOW |
+                                PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER)) ==
+                                (PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL |
+                                 PFD_DOUBLEBUFFER) &&
+                            directPfd.iPixelType == PFD_TYPE_RGBA &&
+                            directPfd.cColorBits >= 24) {
+                            directFormat = (int)formatIndex;
+                            break;
+                        }
+                    }
+                    BOOL directFormatSet = directFormat > 0 && directSetPixelFormat &&
+                        directSetPixelFormat(hdc, directFormat);
+                    LogMsg("-> Direct ICD pixel formats=%ld chosen=%d set_result=%u (GDI format=%d)\n",
+                           directFormatCount, directFormat, (unsigned)directFormatSet, format);
+                    /* DHGLRC is an ICD-private handle, not a public HGLRC. Bind it
+                       through the ICD DDI instead of passing it to GDI WGL. */
+                    PVOID clientTable = directSetContext(hdc, directContext, NULL);
+                    LogMsg("-> Direct DrvSetContext handle=%p result=%p\n",
+                           (void *)(UINT_PTR)directContext, clientTable);
+                    memset(&nvxDirectGl, 0, sizeof(nvxDirectGl));
+#define NVX_LOAD_DIRECT_GL(field, symbol) \
+                    nvxDirectGl.field = directGetProcAddress ? \
+                        (__typeof__(nvxDirectGl.field))directGetProcAddress(symbol) : NULL
+                    NVX_LOAD_DIRECT_GL(Begin, "glBegin");
+                    NVX_LOAD_DIRECT_GL(End, "glEnd");
+                    NVX_LOAD_DIRECT_GL(Vertex3f, "glVertex3f");
+                    NVX_LOAD_DIRECT_GL(Color3f, "glColor3f");
+                    NVX_LOAD_DIRECT_GL(Color4f, "glColor4f");
+                    NVX_LOAD_DIRECT_GL(PushMatrix, "glPushMatrix");
+                    NVX_LOAD_DIRECT_GL(PopMatrix, "glPopMatrix");
+                    NVX_LOAD_DIRECT_GL(Rotatef, "glRotatef");
+                    NVX_LOAD_DIRECT_GL(GetString, "glGetString");
+                    NVX_LOAD_DIRECT_GL(Viewport, "glViewport");
+                    NVX_LOAD_DIRECT_GL(MatrixMode, "glMatrixMode");
+                    NVX_LOAD_DIRECT_GL(LoadIdentity, "glLoadIdentity");
+                    NVX_LOAD_DIRECT_GL(Disable, "glDisable");
+                    NVX_LOAD_DIRECT_GL(Enable, "glEnable");
+                    NVX_LOAD_DIRECT_GL(ClearColor, "glClearColor");
+                    NVX_LOAD_DIRECT_GL(Clear, "glClear");
+                    NVX_LOAD_DIRECT_GL(GetError, "glGetError");
+                    NVX_LOAD_DIRECT_GL(ReadBuffer, "glReadBuffer");
+                    NVX_LOAD_DIRECT_GL(ReadPixels, "glReadPixels");
+                    NVX_LOAD_DIRECT_GL(Finish, "glFinish");
+                    NVX_LOAD_DIRECT_GL(ClearDepth, "glClearDepth");
+                    NVX_LOAD_DIRECT_GL(DepthFunc, "glDepthFunc");
+                    NVX_LOAD_DIRECT_GL(DepthMask, "glDepthMask");
+                    NVX_LOAD_DIRECT_GL(Frustum, "glFrustum");
+                    NVX_LOAD_DIRECT_GL(Translatef, "glTranslatef");
+#undef NVX_LOAD_DIRECT_GL
+                    unsigned resolvedGl = 0;
+                    PROC *glSlots = (PROC *)&nvxDirectGl;
+                    size_t glSlotCount = sizeof(nvxDirectGl) / sizeof(PROC);
+                    for (size_t glIndex = 0; glIndex < glSlotCount; ++glIndex)
+                        if (glSlots[glIndex]) ++resolvedGl;
+                    LogMsg("-> Direct DrvGetProcAddress GL functions resolved=%u/%u\n",
+                           resolvedGl, (unsigned)glSlotCount);
+                    if (directFormat > 0 && clientTable && directSwapBuffers && directGetProcAddress &&
+                        resolvedGl == glSlotCount) {
+                        directDdiHandle = directContext;
+                        directDdiCurrent = TRUE;
+                        LogMsg("-> Direct ICD DDI context is current; GL calls use ICD dispatch\n");
+                    } else if (directDeleteContext) {
+                        if (directSetContext) directSetContext(NULL, 0, NULL);
+                        memset(&nvxDirectGl, 0, sizeof(nvxDirectGl));
+                        directDeleteContext(directContext);
+                    }
+                } else if (directContext && directDeleteContext) {
+                    directDeleteContext(directContext);
+                }
             }
             LogMsg("-> Mesa ICD callback trace after direct ICD probes:\n");
             DumpMesaIcdTrace();
-            wglTraceStart = openGlTraceCount;
-            hglrc = wglCreateContext(hdc);
-            DumpOpenGlTrace(wglTraceStart);
-            LogMsg("-> WGL retry after explicit ICD initialization: %s (err=%lu)\n",
-                   hglrc ? "success" : "failed", GetLastError());
-            FreeLibrary(icd);
+            if (!hglrc && !directDdiCurrent) {
+                wglTraceStart = openGlTraceCount;
+                hglrc = wglCreateContext(hdc);
+                DWORD retryErr = GetLastError();
+                DumpOpenGlTrace(wglTraceStart);
+                LogMsg("-> WGL retry after explicit ICD initialization: %s (err=%lu)\n",
+                       hglrc ? "success" : "failed", retryErr);
+            }
+            if (!directDdiCurrent) {
+                FreeLibrary(icd);
+                directIcdModule = NULL;
+            }
         }
-        if (!hglrc) {
+        if (!hglrc && !directDdiCurrent) {
             LogMsg("-> [FAIL] XP WGL could not create an ICD context\n");
             failures++;
+            if (directIcdModule) FreeLibrary(directIcdModule);
             return;
         }
     }
 
-    if (!wglMakeCurrent(hdc, hglrc)) {
+    if (!directDdiCurrent && !wglMakeCurrent(hdc, hglrc)) {
         LogMsg("-> [FAIL] wglMakeCurrent failed (err=%lu)\n", GetLastError()); failures++;
-        wglDeleteContext(hglrc);
+        if (hglrc) wglDeleteContext(hglrc);
         return;
     }
 
@@ -1087,7 +1257,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
         LogMsg("-> Submitted two flat-color GL_QUADS to Mesa bridge; GL error=0x%X\n",
                bridgeError);
         if (bridgeError != GL_NO_ERROR) failures++;
-        if (!SwapBuffers(hdc)) {
+        if (!(directDdiCurrent ? directSwapBuffers(hdc) : SwapBuffers(hdc))) {
             LogMsg("[MESA_GPU_PIXEL_RESULT] FAIL (SwapBuffers error=%lu)\n",
                    GetLastError());
             failures++;
@@ -1137,10 +1307,33 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
         {
             BYTE fullTargetCenter[4]={0,0,0,0},fullTargetCorner[4]={0,0,0,0};
             BYTE fullTargetBackCenter[4]={0,0,0,0};
+            BYTE mesaClearBackCenter[4]={0,0,0,0};
             GLenum fullTargetError;
             unsigned batchesBefore=mesaGpuBridgeBatchCount;
             glViewport(0,0,w,h);
             glDisable(GL_DEPTH_TEST);
+            glReadBuffer(GL_BACK);
+            glClearColor(0.125f,0.25f,0.75f,1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glFinish();
+            fullTargetError=glGetError();
+            if(fullTargetError==GL_NO_ERROR) {
+                glReadPixels(w/2,h/2,1,1,GL_RGBA,GL_UNSIGNED_BYTE,
+                             mesaClearBackCenter);
+                fullTargetError=glGetError();
+            }
+            LogMsg("[MESA_GPU_CLEAR_BACK_READBACK] pixel=%u,%u,%u error=0x%X\n",
+                   mesaClearBackCenter[0],mesaClearBackCenter[1],
+                   mesaClearBackCenter[2],fullTargetError);
+            if(fullTargetError==GL_NO_ERROR&&
+               mesaClearBackCenter[0]>=24&&mesaClearBackCenter[0]<=40&&
+               mesaClearBackCenter[1]>=56&&mesaClearBackCenter[1]<=72&&
+               mesaClearBackCenter[2]>=184&&mesaClearBackCenter[2]<=200) {
+                LogMsg("[MESA_GPU_CLEAR_BACK_RESULT] PASS\n");
+            } else {
+                LogMsg("[MESA_GPU_CLEAR_BACK_RESULT] FAIL\n");
+                failures++;
+            }
             glClearColor(0.0f,0.0f,0.0f,1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
             glBegin(GL_QUADS);
@@ -1158,7 +1351,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                              fullTargetBackCenter);
                 fullTargetError=glGetError();
             }
-            if(fullTargetError==GL_NO_ERROR&&SwapBuffers(hdc)) {
+            if(fullTargetError==GL_NO_ERROR&&(directDdiCurrent ? directSwapBuffers(hdc) : SwapBuffers(hdc))) {
                 glReadBuffer(GL_FRONT);
                 glReadPixels(w/2,h/2,1,1,GL_RGBA,GL_UNSIGNED_BYTE,
                              fullTargetCenter);
@@ -1231,7 +1424,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                              depthBackCenter);
                 depthError=glGetError();
             }
-            if(depthError==GL_NO_ERROR&&SwapBuffers(hdc)) {
+            if(depthError==GL_NO_ERROR&&(directDdiCurrent ? directSwapBuffers(hdc) : SwapBuffers(hdc))) {
                 glReadBuffer(GL_FRONT);
                 glReadPixels(w/2,h/2,1,1,GL_RGBA,GL_UNSIGNED_BYTE,
                              depthCenter);
@@ -1306,7 +1499,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
         glEnd();
         glFinish();
         depthError = glGetError();
-        if (depthError == GL_NO_ERROR && SwapBuffers(hdc)) {
+        if (depthError == GL_NO_ERROR && (directDdiCurrent ? directSwapBuffers(hdc) : SwapBuffers(hdc))) {
             glReadBuffer(GL_FRONT);
             glReadPixels(32, 8, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, depthPixel);
             depthError = glGetError();
@@ -1336,9 +1529,10 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
 
         /* Keep the cube's GPU evidence independent of the depth probe above. */
         DeleteFileA("C:\\test_accel\\mesa_bridge.log");
-        BYTE *cubePixels = NULL, *softCubePixels = NULL;
+        BYTE *cubePixels = NULL, *backPixels = NULL, *softCubePixels = NULL;
         SIZE_T cubeBytes = (SIZE_T)w * (SIZE_T)h * 4;
         unsigned coloredPixels = 0, referenceColored = 0,
+                 backColored = 0,
                  facePixels[6] = {0,0,0,0,0,0},
                  referenceFaces[6] = {0,0,0,0,0,0},
                  minX = (unsigned)w, minY = (unsigned)h, maxX = 0, maxY = 0,
@@ -1356,10 +1550,28 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
         DrawCube(17.0f);
         glFinish();
         cubePixels = (BYTE *)HeapAlloc(GetProcessHeap(), 0, cubeBytes);
+        backPixels = (BYTE *)HeapAlloc(GetProcessHeap(), 0, cubeBytes);
+        if (backPixels) {
+            GLenum backError;
+            glReadBuffer(GL_BACK);
+            glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, backPixels);
+            backError = glGetError();
+            if (backError == GL_NO_ERROR) {
+                for (p = 0; p < (unsigned)(w * h); p++) {
+                    if (backPixels[p * 4] > 200 || backPixels[p * 4 + 1] > 200 ||
+                        backPixels[p * 4 + 2] > 200)
+                        backColored++;
+                }
+            }
+            LogMsg("[MESA_GPU_CUBE_BACK_READBACK] colored_pixels=%u error=0x%X\n",
+                   backColored, backError);
+        } else {
+            LogMsg("[MESA_GPU_CUBE_BACK_READBACK] allocation failed\n");
+        }
         if (!cubePixels) {
             LogMsg("[MESA_GPU_CUBE_RESULT] FAIL (full-frame readback allocation failed)\n");
             failures++;
-        } else if (!SwapBuffers(hdc)) {
+        } else if (!(directDdiCurrent ? directSwapBuffers(hdc) : SwapBuffers(hdc))) {
             LogMsg("[MESA_GPU_CUBE_RESULT] FAIL (SwapBuffers error=%lu)\n",
                    GetLastError());
             failures++;
@@ -1379,7 +1591,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                 glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
                 DrawCube(17.0f);
                 glFinish();
-                if (glGetError() == GL_NO_ERROR && SwapBuffers(hdc)) {
+                if (glGetError() == GL_NO_ERROR && (directDdiCurrent ? directSwapBuffers(hdc) : SwapBuffers(hdc))) {
                     glReadBuffer(GL_FRONT);
                     glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
                                  softCubePixels);
@@ -1467,7 +1679,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             DrawCube(17.0f);
             glFinish();
             noDepthError = glGetError();
-            if (noDepthError == GL_NO_ERROR && !SwapBuffers(hdc))
+            if (noDepthError == GL_NO_ERROR && !(directDdiCurrent ? directSwapBuffers(hdc) : SwapBuffers(hdc)))
                 noDepthError = (GLenum)GetLastError();
             if (noDepthError == GL_NO_ERROR) {
                 glReadBuffer(GL_FRONT);
@@ -1487,7 +1699,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                 DrawCube(17.0f);
                 glFinish();
                 noDepthError = glGetError();
-                if (noDepthError == GL_NO_ERROR && !SwapBuffers(hdc))
+            if (noDepthError == GL_NO_ERROR && !(directDdiCurrent ? directSwapBuffers(hdc) : SwapBuffers(hdc)))
                     noDepthError = (GLenum)GetLastError();
                 if (noDepthError == GL_NO_ERROR) {
                     glReadBuffer(GL_FRONT);
@@ -1527,6 +1739,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             glEnable(GL_DEPTH_TEST);
         }
         if (cubePixels) HeapFree(GetProcessHeap(), 0, cubePixels);
+        if (backPixels) HeapFree(GetProcessHeap(), 0, backPixels);
         if (softCubePixels) HeapFree(GetProcessHeap(), 0, softCubePixels);
         glViewport(0, 0, w, h);
     }
@@ -1547,12 +1760,19 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
     double intervalStart = tStart;
     unsigned intervalBatches = mesaGpuBridgeBatchCount;
     for (int frame = 0; frame < GL_FRAMES; frame++) {
+        if (frame == 0) LogMsg("[OPENGL_FRAME0] clear begin\n");
         glClearColor(0.1f, 0.1f, 0.2f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        if (frame == 0) LogMsg("[OPENGL_FRAME0] clear complete; cube draw begin\n");
 
         DrawCube((float)frame * 3.6f);
+        if (frame == 0) LogMsg("[OPENGL_FRAME0] cube draw complete; swap begin\n");
 
-        if (!SwapBuffers(hdc)) {
+        BOOL swapResult = directDdiCurrent ? directSwapBuffers(hdc) : SwapBuffers(hdc);
+        if (frame == 0)
+            LogMsg("[OPENGL_FRAME0] swap returned=%u error=%lu\n",
+                   (unsigned)swapResult, (unsigned long)GetLastError());
+        if (!swapResult) {
             LogMsg("-> [FAIL] SwapBuffers failed: %lu\n", GetLastError());
             failures++;
             break;
@@ -1590,8 +1810,16 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
         if (error != GL_NO_ERROR) failures++;
     }
     DumpMesaRuntimeTraces();
-    wglMakeCurrent(NULL, NULL);
-    wglDeleteContext(hglrc);
+    if (directDdiCurrent) {
+        /* DrvSetContext(NULL, 0) is the Mesa ICD's supported unbind path. */
+        directSetContext(NULL, 0, NULL);
+        if (directIcdModule && directDdiHandle && directDeleteContext)
+            directDeleteContext(directDdiHandle);
+        if (directIcdModule) FreeLibrary(directIcdModule);
+    } else {
+        wglMakeCurrent(NULL, NULL);
+        if (hglrc) wglDeleteContext(hglrc);
+    }
     if (mesaGpuBridgeProbe) {
         typedef ULONG_PTR (APIENTRY *PFN_ICD_CREATE_CONTEXT)(HDC);
         typedef BOOL (APIENTRY *PFN_ICD_DELETE_CONTEXT)(ULONG_PTR);
@@ -1613,6 +1841,32 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
     }
     LogMsg("-> OpenGL rendering test completed; renderer classification reported above.\n");
 }
+
+#undef glBegin
+#undef glEnd
+#undef glVertex3f
+#undef glColor3f
+#undef glColor4f
+#undef glPushMatrix
+#undef glPopMatrix
+#undef glRotatef
+#undef glGetString
+#undef glViewport
+#undef glMatrixMode
+#undef glLoadIdentity
+#undef glDisable
+#undef glEnable
+#undef glClearColor
+#undef glClear
+#undef glGetError
+#undef glReadBuffer
+#undef glReadPixels
+#undef glFinish
+#undef glClearDepth
+#undef glDepthFunc
+#undef glDepthMask
+#undef glFrustum
+#undef glTranslatef
 
 /* Exercise Mesa's libgl-gdi frontend without replacing XP's System32
  * opengl32.dll. This is a diagnostic for the ICD DDI route, not a hardware
@@ -1652,7 +1906,7 @@ static void TestMesaWglFrontend(HINSTANCE instance)
     PFN_GET_STRING getString;
 
     LogMsg("\n[MESA_WGL_SHIM] Starting direct Mesa WGL frontend diagnostic\n");
-    mesa = LoadLibraryA("C:\\test_accel\nvxmesa.dll");
+    mesa = LoadLibraryA("C:\\test_accel\\nvxmesa.dll");
     if (!mesa) {
         LogMsg("[MESA_WGL_SHIM] DLL load failed err=%lu\n", GetLastError());
         return;
@@ -3442,7 +3696,7 @@ int main(int argc, char **argv)
                                       runMesaFrontendTest,
                                       sizeof(runMesaFrontendTest)) > 0 &&
               runMesaFrontendTest[0] == '1' &&
-            GetFileAttributesA("C:\\test_accel\nvxmesa.dll") != INVALID_FILE_ATTRIBUTES)
+            GetFileAttributesA("C:\\test_accel\\nvxmesa.dll") != INVALID_FILE_ATTRIBUTES)
             TestMesaWglFrontend(wc.hInstance);
 #endif
         int before = failures;

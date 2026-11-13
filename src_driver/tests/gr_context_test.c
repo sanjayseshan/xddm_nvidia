@@ -46,29 +46,36 @@ int main(void)
     gart_ptes=(uint64_t *)calloc(NVX_GART_SLICE_COUNT *
                                  NVX_GART_PTES_PER_SLICE,sizeof(uint64_t));
     assert(gart_ptes);
-    assert(NvxGartReserve(&gart,0x210000,&first,&count,&gpu_va));
-    assert(first==0&&count==2&&gpu_va==NVX_GART_GPU_VA_BASE);
+    assert(NvxGartReserve(&gart,0x210000,0x1000,&first,&count,&gpu_va));
+    assert(first==0&&count==528&&gpu_va==NVX_GART_GPU_VA_BASE);
     assert(NvxGartBuildPtes(gart_ptes,
-        NVX_GART_SLICE_COUNT*NVX_GART_PTES_PER_SLICE,first,count,
+        NVX_GART_PAGE_COUNT,first,count,
         0x123000,0x210000,0));
     assert(gart_ptes[0]==((UINT64_C(0x123000)>>4)|0x0d));
     assert(gart_ptes[(0x20f000>>12)]==
            ((UINT64_C(0x332000)>>4)|0x0d));
-    assert(gart_ptes[(uint32_t)count*NVX_GART_PTES_PER_SLICE-1U]==0);
-    assert(!NvxGartRelease(&gart,0,3));
-    assert(NvxGartReserve(&gart,1,&first,&count,&gpu_va));
-    assert(first==2&&count==1&&gpu_va==NVX_GART_GPU_VA_BASE+0x400000);
-    assert(NvxGartRelease(&gart,0,2));
-    assert(NvxGartReserve(&gart,0x400000,&first,&count,&gpu_va));
-    assert(first==0&&count==2);
-    assert(NvxGartRelease(&gart,0,2));
-    assert(NvxGartRelease(&gart,2,1));
-    assert(!NvxGartReserve(&gart,0,&first,&count,&gpu_va));
+    assert(gart_ptes[count]==0);
+    assert(!NvxGartRelease(&gart,0,count+1));
+    assert(NvxGartReserve(&gart,1,0x1000,&first,&count,&gpu_va));
+    assert(first==528&&count==1&&
+           gpu_va==NVX_GART_GPU_VA_BASE+UINT64_C(528)*4096U);
+    assert(NvxGartReserve(&gart,1,NVX_GART_MIN_VA_ALIGNMENT,
+                          &first,&count,&gpu_va));
+    assert(first==544&&count==1&&
+           (gpu_va&(NVX_GART_MIN_VA_ALIGNMENT-1U))==0);
+    assert(NvxGartReserve(&gart,0x200000,0x200000,&first,&count,&gpu_va));
+    assert(first==1024&&count==512&&
+           (gpu_va&0x1fffffU)==0);
+    assert(NvxGartRelease(&gart,0,528));
+    assert(NvxGartRelease(&gart,528,1));
+    assert(NvxGartRelease(&gart,544,1));
+    assert(NvxGartRelease(&gart,1024,512));
+    assert(!NvxGartReserve(&gart,0,4096,&first,&count,&gpu_va));
     assert(!NvxGartReserve(&gart,
         (uint64_t)NVX_GART_SLICE_COUNT*NVX_GART_SLICE_BYTES+1,
-        &first,&count,&gpu_va));
+        4096,&first,&count,&gpu_va));
     assert(!NvxGartBuildPtes(gart_ptes,
-        NVX_GART_SLICE_COUNT*NVX_GART_PTES_PER_SLICE,0,1,
+        NVX_GART_PAGE_COUNT,0,1,
         0x123000,0x200001,0));
     free(gart_ptes);
     puts("GR context layout tests passed: bounds, alignment, required buffers and subcontext headers.");

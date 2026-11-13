@@ -11,6 +11,7 @@ typedef struct NVX_NOUVEAU_BO {
    NVX_3D_ALLOC_BUFFER allocation;
    uint8_t *shadow;
    uint64_t last_fence;
+   uint64_t shadow_fence;
    uint32_t references;
    uint32_t map_access;
    uint32_t map_count;
@@ -27,6 +28,9 @@ int NvxNouveauBoCreate(NVX_WINSYS_DEVICE *device,
                        uint64_t client_token, NVX_NOUVEAU_BO *bo);
 void NvxNouveauBoReference(NVX_NOUVEAU_BO *bo);
 int NvxNouveauBoMarkUsed(NVX_NOUVEAU_BO *bo, uint64_t fence_value);
+/* Refresh a persistent CPU shadow after GPU writes have completed. */
+int NvxNouveauBoRefreshRead(NVX_NOUVEAU_BO *bo);
+int NvxNouveauBoRefreshReadIfStale(NVX_NOUVEAU_BO *bo);
 /* Resolve a checked BO-relative range to the NVX-owned GPUVA. Command
  * relocation records should retain BufferId + offset and use this only when
  * building a validated submission; callers must not accept arbitrary VAs. */

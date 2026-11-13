@@ -1,0 +1,45 @@
+diff --git a/src/gallium/drivers/nouveau/nvc0/nvc0_miptree.c b/src/gallium/drivers/nouveau/nvc0/nvc0_miptree.c
+index 26c1df0..fc8e848 100644
+--- a/src/gallium/drivers/nouveau/nvc0/nvc0_miptree.c
++++ b/src/gallium/drivers/nouveau/nvc0/nvc0_miptree.c
+@@ -31,6 +31,8 @@
+ #include "nvc0/nvc0_context.h"
+ #include "nvc0/nvc0_resource.h"
+ 
++extern void NvxWglRecordMesaInitStage(const char *stage);
++
+ static uint32_t
+ nvc0_tex_choose_tile_dims(unsigned nx, unsigned ny, unsigned nz, bool is_3d)
+ {
+@@ -444,6 +446,7 @@ nvc0_miptree_create(struct pipe_screen *pscreen,
+                     const struct pipe_resource *templ,
+                     const uint64_t *modifiers, unsigned int count)
+ {
++   NvxWglRecordMesaInitStage("NVC0: miptree allocation entry");
+    struct nouveau_device *dev = nouveau_screen(pscreen)->device;
+    struct nouveau_drm *drm = nouveau_screen(pscreen)->drm;
+    struct nv50_miptree *mt = CALLOC_STRUCT(nv50_miptree);
+@@ -502,6 +505,7 @@ nvc0_miptree_create(struct pipe_screen *pscreen,
+    }
+ 
+    if (!nvc0_miptree_init_ms_mode(mt)) {
++      NvxWglRecordMesaInitStage("NVC0: miptree sample layout failed");
+       FREE(mt);
+       return NULL;
+    }
+@@ -522,6 +526,7 @@ nvc0_miptree_create(struct pipe_screen *pscreen,
+       else
+          pitch_align = 128;
+       if (!nv50_miptree_init_layout_linear(mt, pitch_align)) {
++         NvxWglRecordMesaInitStage("NVC0: miptree linear layout failed");
+          FREE(mt);
+          return NULL;
+       }
+@@ -541,6 +546,7 @@ nvc0_miptree_create(struct pipe_screen *pscreen,
+    ret = nouveau_bo_new(dev, bo_flags, 4096, mt->total_size, &bo_config,
+                         &mt->base.bo);
+    if (ret) {
++      NvxWglRecordMesaInitStage("NVC0: miptree BO allocation failed");
+       FREE(mt);
+       return NULL;
+    }

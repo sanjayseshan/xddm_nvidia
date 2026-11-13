@@ -21,7 +21,14 @@ $repo_root/mesa_patches/0015-nouveau-xp-winsys-init-stage-trace.patch
 $repo_root/mesa_patches/0016-nouveau-xp-context-stage-trace.patch
 $repo_root/mesa_patches/0017-nouveau-xp-nvc0-tsc-stage-trace.patch
 $repo_root/mesa_patches/0018-nouveau-xp-pushbuf-validation-trace.patch
-$repo_root/mesa_patches/0019-nouveau-xp-preserve-pushbuf-limits-on-error.patch"
+$repo_root/mesa_patches/0019-nouveau-xp-preserve-pushbuf-limits-on-error.patch
+$repo_root/mesa_patches/0020-nouveau-xp-async-swap.patch
+$repo_root/mesa_patches/0021-nouveau-xp-swap-path-diagnostics.patch
+$repo_root/mesa_patches/0022-nouveau-xp-miptree-allocation-trace.patch
+$repo_root/mesa_patches/0023-nouveau-xp-wgl-gart-targets.patch
+$repo_root/mesa_patches/0024-nouveau-xp-linear-kind-tiled-depth.patch
+$repo_root/mesa_patches/0025-nouveau-xp-force-cpu-prep.patch
+$repo_root/mesa_patches/0026-nouveau-xp-render-target-trace.patch"
 expected_revision=cc2dcf9abdc6afc093e85d48e4cfa34eed60a01e
 
 actual_revision=$(git -C "$mesa_dir" rev-parse HEAD)

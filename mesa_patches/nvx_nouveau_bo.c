@@ -3,6 +3,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(NVX_XP_WIN32_SHIMS) && \
+    (defined(_WIN32) || defined(_WIN64))
+void NvxWglRecordNouveauPushbufItem(uint32_t kind, uint32_t index,
+                                   uint32_t a, uint32_t b, uint32_t c,
+                                   uint32_t d, uint32_t e, uint32_t f);
+static uint32_t nvx_bo_readmap_trace_count;
+#endif
+
 int
 NvxNouveauBoCreate(NVX_WINSYS_DEVICE *device,
                    const NVX_3D_ALLOC_BUFFER *description,
@@ -47,6 +55,45 @@ NvxNouveauBoMarkUsed(NVX_NOUVEAU_BO *bo, uint64_t fence_value)
        fence_value < bo->last_fence)
       return 0;
    bo->last_fence = fence_value;
+   return 1;
+}
+
+int
+NvxNouveauBoRefreshRead(NVX_NOUVEAU_BO *bo)
+{
+   if (!bo || !bo->references || !bo->shadow || !bo->map_count)
+      return 0;
+   if (bo->shadow_fence >= bo->last_fence)
+      return 1;
+   if (bo->last_fence &&
+       !NvxWinsysWaitFence(bo->device, bo->last_fence, 5000))
+      return 0;
+   if (!NvxWinsysDownloadBuffer(bo->device, bo->allocation.BufferId,
+                               bo->allocation.Bytes, 0, bo->shadow,
+                               bo->allocation.Bytes))
+      return 0;
+   bo->shadow_fence = bo->last_fence;
+   bo->contents_valid = 1;
+   return 1;
+}
+
+int
+NvxNouveauBoRefreshReadIfStale(NVX_NOUVEAU_BO *bo)
+{
+   if (!bo || !bo->references || !bo->shadow || !bo->map_count ||
+       !(bo->map_access & NVX_NOUVEAU_BO_READ))
+      return 0;
+   if (bo->shadow_fence >= bo->last_fence)
+      return 1;
+   if (bo->last_fence &&
+       !NvxWinsysWaitFence(bo->device, bo->last_fence, 5000))
+      return 0;
+   if (!NvxWinsysDownloadBuffer(bo->device, bo->allocation.BufferId,
+                               bo->allocation.Bytes, 0, bo->shadow,
+                               bo->allocation.Bytes))
+      return 0;
+   bo->shadow_fence = bo->last_fence;
+   bo->contents_valid = 1;
    return 1;
 }
 
@@ -117,6 +164,11 @@ NvxNouveauBoMap(NVX_NOUVEAU_BO *bo, uint32_t access)
        * on a BO that Mesa already holds mapped WRITE-only. */
       bo->map_access |= access;
       bo->map_count++;
+      if ((access & NVX_NOUVEAU_BO_READ) &&
+          !NvxNouveauBoRefreshReadIfStale(bo)) {
+         bo->map_count--;
+         return NULL;
+      }
       return bo->shadow;
    }
 
@@ -137,16 +189,53 @@ NvxNouveauBoMap(NVX_NOUVEAU_BO *bo, uint32_t access)
       if (!NvxWinsysDownloadBuffer(bo->device, bo->allocation.BufferId,
                                    bo->allocation.Bytes, 0, bo->shadow,
                                    bo->allocation.Bytes)) {
+#if defined(NVX_XP_WIN32_SHIMS) && \
+    (defined(_WIN32) || defined(_WIN64))
+         if ((access & NVX_NOUVEAU_BO_READ) &&
+             nvx_bo_readmap_trace_count < 32U)
+            NvxWglRecordNouveauPushbufItem(12U,
+               nvx_bo_readmap_trace_count++,
+               (uint32_t)bo->allocation.BufferId,
+               (uint32_t)bo->last_fence, 0U, bo->allocation.Bytes,
+               access, 0U);
+#endif
          free(bo->shadow);
          bo->shadow = NULL;
          return NULL;
       }
+#if defined(NVX_XP_WIN32_SHIMS) && \
+    (defined(_WIN32) || defined(_WIN64))
+      if ((access & NVX_NOUVEAU_BO_READ) &&
+          nvx_bo_readmap_trace_count < 32U) {
+         uint32_t first_dword = 0;
+         uint32_t nonblack_words = 0;
+         uint32_t offset;
+         if (bo->allocation.Bytes >= sizeof(first_dword))
+            memcpy(&first_dword, bo->shadow, sizeof(first_dword));
+         /* Color BOs often retain opaque black as 0xff000000. Count words
+          * with any RGB bits set to distinguish a successful zero image
+          * readback from a rendered target. */
+         for (offset = 0; offset + sizeof(uint32_t) <= bo->allocation.Bytes;
+              offset += sizeof(uint32_t)) {
+            uint32_t pixel;
+            memcpy(&pixel, bo->shadow + offset, sizeof(pixel));
+            if (pixel & 0x00ffffffU)
+               nonblack_words++;
+         }
+         NvxWglRecordNouveauPushbufItem(12U,
+            nvx_bo_readmap_trace_count++,
+            (uint32_t)bo->allocation.BufferId,
+            (uint32_t)bo->last_fence, 1U, bo->allocation.Bytes,
+            nonblack_words, first_dword);
+      }
+#endif
    } else {
       memset(bo->shadow, 0, bo->allocation.Bytes);
    }
 
    bo->map_access = access;
    bo->map_count = 1;
+   bo->shadow_fence = bo->last_fence;
    return bo->shadow;
 }
 
@@ -166,6 +255,7 @@ NvxNouveauBoFlush(NVX_NOUVEAU_BO *bo)
                               bo->allocation.Bytes))
       return 0;
    bo->contents_valid = 1;
+   bo->shadow_fence = bo->last_fence;
    return 1;
 }
 

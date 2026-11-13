@@ -3,6 +3,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* NVX_WINSYS_DEVICE values are copied into the xf86drm registry and the
+ * WGL Nouveau adapter. The kernel scopes AllocationToken by ClientToken, so
+ * a counter stored in each copy can collide for different BO requests. */
+static volatile uint32_t nvx_global_allocation_token;
+
 static int
 nvx_winsys_ready(const NVX_WINSYS_DEVICE *device)
 {
@@ -73,11 +78,34 @@ NvxWinsysOpenNouveauChannel(NVX_WINSYS_DEVICE *device)
        result.Operation != NVX_3D_CHANNEL_OPEN || result.Reserved ||
        result.ClientToken != device->ClientToken ||
        !result.ChannelHandle || !result.GraphicsObjectHandle ||
-       !result.ComputeObjectHandle)
+       !result.ComputeObjectHandle || !result.GraphicsClassEngineId ||
+       !result.ComputeClassEngineId || !result.M2mfClassEngineId ||
+       !result.CopyClassEngineId || !result.TwoDClassEngineId)
       return 0;
    device->NouveauChannelHandle = result.ChannelHandle;
    device->NouveauGraphicsObjectHandle = result.GraphicsObjectHandle;
    device->NouveauComputeObjectHandle = result.ComputeObjectHandle;
+   device->NouveauObjectBindings[0].Subchannel = 0U;
+   device->NouveauObjectBindings[0].UserClass = 0x0000c797U;
+   device->NouveauObjectBindings[0].ClassEngineId =
+      result.GraphicsClassEngineId;
+   device->NouveauObjectBindings[1].Subchannel = 1U;
+   device->NouveauObjectBindings[1].UserClass = 0x0000c7c0U;
+   device->NouveauObjectBindings[1].ClassEngineId =
+      result.ComputeClassEngineId;
+   device->NouveauObjectBindings[2].Subchannel = 2U;
+   device->NouveauObjectBindings[2].UserClass = 0x0000a040U;
+   device->NouveauObjectBindings[2].ClassEngineId =
+      result.M2mfClassEngineId;
+   device->NouveauObjectBindings[3].Subchannel = 3U;
+   device->NouveauObjectBindings[3].UserClass = 0x0000902dU;
+   device->NouveauObjectBindings[3].ClassEngineId =
+      result.TwoDClassEngineId;
+   device->NouveauObjectBindings[4].Subchannel = 4U;
+   device->NouveauObjectBindings[4].UserClass = 0x0000c7b5U;
+   device->NouveauObjectBindings[4].ClassEngineId =
+      result.CopyClassEngineId;
+   device->NouveauObjectBindingCount = 5U;
    return 1;
 }
 
@@ -87,6 +115,13 @@ NvxWinsysCloseNouveauChannel(NVX_WINSYS_DEVICE *device)
    NVX_3D_CHANNEL_LEASE request, result;
    if (!nvx_winsys_ready(device) || !device->ClientToken)
       return 0;
+   if (device->NouveauBatchPushBuffer.BufferId) {
+      if (!NvxWinsysFreeBuffer(device,
+                               device->NouveauBatchPushBuffer.BufferId))
+         return 0;
+      memset(&device->NouveauBatchPushBuffer, 0,
+             sizeof(device->NouveauBatchPushBuffer));
+   }
    if (!device->NouveauChannelHandle &&
        !device->NouveauGraphicsObjectHandle &&
        !device->NouveauComputeObjectHandle)
@@ -103,6 +138,16 @@ NvxWinsysCloseNouveauChannel(NVX_WINSYS_DEVICE *device)
    request.ChannelHandle = device->NouveauChannelHandle;
    request.GraphicsObjectHandle = device->NouveauGraphicsObjectHandle;
    request.ComputeObjectHandle = device->NouveauComputeObjectHandle;
+   request.GraphicsClassEngineId =
+      device->NouveauObjectBindings[0].ClassEngineId;
+   request.ComputeClassEngineId =
+      device->NouveauObjectBindings[1].ClassEngineId;
+   request.M2mfClassEngineId =
+      device->NouveauObjectBindings[2].ClassEngineId;
+   request.TwoDClassEngineId =
+      device->NouveauObjectBindings[3].ClassEngineId;
+   request.CopyClassEngineId =
+      device->NouveauObjectBindings[4].ClassEngineId;
    memset(&result, 0, sizeof(result));
    if (!device->escape(device->opaque, NVX_ESCAPE_3D_CHANNEL_LEASE,
                        sizeof(request), &request, sizeof(result), &result) ||
@@ -112,11 +157,19 @@ NvxWinsysCloseNouveauChannel(NVX_WINSYS_DEVICE *device)
        result.ClientToken != device->ClientToken ||
        result.ChannelHandle != device->NouveauChannelHandle ||
        result.GraphicsObjectHandle != device->NouveauGraphicsObjectHandle ||
-       result.ComputeObjectHandle != device->NouveauComputeObjectHandle)
+       result.ComputeObjectHandle != device->NouveauComputeObjectHandle ||
+       result.GraphicsClassEngineId != request.GraphicsClassEngineId ||
+       result.ComputeClassEngineId != request.ComputeClassEngineId ||
+       result.M2mfClassEngineId != request.M2mfClassEngineId ||
+       result.CopyClassEngineId != request.CopyClassEngineId ||
+       result.TwoDClassEngineId != request.TwoDClassEngineId)
       return 0;
    device->NouveauChannelHandle = 0;
    device->NouveauGraphicsObjectHandle = 0;
    device->NouveauComputeObjectHandle = 0;
+   memset(device->NouveauObjectBindings, 0,
+          sizeof(device->NouveauObjectBindings));
+   device->NouveauObjectBindingCount = 0;
    return 1;
 }
 
@@ -166,9 +219,12 @@ NvxWinsysAllocBuffer(NVX_WINSYS_DEVICE *device,
 
    input = *request;
    input.ClientToken = device->ClientToken;
-   if (++device->NextAllocationToken == 0)
-      ++device->NextAllocationToken;
-   input.AllocationToken = device->NextAllocationToken;
+   if (!input.Alignment)
+      input.Alignment = NVX_3D_PAGE_BYTES;
+   input.AllocationToken = __sync_add_and_fetch(&nvx_global_allocation_token, 1U);
+   if (!input.AllocationToken)
+      input.AllocationToken = __sync_add_and_fetch(&nvx_global_allocation_token, 1U);
+   device->NextAllocationToken = input.AllocationToken;
    memset(&output, 0, sizeof(output));
    if (!device->escape(device->opaque, NVX_ESCAPE_3D_ALLOC,
                        sizeof(input), &input, sizeof(output), &output) ||
@@ -179,6 +235,7 @@ NvxWinsysAllocBuffer(NVX_WINSYS_DEVICE *device,
        output.Width != request->Width || output.Height != request->Height ||
        output.PitchBytes != request->PitchBytes ||
        output.TileMode != request->TileMode ||
+       output.Alignment != input.Alignment ||
        output.ClientToken != input.ClientToken ||
        output.AllocationToken != input.AllocationToken)
       return 0;
@@ -348,4 +405,74 @@ NvxWinsysValidateBatch(NVX_WINSYS_DEVICE *device,
     * commands and must not be treated as a pushbuffer kick. */
    return device->escape(device->opaque, NVX_ESCAPE_3D_VALIDATE_BATCH,
                          batch_bytes, batch, 0, NULL);
+}
+
+int
+NvxWinsysSubmitBatch(NVX_WINSYS_DEVICE *device,
+                     const void *batch, uint32_t batch_bytes,
+                     uint64_t *fence_value)
+{
+   NVX_3D_BATCH_HEADER header;
+   NVX_3D_BATCH_RESULT result;
+   NVX_3D_ALLOC_BUFFER allocation, allocation_result;
+   NVX_3D_BUFFER_REFERENCE push_reference;
+   uint8_t *submission;
+   uint64_t required_bytes, references_bytes, dwords_bytes, relocations_bytes;
+   uint32_t required;
+
+   if (fence_value)
+      *fence_value = 0;
+   if (!fence_value || !nvx_winsys_ready(device) || !batch ||
+       !device->NouveauChannelHandle ||
+       batch_bytes < sizeof(header) || batch_bytes > NVX_3D_MAX_BATCH_BYTES)
+      return 0;
+   if (!device->NouveauBatchPushBuffer.BufferId) {
+      memset(&allocation, 0, sizeof(allocation));
+      allocation.Size = sizeof(allocation);
+      allocation.Version = NVX_3D_ABI_VERSION;
+      allocation.Usage = NVX_3D_USAGE_GART_BUFFER;
+      allocation.Bytes = 20U * 1024U;
+      allocation.ClientToken = device->ClientToken;
+      if (!NvxWinsysAllocBuffer(device, &allocation, &allocation_result))
+         return 0;
+      device->NouveauBatchPushBuffer = allocation_result;
+   }
+   memcpy(&header, batch, sizeof(header));
+   if (header.BufferReferenceCount >= NVX_3D_MAX_BATCH_BUFFERS ||
+       !Nvx3dBatchRequiredBytes(&header, &required) || required != batch_bytes)
+      return 0;
+   references_bytes=(uint64_t)header.BufferReferenceCount*
+                    sizeof(NVX_3D_BUFFER_REFERENCE);
+   dwords_bytes=(uint64_t)header.DwordCount*sizeof(uint32_t);
+   relocations_bytes=(uint64_t)header.RelocationCount*sizeof(NVX_3D_RELOCATION);
+   required_bytes=(uint64_t)batch_bytes+sizeof(push_reference);
+   if (required_bytes > NVX_3D_MAX_BATCH_BYTES || required_bytes > UINT32_MAX)
+      return 0;
+   submission=(uint8_t *)malloc((size_t)required_bytes);
+   if (!submission)
+      return 0;
+   header.BufferReferenceCount++;
+   memcpy(submission, &header, sizeof(header));
+   memcpy(submission+sizeof(header), (const uint8_t *)batch+sizeof(header),
+          (size_t)references_bytes);
+   push_reference.BufferId=device->NouveauBatchPushBuffer.BufferId;
+   push_reference.Access=NVX_3D_RELOC_WRITE;
+   push_reference.Reserved=0;
+   memcpy(submission+sizeof(header)+references_bytes,
+          &push_reference,sizeof(push_reference));
+   memcpy(submission+sizeof(header)+references_bytes+sizeof(push_reference),
+          (const uint8_t *)batch+sizeof(header)+references_bytes,
+          (size_t)(dwords_bytes+relocations_bytes));
+   memset(&result, 0, sizeof(result));
+   if (!device->escape(device->opaque, NVX_ESCAPE_3D_SUBMIT_BATCH,
+                       (uint32_t)required_bytes, submission,
+                       sizeof(result), &result) ||
+       result.Size != sizeof(result) || result.Version != NVX_3D_ABI_VERSION ||
+       !result.FenceValue) {
+      free(submission);
+      return 0;
+   }
+   free(submission);
+   *fence_value = result.FenceValue;
+   return 1;
 }

@@ -41,7 +41,7 @@ void NvxWglRecordNouveauGetparam(uint32_t param, uint32_t value,
 #endif
 
 #define NVX_DRM_DEVICE_SLOTS 8U
-#define NVX_DRM_BUFFER_SLOTS 64U
+#define NVX_DRM_BUFFER_SLOTS 2048U
 #define NVX_DRM_OBJECT_SLOTS 8U
 #define NVX_DRM_MAX_SCLASS 16U
 #define NVX_DRM_FD_BASE 0x4e580100
@@ -78,8 +78,12 @@ struct nvx_drm_device_slot {
 
 static struct nvx_drm_device_slot nvx_drm_devices[NVX_DRM_DEVICE_SLOTS];
 static volatile int nvx_drm_lock;
-static volatile uint32_t nvx_drm_pushbuf_validation_count;
 static NVX_XF86DRM_STATUS nvx_drm_status;
+#if defined(_WIN32) || defined(_WIN64)
+static uint32_t nvx_drm_fence_trace_count;
+static uint32_t nvx_drm_prep_trace_count;
+static uint32_t nvx_drm_prep_call_trace_count;
+#endif
 static int nvx_drm_unsupported(void);
 static int nvx_drm_unsupported_operation(uint32_t kind,
                                         unsigned long operation);
@@ -92,11 +96,110 @@ static struct nvx_drm_bo_slot *nvx_drm_find_bo_locked(
    struct nvx_drm_device_slot *device, uint32_t handle);
 
 #if defined(_WIN32) || defined(_WIN64)
-/* Diagnostic-only validation of a few simple Mesa batches. This intentionally
- * does not turn a DRM pushbuf into a GPU kick. */
-static void
-nvx_drm_validate_pushbuf(int fd,
-                         struct drm_nouveau_gem_pushbuf *request)
+/* Find only the BOs whose addresses are actually consumed by a known NVC0
+ * address method. The submit helper needs one of the batch reference slots
+ * for its own pushbuffer BO, so including every live allocation would fill
+ * the reference array with unrelated buffers and make all later pushes fail. */
+static int
+nvx_drm_add_direct_address_reference(
+   struct nvx_drm_device_slot *device, uint64_t address, uint32_t access,
+   NVX_3D_BUFFER_REFERENCE *references, uint32_t *reference_count)
+{
+   uint32_t i, j;
+
+   if (!address || !access || !references || !reference_count)
+      return 1;
+   for (i = 0; i < NVX_DRM_BUFFER_SLOTS; i++) {
+      const struct nvx_drm_bo_slot *slot = &device->buffers[i];
+      uint64_t start, bytes;
+      if (!slot->handle || !slot->bo.allocation.BufferId ||
+          slot->bo.allocation.ClientToken != device->client_token)
+         continue;
+      start = slot->bo.allocation.GpuVa;
+      bytes = slot->bo.allocation.Bytes;
+      if (!start || !bytes || address < start || address - start >= bytes)
+         continue;
+      for (j = 0; j < *reference_count; j++) {
+         if (references[j].BufferId == slot->bo.allocation.BufferId) {
+            references[j].Access |= access;
+            return 1;
+         }
+      }
+      /* Leave one slot for NvxWinsysSubmitBatch's staging pushbuffer BO. */
+      if (*reference_count >= NVX_3D_MAX_BATCH_BUFFERS - 1U)
+         return 0;
+      references[*reference_count].BufferId =
+         slot->bo.allocation.BufferId;
+      references[*reference_count].Access = access;
+      references[*reference_count].Reserved = 0;
+      (*reference_count)++;
+      return 1;
+   }
+   return 1;
+}
+
+static int
+nvx_drm_add_nvc0_address_references(
+   struct nvx_drm_device_slot *device, const uint8_t *dword_data,
+   uint32_t dword_count, NVX_3D_BUFFER_REFERENCE *references,
+   uint32_t *reference_count)
+{
+   uint32_t cursor = 0;
+
+   while (cursor < dword_count) {
+      uint32_t header, packet_type, count, method, subchannel, i;
+      memcpy(&header, dword_data + (size_t)cursor * sizeof(uint32_t),
+             sizeof(header));
+      packet_type = header & 0xe0000000U;
+      if (packet_type == 0x80000000U) {
+         cursor++;
+         continue;
+      }
+      if (packet_type != 0x20000000U && packet_type != 0x60000000U &&
+          packet_type != 0xa0000000U)
+         return 1; /* The miniport performs the authoritative rejection. */
+      count = (header >> 16) & 0x1fffU;
+      method = (header & 0x1fffU) << 2;
+      subchannel = (header >> 13) & 7U;
+      if (!count || count > dword_count - cursor - 1U)
+         return 1;
+      for (i = 0; i < count; i++) {
+         uint32_t current_method, pair_index;
+         int kind;
+         if (packet_type == 0x20000000U)
+            current_method = method + i * 4U;
+         else if (packet_type == 0xa0000000U && i)
+            current_method = method + 4U;
+         else
+            current_method = method;
+         kind = Nvx3dNvc0AddressMethodKind(subchannel, current_method,
+                                          &pair_index, NULL);
+         if (kind == 1) {
+            const NVX_3D_NVC0_ADDRESS_PAIR *pair =
+               &Nvx3dNvc0AddressPairs[pair_index];
+            uint32_t high, low;
+            uint64_t address;
+            if (i + 1U >= count)
+               return 1;
+            memcpy(&high, dword_data + (size_t)(cursor + 1U + i) * 4U, 4U);
+            memcpy(&low, dword_data + (size_t)(cursor + 2U + i) * 4U, 4U);
+            address = ((uint64_t)high << 32) | low;
+            if (!nvx_drm_add_direct_address_reference(device, address,
+                     pair->Access, references, reference_count))
+               return 0;
+            i++;
+         }
+      }
+      cursor += count + 1U;
+   }
+   return 1;
+}
+
+/* Translate the bounded Nouveau subset into the NVX batch ABI. The miniport
+ * validates ownership, packet methods and addresses before submitting it. */
+static int
+nvx_drm_submit_pushbuf(int fd,
+                       struct drm_nouveau_gem_pushbuf *request)
 {
    struct nvx_drm_device_slot *device;
    struct drm_nouveau_gem_pushbuf_bo *buffers;
@@ -109,16 +212,16 @@ nvx_drm_validate_pushbuf(int fd,
    uint32_t dword_count = 0, reference_count = 0, relocation_count = 0, i;
    uint32_t reference_bytes, dword_bytes, relocation_bytes, batch_bytes;
    uint64_t client_token;
-   int valid = 0;
+   uint64_t fence_value = 0;
+   int valid = 0, translated = 0;
 
    if (!request || !request->nr_push ||
        request->nr_push > NOUVEAU_GEM_MAX_PUSH || !request->nr_buffers ||
        request->nr_buffers > NVX_3D_MAX_BATCH_BUFFERS ||
        request->nr_relocs > NVX_3D_MAX_BATCH_RELOCATIONS ||
        !request->buffers || !request->push ||
-       (request->nr_relocs && !request->relocs) ||
-       __sync_fetch_and_add(&nvx_drm_pushbuf_validation_count, 1U) >= 8U)
-      return;
+       (request->nr_relocs && !request->relocs))
+      return 0;
 
    buffers = (struct drm_nouveau_gem_pushbuf_bo *)(uintptr_t)request->buffers;
    pushes = (struct drm_nouveau_gem_pushbuf_push *)(uintptr_t)request->push;
@@ -178,6 +281,14 @@ nvx_drm_validate_pushbuf(int fd,
              slot->bo.shadow + (uint32_t)pushes[i].offset, (size_t)bytes);
       dword_count += (uint32_t)(bytes / sizeof(uint32_t));
    }
+
+   /* NVC0 also emits direct GPU addresses in its method streams, outside
+    * request->buffers. Add references for those address operands only. */
+   if (!nvx_drm_add_nvc0_address_references(device,
+          batch + sizeof(header) +
+             (size_t)NVX_3D_MAX_BATCH_BUFFERS * sizeof(references[0]),
+          dword_count, references, &reference_count))
+      goto done;
 
    /* Translate Nouveau's source-BO relocation into a relocation against an
     * owned NVX allocation. Preserve the GPU address in the copied batch and
@@ -276,20 +387,75 @@ nvx_drm_validate_pushbuf(int fd,
            dword_bytes);
    memcpy(batch, &header, sizeof(header));
    memcpy(batch + sizeof(header), references, reference_bytes);
+   translated = Nvx3dTranslateNvc0ObjectBindings(
+      batch + sizeof(header) + reference_bytes, dword_count,
+      winsys.NouveauObjectBindings, winsys.NouveauObjectBindingCount);
    if (relocation_bytes)
       memcpy(batch + sizeof(header) + reference_bytes + dword_bytes,
              translated_relocations, relocation_bytes);
-   valid = NvxWinsysValidateBatch(&winsys, batch, batch_bytes);
-   NvxWglRecordNouveauPushbufItem(6U, 0U, valid ? 1U : 0U,
+   if (translated) {
+      valid = NvxWinsysSubmitBatch(&winsys, batch, batch_bytes,
+                                   &fence_value);
+   }
+   if (valid && fence_value) {
+      uint32_t reference_index;
+      nvx_drm_lock_acquire();
+      device = nvx_drm_find_device_locked(fd);
+      if (device) {
+         for (reference_index = 0; reference_index < reference_count;
+              reference_index++) {
+            unsigned slot_index;
+            for (slot_index = 0; slot_index < NVX_DRM_BUFFER_SLOTS;
+                 slot_index++) {
+               struct nvx_drm_bo_slot *slot = &device->buffers[slot_index];
+               if (slot->handle && slot->bo.allocation.BufferId ==
+                                      references[reference_index].BufferId) {
+                  int marked = NvxNouveauBoMarkUsed(&slot->bo, fence_value);
+                  /* Mesa keeps GART BOs mapped through persistent shadows.
+                   * Keep readable mappings current after GPU writes so a
+                   * later READ map sees completed render output rather than
+                   * stale CPU cache contents. */
+                  if ((references[reference_index].Access &
+                       NVX_3D_RELOC_WRITE) && slot->bo.map_count &&
+                      (slot->bo.map_access & NVX_NOUVEAU_BO_READ))
+                     (void)NvxNouveauBoRefreshRead(&slot->bo);
+                  if (nvx_drm_fence_trace_count < 4U) {
+                     uint32_t trace_index = nvx_drm_fence_trace_count++;
+                     NvxWglRecordNouveauPushbufItem(9U, trace_index,
+                        (uint32_t)slot->bo.allocation.BufferId,
+                        (uint32_t)fence_value, (uint32_t)marked,
+                        (uint32_t)slot->bo.last_fence, 0U, 0U);
+                  }
+                  break;
+               }
+            }
+         }
+      }
+      nvx_drm_lock_release();
+   }
+   if (valid) {
+      /* nouveau_pushbuf_flush() uses these kernel outputs to establish the
+       * per-domain allocation budget. Leaving them as the caller's zeroed
+       * input makes pushbuf_kref_fits() reject every subsequent BO with
+       * "PBK: memory domain limit", even though GEM_NEW allocated it. Keep
+       * the response consistent with the empty pushbuf initialization ioctl. */
+      request->suffix0 = 0;
+      request->suffix1 = 0;
+      request->vram_available = winsys.caps.VramApertureBytes;
+      request->gart_available = winsys.caps.GartBytes;
+   }
+   NvxWglRecordNouveauPushbufItem(6U, 0U,
+                                  !translated ? 3U : (valid ? 1U : 2U),
                                   dword_count, reference_count,
                                   request->nr_relocs, relocation_count, 0U);
-   return;
+   return valid;
 
 done:
    nvx_drm_lock_release();
    NvxWglRecordNouveauPushbufItem(6U, 0U, 0U,
                                   dword_count, reference_count,
                                   request->nr_relocs, 0U, 0U);
+   return 0;
 }
 #endif
 
@@ -338,9 +504,11 @@ nvx_drm_getparam(int fd, void *data, unsigned long size)
       return nvx_drm_unsupported();
    switch (request->param) {
    case NOUVEAU_GETPARAM_FB_SIZE:
-      /* This is the bounded GPUVA aperture reported by NVX, not physical
-       * VRAM capacity. Treat it as a conservative Nouveau allocation limit. */
-      request->value = device.caps.VramApertureBytes;
+      /* Report available VRAM heap size (~32 MiB) rather than the entire
+       * 128 MiB aperture so Mesa accurately paces VRAM consumption and
+       * prefers GART for large allocations like TLS. */
+      request->value = (device.caps.VramApertureBytes > 0x02000000ULL) ?
+                       0x02000000ULL : device.caps.VramApertureBytes;
       break;
    case NOUVEAU_GETPARAM_AGP_SIZE:
       request->value = device.caps.GartBytes;
@@ -755,8 +923,6 @@ nvx_drm_pushbuf_nop(int fd, struct drm_nouveau_gem_pushbuf *request,
          (const struct drm_nouveau_gem_pushbuf_reloc *)(uintptr_t)request->relocs;
       uint32_t i;
 
-      NvxWglRecordNouveauPushbuf(request->channel, request->nr_push,
-                                 request->nr_buffers, request->nr_relocs);
       if (buffers && request->nr_buffers <= NOUVEAU_GEM_MAX_BUFFERS) {
          for (i = 0; i < request->nr_buffers && i < 16U; i++) {
             NvxWglRecordNouveauPushbufItem(1U, i, buffers[i].handle,
@@ -835,7 +1001,11 @@ nvx_drm_pushbuf_nop(int fd, struct drm_nouveau_gem_pushbuf *request,
                relocs[i].flags, relocs[i].data, relocs[i].vor);
          }
       }
-      nvx_drm_validate_pushbuf(fd, request);
+      if (nvx_drm_submit_pushbuf(fd, request)) {
+         NvxWglRecordNouveauPushbuf(request->channel, request->nr_push,
+                                    request->nr_buffers, request->nr_relocs);
+         return 0;
+      }
       return nvx_drm_unsupported_operation(
          NVX_XF86DRM_UNSUPPORTED_WRITE_READ, DRM_NOUVEAU_GEM_PUSHBUF);
    }
@@ -1022,15 +1192,29 @@ nvx_drm_gem_new(struct nvx_drm_device_slot *device,
    int allocated;
    unsigned i;
 
+#if defined(_WIN32) || defined(_WIN64)
+   /* Large NVC0 miptree BOs identify depth/target allocation failures in the
+    * XP trace. Preserve the exact Nouveau placement request before the shim's
+    * restricted GEM_NEW checks can reject it. */
+   if (request && request->info.size >= (1U << 20))
+      NvxWglRecordNouveauPushbufItem(7U, 0U,
+         (uint32_t)request->info.size,
+         (uint32_t)(request->info.size >> 32), request->align,
+         request->info.domain, request->info.tile_mode,
+         request->info.tile_flags);
+#endif
+
    if (!device || !request || request->info.handle ||
        !request->info.size ||
        request->info.size > device->device.caps.MaxBufferBytes ||
        request->info.size > UINT32_MAX ||
        request->align > ((request->info.domain & NOUVEAU_GEM_DOMAIN_VRAM) ?
-                         NVX_3D_VRAM_ALLOCATION_ALIGNMENT : 0x10000U) ||
+                         NVX_3D_VRAM_ALLOCATION_ALIGNMENT :
+                         ((request->info.domain & NOUVEAU_GEM_DOMAIN_GART) ?
+                          0x00200000U : 0x10000U)) ||
        (request->align &&
         (request->align & (request->align - 1U))) ||
-       request->info.tile_mode ||
+       (request->info.tile_mode & ~0x70U) ||
        (request->info.tile_flags & ~NOUVEAU_GEM_TILE_NONCONTIG) ||
        (request->info.domain & (NOUVEAU_GEM_DOMAIN_CPU |
                                 NOUVEAU_GEM_DOMAIN_COHERENT)) ||
@@ -1068,6 +1252,7 @@ nvx_drm_gem_new(struct nvx_drm_device_slot *device,
    description.Version = NVX_3D_ABI_VERSION;
    description.Usage = usage;
    description.Bytes = allocated_bytes;
+   description.Alignment = request->align ? request->align : 0x1000U;
    handle = device->next_handle++;
    if (!handle)
       handle = device->next_handle++;
@@ -1085,8 +1270,14 @@ nvx_drm_gem_new(struct nvx_drm_device_slot *device,
       if (allocated)
          domain = NOUVEAU_GEM_DOMAIN_GART;
    }
-   if (!allocated)
+   if (!allocated) {
+#if defined(_WIN32) || defined(_WIN64)
+      if (requested_bytes >= (1U << 20))
+         NvxWglRecordNouveauPushbufItem(8U, 0U, 0U, domain,
+            (uint32_t)requested_bytes, allocated_bytes, request->align, 0U);
+#endif
       return 0;
+   }
 
    /* The miniport places VRAM BOs at 128 KiB boundaries and GART BOs at
     * 2 MiB boundaries. Confirm every requested VA alignment; never claim the
@@ -1095,8 +1286,19 @@ nvx_drm_gem_new(struct nvx_drm_device_slot *device,
        (slot->bo.allocation.GpuVa & (request->align - 1U))) {
       (void)NvxNouveauBoDestroy(&slot->bo);
       memset(&slot->bo, 0, sizeof(slot->bo));
+#if defined(_WIN32) || defined(_WIN64)
+      if (requested_bytes >= (1U << 20))
+         NvxWglRecordNouveauPushbufItem(8U, 0U, 0U, domain,
+            (uint32_t)requested_bytes, allocated_bytes, request->align, 1U);
+#endif
       return 0;
    }
+
+#if defined(_WIN32) || defined(_WIN64)
+   if (requested_bytes >= (1U << 20))
+      NvxWglRecordNouveauPushbufItem(8U, 0U, 1U, domain,
+         (uint32_t)requested_bytes, allocated_bytes, request->align, 0U);
+#endif
 
    slot->handle = handle;
    request->info.handle = handle;
@@ -1321,7 +1523,38 @@ drmCommandWrite(int fd, unsigned long command, void *data,
               (!(request->flags & NOUVEAU_GEM_CPU_PREP_NOWAIT) &&
                NvxWinsysWaitFence(&device->device, buffer->bo.last_fence,
                                   5000U));
+         /* Mesa keeps the CPU shadow mapped across accesses. Waiting for the
+          * GPU fence alone leaves that mapping stale after render-target
+          * writes; refresh it before reporting a read-prep as complete. */
+         if (ok && !(request->flags & NOUVEAU_GEM_CPU_PREP_WRITE) &&
+             buffer->bo.shadow && buffer->bo.map_count) {
+            uint32_t stale = buffer->bo.shadow_fence <
+                             buffer->bo.last_fence;
+            ok = NvxNouveauBoRefreshRead(&buffer->bo);
+#if defined(_WIN32) || defined(_WIN64)
+            if (nvx_drm_prep_trace_count < 48U) {
+               uint32_t trace_index = nvx_drm_prep_trace_count++;
+               NvxWglRecordNouveauPushbufItem(10U, trace_index,
+                  request->handle, (uint32_t)buffer->bo.last_fence,
+                  (uint32_t)buffer->bo.shadow_fence, stale,
+                  (uint32_t)ok, request->flags);
+            }
+#else
+            (void)stale;
+#endif
+         }
       }
+#if defined(_WIN32) || defined(_WIN64)
+      if (!(request->flags & NOUVEAU_GEM_CPU_PREP_WRITE) &&
+          nvx_drm_prep_call_trace_count < 48U) {
+         uint32_t trace_index = nvx_drm_prep_call_trace_count++;
+         NvxWglRecordNouveauPushbufItem(11U, trace_index,
+            request->handle, request->flags, (uint32_t)found,
+            buffer ? buffer->bo.map_count : 0U,
+            buffer ? (uint32_t)buffer->bo.last_fence : 0U,
+            buffer ? (uint32_t)buffer->bo.shadow_fence : (uint32_t)ok);
+      }
+#endif
       nvx_drm_lock_release();
       if (ok)
          return 0;

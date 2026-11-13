@@ -1,0 +1,12 @@
+diff --git a/src/gallium/winsys/nouveau/drm/nouveau.c b/src/gallium/winsys/nouveau/drm/nouveau.c
+--- a/src/gallium/winsys/nouveau/drm/nouveau.c
++++ b/src/gallium/winsys/nouveau/drm/nouveau.c
+@@ -922,4 +922,8 @@ nouveau_bo_wait(struct nouveau_bo *bo, uint32_t access, struct nouveau_client *client)
+ 
++#ifndef NVX_XP_WIN32_SHIMS
+    if (!nvbo->head.next && !(nvbo->access & NOUVEAU_BO_WR) && !(access & NOUVEAU_BO_WR))
+       return 0;
++#endif
++   /* XP submits outside Mesa's pushbuf list, so synchronize CPU maps through
++    * the shim even when Mesa has no locally tracked pending BO references. */
+ 

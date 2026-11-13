@@ -307,7 +307,7 @@ typedef struct _VIDEO_MODE_DEF {
     ULONG VbeModeAlt;
 } VIDEO_MODE_DEF;
 
-#define NVX_3D_USER_BUFFER_SLOTS 64U
+#define NVX_3D_USER_BUFFER_SLOTS 2048U
 #define NVX_3D_CLIENT_SESSION_SLOTS 32U
 typedef struct NVX_3D_CLIENT_SESSION_ENTRY {
     ULONG64 ClientToken;
@@ -324,9 +324,10 @@ typedef struct _NVX_3D_USER_BUFFER_ENTRY {
     ULONG Height;
     ULONG PitchBytes;
     ULONG TileMode;
+    ULONG Alignment;
     ULONG Busy;
-    ULONG GartFirstSlice;
-    ULONG GartSliceCount;
+    ULONG GartFirstPage;
+    ULONG GartPageCount;
     BOOLEAN GartUnmapPending;
     PVOID SystemVirtual;
     PHYSICAL_ADDRESS SystemPhysical;
@@ -451,6 +452,11 @@ typedef struct _NVX_DEVICE_EXTENSION {
     ULONG GspGraphicsM2mfObjectHandle;
     ULONG GspGraphicsCopyObjectHandle;
     ULONG GspGraphics2dObjectHandle;
+    ULONG GspGraphicsObjectClassEngineId;
+    ULONG GspGraphicsComputeClassEngineId;
+    ULONG GspGraphicsM2mfClassEngineId;
+    ULONG GspGraphicsCopyClassEngineId;
+    ULONG GspGraphics2dClassEngineId;
     BOOLEAN GspCopyVerified;
     BOOLEAN GspChannelFaulted;
     BOOLEAN GspGraphicsChannelReady;
@@ -463,6 +469,7 @@ typedef struct _NVX_DEVICE_EXTENSION {
     BOOLEAN GspGraphicsUserAllocReady;
     BOOLEAN GspGraphicsUserSubmitReady;
     ULONG64 Nvx3dChannelOwnerToken;
+    ULONG64 Nvx3dChannelBoundToken;
     ULONG64 Nvx3dNextBufferId;
     ULONG64 Nvx3dLastSubmitToken;
     ULONG64 Nvx3dLastSubmitClientToken;
@@ -531,10 +538,10 @@ BOOLEAN NvxGspSetDepthPageKind(PVOID HwDeviceExtension,ULONG64 gpuVa,
                                ULONG kind,BOOLEAN map);
 BOOLEAN NvxGspSetDepthRangeKind(PVOID HwDeviceExtension,ULONG64 gpuVa,
                                 ULONG bytes,ULONG kind,BOOLEAN map);
-BOOLEAN NvxGspMapGartRange(PVOID HwDeviceExtension,ULONG firstSlice,
-                           ULONG sliceCount,ULONG64 physical,ULONG bytes);
-BOOLEAN NvxGspUnmapGartRange(PVOID HwDeviceExtension,ULONG firstSlice,
-                             ULONG sliceCount);
+BOOLEAN NvxGspMapGartRange(PVOID HwDeviceExtension,ULONG firstPage,
+                           ULONG pageCount,ULONG64 physical,ULONG bytes);
+BOOLEAN NvxGspUnmapGartRange(PVOID HwDeviceExtension,ULONG firstPage,
+                             ULONG pageCount);
 BOOLEAN NvxGspSubmitFill(PVOID HwDeviceExtension,ULONG64 dstVa,ULONG color,ULONG bytes);
 BOOLEAN NvxGspSubmitFillLocked(PVOID HwDeviceExtension,ULONG64 dstVa,
                                ULONG color,ULONG bytes);
@@ -549,6 +556,9 @@ BOOLEAN NvxGspSubmitNvc0ColorTargetClear(PVOID HwDeviceExtension,
     ULONG64 fenceValue);
 BOOLEAN NvxGspSubmitNvc0NativeClear(PVOID HwDeviceExtension,
     const uint32_t *nvc0Dwords,ULONG64 fenceValue);
+BOOLEAN NvxGspSubmitNvc0Batch(PVOID HwDeviceExtension,
+    const uint32_t *nvc0Dwords,ULONG dwordCount,
+    PVOID pushVirtual,ULONG64 pushGpuVa,ULONG pushBytes,ULONG64 fenceValue);
 BOOLEAN NvxGspSubmitUserColorTargetTriangles(PVOID HwDeviceExtension,
     ULONG64 dstVa,ULONG width,ULONG height,ULONG tileMode,ULONG64 vertexVa,
     ULONG vertexCount,ULONG color,ULONG64 fenceValue,BOOLEAN verifyFullTarget);

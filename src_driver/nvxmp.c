@@ -1437,6 +1437,48 @@ static PNVX_3D_USER_BUFFER_ENTRY Nvx3dFindBuffer(PNVX_DEVICE_EXTENSION engine,
     return NULL;
 }
 
+/* The validator needs ownership metadata only for buffers named by this
+ * batch. Gathering the first NVX_3D_MAX_BATCH_BUFFERS live allocations is
+ * incorrect once the client's much larger BO table has more than 64 entries:
+ * a valid referenced allocation may be later in the table and would appear
+ * unowned. Resolve the exact reference list while the buffer lock is held. */
+static BOOLEAN Nvx3dCollectBatchAllocations(
+    PNVX_DEVICE_EXTENSION engine,const void *input,
+    const NVX_3D_BATCH_HEADER *header,ULONG64 clientToken,
+    NVX_3D_ALLOC_BUFFER *allocations,ULONG *allocationCount)
+{
+    const UCHAR *references=(const UCHAR *)input+sizeof(*header);
+    ULONG i;
+    if(!engine||!input||!header||!allocations||!allocationCount||
+       header->BufferReferenceCount>NVX_3D_MAX_BATCH_BUFFERS)
+        return FALSE;
+    *allocationCount=0;
+    for(i=0;i<header->BufferReferenceCount;i++) {
+        NVX_3D_BUFFER_REFERENCE reference;
+        NVX_3D_ALLOC_BUFFER *allocation;
+        PNVX_3D_USER_BUFFER_ENTRY entry;
+        VideoPortMoveMemory(&reference,(PVOID)(references+
+            (ULONG64)i*sizeof(reference)),sizeof(reference));
+        entry=Nvx3dFindBuffer(engine,reference.BufferId);
+        if(!entry||entry->Busy||entry->ClientToken!=clientToken)
+            return FALSE;
+        allocation=&allocations[(*allocationCount)++];
+        VideoPortZeroMemory(allocation,sizeof(*allocation));
+        allocation->Size=sizeof(*allocation);
+        allocation->Version=NVX_3D_ABI_VERSION;
+        allocation->Usage=entry->Usage;
+        allocation->Bytes=entry->Bytes;
+        allocation->BufferId=entry->Id;
+        allocation->GpuVa=entry->GpuVa;
+        allocation->Width=entry->Width;
+        allocation->Height=entry->Height;
+        allocation->PitchBytes=entry->PitchBytes;
+        allocation->TileMode=entry->TileMode;
+        allocation->ClientToken=entry->ClientToken;
+    }
+    return TRUE;
+}
+
 static BOOLEAN Nvx3dFillBuffer(PNVX_DEVICE_EXTENSION engine,ULONG64 gpuVa,
                                ULONG bytes,ULONG usage)
 {
@@ -1467,13 +1509,29 @@ static BOOLEAN Nvx3dAllocateGartBuffer(PNVX_DEVICE_EXTENSION engine,
     NVX_3D_USER_BUFFER_ENTRY *entry=&engine->Nvx3dBuffers[slot];
     PHYSICAL_ADDRESS physical;
     PVOID virtualAddress;
-    uint32_t firstSlice,sliceCount;
+    uint32_t firstPage,pageCount;
+    uint32_t vaAlignment;
     ULONG64 gpuVa,id;
     BOOLEAN mapped;
 
-    if(!engine->GspGartReady||!engine->DmaAdapter||
-       !NvxGartReserve(&engine->GspGartHeap,request->Bytes,&firstSlice,
-                       &sliceCount,&gpuVa)) {
+    if(!engine->GspGartReady||!engine->DmaAdapter) {
+        LogStr("NVX [GART]: alloc rejected ready=");
+        LogHex(engine->GspGartReady);LogStr(" dma=");LogHex((ULONG64)engine->DmaAdapter);
+        LogStr("\n");
+        Nvx3dUnlockBuffers();
+        return FALSE;
+    }
+    /* Diagnostic safeguard: a CE upload to a 4 KiB-offset GART VA faulted
+     * despite a valid logged PTE. Keep BO bases 64 KiB aligned while the
+     * page-table placement is being validated on hardware. */
+    vaAlignment=request->Alignment;
+    if(!vaAlignment) vaAlignment=NVX_GART_PAGE_BYTES;
+    if(vaAlignment<NVX_GART_MIN_VA_ALIGNMENT)
+        vaAlignment=NVX_GART_MIN_VA_ALIGNMENT;
+    if(!NvxGartReserve(&engine->GspGartHeap,request->Bytes,
+                       vaAlignment,&firstPage,&pageCount,&gpuVa)) {
+        LogStr("NVX [GART]: NvxGartReserve failed for bytes=");
+        LogHex(request->Bytes);LogStr("\n");
         Nvx3dUnlockBuffers();
         return FALSE;
     }
@@ -1485,8 +1543,9 @@ static BOOLEAN Nvx3dAllocateGartBuffer(PNVX_DEVICE_EXTENSION engine,
     entry->GpuVa=gpuVa;
     entry->Bytes=request->Bytes;
     entry->Usage=NVX_3D_USAGE_GART_BUFFER;
-    entry->GartFirstSlice=firstSlice;
-    entry->GartSliceCount=sliceCount;
+    entry->GartFirstPage=firstPage;
+    entry->GartPageCount=pageCount;
+    entry->Alignment=request->Alignment;
     entry->Busy=TRUE;
     physical.QuadPart=0;
     Nvx3dUnlockBuffers();
@@ -1496,13 +1555,16 @@ static BOOLEAN Nvx3dAllocateGartBuffer(PNVX_DEVICE_EXTENSION engine,
     if(!virtualAddress||physical.QuadPart<0||
        ((ULONG64)physical.QuadPart&0xfffULL)||
        (ULONG64)physical.QuadPart>0x100000000ULL-request->Bytes) {
+        LogStr("NVX [GART]: VideoPortAllocateCommonBuffer failed bytes=");
+        LogHex(request->Bytes);LogStr(" virt=");LogHex((ULONG64)virtualAddress);
+        LogStr(" phys=");LogHex((ULONG64)physical.QuadPart);LogStr("\n");
         if(virtualAddress)
             VideoPortFreeCommonBuffer(engine,request->Bytes,virtualAddress,
                                       physical,FALSE);
         if(Nvx3dLockBuffers()) {
             entry=Nvx3dFindBuffer(engine,id);
             if(entry&&entry->Busy&&!entry->SystemVirtual) {
-                (void)NvxGartRelease(&engine->GspGartHeap,firstSlice,sliceCount);
+                (void)NvxGartRelease(&engine->GspGartHeap,firstPage,pageCount);
                 VideoPortZeroMemory(entry,sizeof(*entry));
             }
             Nvx3dUnlockBuffers();
@@ -1515,17 +1577,22 @@ static BOOLEAN Nvx3dAllocateGartBuffer(PNVX_DEVICE_EXTENSION engine,
     /* Busy and ClientToken==0 keep this backing private until map completion. */
     entry->SystemVirtual=virtualAddress;
     entry->SystemPhysical=physical;
-    mapped=NvxGspMapGartRange(engine,firstSlice,sliceCount,
+    mapped=NvxGspMapGartRange(engine,firstPage,pageCount,
                               (ULONG64)physical.QuadPart,request->Bytes);
     if(!mapped) {
-        if(NvxGspUnmapGartRange(engine,firstSlice,sliceCount)) {
+        BOOLEAN unmapped=NvxGspUnmapGartRange(engine,firstPage,pageCount);
+        LogStr("NVX [GART]: map failed id=");LogHex(id);
+        LogStr(" first_page=");LogHex(firstPage);LogStr(" pages=");
+        LogHex(pageCount);LogStr(" cleanup_unmap=");LogHex(unmapped);
+        LogStr("\n");
+        if(unmapped) {
             if(Nvx3dLockBuffers()) {
                 entry=Nvx3dFindBuffer(engine,id);
                 if(entry&&entry->Busy&&entry->SystemVirtual==virtualAddress) {
                     VideoPortFreeCommonBuffer(engine,request->Bytes,
                                               virtualAddress,physical,FALSE);
-                    (void)NvxGartRelease(&engine->GspGartHeap,
-                                         firstSlice,sliceCount);
+                    /* Mapping was attempted, so keep these pages quarantined
+                     * even after a confirmed clear. */
                     VideoPortZeroMemory(entry,sizeof(*entry));
                 }
                 Nvx3dUnlockBuffers();
@@ -1541,11 +1608,19 @@ static BOOLEAN Nvx3dAllocateGartBuffer(PNVX_DEVICE_EXTENSION engine,
     if(!Nvx3dLockBuffers()) {
         /* Leave the mapping and backing retained; exposing or freeing it
          * without committing ownership would be unsafe. */
+        LogStr("NVX [GART]: buffer lock timeout after mapping id=");
+        LogHex(id);LogStr(" first_page=");LogHex(firstPage);
+        LogStr(" pages=");LogHex(pageCount);LogStr("\n");
         request->BufferId=request->GpuVa=0;
         return FALSE;
     }
     entry=Nvx3dFindBuffer(engine,id);
     if(!entry||!entry->Busy||entry->SystemVirtual!=virtualAddress) {
+        LogStr("NVX [GART]: pending allocation changed before commit id=");
+        LogHex(id);LogStr(" entry=");LogHex((ULONG64)entry);
+        LogStr(" busy=");LogHex(entry&&entry->Busy);
+        LogStr(" system=");LogHex((ULONG64)(entry?entry->SystemVirtual:NULL));
+        LogStr(" expected=");LogHex((ULONG64)virtualAddress);LogStr("\n");
         Nvx3dUnlockBuffers();
         request->BufferId=request->GpuVa=0;
         return FALSE;
@@ -1558,7 +1633,7 @@ static BOOLEAN Nvx3dAllocateGartBuffer(PNVX_DEVICE_EXTENSION engine,
     Nvx3dUnlockBuffers();
     LogStr("NVX [GART]: committed client BO id=");LogHex(id);
     LogStr(" va=");LogHex(gpuVa);LogStr(" bytes=");LogHex(request->Bytes);
-    LogStr(" slices=");LogHex(sliceCount);LogStr("\n");
+    LogStr(" pages=");LogHex(pageCount);LogStr("\n");
     return TRUE;
 }
 
@@ -1588,7 +1663,8 @@ static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
                 if(entry->Bytes!=request->Bytes||entry->Usage!=request->Usage||
                    entry->Width!=request->Width||entry->Height!=request->Height||
                    entry->PitchBytes!=request->PitchBytes||
-                   entry->TileMode!=request->TileMode) {
+                   entry->TileMode!=request->TileMode||
+                   entry->Alignment!=request->Alignment) {
                     Nvx3dUnlockBuffers();return FALSE;
                 }
                 request->BufferId=entry->Id;request->GpuVa=entry->GpuVa;
@@ -1613,6 +1689,7 @@ static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
                    busy would make the caller's first submit fail validation. */
                 entry->ClientToken=request->ClientToken;
                 entry->AllocationToken=request->AllocationToken;
+                entry->Alignment=request->Alignment;
                 request->BufferId=entry->Id;request->GpuVa=entry->GpuVa;
                 LogStr("NVX [3D-ALLOC]: reused depth pool id=");
                 LogHex(entry->Id);LogStr(" va=");LogHex(entry->GpuVa);
@@ -1686,6 +1763,7 @@ static BOOLEAN Nvx3dAllocateBuffer(PNVX_DEVICE_EXTENSION engine,
     engine->Nvx3dBuffers[slot].Height=request->Height;
     engine->Nvx3dBuffers[slot].PitchBytes=request->PitchBytes;
     engine->Nvx3dBuffers[slot].TileMode=request->TileMode;
+    engine->Nvx3dBuffers[slot].Alignment=request->Alignment;
     engine->Nvx3dBuffers[slot].Busy=TRUE;
     request->BufferId=engine->Nvx3dBuffers[slot].Id;
     request->GpuVa=engine->Nvx3dBuffers[slot].GpuVa;
@@ -1778,8 +1856,8 @@ static BOOLEAN Nvx3dFreeBuffer(PNVX_DEVICE_EXTENSION engine,ULONG64 id,
                owned and inaccessible to ordinary map/submit operations. */
             saved=*entry;
             Nvx3dUnlockBuffers();
-            if(!NvxGspUnmapGartRange(engine,saved.GartFirstSlice,
-                                     saved.GartSliceCount))
+            if(!NvxGspUnmapGartRange(engine,saved.GartFirstPage,
+                                     saved.GartPageCount))
                 return FALSE;
             if(!Nvx3dLockBuffers()) return FALSE;
             entry=Nvx3dFindBuffer(engine,id);
@@ -1787,13 +1865,11 @@ static BOOLEAN Nvx3dFreeBuffer(PNVX_DEVICE_EXTENSION engine,ULONG64 id,
                entry->SystemVirtual==saved.SystemVirtual) {
                 VideoPortFreeCommonBuffer(engine,saved.Bytes,
                     saved.SystemVirtual,saved.SystemPhysical,FALSE);
-                /* Do not recycle a GART VA in this device lifetime. Ampere
-                   can retain invalid translations after a short mapping is
-                   removed; reusing that VA for a larger BO faults exactly
-                   at the old mapping boundary despite valid new CPU PTEs. */
-                LogStr("NVX [GART]: quarantined VA slice range first=");
-                LogHex(saved.GartFirstSlice);LogStr(" count=");
-                LogHex(saved.GartSliceCount);LogStr(" after confirmed unmap\n");
+                /* Do not recycle mapped GART pages during this device
+                   lifetime; Ampere can retain stale translations. */
+                LogStr("NVX [GART]: quarantined VA page range first=");
+                LogHex(saved.GartFirstPage);LogStr(" count=");
+                LogHex(saved.GartPageCount);LogStr(" after confirmed unmap\n");
                 VideoPortZeroMemory(entry,sizeof(*entry));
             }
             Nvx3dUnlockBuffers();
@@ -1811,11 +1887,11 @@ static BOOLEAN Nvx3dFreeBuffer(PNVX_DEVICE_EXTENSION engine,ULONG64 id,
     LogStr(" va=");LogHex(saved.GpuVa);LogStr(" usage=");
     LogHex(saved.Usage);LogStr("\n");
     if(saved.Usage&NVX_3D_USAGE_GART_BUFFER) {
-        if(!saved.SystemVirtual||!saved.GartSliceCount) return FALSE;
+        if(!saved.SystemVirtual||!saved.GartPageCount) return FALSE;
         VideoPortZeroMemory(saved.SystemVirtual,saved.Bytes);
         __sync_synchronize();
-        if(!NvxGspUnmapGartRange(engine,saved.GartFirstSlice,
-                                 saved.GartSliceCount)) {
+        if(!NvxGspUnmapGartRange(engine,saved.GartFirstPage,
+                                 saved.GartPageCount)) {
             if(Nvx3dLockBuffers()) {
                 entry=Nvx3dFindBuffer(engine,id);
                 if(entry&&entry->Busy&&entry->SystemVirtual==saved.SystemVirtual)
@@ -1832,11 +1908,11 @@ static BOOLEAN Nvx3dFreeBuffer(PNVX_DEVICE_EXTENSION engine,ULONG64 id,
            entry->SystemVirtual==saved.SystemVirtual) {
             VideoPortFreeCommonBuffer(engine,saved.Bytes,
                 saved.SystemVirtual,saved.SystemPhysical,FALSE);
-            /* Keep the VA reserved until the adapter is torn down so an
-               invalid PTE cached by Ampere cannot poison a later allocation. */
-            LogStr("NVX [GART]: quarantined VA slice range first=");
-            LogHex(saved.GartFirstSlice);LogStr(" count=");
-            LogHex(saved.GartSliceCount);LogStr(" after confirmed unmap\n");
+            /* Keep mapped pages reserved until adapter teardown so a stale
+               PTE cannot poison a later allocation. */
+            LogStr("NVX [GART]: quarantined VA page range first=");
+            LogHex(saved.GartFirstPage);LogStr(" count=");
+            LogHex(saved.GartPageCount);LogStr(" after confirmed unmap\n");
             VideoPortZeroMemory(entry,sizeof(*entry));
         }
         Nvx3dUnlockBuffers();
@@ -2023,18 +2099,30 @@ BOOLEAN NTAPI HwVidStartIO(
                 Nvx3dUnlockBuffers();status=ERROR_BUSY;break;
             }
             engine->Nvx3dChannelOwnerToken=request.ClientToken;
+            engine->Nvx3dChannelBoundToken=0;
             request.ChannelHandle=engine->GspGraphicsChannelHandle;
             request.GraphicsObjectHandle=engine->GspGraphicsObjectHandle;
             request.ComputeObjectHandle=engine->GspGraphicsComputeObjectHandle;
+            request.GraphicsClassEngineId=engine->GspGraphicsObjectClassEngineId;
+            request.ComputeClassEngineId=engine->GspGraphicsComputeClassEngineId;
+            request.M2mfClassEngineId=engine->GspGraphicsM2mfClassEngineId;
+            request.CopyClassEngineId=engine->GspGraphicsCopyClassEngineId;
+            request.TwoDClassEngineId=engine->GspGraphics2dClassEngineId;
             status=NO_ERROR;
         } else if(request.Operation==NVX_3D_CHANNEL_CLOSE) {
             if(engine->Nvx3dChannelOwnerToken!=request.ClientToken||
                request.ChannelHandle!=engine->GspGraphicsChannelHandle||
                request.GraphicsObjectHandle!=engine->GspGraphicsObjectHandle||
-               request.ComputeObjectHandle!=engine->GspGraphicsComputeObjectHandle) {
+               request.ComputeObjectHandle!=engine->GspGraphicsComputeObjectHandle||
+               request.GraphicsClassEngineId!=engine->GspGraphicsObjectClassEngineId||
+               request.ComputeClassEngineId!=engine->GspGraphicsComputeClassEngineId||
+               request.M2mfClassEngineId!=engine->GspGraphicsM2mfClassEngineId||
+               request.CopyClassEngineId!=engine->GspGraphicsCopyClassEngineId||
+               request.TwoDClassEngineId!=engine->GspGraphics2dClassEngineId) {
                 Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
             }
             engine->Nvx3dChannelOwnerToken=0;
+            engine->Nvx3dChannelBoundToken=0;
             status=NO_ERROR;
         } else {
             Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
@@ -2626,6 +2714,15 @@ BOOLEAN NTAPI HwVidStartIO(
             caps->Features|=NVX_3D_FEATURE_NVC0_COPY_OBJECT;
         if(engine&&engine->GspGraphics2dObjectHandle)
             caps->Features|=NVX_3D_FEATURE_NVC0_2D_OBJECT;
+        if(engine&&engine->GspGraphicsUserAllocReady&&
+           engine->GspGraphicsChannelReady&&
+           engine->GspGraphicsCommandVerified&&
+           engine->GspGraphicsObjectClassEngineId&&
+           engine->GspGraphicsComputeClassEngineId&&
+           engine->GspGraphicsM2mfClassEngineId&&
+           engine->GspGraphicsCopyClassEngineId&&
+           engine->GspGraphics2dClassEngineId&&engine->GspGartReady)
+            caps->Features|=NVX_3D_FEATURE_NVC0_BATCH_SUBMIT;
         if(engine) {
             caps->DeviceId=engine->DeviceId;
             caps->Chipset=Nvx3dChipsetFromDeviceId(engine->DeviceId);
@@ -2898,7 +2995,7 @@ BOOLEAN NTAPI HwVidStartIO(
         NVX_3D_BATCH_HEADER header;
         PVOID copiedInput=NULL;
         NVX_3D_ALLOC_BUFFER *ownedAllocations=NULL;
-        ULONG ownedCount=0,i;
+        ULONG ownedCount=0;
         uint32_t requiredBytes;
         if(!RequestPacket->InputBuffer||
            RequestPacket->InputBufferLength<sizeof(header)||
@@ -2933,25 +3030,10 @@ BOOLEAN NTAPI HwVidStartIO(
             Nvx3dUnlockBuffers();
             status=ERROR_INVALID_PARAMETER;goto validate_batch_done;
         }
-        for(i=0;i<NVX_3D_USER_BUFFER_SLOTS;i++) {
-            NVX_3D_USER_BUFFER_ENTRY *entry=&engine->Nvx3dBuffers[i];
-            NVX_3D_ALLOC_BUFFER *allocation;
-            if(!entry->Id||entry->Busy||
-               entry->ClientToken!=header.ClientToken) continue;
-            if(ownedCount>=NVX_3D_MAX_BATCH_BUFFERS) break;
-            allocation=&ownedAllocations[ownedCount++];
-            VideoPortZeroMemory(allocation,sizeof(*allocation));
-            allocation->Size=sizeof(*allocation);
-            allocation->Version=NVX_3D_ABI_VERSION;
-            allocation->Usage=entry->Usage;
-            allocation->Bytes=entry->Bytes;
-            allocation->BufferId=entry->Id;
-            allocation->GpuVa=entry->GpuVa;
-            allocation->Width=entry->Width;
-            allocation->Height=entry->Height;
-            allocation->PitchBytes=entry->PitchBytes;
-            allocation->TileMode=entry->TileMode;
-            allocation->ClientToken=entry->ClientToken;
+        if(!Nvx3dCollectBatchAllocations(engine,copiedInput,&header,
+                header.ClientToken,ownedAllocations,&ownedCount)) {
+            Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;
+            goto validate_batch_done;
         }
         Nvx3dUnlockBuffers();
 
@@ -2964,6 +3046,180 @@ BOOLEAN NTAPI HwVidStartIO(
         status=NO_ERROR;
 
 validate_batch_done:
+        if(ownedAllocations) VideoPortFreePool(devExt,ownedAllocations);
+        if(copiedInput) VideoPortFreePool(devExt,copiedInput);
+        break;
+    }
+
+    case IOCTL_NVX_3D_SUBMIT_BATCH: {
+        PNVX_DEVICE_EXTENSION engine=devExt->IsSecondaryDisplay?
+            (PNVX_DEVICE_EXTENSION)devExt->PrimaryDeviceExtension:devExt;
+        NVX_3D_BATCH_HEADER header;
+        NVX_3D_BATCH_RESULT result;
+        PVOID copiedInput=NULL;
+        NVX_3D_ALLOC_BUFFER *ownedAllocations=NULL;
+        PNVX_3D_USER_BUFFER_ENTRY pinned[NVX_3D_MAX_BATCH_BUFFERS];
+        PNVX_3D_USER_BUFFER_ENTRY pushEntry=NULL;
+        uint32_t classIds[5],requiredBytes,*dwords;
+        uint32_t addressFailMethod=0xffffffffU;
+        uint64_t addressFailVa=0;
+        ULONG ownedCount=0,pinnedCount=0,i;
+        ULONG64 fenceValue;
+        BOOLEAN submitted=FALSE;
+        status=ERROR_DEVICE_NOT_READY;
+        if(!RequestPacket->InputBuffer||
+           RequestPacket->InputBufferLength<sizeof(header)||
+           RequestPacket->InputBufferLength>NVX_3D_MAX_BATCH_BYTES||
+           !RequestPacket->OutputBuffer||
+           RequestPacket->OutputBufferLength<sizeof(result)) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+        VideoPortMoveMemory(&header,RequestPacket->InputBuffer,sizeof(header));
+        if(!Nvx3dBatchRequiredBytes(&header,&requiredBytes)||
+           requiredBytes!=RequestPacket->InputBufferLength||
+           !header.ClientToken) {
+            status=ERROR_INVALID_PARAMETER;break;
+        }
+        copiedInput=VideoPortAllocatePool(devExt,VpNonPagedPool,
+                            requiredBytes,0x4258564eUL);
+        ownedAllocations=(NVX_3D_ALLOC_BUFFER *)VideoPortAllocatePool(
+                            devExt,VpNonPagedPool,
+                            NVX_3D_MAX_BATCH_BUFFERS*sizeof(*ownedAllocations),
+                            0x4158564eUL);
+        if(!copiedInput||!ownedAllocations) {
+            LogStr("NVX [NVC0-BATCH]: reject allocation dwords=");
+            LogHex(header.DwordCount);LogStr(" refs=");
+            LogHex(header.BufferReferenceCount);LogStr("\n");
+            status=ERROR_NOT_ENOUGH_MEMORY;goto submit_batch_done;
+        }
+        VideoPortMoveMemory(copiedInput,RequestPacket->InputBuffer,
+                            requiredBytes);
+        if(!engine||!Nvx3dLockBuffers()) {
+            status=ERROR_DEVICE_NOT_READY;goto submit_batch_done;
+        }
+        if(!Nvx3dClientSessionActiveLocked(engine,header.ClientToken)||
+           engine->Nvx3dChannelOwnerToken!=header.ClientToken||
+           !engine->GspGraphicsUserAllocReady||
+           !engine->GspGraphicsChannelReady||
+           engine->GspGraphicsChannelFaulted||engine->GspMmuFaultQueued) {
+            LogStr("NVX [NVC0-BATCH]: reject channel/session owner=");
+            LogHex(engine?engine->Nvx3dChannelOwnerToken:0);
+            LogStr(" token=");LogHex(header.ClientToken);
+            LogStr(" userAlloc=");LogHex(engine?engine->GspGraphicsUserAllocReady:0);
+            LogStr(" ready=");LogHex(engine?engine->GspGraphicsChannelReady:0);
+            LogStr(" fault=");LogHex(engine?engine->GspGraphicsChannelFaulted:0);
+            LogStr(" mmu=");LogHex(engine?engine->GspMmuFaultQueued:0);
+            LogStr("\n");
+            Nvx3dUnlockBuffers();status=ERROR_DEVICE_NOT_READY;
+            goto submit_batch_done;
+        }
+        if(!Nvx3dCollectBatchAllocations(engine,copiedInput,&header,
+                header.ClientToken,ownedAllocations,&ownedCount)) {
+            Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;
+            goto submit_batch_done;
+        }
+        Nvx3dUnlockBuffers();
+        dwords=(uint32_t *)((PUCHAR)copiedInput+sizeof(header)+
+            (ULONG64)header.BufferReferenceCount*
+            sizeof(NVX_3D_BUFFER_REFERENCE));
+        if(!Nvx3dValidateNvc0Batch(copiedInput,requiredBytes,
+                ownedAllocations,ownedCount,header.ClientToken)) {
+            LogStr("NVX [NVC0-BATCH]: reject packet/address validation dwords=");
+            LogHex(header.DwordCount);LogStr(" refs=");
+            LogHex(header.BufferReferenceCount);LogStr(" owned=");
+            LogHex(ownedCount);
+            if(!Nvx3dValidateNvc0AddressMethods((const uint8_t *)dwords,
+                    header.DwordCount,
+                    (const uint8_t *)copiedInput+sizeof(header),
+                    header.BufferReferenceCount,ownedAllocations,ownedCount,
+                    header.ClientToken,&addressFailMethod,&addressFailVa)) {
+                LogStr(" addressMethod=");LogHex(addressFailMethod);
+                LogStr(" address=");LogHex(addressFailVa);
+            } else LogStr(" addressMethods=PASS");
+            LogStr("\n");
+            status=ERROR_INVALID_PARAMETER;goto submit_batch_done;
+        }
+        {
+            ULONG64 refsOffset=sizeof(header);
+            uint32_t bindingFailSubchannel=0xffffffffU,bindingFailValue=0;
+            classIds[0]=engine->GspGraphicsObjectClassEngineId;
+            classIds[1]=engine->GspGraphicsComputeClassEngineId;
+            classIds[2]=engine->GspGraphicsM2mfClassEngineId;
+            classIds[3]=engine->GspGraphics2dClassEngineId;
+            classIds[4]=engine->GspGraphicsCopyClassEngineId;
+            if(!Nvx3dValidateNvc0ObjectBindingsEx((const uint8_t *)dwords,
+                    header.DwordCount,classIds,
+                    engine->Nvx3dChannelBoundToken!=header.ClientToken,
+                    &bindingFailSubchannel,&bindingFailValue)) {
+                LogStr("NVX [NVC0-BATCH]: reject class bindings boundToken=");
+                LogHex(engine->Nvx3dChannelBoundToken);LogStr(" client=");
+                LogHex(header.ClientToken);LogStr(" ids=");
+                for(i=0;i<5;i++){LogHex(classIds[i]);LogStr(" ");}
+                LogStr(" subchannel=");LogHex(bindingFailSubchannel);
+                LogStr(" value=");LogHex(bindingFailValue);
+                LogStr("\n");
+                status=ERROR_INVALID_PARAMETER;goto submit_batch_done;
+            }
+            if(!Nvx3dLockBuffers()) {
+                status=ERROR_DEVICE_NOT_READY;goto submit_batch_done;
+            }
+            for(i=0;i<header.BufferReferenceCount;i++) {
+                NVX_3D_BUFFER_REFERENCE ref;
+                NVX_3D_USER_BUFFER_ENTRY *entry;
+                VideoPortMoveMemory(&ref,(PUCHAR)copiedInput+refsOffset+
+                    (ULONG64)i*sizeof(ref),sizeof(ref));
+                entry=Nvx3dFindBuffer(engine,ref.BufferId);
+                if(!entry||entry->Busy||entry->ClientToken!=header.ClientToken) {
+                    status=ERROR_BUSY;
+                    for(ULONG j=0;j<pinnedCount;j++) pinned[j]->Busy=FALSE;
+                    pinnedCount=0;
+                    break;
+                }
+                if((entry->Usage&NVX_3D_USAGE_GART_BUFFER)&&
+                   entry->SystemVirtual&&entry->GartPageCount&&
+                   entry->Bytes>=header.DwordCount*sizeof(ULONG)+
+                                  7U*sizeof(ULONG))
+                    pushEntry=entry;
+                entry->Busy=TRUE;pinned[pinnedCount++]=entry;
+            }
+            if(status!=ERROR_BUSY&&(!pushEntry||!pinnedCount))
+                status=ERROR_INVALID_PARAMETER;
+            if(status!=ERROR_INVALID_PARAMETER&&status!=ERROR_BUSY)
+                status=NO_ERROR;
+            if(status!=NO_ERROR) {
+                for(ULONG j=0;j<pinnedCount;j++) pinned[j]->Busy=FALSE;
+                pinnedCount=0;
+            }
+            Nvx3dUnlockBuffers();
+            if(status!=NO_ERROR) goto submit_batch_done;
+            fenceValue=engine->Nvx3dLastFence+1U;
+            if(!fenceValue||fenceValue>0xffffffffULL) {
+                status=ERROR_DEVICE_NOT_READY;goto release_batch_buffers;
+            }
+            submitted=NvxGspSubmitNvc0Batch(engine,dwords,header.DwordCount,
+                pushEntry->SystemVirtual,pushEntry->GpuVa,pushEntry->Bytes,
+                fenceValue);
+            if(!submitted) {
+                LogStr("NVX [NVC0-BATCH]: GPU kick/fence failed pushId=");
+                LogHex(pushEntry->Id);LogStr(" va=");LogHex(pushEntry->GpuVa);
+                LogStr(" bytes=");LogHex(pushEntry->Bytes);LogStr("\n");
+                status=ERROR_DEVICE_NOT_READY;
+                if(engine->GspGraphicsChannelFaulted) goto submit_batch_done;
+                goto release_batch_buffers;
+            }
+            engine->Nvx3dLastFence=fenceValue;
+            engine->Nvx3dChannelBoundToken=header.ClientToken;
+            result.Size=sizeof(result);result.Version=NVX_3D_ABI_VERSION;
+            result.FenceValue=fenceValue;
+            VideoPortMoveMemory(RequestPacket->OutputBuffer,&result,sizeof(result));
+            statusBlock->Information=sizeof(result);status=NO_ERROR;
+        }
+release_batch_buffers:
+        if(Nvx3dLockBuffers()) {
+            for(i=0;i<pinnedCount;i++) pinned[i]->Busy=FALSE;
+            Nvx3dUnlockBuffers();
+        }
+submit_batch_done:
         if(ownedAllocations) VideoPortFreePool(devExt,ownedAllocations);
         if(copiedInput) VideoPortFreePool(devExt,copiedInput);
         break;
