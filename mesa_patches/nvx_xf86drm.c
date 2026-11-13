@@ -158,6 +158,7 @@ nvx_drm_capture_shader_addresses_locked(
       0x2140U, 0x2154U, 0x2158U, 0x3818U, 0x3820U
    };
    uint32_t cursor = 0, captured = 0, draw_seen = 0;
+   uint32_t draw_primitive = 0xffffffffU, draw_vertex_count = 0;
 
    while (cursor < dword_count) {
       uint32_t header, packet_type, count, method, subchannel, i;
@@ -190,8 +191,12 @@ nvx_drm_capture_shader_addresses_locked(
          if (current_method < sizeof(device->gr_state))
             device->gr_state[current_method / sizeof(uint32_t)] =
                Nvx3dBatchReadDword(dword_data, cursor + 1U + i);
-         if (current_method == 0x1618U)
-            draw_seen = Nvx3dBatchReadDword(dword_data, cursor + 1U + i) == 7U;
+         if (current_method == 0x1618U) {
+            draw_primitive = Nvx3dBatchReadDword(dword_data, cursor + 1U + i);
+            draw_seen = draw_primitive == 7U;
+         } else if (current_method == 0x0d78U) {
+            draw_vertex_count = Nvx3dBatchReadDword(dword_data, cursor + 1U + i);
+         }
          if (Nvx3dNvc0AddressMethodKind(subchannel, current_method,
                                        &pair_index, &stage) != 1)
             continue;
@@ -211,7 +216,11 @@ nvx_drm_capture_shader_addresses_locked(
       cursor += count + 1U;
    }
 
-   if (draw_seen && !device->gr_draw_state_snapshot_done &&
+   /* The cube is specifically a 24-vertex QUADS draw. Earlier bridge probes
+    * issue smaller QUADS, so a primitive-only trigger snapshots unrelated
+    * persistent vertex state and mislabels it as the cube. */
+   if (draw_seen && draw_primitive == 7U && draw_vertex_count == 24U &&
+       !device->gr_draw_state_snapshot_done &&
        (device->shader_address_mask & ((1U << 1) | (1U << 2) | (1U << 5))) ==
        ((1U << 1) | (1U << 2) | (1U << 5))) {
       uint32_t values[sizeof(trace_methods) / sizeof(trace_methods[0])];
@@ -225,7 +234,8 @@ nvx_drm_capture_shader_addresses_locked(
 
    /* Program addresses are persistent 3D state. A later draw batch often
     * omits SP_ADDRESS writes, so snapshot the cached bindings at draw time. */
-   if (!draw_seen || device->shader_draw_snapshot_done ||
+   if (!draw_seen || draw_primitive != 7U || draw_vertex_count != 24U ||
+       device->shader_draw_snapshot_done ||
        (device->shader_address_mask & ((1U << 1) | (1U << 2) | (1U << 5))) !=
        ((1U << 1) | (1U << 2) | (1U << 5)))
       return 0;

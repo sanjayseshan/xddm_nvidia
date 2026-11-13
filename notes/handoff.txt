@@ -1,14 +1,20 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.111`.
+Updated November 13, 2026 after VFIO run `.121`.
 
 ## Current status
 
 The XP x64 Mesa ICD builds and selects Mesa / NV170 (OpenGL 4.3 Compatibility
 Profile, Mesa 27.0.0-devel). The run creates a native Nouveau Gallium
 `pipe_screen`, allocates its channel and BOs, and submits batches through the
-NVX channel. Hardware rendering is still not working: draw probes and the cube
-read back black, and `[OPENGL_RESULT] FAIL`. No cube frame has been proven.
+NVX channel. Hardware rendering is still not working: the cube readback is
+black and `[OPENGL_RESULT] FAIL`. No cube frame has been proven. `.120` proved
+the 24-vertex cube batches complete their release fences, but its one-time
+state snapshot actually captured an earlier small QUADS probe. Revision
+`.121` fixes the snapshot trigger to require exactly QUADS/24 before recording
+the cube state and shader bytes. The corrected snapshot shows plausible cube
+vertex fetch, target, viewport, cull, and fill state; the bound shader draw
+still writes no colored pixels.
 The trace reports `screens=1 callbacks=0`; callbacks are the unused WGL hybrid
 path and do not represent the native Nouveau screen's activity.
 
@@ -293,9 +299,10 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 1. Explain the missing raster output even though cube draw submissions complete:
    `.120` completed two 24-vertex QUADS batches with matching fences (`0x3f`,
    `0x40`, then `0x4b`, `0x4c`), but depth and no-depth cube readbacks were
-   still black. Clear readback passes. Review cull state and the captured
-   vertex/shader inputs against a working NVC0 draw; then isolate vertex shader,
-   rasterization, and fragment shader output with minimal GPU tests.
+   still black. Its state snapshot was from an earlier QUADS probe, so it does
+   not prove the cube's cull/raster state. Run `.121` to capture actual cube
+   state and shader bytes, then compare them against a working NVC0 draw and
+   isolate vertex shader, rasterization, and fragment shader output.
 2. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
    The failed stream is decoded above; trace the Mesa semaphore release and
    miniport completion fence through PBDMA progress, and correlate with the
@@ -311,7 +318,7 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Relevant files
 
-- Latest completed full VFIO log: `test_logs/v3.0.0.120-20261113-005115.log`
+- Latest completed full VFIO log: `test_logs/v3.0.0.121-20261113-005724.log`
 - Latest extracted Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest Mesa/Nouveau bridge excerpt: `notes/mesa-bridge-latest.txt`
 - GPFIFO submission and diagnostics: `src_driver/nvx_gsp.c`,
@@ -467,11 +474,35 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   Nouveau screen, `gpu_batches=212`; that is submission evidence, not successful
   rendering. The independent GR hardware triangle readback passes. Firmware
   assertion count reaches 3 during later animation.
-- State trace revision 120 now includes cull fields: method decimal 6424
-  (`0x1918`) is 0; methods `0x191c`/`0x1920` are `0x901`/`0x405`. Their
-  hardware semantics still need confirmation, but the observed enable value is
-  zero. Cull is unlikely to explain the no-depth failure by itself.
-- Next: compare vertex fetch, shader inputs/output declarations, and stage
-  program contents to a known working NVC0 sequence, then run a minimal shader
-  and raster test that writes a solid color without Mesa's fixed-function
-  shader. Keep the later FIFO stall as a separate issue until correlated.
+- The trace was initially described as cube state, but review showed the
+  one-time snapshot trigger accepted any QUADS. Its vertex arrays (`0x16090010`
+  and `0x16090000`) belong to an earlier small probe, not the 24-vertex cube.
+  Therefore its cull values and stage state cannot be used to explain the cube.
+- Actual cube vertex data is captured at `0x160903a8` (position) and
+  `0x1609039c` (color), with 24 plausible position/color records. `.121` changes
+  the state and shader snapshot trigger to require a QUADS primitive and count
+  24.
+
+### Revision 3.0.0.121 — capture actual cube state
+
+- Changed the one-time state and shader snapshot trigger from any QUADS draw to
+  QUADS with exactly 24 vertices. This prevents the earlier four/eight-vertex
+  diagnostic quads from consuming the snapshot.
+- Host `make -C src_driver check` and `git diff --check` passed. XP x64 Mesa ICD
+  built and passed XP import/subsystem audits. VFIO booted on attempt 1, ran the
+  full guest suite, and shut down normally. Full log:
+  `test_logs/v3.0.0.121-20261113-005724.log`.
+- The new marker `cube_draw=QUADS/24` is present. Snapshot captures target
+  `0x15f40000`, pitch `0xa00`, 632x453 viewport/scissor, and enabled rasterizer.
+  NVC0 fetch uses 24-byte stride and VAs `0x160903a8` and `0x1609039c`;
+  captured shadows contain 24 plausible position/color records. Both fill
+  macros are `GL_FILL`; culling is disabled; shader stages VP_B/FP are enabled
+  at the captured addresses. The snapshot now corresponds to the actual cube.
+- Despite this coherent state and completed draw fences, depth and no-depth
+  cube readbacks remain black. Clear and independent GR triangle readback pass;
+  `[OPENGL_RESULT] FAIL`. 100 animation frames took 8.4388 seconds (11.8 FPS).
+  Firmware assertion count reaches 3 during the later animation.
+- Next, inspect the cube-bound shader headers/instructions and constant-buffer
+  contents against the vertex attribute layout, then compare emitted setup to
+  Nouveau's working NVC0 initialization/draw sequences. Keep the later FIFO
+  stall as a separate issue unless evidence ties it to the black draws.

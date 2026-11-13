@@ -589,7 +589,7 @@ NvxWglRecordNouveauDrawState(const uint32_t *methods, const uint32_t *values,
       return;
    {
       int length = wsprintfA(line,
-         "Nouveau cube draw state trace_rev=120 entries=%lu\r\n",
+         "Nouveau cube draw state trace_rev=121 cube_draw=QUADS/24 entries=%lu\r\n",
          (unsigned long)count);
       if (length > 0 && (uint32_t)length <= sizeof(output) - used) {
          memcpy(output + used, line, (size_t)length);
