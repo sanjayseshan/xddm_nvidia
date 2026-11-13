@@ -1,4 +1,4 @@
-Latest Nouveau/OpenGL diagnostic excerpt from test_logs/v3.0.0.104-20261112-231922.log
+Latest Nouveau/OpenGL diagnostic excerpt from test_logs/v3.0.0.105-20261112-232308.log
 
 NVX [RPC]: firmware assertion count=0x0000000000000001
 NVX [RPC]: firmware assertion count=0x0000000000000001
@@ -18,15 +18,15 @@ NVX [RPC]: firmware assertion count=0x0000000000000001
 [MESA_BRIDGE_STATUS] screens=1 callbacks=0 gpu_batches=191 nvc0_clears=0 version=5 last_primitive=0 last_count=0 last_triangles=0 clear_ms=0 draw_ms=0 readback_ms=0 last=NVX bridge device probe completed
 [MESA_BRIDGE_STATUS] screens=1 callbacks=0 gpu_batches=221 nvc0_clears=0 version=5 last_primitive=0 last_count=0 last_triangles=0 clear_ms=0 draw_ms=0 readback_ms=0 last=NVX bridge device probe completed
 [MESA_BRIDGE_STATUS] screens=1 callbacks=0 gpu_batches=251 nvc0_clears=0 version=5 last_primitive=0 last_count=0 last_triangles=0 clear_ms=0 draw_ms=0 readback_ms=0 last=NVX bridge device probe completed
-[MESA_BRIDGE_STATUS] screens=1 callbacks=0 gpu_batches=281 nvc0_clears=0 version=5 last_primitive=0 last_count=0 last_triangles=0 clear_ms=0 draw_ms=0 readback_ms=0 last=NVX bridge device probe completed
 NVX [RM]: firmware assertion count=0x0000000000000002
 NVX [RM]: firmware assertion count=0x0000000000000003
-[MESA_BRIDGE_STATUS] screens=1 callbacks=0 gpu_batches=284 nvc0_clears=0 version=5 last_primitive=0 last_count=0 last_triangles=0 clear_ms=0 draw_ms=0 readback_ms=0 last=NVX bridge device probe completed
-[MESA_BRIDGE_STATUS] screens=1 callbacks=0 gpu_batches=284 nvc0_clears=0 version=5 last_primitive=0 last_count=0 last_triangles=0 clear_ms=0 draw_ms=0 readback_ms=0 last=NVX bridge device probe completed
-[MESA_BRIDGE_STATUS] screens=1 callbacks=0 gpu_batches=284 nvc0_clears=0 version=5 last_primitive=0 last_count=0 last_triangles=0 clear_ms=0 draw_ms=0 readback_ms=0 last=NVX bridge device probe completed
+[MESA_BRIDGE_STATUS] screens=1 callbacks=0 gpu_batches=260 nvc0_clears=0 version=5 last_primitive=0 last_count=0 last_triangles=0 clear_ms=0 draw_ms=0 readback_ms=0 last=NVX bridge device probe completed
+[MESA_BRIDGE_STATUS] screens=1 callbacks=0 gpu_batches=260 nvc0_clears=0 version=5 last_primitive=0 last_count=0 last_triangles=0 clear_ms=0 draw_ms=0 readback_ms=0 last=NVX bridge device probe completed
+[MESA_BRIDGE_STATUS] screens=1 callbacks=0 gpu_batches=260 nvc0_clears=0 version=5 last_primitive=0 last_count=0 last_triangles=0 clear_ms=0 draw_ms=0 readback_ms=0 last=NVX bridge device probe completed
+[MESA_BRIDGE_STATUS] screens=1 callbacks=0 gpu_batches=260 nvc0_clears=0 version=5 last_primitive=0 last_count=0 last_triangles=0 clear_ms=0 draw_ms=0 readback_ms=0 last=NVX bridge device probe completed
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000516 c=00000004 d=00000000 e=00000000 f=00000000
 Nouveau pushbuf channel=c56f0002 pushes=1 buffers=2 relocs=0
-[MESA_BRIDGE_STATUS] screens=1 callbacks=0 gpu_batches=284 nvc0_clears=0 version=5 last_primitive=0 last_count=0 last_triangles=0 clear_ms=0 draw_ms=0 readback_ms=0 last=NVX bridge device probe completed
+[MESA_BRIDGE_STATUS] screens=1 callbacks=0 gpu_batches=260 nvc0_clears=0 version=5 last_primitive=0 last_count=0 last_triangles=0 clear_ms=0 draw_ms=0 readback_ms=0 last=NVX bridge device probe completed
 [OPENGL_RESULT] FAIL
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000516 c=00000004 d=00000000 e=00000000 f=00000000
 Nouveau pushbuf channel=c56f0002 pushes=1 buffers=2 relocs=0
@@ -49,6 +49,23 @@ Nouveau vertex data offset=304: 00000000 00000000 00000000 00000000 00000000 000
 Nouveau vertex data offset=328: 00000000 00000000 00000000 00000000 00000000 00000000
 Nouveau vertex data offset=352: 00000000 00000000 00000000 00000000 00000000 00000000
 Nouveau vertex data offset=376: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex dump buffer=00000016 gpu=00000000:16090000 offset=0 dwords=168 source=1
+Nouveau vertex data offset=0: 00000000 3f800000 00000000 3f800000 bf800000 bf400000
+Nouveau vertex data offset=24: 00000000 00000000 3f800000 00000000 3f800000 3f800000
+Nouveau vertex data offset=48: bf400000 00000000 00000000 3f800000 00000000 3f800000
+Nouveau vertex data offset=72: 3f800000 3f400000 00000000 00000000 3f800000 00000000
+Nouveau vertex data offset=96: 3f800000 bf800000 3f400000 00000000 3f800000 00000000
+Nouveau vertex data offset=120: 00000000 3f800000 3f4ccccd bf400000 00000000 3f800000
+Nouveau vertex data offset=144: 00000000 00000000 3f800000 3f733333 bf400000 00000000
+Nouveau vertex data offset=168: 3f800000 00000000 00000000 3f800000 3f733333 3f400000
+Nouveau vertex data offset=192: 00000000 3f800000 00000000 00000000 3f800000 3f4ccccd
+Nouveau vertex data offset=216: 3f400000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=240: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=264: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=288: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=312: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=336: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=360: 00000000 00000000 00000000 00000000 00000000 00000000
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000221 c=00000007 d=00000000 e=00000000 f=00000000
 Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000005 c=00000008 d=00000000 e=00000000 f=00000000
@@ -82,6 +99,23 @@ Nouveau vertex data offset=528: 00000000 00000000 00000000 00000000 00000000 000
 Nouveau vertex data offset=552: 00000000 00000000 00000000 00000000 00000000 00000000
 Nouveau vertex data offset=576: 00000000 00000000 00000000 00000000 00000000 00000000
 Nouveau vertex data offset=600: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex dump buffer=00000016 gpu=00000000:160900e0 offset=224 dwords=168 source=1
+Nouveau vertex data offset=224: 00000000 3f800000 00000000 3f800000 bf666666 bf666666
+Nouveau vertex data offset=248: 00000000 00000000 3f800000 00000000 3f800000 3f666666
+Nouveau vertex data offset=272: bf666666 00000000 00000000 3f800000 00000000 3f800000
+Nouveau vertex data offset=296: 3f666666 3f666666 00000000 00000000 3f800000 00000000
+Nouveau vertex data offset=320: 3f800000 bf666666 3f666666 00000000 00000000 00000000
+Nouveau vertex data offset=344: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=368: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=392: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=416: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=440: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=464: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=488: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=512: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=536: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=560: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=584: 00000000 00000000 00000000 00000000 00000000 00000000
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=0000006f c=00000007 d=00000000 e=00000000 f=00000000
 Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000005 c=00000008 d=00000000 e=00000000 f=00000000
@@ -113,6 +147,23 @@ Nouveau vertex data offset=640: bf000000 3f800000 00000000 00000000 3f800000 be9
 Nouveau vertex data offset=664: 3e99999a bf000000 00000000 00000000 00000000 00000000
 Nouveau vertex data offset=688: 00000000 00000000 00000000 00000000 00000000 00000000
 Nouveau vertex data offset=712: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex dump buffer=00000016 gpu=00000000:16090150 offset=336 dwords=168 source=1
+Nouveau vertex data offset=336: 00000000 3f800000 00000000 3f800000 bf4ccccd bf4ccccd
+Nouveau vertex data offset=360: 3f000000 00000000 3f800000 00000000 3f800000 3f4ccccd
+Nouveau vertex data offset=384: bf4ccccd 3f000000 00000000 3f800000 00000000 3f800000
+Nouveau vertex data offset=408: 3f4ccccd 3f4ccccd 3f000000 00000000 3f800000 00000000
+Nouveau vertex data offset=432: 3f800000 bf4ccccd bf4ccccd 3f000000 00000000 3f800000
+Nouveau vertex data offset=456: 00000000 3f800000 3f4ccccd 3f4ccccd 3f000000 00000000
+Nouveau vertex data offset=480: 3f800000 00000000 3f800000 bf4ccccd 3f4ccccd 3f000000
+Nouveau vertex data offset=504: 3f800000 00000000 00000000 3f800000 be99999a be99999a
+Nouveau vertex data offset=528: bf000000 3f800000 00000000 00000000 3f800000 3e99999a
+Nouveau vertex data offset=552: be99999a bf000000 3f800000 00000000 00000000 3f800000
+Nouveau vertex data offset=576: 3e99999a 3e99999a bf000000 3f800000 00000000 00000000
+Nouveau vertex data offset=600: 3f800000 be99999a be99999a bf000000 3f800000 00000000
+Nouveau vertex data offset=624: 00000000 3f800000 3e99999a 3e99999a bf000000 3f800000
+Nouveau vertex data offset=648: 00000000 00000000 3f800000 be99999a 3e99999a bf000000
+Nouveau vertex data offset=672: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=696: 00000000 00000000 00000000 00000000 00000000 00000000
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000066 c=00000007 d=00000000 e=00000000 f=00000000
 Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000005 c=00000008 d=00000000 e=00000000 f=00000000
@@ -148,6 +199,23 @@ Nouveau vertex data offset=976: 00000000 00000000 00000000 00000000 00000000 000
 Nouveau vertex data offset=1000: 00000000 00000000 00000000 00000000 00000000 00000000
 Nouveau vertex data offset=1024: 00000000 00000000 00000000 00000000 00000000 00000000
 Nouveau vertex data offset=1048: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex dump buffer=00000016 gpu=00000000:160902a0 offset=672 dwords=168 source=1
+Nouveau vertex data offset=672: 3f800000 00000000 00000000 3f800000 bf666666 bf666666
+Nouveau vertex data offset=696: 3f000000 3f800000 00000000 00000000 3f800000 3f666666
+Nouveau vertex data offset=720: bf666666 3f000000 3f800000 00000000 00000000 3f800000
+Nouveau vertex data offset=744: 00000000 3f666666 3f000000 00000000 3f800000 00000000
+Nouveau vertex data offset=768: 3f800000 bf666666 bf666666 bf000000 00000000 3f800000
+Nouveau vertex data offset=792: 00000000 3f800000 3f666666 bf666666 bf000000 00000000
+Nouveau vertex data offset=816: 3f800000 00000000 3f800000 00000000 3f666666 bf000000
+Nouveau vertex data offset=840: 00000000 00000000 3f800000 3f800000 bf666666 bf666666
+Nouveau vertex data offset=864: 3f400000 00000000 00000000 3f800000 3f800000 3f666666
+Nouveau vertex data offset=888: bf666666 3f400000 00000000 00000000 3f800000 3f800000
+Nouveau vertex data offset=912: 00000000 3f666666 3f400000 00000000 00000000 00000000
+Nouveau vertex data offset=936: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=960: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=984: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=1008: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=1032: 00000000 00000000 00000000 00000000 00000000 00000000
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000085 c=00000007 d=00000000 e=00000000 f=00000000
 Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000005 c=00000008 d=00000000 e=00000000 f=00000000
@@ -172,26 +240,9 @@ Nouveau dwords push=0 capture=31 offset=80: 00000000 00000000 00000000 00000001 
 Nouveau dwords push=0 capture=31 offset=88: 00000000 01c025d8 00000000 469a8cd2 00000002 80008000 00000000 01bd7f90
 Nouveau dwords push=0 capture=31 offset=96: 00000000 00000002 00000000 000001c5 00000000 80008000 c7970000 00000000
 Nouveau dwords push=0 capture=31 offset=104: 00000002 01c01f30 00000000 00000000 00000000 80008000 00000000 469d5f5e
-Nouveau dwords push=0 capture=31 offset=112: 00000002 01bc8ec0 00000000 46d0e2bd 00000002 80008000 000000a4 01bdec50
+Nouveau dwords push=0 capture=31 offset=112: 00000002 01bc8ec0 00000000 46d0e33d 00000002 80008000 000000a4 01bdec50
 Nouveau dwords push=0 capture=31 offset=120: 00000000 00000000 00000000 00000000 00000000 20040478 88888888 88888888
 Nouveau dwords push=0 capture=31 offset=128: 88888888 88888888 20010586 00000007 2002035d 00000000 00000018 80000585
-Nouveau vertex dump buffer=00000016 gpu=00000000:160903a8 offset=936 dwords=144 source=1
-Nouveau vertex data offset=936: bf800000 bf800000 3f800000 3f800000 00000000 00000000
-Nouveau vertex data offset=960: 3f800000 bf800000 3f800000 3f800000 00000000 00000000
-Nouveau vertex data offset=984: 3f800000 3f800000 3f800000 3f800000 00000000 00000000
-Nouveau vertex data offset=1008: bf800000 3f800000 3f800000 00000000 3f800000 00000000
-Nouveau vertex data offset=1032: bf800000 bf800000 bf800000 00000000 3f800000 00000000
-Nouveau vertex data offset=1056: bf800000 3f800000 bf800000 00000000 3f800000 00000000
-Nouveau vertex data offset=1080: 3f800000 3f800000 bf800000 00000000 3f800000 00000000
-Nouveau vertex data offset=1104: 3f800000 bf800000 bf800000 00000000 00000000 3f800000
-Nouveau vertex data offset=1128: bf800000 3f800000 bf800000 00000000 00000000 3f800000
-Nouveau vertex data offset=1152: bf800000 3f800000 3f800000 00000000 00000000 3f800000
-Nouveau vertex data offset=1176: 3f800000 3f800000 3f800000 00000000 00000000 3f800000
-Nouveau vertex data offset=1200: 3f800000 3f800000 bf800000 3f800000 3f800000 00000000
-Nouveau vertex data offset=1224: bf800000 bf800000 bf800000 3f800000 3f800000 00000000
-Nouveau vertex data offset=1248: 3f800000 bf800000 bf800000 3f800000 3f800000 00000000
-Nouveau vertex data offset=1272: 3f800000 bf800000 3f800000 3f800000 3f800000 00000000
-Nouveau vertex data offset=1296: bf800000 bf800000 3f800000 00000000 3f800000 3f800000
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000088 c=00000007 d=00000000 e=00000000 f=00000000
 Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000005 c=00000008 d=00000000 e=00000000 f=00000000
@@ -204,23 +255,6 @@ Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000023 c=00000004 d=00000000 
 Nouveau pushbuf channel=c56f0002 pushes=1 buffers=4 relocs=0
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=0000006b c=00000007 d=00000000 e=00000000 f=00000000
 Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
-Nouveau vertex dump buffer=00000016 gpu=00000000:160905e8 offset=1512 dwords=144 source=1
-Nouveau vertex data offset=1512: bf800000 bf800000 3f800000 3f800000 00000000 00000000
-Nouveau vertex data offset=1536: 3f800000 bf800000 3f800000 3f800000 00000000 00000000
-Nouveau vertex data offset=1560: 3f800000 3f800000 3f800000 3f800000 00000000 00000000
-Nouveau vertex data offset=1584: bf800000 3f800000 3f800000 00000000 3f800000 00000000
-Nouveau vertex data offset=1608: bf800000 bf800000 bf800000 00000000 3f800000 00000000
-Nouveau vertex data offset=1632: bf800000 3f800000 bf800000 00000000 3f800000 00000000
-Nouveau vertex data offset=1656: 3f800000 3f800000 bf800000 00000000 3f800000 00000000
-Nouveau vertex data offset=1680: 3f800000 bf800000 bf800000 00000000 00000000 3f800000
-Nouveau vertex data offset=1704: bf800000 3f800000 bf800000 00000000 00000000 3f800000
-Nouveau vertex data offset=1728: bf800000 3f800000 3f800000 00000000 00000000 3f800000
-Nouveau vertex data offset=1752: 3f800000 3f800000 3f800000 00000000 00000000 3f800000
-Nouveau vertex data offset=1776: 3f800000 3f800000 bf800000 3f800000 3f800000 00000000
-Nouveau vertex data offset=1800: bf800000 bf800000 bf800000 3f800000 3f800000 00000000
-Nouveau vertex data offset=1824: 3f800000 bf800000 bf800000 3f800000 3f800000 00000000
-Nouveau vertex data offset=1848: 3f800000 bf800000 3f800000 3f800000 3f800000 00000000
-Nouveau vertex data offset=1872: bf800000 bf800000 3f800000 00000000 3f800000 3f800000
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000079 c=00000007 d=00000000 e=00000000 f=00000000
 Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000005 c=00000008 d=00000000 e=00000000 f=00000000
@@ -231,93 +265,11 @@ Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000023 c=00000004 d=00000000 
 Nouveau pushbuf channel=c56f0002 pushes=1 buffers=4 relocs=0
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=0000006d c=00000007 d=00000000 e=00000000 f=00000000
 Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
-Nouveau vertex dump buffer=00000016 gpu=00000000:16090828 offset=2088 dwords=144 source=1
-Nouveau vertex data offset=2088: bf800000 bf800000 3f800000 3f800000 00000000 00000000
-Nouveau vertex data offset=2112: 3f800000 bf800000 3f800000 3f800000 00000000 00000000
-Nouveau vertex data offset=2136: 3f800000 3f800000 3f800000 3f800000 00000000 00000000
-Nouveau vertex data offset=2160: bf800000 3f800000 3f800000 00000000 3f800000 00000000
-Nouveau vertex data offset=2184: bf800000 bf800000 bf800000 00000000 3f800000 00000000
-Nouveau vertex data offset=2208: bf800000 3f800000 bf800000 00000000 3f800000 00000000
-Nouveau vertex data offset=2232: 3f800000 3f800000 bf800000 00000000 3f800000 00000000
-Nouveau vertex data offset=2256: 3f800000 bf800000 bf800000 00000000 00000000 3f800000
-Nouveau vertex data offset=2280: bf800000 3f800000 bf800000 00000000 00000000 3f800000
-Nouveau vertex data offset=2304: bf800000 3f800000 3f800000 00000000 00000000 3f800000
-Nouveau vertex data offset=2328: 3f800000 3f800000 3f800000 00000000 00000000 3f800000
-Nouveau vertex data offset=2352: 3f800000 3f800000 bf800000 3f800000 3f800000 00000000
-Nouveau vertex data offset=2376: bf800000 bf800000 bf800000 3f800000 3f800000 00000000
-Nouveau vertex data offset=2400: 3f800000 bf800000 bf800000 3f800000 3f800000 00000000
-Nouveau vertex data offset=2424: 3f800000 bf800000 3f800000 3f800000 3f800000 00000000
-Nouveau vertex data offset=2448: bf800000 bf800000 3f800000 00000000 3f800000 3f800000
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=0000007c c=00000007 d=00000000 e=00000000 f=00000000
 Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000005 c=00000008 d=00000000 e=00000000 f=00000000
 Nouveau pushbuf channel=c56f0002 pushes=1 buffers=8 relocs=0
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=0000006d c=00000007 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
-Nouveau vertex dump buffer=00000016 gpu=00000000:16090a68 offset=2664 dwords=144 source=1
-Nouveau vertex data offset=2664: bf800000 bf800000 3f800000 3f800000 00000000 00000000
-Nouveau vertex data offset=2688: 3f800000 bf800000 3f800000 3f800000 00000000 00000000
-Nouveau vertex data offset=2712: 3f800000 3f800000 3f800000 3f800000 00000000 00000000
-Nouveau vertex data offset=2736: bf800000 3f800000 3f800000 00000000 3f800000 00000000
-Nouveau vertex data offset=2760: bf800000 bf800000 bf800000 00000000 3f800000 00000000
-Nouveau vertex data offset=2784: bf800000 3f800000 bf800000 00000000 3f800000 00000000
-Nouveau vertex data offset=2808: 3f800000 3f800000 bf800000 00000000 3f800000 00000000
-Nouveau vertex data offset=2832: 3f800000 bf800000 bf800000 00000000 00000000 3f800000
-Nouveau vertex data offset=2856: bf800000 3f800000 bf800000 00000000 00000000 3f800000
-Nouveau vertex data offset=2880: bf800000 3f800000 3f800000 00000000 00000000 3f800000
-Nouveau vertex data offset=2904: 3f800000 3f800000 3f800000 00000000 00000000 3f800000
-Nouveau vertex data offset=2928: 3f800000 3f800000 bf800000 3f800000 3f800000 00000000
-Nouveau vertex data offset=2952: bf800000 bf800000 bf800000 3f800000 3f800000 00000000
-Nouveau vertex data offset=2976: 3f800000 bf800000 bf800000 3f800000 3f800000 00000000
-Nouveau vertex data offset=3000: 3f800000 bf800000 3f800000 3f800000 3f800000 00000000
-Nouveau vertex data offset=3024: bf800000 bf800000 3f800000 00000000 3f800000 3f800000
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000075 c=00000007 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000005 c=00000008 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=8 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=0000006c c=00000007 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000075 c=00000007 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000005 c=00000008 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=8 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=0000006c c=00000007 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000075 c=00000007 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000005 c=00000008 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=8 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=0000006c c=00000007 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000075 c=00000007 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000005 c=00000008 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=8 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=0000006c c=00000007 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000075 c=00000007 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000005 c=00000008 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=8 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=0000006c c=00000007 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000075 c=00000007 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000005 c=00000008 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=8 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=0000006c c=00000007 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000075 c=00000007 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000005 c=00000008 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=8 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=0000006c c=00000007 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000075 c=00000007 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000005 c=00000008 d=00000000 e=00000000 f=00000000
-Nouveau pushbuf channel=c56f0002 pushes=1 buffers=8 relocs=0
-Nouveau pushbuf item kind=6 index=0 a=00000001 b=0000006c c=00000007 d=00000000 e=00000000 f=00000000
 Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
 Nouveau pushbuf item kind=6 index=0 a=00000001 b=00000075 c=00000007 d=00000000 e=00000000 f=00000000
 Nouveau pushbuf channel=c56f0002 pushes=1 buffers=7 relocs=0
