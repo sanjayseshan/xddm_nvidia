@@ -1087,10 +1087,9 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   rendered pixels and no new draw batches; its 100-frame test ran at 51.9 FPS
   but did not demonstrate hardware cube rendering. Firmware assertions were
   reported during the run (counts reached 3).
-- Next: log the immediate BO's CPU shadow contents at submit time. If it holds
-  the expected vertices, force a writeback for this narrowly identified
-  vertex BO and check the fenced GPU readback; otherwise trace where the
-  expected Begin/End data stops reaching that shadow.
+- Follow-up in `.154`: the immediate BO shadow did contain the expected
+  vertices, so this path now forces a writeback for that narrowly identified
+  BO. The next outstanding step is to fence/read back after that writeback.
 
 ### Revision 3.0.0.154 — inspect and flush the immediate CPU shadow
 
@@ -1099,7 +1098,16 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   exact shadow before the GPU consumes its direct address. This tests whether
   the expected vertices are present in CPU shadow and whether making that
   shadow visible fixes the fenced GPU readback; it does not change other BOs.
-- Version bumped to `3.0.0.154`. Full VFIO result pending.
+- Full VFIO log: `test_logs/v3.0.0.154-20261113-040845.log`. The shadow
+  contained the expected coordinates (`bf4ccccd bf4ccccd 00000000`,
+  `3f4ccccd bf4ccccd 00000000`, `00000000 3f4ccccd 00000000`), and the
+  targeted upload succeeded (`map_access=3`, kind-14 flush result `1`).
+  However, the logged GPU readback was scheduled on the preceding submission,
+  before the upload, so it still showed zeroes and does not validate the
+  upload. OpenGL remained failed and the cube probe still showed zero pixels
+  and no new GPU draw batches; the 100-frame run reported 56.9 FPS.
+- Next: only schedule the diagnostic GPU readback once the targeted upload
+  has happened, so its fence covers the submitted vertex data.
 - Relevant files: `mesa_patches/nvx_xf86drm.c`, `test/test_full_driver.sh`,
   `dist_full/nvx.inf`, and this handoff.
 
