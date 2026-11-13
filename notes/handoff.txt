@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.142`; preparing `.143`.
+Updated November 13, 2026 after VFIO run `.143`; preparing `.144`.
 
 ## Current status
 
@@ -9,15 +9,19 @@ standalone GLSL triangle now passes on the hardware path: transform feedback
 captured all three intended positions, the sample query returned 1,352, and
 both `glReadPixels` and direct CE readback found 1,352 green pixels on the
 exact 632x453 target. This confirms shader execution, rasterization, color
-write, and readback for an explicit attribute array. Overall
-`[OPENGL_RESULT] FAIL` remains because the Mesa/Nouveau fixed-function cube
-draws still produce zero colored pixels, with and without depth. Revision
-`.143` compares fixed-function immediate mode against a legacy client vertex
-array to isolate the failing fixed-function input path. Full `.142` log:
-`test_logs/v3.0.0.142-20261113-030348.log`.
+write, and readback for an explicit attribute array. Run `.143` shows the
+fixed-function shader path also draws correctly from a client vertex array
+(1,352 green pixels), while the same draw using `glBegin`/`glVertex3f` produces
+zero pixels. The cube uses immediate mode and remains black, with and without
+depth. The failure boundary is now the legacy immediate-mode vertex buffer:
+Mesa keeps its Begin/End buffer persistently mapped, while this Windows
+Winsys implements mapped BOs as CPU shadows that need an explicit upload.
+Revision `.144` flushes mapped writable BO shadows before submission when the
+GPU references them. Full `.143` log:
+`test_logs/v3.0.0.143-20261113-030753.log`.
 
 The cube test had no colored pixels in its depth or no-depth draw. Animation
-reached 100 frames at 16.9 FPS, then timed out at FIFO index/fence `0x137`;
+reached 100 frames at 15.5 FPS, then timed out at FIFO index/fence `0x17f`;
 firmware assertions reached 3. The callback type warning has been fixed.
 
 The XP x64 Mesa ICD builds and selects Mesa / NV170 (OpenGL 4.3 Compatibility
@@ -907,4 +911,17 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   with `glVertexPointer` and `glDrawArrays`. This distinguishes immediate-mode
   input handling from generated fixed-function shader execution. Also corrects
   the CE readback message so it reports agreement when pixel counts match.
+- Full VFIO log: `test_logs/v3.0.0.143-20261113-030753.log`. The GLSL triangle
+  and fixed-function client-array triangle each rendered 1,352 green pixels;
+  the fixed-function immediate-mode triangle returned zero. The cube remained
+  black in depth and no-depth paths. Animation reached 100 frames at 15.5 FPS
+  then timed out at FIFO/fence `0x17f`; assertions reached 3. This isolates
+  immediate-mode data publication rather than fixed-function shader support.
+
+### Revision 3.0.0.144 — publish persistent CPU-shadow writes
+
+- Before submitting a Nouveau batch, uploads each referenced BO that still
+  has a writable CPU shadow. Mesa's Begin/End vertex buffer uses a persistent
+  mapping and does not unmap or explicitly flush it; the NVX Windows Winsys
+  stores maps in a CPU shadow and needs to publish changed bytes to the GPU.
   Full VFIO result is pending.

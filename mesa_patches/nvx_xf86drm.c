@@ -106,6 +106,7 @@ static NVX_XF86DRM_STATUS nvx_drm_status;
 static uint32_t nvx_drm_fence_trace_count;
 static uint32_t nvx_drm_prep_trace_count;
 static uint32_t nvx_drm_prep_call_trace_count;
+static uint32_t nvx_drm_shadow_flush_trace_count;
 #define NVX_DRM_VERTEX_DUMP_LIMIT 16U
 static uint64_t nvx_drm_vertex_dump_addresses[NVX_DRM_VERTEX_DUMP_LIMIT];
 static uint32_t nvx_drm_vertex_dump_count;
@@ -527,6 +528,7 @@ nvx_drm_submit_pushbuf(int fd,
    NVX_3D_RELOCATION translated_relocations[NVX_3D_MAX_BATCH_RELOCATIONS];
    uint8_t batch[NVX_3D_MAX_BATCH_BYTES];
    uint32_t dword_count = 0, reference_count = 0, relocation_count = 0, i;
+   uint32_t flushed_shadow_count = 0;
    uint32_t reference_bytes, dword_bytes, relocation_bytes, batch_bytes;
    uint64_t client_token;
    uint64_t fence_value = 0;
@@ -579,6 +581,31 @@ nvx_drm_submit_pushbuf(int fd,
          reference_count++;
       } else {
          references[j].Access |= access;
+      }
+   }
+
+   /* Mesa's glBegin/glEnd vertex buffer may remain persistently mapped until
+    * context destruction. The XP Winsys exposes CPU shadow memory for mapped
+    * BOs, so persistent writes are not visible to the GPU until uploaded.
+    * Publish referenced writable shadows before translating/submitting the
+    * batch. */
+   for (i = 0; i < request->nr_buffers; i++) {
+      struct nvx_drm_bo_slot *slot =
+         nvx_drm_find_bo_locked(device, buffers[i].handle);
+      if (!slot)
+         goto done;
+      if (!buffers[i].read_domains || !slot->bo.map_count ||
+          !(slot->bo.map_access & NVX_NOUVEAU_BO_WRITE))
+         continue;
+      if (!NvxNouveauBoFlush(&slot->bo))
+         goto done;
+      flushed_shadow_count++;
+      if (nvx_drm_shadow_flush_trace_count < 16U) {
+         uint32_t trace_index = nvx_drm_shadow_flush_trace_count++;
+         NvxWglRecordNouveauPushbufItem(13U, trace_index,
+            buffers[i].handle, (uint32_t)slot->bo.allocation.Bytes,
+            buffers[i].read_domains, buffers[i].write_domains,
+            slot->bo.map_count, slot->bo.map_access);
       }
    }
 
@@ -829,14 +856,16 @@ nvx_drm_submit_pushbuf(int fd,
    NvxWglRecordNouveauPushbufItem(6U, 0U,
                                   !translated ? 3U : (valid ? 1U : 2U),
                                   dword_count, reference_count,
-                                  request->nr_relocs, relocation_count, 0U);
+                                  request->nr_relocs, relocation_count,
+                                  flushed_shadow_count);
    return valid;
 
 done:
    nvx_drm_lock_release();
    NvxWglRecordNouveauPushbufItem(6U, 0U, 0U,
                                   dword_count, reference_count,
-                                  request->nr_relocs, 0U, 0U);
+                                  request->nr_relocs, 0U,
+                                  flushed_shadow_count);
    return 0;
 }
 #endif
