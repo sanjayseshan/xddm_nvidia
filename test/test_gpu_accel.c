@@ -646,32 +646,24 @@ static void LogMsg(const char *fmt, ...)
     }
 }
 
-static unsigned ReadRawMesaTargetGreenPixels(int height,
-                                              uint64_t *buffer_id,
+static unsigned ReadRawMesaTargetGreenPixels(uint64_t *buffer_id,
+                                              uint32_t *buffer_bytes,
                                               int *available)
 {
-    typedef int (WINAPI *PFN_READ_TARGET_TILE)(DWORD, DWORD, DWORD *,
-                                               uint64_t *);
+    typedef int (WINAPI *PFN_READ_TARGET_RAW)(DWORD *, DWORD *, uint64_t *);
     HMODULE icd = GetModuleHandleA("nvxogl64.dll");
-    PFN_READ_TARGET_TILE readTarget = icd ?
-        (PFN_READ_TARGET_TILE)GetProcAddress(
-            icd, "NvxXf86DrmReadCurrentTargetTile") : NULL;
-    DWORD rawPixels[64U * 16U];
-    DWORD tileY;
+    PFN_READ_TARGET_RAW readTarget = icd ?
+        (PFN_READ_TARGET_RAW)GetProcAddress(
+            icd, "NvxXf86DrmReadCurrentTargetRaw") : NULL;
     unsigned green = 0;
 
     if (buffer_id) *buffer_id = 0;
     if (available) *available = readTarget != NULL;
+    if (buffer_bytes) *buffer_bytes = 0;
     if (!readTarget)
         return 0;
-    for (tileY = 384U; tileY < (DWORD)height; tileY += 16U) {
-        DWORD i;
-        if (!readTarget(0U, tileY, rawPixels, buffer_id))
-            continue;
-        for (i = 0; i < 64U * 16U; i++)
-            if ((rawPixels[i] & 0x00ffffffU) == 0x0000ff00U)
-                green++;
-    }
+    if (!readTarget(&green, buffer_bytes, buffer_id))
+        return 0;
     return green;
 }
 
@@ -1413,6 +1405,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             unsigned fixedVertexGreen = 0;
             unsigned rawTargetGreen = 0, fixedRawTargetGreen = 0;
             uint64_t rawTargetBufferId = 0, fixedRawTargetBufferId = 0;
+            uint32_t rawTargetBytes = 0, fixedRawTargetBytes = 0;
             int rawTargetAvailable = 0, fixedRawTargetAvailable = 0;
             int baselinePass;
             int shaderApiReady = createShader && shaderSource && compileShader &&
@@ -1497,10 +1490,11 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                     if (shaderError == GL_NO_ERROR)
                         shaderError = glGetError();
                     rawTargetGreen = ReadRawMesaTargetGreenPixels(
-                        h, &rawTargetBufferId, &rawTargetAvailable);
-                    LogMsg("[MESA_GLSL_RAW_TARGET] buffer=%I64u green_pixels=%u source=%s\n",
-                           rawTargetBufferId, rawTargetGreen,
-                           rawTargetAvailable ? "miniport-copy-engine" :
+                        &rawTargetBufferId, &rawTargetBytes,
+                        &rawTargetAvailable);
+                    LogMsg("[MESA_GLSL_RAW_TARGET] buffer=%I64u bytes=%u green_pixels=%u source=%s\n",
+                           rawTargetBufferId, rawTargetBytes, rawTargetGreen,
+                           rawTargetAvailable ? "miniport-ce-download" :
                                                 "unavailable");
                     glReadBuffer(GL_BACK);
                     if (pixels)
@@ -1565,12 +1559,13 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                         if (fixedVertexError == GL_NO_ERROR)
                             fixedVertexError = glGetError();
                         fixedRawTargetGreen = ReadRawMesaTargetGreenPixels(
-                            h, &fixedRawTargetBufferId,
+                            &fixedRawTargetBufferId, &fixedRawTargetBytes,
                             &fixedRawTargetAvailable);
-                        LogMsg("[MESA_GLSL_FFVS_RAW_TARGET] buffer=%I64u green_pixels=%u source=%s\n",
-                               fixedRawTargetBufferId, fixedRawTargetGreen,
+                        LogMsg("[MESA_GLSL_FFVS_RAW_TARGET] buffer=%I64u bytes=%u green_pixels=%u source=%s\n",
+                               fixedRawTargetBufferId, fixedRawTargetBytes,
+                               fixedRawTargetGreen,
                                fixedRawTargetAvailable ?
-                                   "miniport-copy-engine" : "unavailable");
+                                   "miniport-ce-download" : "unavailable");
                         glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
                                      pixels);
                         glReadPixels(32, 32, 1, 1, GL_RGBA,

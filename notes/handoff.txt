@@ -1,15 +1,18 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 before VFIO run `.131`.
+Updated November 13, 2026 before VFIO run `.132`.
 
 ## Current status
 
-The latest VFIO run `.129` completed its guest benchmarks and clean shutdown, but
-`[OPENGL_RESULT] FAIL`; both same-target triangle readbacks still show zero
-green pixels. The explicit scissor reset did not change the result. Full log:
-`test_logs/v3.0.0.129-20261113-015132.log`; the latest triangle capture is in
-`notes/nouveau-trace-latest.txt`. The run took 100 cube frames in 6.8648 s
-(14.6 FPS), and firmware assertion count reached 3 during animation.
+The latest completed VFIO run `.131` booted and shut down normally, but
+`[OPENGL_RESULT] FAIL`; GLSL and fixed-function vertex triangle readback still
+show zero green pixels. The `.131` alternate target diagnostic did not find its
+BO because Mesa allocated it as generic VRAM; it did not read the actual target.
+During later cube animation, NVC0 batch submission timed out at FIFO index
+`0x1a9`, the channel faulted, and firmware assertions rose to 3. Full log:
+`test_logs/v3.0.0.131-20261113-021118.log`. Revision `.132` switches to a raw
+miniport CE download of the target BO to distinguish GL readback failure from
+missing GPU writes.
 
 The XP x64 Mesa ICD builds and selects Mesa / NV170 (OpenGL 4.3 Compatibility
 Profile, Mesa 27.0.0-devel). The run creates a native Nouveau Gallium
@@ -733,20 +736,16 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   passthrough. The captured `RT_CONTROL=0x0fac6881` is the expected one-target
   route `(076543210 << 4) | 1`; RGBA mask is `0x1111`, rasterization is enabled,
   and depth/cull/blend/logic-op gates are disabled. These captures don't prove
-  execution. Next inspect the raw per-draw batch and validated class/address
-  substitutions through the GPFIFO submission path.
+  execution. The `.131` timeout during animation is separate from the initial
+  triangle no-write; the `.132` raw target download should establish whether
+  that triangle actually changed its GPU BO.
 
 
 ### Revision 3.0.0.130 — independent render-target readback build attempt
 
-- Adds an ICD diagnostic export that finds the current NVC0 render-target BO by
-  the RT GPU address captured from the submitted batch, then asks the miniport
-  to read 64x16 tiles through its GPU copy-engine path. The OpenGL probe scans
-  the 64-pixel viewport's full vertical extent immediately after each triangle
-  fence and before `glReadPixels`.
-- This separates a Mesa GL readback/shadow problem from a draw that writes no
-  pixels to the actual GPU target. It is diagnostic only and does not change
-  rendering state or decide the existing OpenGL pass result.
+- The first implementation tried to identify the current target by RT GPU
+  address and read it as a special color-target allocation. It did not match
+  Mesa's generic VRAM allocation, so the `.131` retry returned no BufferId.
 - The `.130` full-suite attempt stopped before VM launch: Mesa rejected the new
   export because `-Werror=missing-prototypes` requires a declaration. The
   declaration is now in the Windows xf86drm shim. No guest result exists for
@@ -754,7 +753,26 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
 
 ### Revision 3.0.0.131 — retry independent render-target readback
 
-- Rebuilds the `.130` diagnostic with its export prototype declared. The full
-  VFIO result is pending. A nonzero miniport green count with zero GL count
-  indicates a GL readback issue; zero counts from both paths keeps focus on the
-  GPU draw/submission state.
+- Full VFIO log: `test_logs/v3.0.0.131-20261113-021118.log`. Host tests,
+  package audit, and first-attempt XP boot passed; guest tests completed and
+  shut down. `[OPENGL_RESULT] FAIL`; the GL triangle and fixed-function-vertex
+  path still read zero green pixels.
+- The new helper was present, but reported `buffer=0` and zero green pixels for
+  both draws. It required the special `COLOR_TARGET` usage flag, while Mesa's
+  render-target BO is generic VRAM. This did not actually read the target and
+  is not evidence that raw GPU memory lacked green pixels.
+- During later cube animation, the graphics batch at FIFO index `0x1a9` timed
+  out with its fence still zero. The channel then faulted; firmware assertion
+  count rose to 3 and subsequent batches were rejected. The cube reached 100
+  frames in 8.0609 s (12.4 FPS) before this fault. This is a separate runtime
+  stability issue from the initial triangle no-write result.
+
+### Revision 3.0.0.132 — read generic target BO through CE
+
+- Finds the current target BO from its captured RT GPU address without requiring
+  the special color-target usage flag. Downloads the raw allocation through the
+  miniport's generic CE download operation and counts green RGBA8 words. This
+  works with Mesa's existing generic VRAM BO allocation.
+- The diagnostic runs after each triangle's draw fence and before GL readback.
+  It will establish whether GPU target bytes contain green pixels when
+  `glReadPixels` reports none. Full VFIO result is pending.
