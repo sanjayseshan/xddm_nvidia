@@ -403,7 +403,8 @@ nvx_drm_capture_vertex_shadow_locked(
                !device->shader_triangle_input_readback_scheduled &&
                address == immediate_position_address;
          for (slot_index = 0; slot_index < captured_count; slot_index++)
-            if (captured_addresses[slot_index] == address)
+            if (captured_addresses[slot_index] == address &&
+                !force_gpu_readback)
                goto next_address;
          for (slot_index = 0; slot_index < NVX_DRM_BUFFER_SLOTS;
               slot_index++) {
