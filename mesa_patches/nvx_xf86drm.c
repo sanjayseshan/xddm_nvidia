@@ -89,6 +89,9 @@ struct nvx_drm_device_slot {
    uint64_t shader_triangle_target_address;
    uint64_t shader_ffvs_target_address;
    uint64_t shader_full_target_address;
+   uint64_t shader_full_target_vertex_address[2];
+   uint32_t shader_full_target_vertex_count;
+   uint32_t shader_full_target_vertex_readback_mask;
    uint64_t shader_cube_vertex_address;
    uint32_t shader_cube_vertex_stride;
    uint32_t shader_cube_vertex_count;
@@ -293,6 +296,19 @@ nvx_drm_capture_shader_addresses_locked(
       uint32_t i;
       draw_kind = 5U;
       device->shader_full_target_snapshot_done = 1U;
+      device->shader_full_target_vertex_address[0] =
+         ((uint64_t)device->gr_state[0x1c04U / 4U] << 32) |
+         device->gr_state[0x1c08U / 4U];
+      device->shader_full_target_vertex_address[1] =
+         ((uint64_t)device->gr_state[0x1c14U / 4U] << 32) |
+         device->gr_state[0x1c18U / 4U];
+      device->shader_full_target_vertex_count = draw_vertex_count;
+      device->shader_full_target_vertex_readback_mask = 0U;
+      /* Make room for the two arrays that distinguish this draw from the
+       * earlier triangle and cube captures. */
+      nvx_drm_vertex_dump_count = 0U;
+      memset(nvx_drm_vertex_dump_addresses, 0,
+             sizeof(nvx_drm_vertex_dump_addresses));
       for (i = 0; i < sizeof(trace_methods) / sizeof(trace_methods[0]); i++)
          values[i] = device->gr_state[trace_methods[i] / sizeof(uint32_t)];
       NvxWglRecordNouveauDrawState(trace_methods, values,
@@ -420,6 +436,7 @@ nvx_drm_capture_vertex_shadow_locked(
       for (i = 0; i < count; i++) {
          uint32_t current_method, pair_index, array_index;
          uint32_t high, low, fetch, stride, bytes, slot_index;
+         uint32_t full_target_bit = 0U, forced_bytes = 0U;
          uint64_t address;
          const NVX_3D_NVC0_ADDRESS_PAIR *pair;
          if (packet_type == 0x20000000U)
@@ -454,11 +471,20 @@ nvx_drm_capture_vertex_shadow_locked(
             uint64_t immediate_position_address =
                ((uint64_t)device->gr_state[0x1c04U / 4U] << 32) |
                device->gr_state[0x1c08U / 4U];
+            if (device->shader_full_target_vertex_address[0] &&
+                address == device->shader_full_target_vertex_address[0] &&
+                !(device->shader_full_target_vertex_readback_mask & 1U))
+               full_target_bit = 1U;
+            else if (device->shader_full_target_vertex_address[1] &&
+                     address == device->shader_full_target_vertex_address[1] &&
+                     !(device->shader_full_target_vertex_readback_mask & 2U))
+               full_target_bit = 2U;
             uint32_t force_gpu_readback =
                device->shader_triangle_input_snapshot_done &&
                device->shader_triangle_input_flush_trace_done &&
                !device->shader_triangle_input_readback_scheduled &&
                address == immediate_position_address;
+            force_gpu_readback |= full_target_bit != 0U;
          for (slot_index = 0; slot_index < captured_count; slot_index++)
             if (captured_addresses[slot_index] == address &&
                 !force_gpu_readback)
@@ -475,7 +501,15 @@ nvx_drm_capture_vertex_shadow_locked(
             offset = address - base;
             if (offset > UINT32_MAX || allocation_bytes > UINT32_MAX)
                continue;
-            bytes = stride * NVX_DRM_VERTEX_DUMP_VERTICES;
+            if (full_target_bit && device->shader_full_target_vertex_count &&
+                device->shader_full_target_vertex_count <=
+                   NVX_DRM_VERTEX_DUMP_VERTICES)
+               forced_bytes = stride *
+                  device->shader_full_target_vertex_count;
+            else if (force_gpu_readback)
+               forced_bytes = stride * 3U;
+            bytes = forced_bytes ? forced_bytes :
+                    stride * NVX_DRM_VERTEX_DUMP_VERTICES;
             if (bytes > NVX_DRM_VERTEX_DUMP_MAX_BYTES)
                bytes = NVX_DRM_VERTEX_DUMP_MAX_BYTES;
             if (bytes > allocation_bytes - offset)
@@ -489,7 +523,17 @@ nvx_drm_capture_vertex_shadow_locked(
             dump->offset = (uint32_t)offset;
             dump->bytes = bytes;
             dump->force_gpu_readback = force_gpu_readback;
-            if (force_gpu_readback)
+            if (full_target_bit) {
+               device->shader_full_target_vertex_readback_mask |=
+                  full_target_bit;
+               if (slot->bo.shadow && slot->bo.map_count)
+                  NvxWglRecordNouveauBufferDwords(
+                     (uint32_t)slot->bo.allocation.BufferId, address,
+                     dump->offset,
+                     (const uint32_t *)(slot->bo.shadow + dump->offset),
+                     bytes / sizeof(uint32_t), 1U);
+            }
+            if (force_gpu_readback && !full_target_bit)
                device->shader_triangle_input_readback_scheduled = 1U;
             if (slot->bo.shadow && slot->bo.map_count &&
                 !force_gpu_readback) {
