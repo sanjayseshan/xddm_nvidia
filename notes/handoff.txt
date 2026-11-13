@@ -48,6 +48,12 @@ pixels.
   readback, depth probe, cube front/back reads, and no-depth cube all contain
   zero colored pixels with no GL error. The strengthened cube checks fail as
   intended; no actual cube frame is proven.
+- The captured Nouveau stream binds render target GPU VA `0x15f40000` with a
+  2560-byte pitch, 453 rows, linear layout, and one color target; the other
+  swap image is bound at `0x162e0000`. Captured NVC0 streams include constant
+  buffer setup and `VERTEX_BEGIN_GL` / `VERTEX_END_GL` packets. So a draw packet
+  reaches the submitted stream, though the captures do not yet prove its
+  vertex fetch, shaders, or raster writes are valid.
 - The log reports that the separate GR pipeline triangle draw, readback, and
   semaphore completed. This miniport probe does not validate Nouveau's draw
   packets or raster output.
@@ -60,10 +66,11 @@ pixels.
 ## Next work
 
 1. Trace why native Nouveau batches submit but NVC0 draw probes leave the
-   target black. Compare emitted framebuffer, vertex input, shader, viewport,
+   target black. The `.101` capture has framebuffer and draw packets; compare
+   their vertex array addresses/limits, shader code and constants, viewport,
    primitive, and raster state against a known working NVC0/NVK sequence.
    Follow one minimal draw from Gallium state emission through reloc
-   translation to GPU completion, using the `.101` pushbuf capture.
+   translation to GPU completion.
 2. Separate output stages with progressively smaller Nouveau GPU tests: first
    NVC0 clear, then a minimal supported triangle, then Mesa's shader draw.
    Read the same target after each fence to locate where output disappears.
