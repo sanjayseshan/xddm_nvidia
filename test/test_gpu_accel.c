@@ -1371,9 +1371,12 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             unsigned int vertexShader = 0, fragmentShader = 0, program = 0;
             int vertexCompiled = 0, fragmentCompiled = 0, linked = 0;
             BYTE *pixels = NULL;
+            BYTE baselinePixel[4] = {0, 0, 0, 0};
+            BYTE postDrawPixel[4] = {0, 0, 0, 0};
             unsigned greenPixels = 0, pixel;
             int greenMinX = w, greenMinY = h, greenMaxX = -1, greenMaxY = -1;
             GLenum shaderError = GL_NO_ERROR;
+            int baselinePass;
             int shaderApiReady = createShader && shaderSource && compileShader &&
                 getShaderiv && getShaderLog && createProgram && attachShader &&
                 linkProgram && getProgramiv && getProgramLog && useProgram &&
@@ -1436,22 +1439,34 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                     glDisable(GL_DEPTH_TEST);
                     glDisable(GL_CULL_FACE);
                     glDisable(GL_BLEND);
-                    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                    glReadBuffer(GL_BACK);
+                    glClearColor(0.0f, 0.0f, 0.75f, 1.0f);
                     glClear(GL_COLOR_BUFFER_BIT);
                     useProgram(program);
+                    glFinish();
+                    shaderError = glGetError();
+                    glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                                 baselinePixel);
+                    if (shaderError == GL_NO_ERROR)
+                        shaderError = glGetError();
                     glBegin(GL_TRIANGLES);
                     glVertex3f(-0.8f, -0.8f, 0.0f);
                     glVertex3f( 0.8f, -0.8f, 0.0f);
                     glVertex3f( 0.0f,  0.8f, 0.0f);
                     glEnd();
                     glFinish();
-                    shaderError = glGetError();
+                    if (shaderError == GL_NO_ERROR)
+                        shaderError = glGetError();
                     glReadBuffer(GL_BACK);
                     if (pixels)
                         glReadPixels(0, 0, w, h, GL_RGBA,
                                      GL_UNSIGNED_BYTE, pixels);
                     else if (shaderError == GL_NO_ERROR)
                         shaderError = 0x0505U; /* GL_OUT_OF_MEMORY */
+                    glReadPixels(32, 32, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE,
+                                 postDrawPixel);
+                    if (shaderError == GL_NO_ERROR)
+                        shaderError = glGetError();
                     if (shaderError == GL_NO_ERROR)
                         shaderError = glGetError();
                     for (pixel = 0; pixels && pixel < (unsigned)w * (unsigned)h;
@@ -1477,10 +1492,17 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             int glslPass = shaderApiReady && vertexCompiled &&
                 fragmentCompiled && linked && shaderError == GL_NO_ERROR &&
                 greenPixels >= 200U;
-            LogMsg("[MESA_GLSL_TRIANGLE_RESULT] %s compiled=%d/%d linked=%d green_pixels=%u bbox=%d,%d-%d,%d readback=%dx%d error=0x%X\n",
+            baselinePass = baselinePixel[0] < 32U &&
+                           baselinePixel[1] < 32U &&
+                           baselinePixel[2] > 150U;
+            glslPass = glslPass && baselinePass;
+            LogMsg("[MESA_GLSL_TRIANGLE_RESULT] %s compiled=%d/%d linked=%d baseline_pass=%d green_pixels=%u bbox=%d,%d-%d,%d readback=%dx%d baseline=%u,%u,%u,%u post_center=%u,%u,%u,%u error=0x%X\n",
                    glslPass ? "PASS" : "FAIL", vertexCompiled,
-                   fragmentCompiled, linked, greenPixels,
+                   fragmentCompiled, linked, baselinePass, greenPixels,
                    greenMinX, greenMinY, greenMaxX, greenMaxY, w, h,
+                   baselinePixel[0], baselinePixel[1], baselinePixel[2],
+                   baselinePixel[3], postDrawPixel[0], postDrawPixel[1],
+                   postDrawPixel[2], postDrawPixel[3],
                    shaderError);
             if (!glslPass) failures++;
             glViewport(0, 0, w, h);

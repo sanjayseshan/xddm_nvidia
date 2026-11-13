@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.125`.
+Updated November 13, 2026 after VFIO run `.126`.
 
 ## Current status
 
@@ -321,6 +321,9 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
    hardware Y≈421 on a 453-row target. `.125` scans all 632x453 back-buffer
    pixels and still finds zero green pixels; a later clear reads back the
    expected `(32,64,191)`. The empty result is not a small-read-region issue.
+   `.126` confirms a blue clear on the test's back buffer before drawing
+   (`0,0,191,255` at center), then reads the identical blue value afterward;
+   all target pixels remain unchanged by the draw.
 2. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
    The failed stream is decoded above; trace the Mesa semaphore release and
    miniport completion fence through PBDMA progress, and correlate with the
@@ -336,7 +339,7 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Relevant files
 
-- Latest completed full VFIO log: `test_logs/v3.0.0.125-20261113-012451.log`
+- Latest completed full VFIO log: `test_logs/v3.0.0.126-20261113-013041.log`
 - Latest extracted Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest Mesa/Nouveau bridge excerpt: `notes/mesa-bridge-latest.txt`
 - GPFIFO submission and diagnostics: `src_driver/nvx_gsp.c`,
@@ -618,3 +621,21 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   Next inspect NVC0 shader binary/header programming and determine whether the
   draw's target receives any writes; compare against a minimal known-working
   Nouveau shader draw. Keep the later FIFO stall as a separate issue.
+
+### Revision 3.0.0.126 — same-target readback control
+
+- Clear the GLSL test's back buffer blue and read its center before drawing;
+  after the green triangle, read the same center and scan the complete target.
+  This verifies the exact target and readback path around the failed draw.
+- Full VFIO log: `test_logs/v3.0.0.126-20261113-013041.log`. XP booted on the
+  first attempt, completed the suite, and shut down normally. Package audits
+  passed; `[OPENGL_RESULT] FAIL`.
+- The pre-draw clear read `(0,0,191,255)` at the back-buffer center and passed.
+  After the GLSL draw the same pixel was unchanged; the complete 632x453 scan
+  found zero green pixels, with no GL error. Both draw fences completed. The
+  clear and readback work on the exact target around the draw, while the draw
+  leaves that target untouched.
+- The cube remains black; 100 frames took 6.6379 s (15.1 FPS). Firmware
+  assertions reach 3 during animation. Next isolate the programmable vertex
+  shader from the fragment/raster/target path with a constant-color fragment
+  shader using Mesa's fixed-function vertex stage. Keep the FIFO stall separate.
