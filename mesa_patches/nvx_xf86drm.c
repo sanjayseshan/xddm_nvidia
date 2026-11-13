@@ -85,7 +85,7 @@ struct nvx_drm_device_slot {
    uint64_t shader_address[6];
    uint32_t shader_address_mask;
    uint32_t shader_draw_snapshot_done;
-   uint32_t gr_state[0x2200U / sizeof(uint32_t)];
+   uint32_t gr_state[0x4000U / sizeof(uint32_t)];
    uint32_t gr_draw_state_snapshot_done;
 #endif
    struct nvx_drm_bo_slot buffers[NVX_DRM_BUFFER_SLOTS];
@@ -153,7 +153,8 @@ nvx_drm_capture_shader_addresses_locked(
       0x0dacU, 0x0db0U, 0x1160U, 0x1164U, 0x121cU, 0x12ccU, 0x12d0U,
       0x12e8U, 0x1308U, 0x130cU, 0x135cU, 0x1360U, 0x1618U,
       0x1c00U, 0x1c04U, 0x1c08U, 0x1c0cU, 0x1c10U, 0x1c14U, 0x1c18U,
-      0x0d74U
+      0x0d74U, 0x2040U, 0x2054U, 0x2058U, 0x2080U, 0x2094U, 0x2098U,
+      0x2140U, 0x2154U, 0x2158U, 0x3818U, 0x3820U
    };
    uint32_t cursor = 0, captured = 0, draw_seen = 0;
 

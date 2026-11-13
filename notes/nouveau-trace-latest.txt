@@ -1,6 +1,6 @@
-Latest Nouveau/OpenGL diagnostic excerpt from test_logs/v3.0.0.114-20261113-002205.log
-The `.114` VFIO run booted on the first attempt, completed the guest suite, and shut down normally. Cube readback still has zero colored pixels; 100 frames took 8.2670 s (12.1 FPS); `[OPENGL_RESULT] FAIL`.
-Raster, target, viewport, scissor, and vertex BO observations match `.113`. The compiled trace-method table contains `0x0d74`, but the guest emits label `1d74`; treat that start-method row as unresolved pending a raw-index logger check.
+Latest Nouveau/OpenGL diagnostic excerpt from test_logs/v3.0.0.118-20261113-003924.log
+The `.118` VFIO run booted, completed the guest suite, and shut down normally. Cube readback remains zero; 100 frames took 8.1246 s (12.3 FPS); `[OPENGL_RESULT] FAIL`.
+Both polygon MME inputs are GL_FILL: front `0x3818=0x1b02`, back `0x3820=0x1b02`. VP_B/FP selectors and shader addresses are consistent; vertex start is zero and fetches are coherent. A later batch fence stalls with PBDMA having consumed the full stream, no PGRAPH trap, and no MMU fault; see `.118` full log around timeout.
 All three stage program snapshots below are associated with the first draw after cached SP_ADDRESS binds were observed; each was downloaded after its submission fence.
 [MESA_GPU_CLEAR_BACK_READBACK] pixel=32,64,191 error=0x0
 [MESA_GPU_CLEAR_BACK_RESULT] PASS
@@ -36,44 +36,64 @@ Cube draw state methods:
 Cube draw state methods as logged in `.114` (start-method label is under investigation):
 
 Cube draw state methods as logged in `.114` (start-method label is unresolved):
-Nouveau cube draw state method=037c value=00000001
-Nouveau cube draw state method=0800 value=00000000
-Nouveau cube draw state method=0804 value=15f40000
-Nouveau cube draw state method=0808 value=00000a00
-Nouveau cube draw state method=080c value=000001c5
-Nouveau cube draw state method=0810 value=000000cf
-Nouveau cube draw state method=0814 value=00001000
-Nouveau cube draw state method=0a00 value=43900000
-Nouveau cube draw state method=0a04 value=c1000000
-Nouveau cube draw state method=0a08 value=3f000000
-Nouveau cube draw state method=0a0c value=43900000
-Nouveau cube draw state method=0a10 value=43de8000
-Nouveau cube draw state method=0a14 value=3f000000
-Nouveau cube draw state method=0c00 value=02400000
-Nouveau cube draw state method=0c04 value=001001b5
-Nouveau cube draw state method=0e00 value=00000001
-Nouveau cube draw state method=0e04 value=40000000
-Nouveau cube draw state method=0e08 value=40000000
-Nouveau cube draw state method=0ff4 value=02780000
-Nouveau cube draw state method=0ff8 value=01c50000
-Nouveau cube draw state method=0dac value=00000000
-Nouveau cube draw state method=0db0 value=00000000
-Nouveau cube draw state method=1160 value=38400000
-Nouveau cube draw state method=1164 value=38200001
-Nouveau cube draw state method=121c value=0fac6881
-Nouveau cube draw state method=12cc value=00000000
-Nouveau cube draw state method=12d0 value=00000000
-Nouveau cube draw state method=12e8 value=00000000
-Nouveau cube draw state method=1308 value=00000000
-Nouveau cube draw state method=130c value=00000000
-Nouveau cube draw state method=135c value=00000000
-Nouveau cube draw state method=1360 value=00000000
-Nouveau cube draw state method=1618 value=00000007
-Nouveau cube draw state method=1c00 value=0000101c
-Nouveau cube draw state method=1c04 value=00000000
-Nouveau cube draw state method=1c08 value=16090010
-Nouveau cube draw state method=1c0c value=00000000
-Nouveau cube draw state method=1c10 value=0000101c
-Nouveau cube draw state method=1c14 value=00000000
-Nouveau cube draw state method=1c18 value=16090000
-Nouveau cube draw state method=1d74 value=00000000
+
+Cube draw state snapshot `.115`:
+
+Cube draw state snapshot `.116`:
+
+Cube draw state snapshot `.117`:
+
+Cube draw state snapshot `.118`:
+Nouveau cube draw state trace_rev=118 entries=52
+Nouveau cube draw state index=0 method_dec=892 value=00000001
+Nouveau cube draw state index=1 method_dec=2048 value=00000000
+Nouveau cube draw state index=2 method_dec=2052 value=15f40000
+Nouveau cube draw state index=3 method_dec=2056 value=00000a00
+Nouveau cube draw state index=4 method_dec=2060 value=000001c5
+Nouveau cube draw state index=5 method_dec=2064 value=000000cf
+Nouveau cube draw state index=6 method_dec=2068 value=00001000
+Nouveau cube draw state index=7 method_dec=2560 value=43900000
+Nouveau cube draw state index=8 method_dec=2564 value=c1000000
+Nouveau cube draw state index=9 method_dec=2568 value=3f000000
+Nouveau cube draw state index=10 method_dec=2572 value=43900000
+Nouveau cube draw state index=11 method_dec=2576 value=43de8000
+Nouveau cube draw state index=12 method_dec=2580 value=3f000000
+Nouveau cube draw state index=13 method_dec=3072 value=02400000
+Nouveau cube draw state index=14 method_dec=3076 value=001001b5
+Nouveau cube draw state index=15 method_dec=3584 value=00000001
+Nouveau cube draw state index=16 method_dec=3588 value=40000000
+Nouveau cube draw state index=17 method_dec=3592 value=40000000
+Nouveau cube draw state index=18 method_dec=4084 value=02780000
+Nouveau cube draw state index=19 method_dec=4088 value=01c50000
+Nouveau cube draw state index=20 method_dec=3500 value=00000000
+Nouveau cube draw state index=21 method_dec=3504 value=00000000
+Nouveau cube draw state index=22 method_dec=4448 value=38400000
+Nouveau cube draw state index=23 method_dec=4452 value=38200001
+Nouveau cube draw state index=24 method_dec=4636 value=0fac6881
+Nouveau cube draw state index=25 method_dec=4812 value=00000000
+Nouveau cube draw state index=26 method_dec=4816 value=00000000
+Nouveau cube draw state index=27 method_dec=4840 value=00000000
+Nouveau cube draw state index=28 method_dec=4872 value=00000000
+Nouveau cube draw state index=29 method_dec=4876 value=00000000
+Nouveau cube draw state index=30 method_dec=4956 value=00000000
+Nouveau cube draw state index=31 method_dec=4960 value=00000000
+Nouveau cube draw state index=32 method_dec=5656 value=00000007
+Nouveau cube draw state index=33 method_dec=7168 value=0000101c
+Nouveau cube draw state index=34 method_dec=7172 value=00000000
+Nouveau cube draw state index=35 method_dec=7176 value=16090010
+Nouveau cube draw state index=36 method_dec=7180 value=00000000
+Nouveau cube draw state index=37 method_dec=7184 value=0000101c
+Nouveau cube draw state index=38 method_dec=7188 value=00000000
+Nouveau cube draw state index=39 method_dec=7192 value=16090000
+Nouveau cube draw state index=40 method_dec=3444 value=00000000
+Nouveau cube draw state index=41 method_dec=8256 value=00000011
+Nouveau cube draw state index=42 method_dec=8276 value=00000000
+Nouveau cube draw state index=43 method_dec=8280 value=22e9f3c0
+Nouveau cube draw state index=44 method_dec=8320 value=00000020
+Nouveau cube draw state index=45 method_dec=8340 value=00000000
+Nouveau cube draw state index=46 method_dec=8344 value=22e9f2c0
+Nouveau cube draw state index=47 method_dec=8512 value=00000051
+Nouveau cube draw state index=48 method_dec=8532 value=00000000
+Nouveau cube draw state index=49 method_dec=8536 value=22e9f100
+Nouveau cube draw state index=50 method_dec=14360 value=00001b02
+Nouveau cube draw state index=51 method_dec=14368 value=00001b02

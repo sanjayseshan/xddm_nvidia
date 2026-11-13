@@ -587,10 +587,20 @@ NvxWglRecordNouveauDrawState(const uint32_t *methods, const uint32_t *values,
 
    if (!methods || !values || !count || count > 64U)
       return;
+   {
+      int length = wsprintfA(line,
+         "Nouveau cube draw state trace_rev=118 entries=%lu\r\n",
+         (unsigned long)count);
+      if (length > 0 && (uint32_t)length <= sizeof(output) - used) {
+         memcpy(output + used, line, (size_t)length);
+         used += (uint32_t)length;
+      }
+   }
    for (i = 0; i < count; i++) {
-      int length = wsprintfA(line, "Nouveau cube draw state method=%04lx value=%08lx\r\n",
-                             (unsigned long)methods[i],
-                             (unsigned long)values[i]);
+      int length = wsprintfA(line,
+         "Nouveau cube draw state index=%lu method_dec=%lu value=%08lx\r\n",
+         (unsigned long)i, (unsigned long)methods[i],
+         (unsigned long)values[i]);
       if (length <= 0 || (uint32_t)length > sizeof(output) - used)
          break;
       memcpy(output + used, line, (size_t)length);

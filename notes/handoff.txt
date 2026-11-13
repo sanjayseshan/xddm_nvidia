@@ -290,11 +290,13 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Next work
 
-1. Resolve the `.114` trace discrepancy: source requests start method `0x0d74`,
-   but the guest log labels it `0x1d74`. Confirm the packaged ICD contains the
-   latest shim, then log the raw `0x0d74` value from the decoded batch and
-   compare it with the fetched BO and 24-vertex draw. The `.113/.114` fetch
-   bases resolve to BO `0x16`, whose shadow contains plausible cube data.
+1. Resolve the black output despite coherent state: `.118` confirms both
+   polygon MME inputs request GL_FILL, VP_B/FP are selected with the captured
+   program addresses, and vertex start/fetch are coherent. Isolate the first
+   triangle batch that does not complete and identify the first method/state
+   where PGRAPH stops. The later timeout has PBDMA at end-of-buffer, no PGRAPH
+   trap, and no MMU fault; determine whether that timeout follows the black
+   draw or is a later independent queue stall.
 2. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
    The failed stream is decoded above; trace the Mesa semaphore release and
    miniport completion fence through PBDMA progress, and correlate with the
@@ -310,7 +312,7 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Relevant files
 
-- Latest completed full VFIO log: `test_logs/v3.0.0.114-20261113-002205.log`
+- Latest completed full VFIO log: `test_logs/v3.0.0.118-20261113-003924.log`
 - Latest extracted Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest Mesa/Nouveau bridge excerpt: `notes/mesa-bridge-latest.txt`
 - GPFIFO submission and diagnostics: `src_driver/nvx_gsp.c`,
@@ -357,7 +359,8 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
 ### Revision 3.0.0.113 — complete cube fetch snapshot
 
 - Extended the one-time draw snapshot with the second vertex array's low GPU
-  address and `SET_VERTEX_ARRAY_START` (`0x1d74`), alongside the existing
+  address and `SET_VERTEX_ARRAY_START` (encoded packet method `0x35d`, actual
+  method `0x0d74`), alongside the existing
   attribute format and fetch stride/base registers. This lets the next trace
   compare persistent fetch state with all setup writes in the bounded draw
   packet and the 24-vertex draw count.
@@ -372,17 +375,62 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
 
 ### Revision 3.0.0.114 — vertex start trace discrepancy
 
-- Source now requests NVC0 vertex-array start method `0x0d74`; method packet
-  headers encode method offsets in dwords. However, the `.114` guest trace
-  still prints `method=1d74`, so the start value remains unverified and the
-  discrepancy needs investigation.
+- Source requests NVC0 vertex-array start method `0x0d74`; method packet
+  headers encode method offsets in dwords. The old `%04lx` label printed
+  `1d74`, which was misleading; `.115` decimal output resolves it.
 - Full VFIO log: `test_logs/v3.0.0.114-20261113-002205.log`. XP booted on the
   first attempt, ran the suite, and shut down normally. Cube remains at zero
   colored pixels; 100 frames took 8.2670 s (12.1 FPS); `[OPENGL_RESULT] FAIL`.
   Clear readback and the broader 2D checks pass. The draw snapshot still shows
   rasterization enabled and plausible vertex data in BO `0x16`.
-- The `.114` run still prints start-method label `1d74` despite the packaged
-  trace-method table containing `0x0d74`. The `.115` revision will log the
-  method's table index and an explicit trace build marker, then compare those
-  with the packaged DLL and guest output to determine whether this is a format
-  issue or stale runtime code.
+- The `.114` run still used the old hex label. `.115` adds a trace marker and
+  decimal method value to validate method identity in guest output.
+
+### Revision 3.0.0.115 — draw-state trace identity confirmed
+
+- The guest log contains `trace_rev=115`; index 40 reports decimal method 3444
+  (`0x0d74`) with value zero. This does not alter GPU command submission/state.
+- Full VFIO log: `test_logs/v3.0.0.115-20261113-002804.log`. The VM booted on
+  retry 2, completed the suite, and shut down normally. Cube readback remains
+  at zero colored pixels; `[OPENGL_RESULT] FAIL`; 100 frames took 5.9563 s
+  (16.8 FPS). The fetch bases resolve to BO `0x16`, whose shadow dump contains
+  plausible cube vertex data.
+- Next, capture persistent stage-select methods `0x2040`, `0x2080`, and
+  `0x2140` at the same draw, and compare them against cached VS/TCS/FS shader
+  addresses and Mesa NVC0 stage mapping.
+
+### Revision 3.0.0.116 — shader stage selection confirmed
+
+- Full VFIO log: `test_logs/v3.0.0.116-20261113-003214.log`. XP booted, ran
+  the guest suite, and shut down normally. Clear readback passes; cube has zero
+  colored pixels; 100 frames took 8.3395 s (12.0 FPS); `[OPENGL_RESULT] FAIL`.
+- Stage state is coherent: VP_B enabled (`0x11`) with address `0x22e9f3c0`,
+  TCP disabled (`0x20`) with cached address `0x22e9f2c0`, and FP enabled
+  (`0x51`) with address `0x22e9f100`. Vertex fetch remains plausible from BO
+  `0x16`, and vertex start is zero.
+- Direct polygon-mode registers read zero, but Nouveau writes polygon mode
+  through MME methods. `.117` snapshots MME front/back inputs `0x3818/0x381c`
+  to test whether Mesa requested fill and the macro path received it.
+
+### Revision 3.0.0.117 — front polygon fill confirmed
+
+- Full VFIO log: `test_logs/v3.0.0.117-20261113-003625.log`. XP booted, ran
+  the guest suite, and shut down normally. Cube readback remains zero; 100
+  frames took 7.9449 s (12.6 FPS); `[OPENGL_RESULT] FAIL`.
+- The front polygon macro method `0x3818` receives `0x1b02` (GL_FILL). The
+  snapshot mistakenly used `0x381c` for the back macro; Nouveau defines it at
+  `0x3820`, so back fill remains unknown. `.118` corrects this. Stage selects
+  and addresses remain coherent; the vertex BO remains plausible.
+
+### Revision 3.0.0.118 — both polygon modes confirmed
+
+- Full VFIO log: `test_logs/v3.0.0.118-20261113-003924.log`. XP booted, ran
+  the guest suite, and shut down normally. Cube still has zero colored pixels;
+  100 frames took 8.1246 s (12.3 FPS); `[OPENGL_RESULT] FAIL`.
+- Correct NVC0 macro methods both request fill: front `0x3818=0x1b02` and back
+  `0x3820=0x1b02`. Stage selection/address, vertex start, and vertex fetch
+  remain coherent.
+- The log records a later fence timeout with PBDMA GET at the end of the push
+  buffer, no PGRAPH trap, and no MMU fault. Next identify the first triangle
+  submission that fails to complete and correlate its fence with the zero-pixel
+  readback; do not assume this later timeout caused the earlier cube failure.
