@@ -1,5 +1,7 @@
-Latest Nouveau/OpenGL trace excerpt: test_logs/v3.0.0.124-20261113-011908.log
-[MESA_GLSL_TRIANGLE_RESULT] FAIL compiled=1/1 linked=1 green_pixels=0 error=0x0
+Latest Nouveau/OpenGL trace excerpt: test_logs/v3.0.0.125-20261113-012451.log
+[MESA_GLSL_TRIANGLE_RESULT] FAIL compiled=1/1 linked=1 green_pixels=0 bbox=632,453--1,-1 readback=632x453 error=0x0
+[MESA_GPU_CLEAR_BACK_READBACK] pixel=32,64,191 error=0x0
+[MESA_GPU_CLEAR_BACK_RESULT] PASS
 NVX [NVC0-DRAW]: completed index=2 primitive=4 start=0 count=3 fence=0x0f observed=0x0f
 NVX [NVC0-DRAW]: completed index=3 primitive=4 start=0 count=3 fence=0x10 observed=0x10
 GLSL triangle state:

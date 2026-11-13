@@ -1370,8 +1370,9 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                 "void main() { gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0); }\n";
             unsigned int vertexShader = 0, fragmentShader = 0, program = 0;
             int vertexCompiled = 0, fragmentCompiled = 0, linked = 0;
-            BYTE pixels[64 * 64 * 4];
+            BYTE *pixels = NULL;
             unsigned greenPixels = 0, pixel;
+            int greenMinX = w, greenMinY = h, greenMaxX = -1, greenMaxY = -1;
             GLenum shaderError = GL_NO_ERROR;
             int shaderApiReady = createShader && shaderSource && compileShader &&
                 getShaderiv && getShaderLog && createProgram && attachShader &&
@@ -1423,6 +1424,10 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                     }
                 }
                 if (linked) {
+                    size_t pixelBytes = (size_t)w * (size_t)h * 4U;
+                    if (w > 0 && h > 0 && w <= 4096 && h <= 4096 &&
+                        pixelBytes / 4U / (size_t)w == (size_t)h)
+                        pixels = (BYTE *)malloc(pixelBytes);
                     glViewport(0, 0, 64, 64);
                     glMatrixMode(GL_PROJECTION);
                     glLoadIdentity();
@@ -1442,27 +1447,41 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                     glFinish();
                     shaderError = glGetError();
                     glReadBuffer(GL_BACK);
-                    glReadPixels(0, 0, 64, 64, GL_RGBA,
-                                 GL_UNSIGNED_BYTE, pixels);
+                    if (pixels)
+                        glReadPixels(0, 0, w, h, GL_RGBA,
+                                     GL_UNSIGNED_BYTE, pixels);
+                    else if (shaderError == GL_NO_ERROR)
+                        shaderError = 0x0505U; /* GL_OUT_OF_MEMORY */
                     if (shaderError == GL_NO_ERROR)
                         shaderError = glGetError();
-                    for (pixel = 0; pixel < 64U * 64U; pixel++)
+                    for (pixel = 0; pixels && pixel < (unsigned)w * (unsigned)h;
+                         pixel++)
                         if (pixels[pixel * 4U + 1U] > 200U &&
                             pixels[pixel * 4U] < 32U &&
-                            pixels[pixel * 4U + 2U] < 32U)
+                            pixels[pixel * 4U + 2U] < 32U) {
+                            unsigned x = pixel % (unsigned)w;
+                            unsigned y = pixel / (unsigned)w;
                             greenPixels++;
+                            if ((int)x < greenMinX) greenMinX = (int)x;
+                            if ((int)y < greenMinY) greenMinY = (int)y;
+                            if ((int)x > greenMaxX) greenMaxX = (int)x;
+                            if ((int)y > greenMaxY) greenMaxY = (int)y;
+                        }
                     useProgram(0);
                 }
                 if (vertexShader) deleteShader(vertexShader);
                 if (fragmentShader) deleteShader(fragmentShader);
                 if (program) deleteProgram(program);
             }
+            if (pixels) free(pixels);
             int glslPass = shaderApiReady && vertexCompiled &&
                 fragmentCompiled && linked && shaderError == GL_NO_ERROR &&
                 greenPixels >= 200U;
-            LogMsg("[MESA_GLSL_TRIANGLE_RESULT] %s compiled=%d/%d linked=%d green_pixels=%u error=0x%X\n",
+            LogMsg("[MESA_GLSL_TRIANGLE_RESULT] %s compiled=%d/%d linked=%d green_pixels=%u bbox=%d,%d-%d,%d readback=%dx%d error=0x%X\n",
                    glslPass ? "PASS" : "FAIL", vertexCompiled,
-                   fragmentCompiled, linked, greenPixels, shaderError);
+                   fragmentCompiled, linked, greenPixels,
+                   greenMinX, greenMinY, greenMaxX, greenMaxY, w, h,
+                   shaderError);
             if (!glslPass) failures++;
             glViewport(0, 0, w, h);
         }

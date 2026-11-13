@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.124`.
+Updated November 13, 2026 after VFIO run `.125`.
 
 ## Current status
 
@@ -316,9 +316,11 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
    `.123` compiled/linked GLSL 1.10 shaders and submitted two 3-vertex NVC0
    TRIANGLES batches whose release fences matched (`0x0f`, `0x10`), but its
    back-buffer readback had zero green pixels and no GL error. The cube remains
-   black too. Capture the GLSL triangle's exact target, vertex, viewport,
-   shader-stage and output state separately from the later cube; compare its
-   generated shaders to a known working NVC0 programmable draw.
+   black too. `.124` confirms the expected input vertices, active vertex and
+   fragment shader selections, enabled RGBA writes, and a 64x64 viewport at
+   hardware Y≈421 on a 453-row target. `.125` scans all 632x453 back-buffer
+   pixels and still finds zero green pixels; a later clear reads back the
+   expected `(32,64,191)`. The empty result is not a small-read-region issue.
 2. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
    The failed stream is decoded above; trace the Mesa semaphore release and
    miniport completion fence through PBDMA progress, and correlate with the
@@ -334,7 +336,7 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Relevant files
 
-- Latest completed full VFIO log: `test_logs/v3.0.0.124-20261113-011908.log`
+- Latest completed full VFIO log: `test_logs/v3.0.0.125-20261113-012451.log`
 - Latest extracted Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest Mesa/Nouveau bridge excerpt: `notes/mesa-bridge-latest.txt`
 - GPFIFO submission and diagnostics: `src_driver/nvx_gsp.c`,
@@ -597,3 +599,22 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   viewport-to-readback mapping with upstream Nouveau's NVC0 draw emission.
   Preserve these captures while narrowing the remaining common shader,
   rasterization, or target path failure.
+
+### Revision 3.0.0.125 — full-buffer GLSL readback
+
+- Expands the GLSL diagnostic read from 64x64 to the complete window back
+  buffer and records pixel count, bounding box, dimensions, and GL error. This
+  tests whether the valid draw landed outside the small region previously
+  scanned.
+- Full VFIO log: `test_logs/v3.0.0.125-20261113-012451.log`. XP booted on the
+  first attempt, completed the suite, and shut down normally. Package audits
+  passed; `[OPENGL_RESULT] FAIL`.
+- The GLSL test read all 632x453 pixels: zero green pixels, empty bounding box,
+  and `GL error=0`. The following clear readback returned `(32,64,191)` and
+  passed, confirming working back-buffer readback. Both GLSL draw fences
+  completed; cube output also remains black. The 100-frame run took 8.2606 s
+  (12.1 FPS), and firmware assertions reached 3 during the later animation.
+- This rules out the probe's 64x64 scan region as the reason it missed output.
+  Next inspect NVC0 shader binary/header programming and determine whether the
+  draw's target receives any writes; compare against a minimal known-working
+  Nouveau shader draw. Keep the later FIFO stall as a separate issue.
