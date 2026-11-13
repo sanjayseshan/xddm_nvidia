@@ -1072,8 +1072,25 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
 - Added one-shot kind-14 tracing for the immediate triangle's vertex BO,
   logging its buffer ID, address offset, reference access, map count, map
   flags, and whether the upload flush succeeded.
-- Verified patch 0028 applies after 0012 and cleanly reverses. Full VFIO test
-  result pending.
+- Patch 0028 applies after 0012 and cleanly reverses. The `.153` build passed
+  host checks, XP import/subsystem audits, and the full Mesa WGL build. VFIO
+  booted and shut down normally; GR triangle/semaphore and 2D submissions
+  passed, but `OPENGL_RESULT` failed.
+- Log: `test_logs/v3.0.0.153-20261113-040424.log`. Renderer reported `NV170`.
+  The explicit GLSL triangle control passed with 1,352 green pixels; the
+  immediate-triangle GPU readback at BO `0x16`, offset `0xe0`, still returned
+  zeroes. The new kind-14 record is
+  `a=00000016 b=000000e0 c=00000001 d=00000001 e=00000001 f=00000000`:
+  READ reference, one map, READ-only map flags, no flush. This shows that
+  cached-map calls did not request WRITE for this BO, so permission widening
+  alone did not fix the upload. The no-depth cube probe also reported zero
+  rendered pixels and no new draw batches; its 100-frame test ran at 51.9 FPS
+  but did not demonstrate hardware cube rendering. Firmware assertions were
+  reported during the run (counts reached 3).
+- Next: log the immediate BO's CPU shadow contents at submit time. If it holds
+  the expected vertices, force a writeback for this narrowly identified
+  vertex BO and check the fenced GPU readback; otherwise trace where the
+  expected Begin/End data stops reaching that shadow.
 
 Relevant files: `mesa_patches/nvx_xf86drm.c`,
 `mesa_patches/xp_include/xf86drm.h`,
