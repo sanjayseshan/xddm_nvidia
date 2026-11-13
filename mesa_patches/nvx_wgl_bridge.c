@@ -586,14 +586,14 @@ NvxWglRecordNouveauDrawState(const uint32_t *methods, const uint32_t *values,
    HANDLE file;
    DWORD written;
 
-   if (!methods || !values || !count || count > 64U)
+   if (!methods || !values || !count || count > 80U)
       return;
    {
       const char *label = draw_kind == 2U ? "GLSL_TRIANGLES/3" :
                           draw_kind == 3U ? "FFVS_GLSL_FS_TRIANGLES/3" :
                                             "QUADS/24";
       int length = wsprintfA(line,
-         "Nouveau draw state trace_rev=128 draw=%s entries=%lu\r\n",
+         "Nouveau draw state trace_rev=129 draw=%s entries=%lu\r\n",
          label, (unsigned long)count);
       if (length > 0 && (uint32_t)length <= sizeof(output) - used) {
          memcpy(output + used, line, (size_t)length);

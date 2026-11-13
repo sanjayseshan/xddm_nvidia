@@ -1,21 +1,19 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.137`; preparing `.138`.
+Updated November 13, 2026 after VFIO run `.138`; preparing `.139`.
 
 ## Current status
 
-The latest completed VFIO run `.137` booted on auto-retry attempt 2 and shut
-down normally, but `[OPENGL_RESULT] FAIL`; the triangle remains black. Raw CE
-readback of the exact target VA `0x162e0000` found 286,296 blue pixels (the
-entire 632x453 target) and zero green pixels. The occlusion query API is
-available, and `GL_SAMPLES_PASSED` returned zero with no GL error. This places
-the failure before samples reach the color target. Revision `.138` adds
-`GL_PRIMITIVES_GENERATED` to distinguish missing/invalid vertex-stage output
-from viewport, clipping, or raster setup. Full log:
-`test_logs/v3.0.0.137-20261113-024211.log`.
+The latest completed VFIO run `.138` booted and shut down normally, but
+`[OPENGL_RESULT] FAIL`; no triangle pixels reach the target. Raw CE readback
+still finds 286,296 blue pixels on the exact 632x453 draw target. OpenGL
+queries report `primitives_generated=1` and `samples_passed=0`, with no GL
+error. Revision `.139` captures the draw-time NVC0 `VIEWPORT_TRANSFORM_EN`
+value to check the viewport/raster path. Full log:
+`test_logs/v3.0.0.138-20261113-024620.log`.
 
-The cube ran 100 frames at 14.7 FPS, then the animation path timed out waiting
-for fence `0x1ff` at FIFO index `0x1ff`; the channel faulted and firmware
+The cube ran 100 frames at 18.2 FPS, then the animation path timed out waiting
+for fence `0x17b` at FIFO index `0x17b`; the channel faulted and firmware
 assertions rose to 3. This recurring submission fault remains separate from
 the initial triangle's zero pixels. The callback type warning has been fixed.
 
@@ -849,4 +847,14 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
 
 - Adds a `GL_PRIMITIVES_GENERATED` query around the same triangle. A nonzero
   result with zero passed samples points at clipping/raster state; zero points
-  toward vertex input or shader output. Full VFIO result is pending.
+  toward vertex input or shader output.
+- Full VFIO log: `test_logs/v3.0.0.138-20261113-024620.log`. It returned
+  `primitives_generated=1`, `samples_passed=0`; the raw exact target remained
+  fully blue. This confirms primitive generation but no raster coverage. The
+  cube ran 100 frames at 18.2 FPS before timeout at FIFO/fence `0x17b`; the
+  firmware assertion count reached 3.
+
+### Revision 3.0.0.139 — capture viewport transform enable
+
+- Adds NVC0 method `0x192c` (`VIEWPORT_TRANSFORM_EN`) to the draw-state trace.
+  Full VFIO result is pending.
