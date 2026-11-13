@@ -95,8 +95,6 @@ static uint64_t nvx_drm_vertex_dump_addresses[NVX_DRM_VERTEX_DUMP_LIMIT];
 static uint32_t nvx_drm_vertex_dump_count;
 #define NVX_DRM_SHADER_DUMP_LIMIT 16U
 #define NVX_DRM_SHADER_DUMP_BYTES 512U
-static uint64_t nvx_drm_shader_dump_addresses[NVX_DRM_SHADER_DUMP_LIMIT];
-static uint32_t nvx_drm_shader_dump_count;
 #endif
 static int nvx_drm_unsupported(void);
 static int nvx_drm_unsupported_operation(uint32_t kind,
@@ -137,12 +135,11 @@ struct nvx_drm_shader_dump {
 static uint32_t
 nvx_drm_capture_shader_addresses_locked(
    struct nvx_drm_device_slot *device, const uint8_t *dword_data,
-   uint32_t dword_count, const uint64_t *captured_addresses,
-   uint32_t captured_count, struct nvx_drm_shader_dump *dumps)
+   uint32_t dword_count, struct nvx_drm_shader_dump *dumps)
 {
    uint32_t cursor = 0, captured = 0;
 
-   while (cursor < dword_count && captured_count + captured < NVX_DRM_SHADER_DUMP_LIMIT) {
+   while (cursor < dword_count && captured < NVX_DRM_SHADER_DUMP_LIMIT) {
       uint32_t header, packet_type, count, method, subchannel, i;
       memcpy(&header, dword_data + (size_t)cursor * 4U, sizeof(header));
       packet_type = header & 0xe0000000U;
@@ -158,7 +155,7 @@ nvx_drm_capture_shader_addresses_locked(
       subchannel = (header >> 13) & 7U;
       if (!count || count > dword_count - cursor - 1U)
          break;
-      for (i = 0; i < count && captured_count + captured < NVX_DRM_SHADER_DUMP_LIMIT; i++) {
+      for (i = 0; i < count && captured < NVX_DRM_SHADER_DUMP_LIMIT; i++) {
          uint32_t current_method, pair_index, stage, high, low, slot_index;
          uint64_t address;
          const NVX_3D_NVC0_ADDRESS_PAIR *pair;
@@ -182,9 +179,6 @@ nvx_drm_capture_shader_addresses_locked(
          if (high > 0xffU)
             continue;
          address = ((uint64_t)high << 32) | low;
-         for (slot_index = 0; slot_index < captured_count; slot_index++)
-            if (captured_addresses[slot_index] == address)
-               goto next_shader_address;
          for (slot_index = 0; slot_index < NVX_DRM_BUFFER_SLOTS; slot_index++) {
             struct nvx_drm_bo_slot *slot = &device->buffers[slot_index];
             uint64_t base = slot->bo.allocation.GpuVa;
@@ -197,7 +191,7 @@ nvx_drm_capture_shader_addresses_locked(
             offset = address - base;
             if (offset > UINT32_MAX || allocation_bytes > UINT32_MAX)
                break;
-            dump = &dumps[captured++];
+            dump = &dumps[captured];
             memset(dump, 0, sizeof(*dump));
             dump->buffer_id = slot->bo.allocation.BufferId;
             dump->gpu_va = address;
@@ -209,10 +203,6 @@ nvx_drm_capture_shader_addresses_locked(
                dump->bytes = (uint32_t)(allocation_bytes - offset) & ~3U;
             break;
          }
-         if (captured)
-            return captured;
-next_shader_address:
-         ;
       }
       cursor += count + 1U;
    }
@@ -521,19 +511,11 @@ nvx_drm_submit_pushbuf(int fd,
           dword_count, references, &reference_count))
       goto done;
 #if defined(_WIN32) || defined(_WIN64)
-   while (nvx_drm_shader_dump_count < NVX_DRM_SHADER_DUMP_LIMIT &&
-          shader_dump_count < NVX_DRM_SHADER_DUMP_LIMIT) {
-      struct nvx_drm_shader_dump *dump = &shader_dumps[shader_dump_count];
-      uint32_t found = nvx_drm_capture_shader_addresses_locked(device,
+   if (shader_dump_count < NVX_DRM_SHADER_DUMP_LIMIT) {
+      shader_dump_count = nvx_drm_capture_shader_addresses_locked(device,
           batch + sizeof(header) +
              (size_t)NVX_3D_MAX_BATCH_BUFFERS * sizeof(references[0]),
-          dword_count, nvx_drm_shader_dump_addresses,
-          nvx_drm_shader_dump_count, dump);
-      if (!found)
-         break;
-      nvx_drm_shader_dump_addresses[nvx_drm_shader_dump_count++] =
-         dump->gpu_va;
-      shader_dump_count++;
+          dword_count, shader_dumps);
    }
    while (nvx_drm_vertex_dump_count < NVX_DRM_VERTEX_DUMP_LIMIT &&
           vertex_dump_count < NVX_DRM_VERTEX_DUMP_LIMIT) {

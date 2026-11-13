@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 12, 2026 after VFIO run `.108`.
+Updated November 12, 2026 while preparing VFIO run `.109`.
 
 ## Current status
 
@@ -226,16 +226,34 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
   frames at 11.5 FPS on a black image. Firmware assertion count reached 3.
   `notes/nouveau-trace-latest.txt` now contains the post-fence shader bytes.
 
+## `.109` diagnostic revision
+
+- The `.108` shader dump kept a process-wide list of the first 16 shader GPU
+  addresses and skipped later bindings, so it could miss the cube draw's
+  programs. It also returned after each newly discovered binding, limiting
+  dumps per packet. That made the existing shader trace incomplete for
+  correlating program bindings with draws.
+- Changed the capture to inspect all matching program-address pairs in each
+  submitted batch, preserve each batch's binding order, and collect up to 16
+  in-range addresses for post-fence download. Fixed an array indexing error
+  found during review that would have omitted every other entry.
+- Bumped `test/test_full_driver.sh` to `3.0.0.109`. Host checks and a new VFIO
+  run are pending. The diagnostic still does not identify why draw pixels are
+  black; it should provide draw-specific program evidence for that analysis.
+
 ## Next work
 
-1. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
+1. Inspect `.109` per-batch shader captures and correlate them with the cube
+   draw, render target, and viewport state. Decode and validate the actual
+   programs bound for that draw.
+2. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
    The failed stream is decoded above; trace the Mesa semaphore release and
    miniport completion fence through PBDMA progress, and correlate with the
    first firmware assertion.
-2. Decode the bound shader bytes and constant-buffer contents, then check the
+3. Decode the bound shader bytes and constant-buffer contents, then check the
    cube's shader stage selection, draw/viewport state, and target writes
    against a known working NVC0/NVK sequence.
-3. Separate output stages with progressively smaller Nouveau GPU tests: first
+4. Separate output stages with progressively smaller Nouveau GPU tests: first
    NVC0 clear, then a minimal supported triangle, then Mesa's shader draw.
    Read the same target after each fence to locate where output disappears.
 4. Increment the final version component for every real-hardware run. Keep Mesa
