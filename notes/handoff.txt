@@ -331,7 +331,11 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
    state and shader addresses separately. Target, viewport, `SP_SELECT`, and
    color-mask state match the VS+FS draw; the selected vertex program changes
    as expected, but no output appears. The shared fragment/raster/draw setup is
-   now the leading area to inspect.
+   now the leading area to inspect. The two 128-dword fragment snapshots have
+   identical first 116 dwords, including the program header and code region.
+   Mesa's push stream also emits the standard `VERTEX_BEGIN_GL(TRIANGLES)`,
+   `VERTEX_BUFFER_FIRST(0)`, `VERTEX_BUFFER_COUNT(3)`, and `VERTEX_END_GL(0)`
+   sequence found in its upstream NVC0 VBO path.
 2. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
    The failed stream is decoded above; trace the Mesa semaphore release and
    miniport completion fence through PBDMA progress, and correlate with the
@@ -683,6 +687,11 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   also points at its separately captured program image. This narrows the
   failure to state or execution shared after vertex processing, though correct
   shader execution is not yet proven.
+- Comparing the two fragment shader downloads shows the first 116 of 128
+  captured dwords are identical. The submitted draw packet matches upstream
+  Nouveau's NVC0 VBO pattern: `VERTEX_BEGIN_GL=4`, buffer first 0, buffer count
+  3, then `VERTEX_END_GL=0`. Neither the fragment image nor the primitive
+  packet explains the black target so far.
 - Cube remains black; 100 frames took 7.1623 s (14.0 FPS); firmware assertions
   reach 3 during later animation. Next compare shared fragment shader headers,
   fragment output routing, and raster setup to upstream NVC0 state emission.

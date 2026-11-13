@@ -3,6 +3,9 @@ Latest Nouveau/OpenGL trace excerpt: test_logs/v3.0.0.128-20261113-014022.log
 [MESA_GLSL_FFVS_RESULT] linked=1 green_pixels=0 readback=632x453 baseline=0,0,191,255 post_center=0,0,191,255 error=0x0
 NVC0 GLSL VS+FS draws: primitive=4 start=0 count=3 fences=0x13,0x14 (completed)
 NVC0 fixed-function VS+GLSL FS draws: primitive=4 start=0 count=3 fences=0x21,0x22 (completed)
+Both paths emit VERTEX_BEGIN_GL=4, VERTEX_BUFFER_FIRST=0,
+VERTEX_BUFFER_COUNT=3, VERTEX_END_GL=0. Their captured fragment shaders have
+identical first 116 of 128 dwords.
 GLSL VS+FS state:
 Nouveau draw state trace_rev=128 draw=GLSL_TRIANGLES/3 entries=64
 Nouveau draw state draw=GLSL_TRIANGLES/3 index=0 method_dec=892 value=00000001
