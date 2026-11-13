@@ -15,7 +15,7 @@ SOURCES = {
 INDEX_COUNTS = {"GV100_3D_SP": 6}
 
 DEFINE_RE = re.compile(
-    r"^#define\s+(\w+?_(?:ADDRESS_HIGH|ADDRESS_LOW))"
+    r"^#define\s+(\w+?_(?:ADDRESS|START)_(?:HIGH|LOW))"
     r"(?:\([^)]*\))?\s+(.+?)\s*$"
 )
 CONST_RE = re.compile(r"^\(?\s*(0x[0-9a-fA-F]+)\s*\)?$")
@@ -26,6 +26,8 @@ ARRAY_RE = re.compile(
 
 
 def access_for(name):
+    if "_START" in name:
+        return "NVX_3D_RELOC_READ"
     if "_COND_ADDRESS" in name or "_SRC_ADDRESS" in name or "_CODE_ADDRESS" in name:
         return "NVX_3D_RELOC_READ"
     if "_OFFSET_IN_" in name:
@@ -85,7 +87,10 @@ def render(mesa_root):
             low, low_stride = pair["LOW"]
             if high_stride != low_stride:
                 raise ValueError(f"stride mismatch for {stem}")
-            group = stem.rsplit("_ADDRESS", 1)[0]
+            if stem.endswith("_START"):
+                group = stem + "_HIGH"
+            else:
+                group = stem.rsplit("_ADDRESS", 1)[0]
             count = lengths.get(group, INDEX_COUNTS.get(
                 group, 1 if high_stride == 0 else None))
             if count is None:

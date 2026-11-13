@@ -306,6 +306,43 @@ test_nvc0_direct_address_validation(void)
     assert(!Nvx3dValidateNvc0Batch(input,bytes,&allocation,1,token));
     dwords[2]=(uint32_t)allocation.GpuVa;
 
+    /* NVC0 vertex arrays encode GPU addresses as START_HIGH/START_LOW,
+     * rather than ADDRESS_HIGH/ADDRESS_LOW. Validate that the indexed pair
+     * is owned and has read access, as on the captured 24-vertex cube draw. */
+    {
+        uint32_t pairIndex=0xffffffffU,arrayIndex=0xffffffffU;
+        const NVX_3D_NVC0_ADDRESS_PAIR *pair;
+        header.DwordCount=4;
+        reference.Access=NVX_3D_RELOC_READ;
+        dwords[0]=Nvx3dNvc0SeqHeader(0x1c00U,3U);
+        dwords[1]=0x00001018U; /* enabled, 24-byte vertex stride */
+        dwords[2]=0;
+        dwords[3]=(uint32_t)(allocation.GpuVa+0x3a8U);
+        bytes=(uint32_t)(sizeof(header)+sizeof(reference)+4*sizeof(uint32_t));
+        memcpy(input,&header,sizeof(header));
+        memcpy(input+sizeof(header),&reference,sizeof(reference));
+        memcpy(input+sizeof(header)+sizeof(reference),dwords,4*sizeof(uint32_t));
+        assert(Nvx3dNvc0AddressMethodKind(0U,0x1c04U,&pairIndex,
+                                         &arrayIndex)==1);
+        pair=&Nvx3dNvc0AddressPairs[pairIndex];
+        assert(pair->LowMethod==0x1c08U && pair->IndexStride==0x10U &&
+               pair->IndexCount==32U && arrayIndex==0U &&
+               pair->Access==NVX_3D_RELOC_READ);
+        assert(Nvx3dValidateNvc0Batch(input,bytes,&allocation,1,token));
+        dwords[3]=(uint32_t)(allocation.GpuVa+allocation.Bytes);
+        memcpy(input+sizeof(header)+sizeof(reference),dwords,4*sizeof(uint32_t));
+        assert(!Nvx3dValidateNvc0Batch(input,bytes,&allocation,1,token));
+    }
+
+    reference.Access=NVX_3D_RELOC_READ|NVX_3D_RELOC_WRITE;
+    header.DwordCount=3;
+    dwords[0]=Nvx3dNvc0SeqHeader(0x0800U,2U);
+    dwords[1]=(uint32_t)(allocation.GpuVa>>32);
+    dwords[2]=(uint32_t)allocation.GpuVa;
+    bytes=(uint32_t)(sizeof(header)+sizeof(reference)+3*sizeof(uint32_t));
+    memcpy(input,&header,sizeof(header));
+    memcpy(input+sizeof(header),&reference,sizeof(reference));
+    memcpy(input+sizeof(header)+sizeof(reference),dwords,3*sizeof(uint32_t));
     dwords[2]=(uint32_t)(allocation.GpuVa+allocation.Bytes);
     memcpy(input+sizeof(header)+sizeof(reference),dwords,3*sizeof(uint32_t));
     assert(!Nvx3dValidateNvc0Batch(input,bytes,&allocation,1,token));

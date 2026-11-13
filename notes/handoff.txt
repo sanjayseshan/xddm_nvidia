@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 12, 2026 after VFIO run `.101`.
+Updated November 12, 2026 after VFIO run `.102`.
 
 ## Current status
 
@@ -12,7 +12,7 @@ read back black, and `[OPENGL_RESULT] FAIL`. No cube frame has been proven.
 The trace reports `screens=1 callbacks=0`; callbacks are the unused WGL hybrid
 path and do not represent the native Nouveau screen's activity.
 
-The `.101` run shows readback is not generally returning zeros:
+The `.102` run confirms readback is not generally returning zeros:
 `[MESA_GPU_CLEAR_BACK_READBACK] pixel=32,64,191` and
 `[MESA_GPU_CLEAR_BACK_RESULT] PASS`. But multiple draw probes and the cube
 still read black with `GL_NO_ERROR`, including the no-depth cube. This narrows
@@ -28,13 +28,13 @@ Nouveau to softpipe. The comparison and environment toggle have been removed.
 Cube acceptance now relies on actual colored pixel count, visible color faces,
 bounding box, GL error state, and newly submitted GPU batches. The no-depth
 check requires at least 2,000 colored pixels and new GPU batches, so two black
-frames cannot pass. In `.101` both depth and no-depth cases fail at 0 colored
-pixels.
+frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
+0 colored pixels.
 
 ## Latest hardware evidence
 
-- Full VFIO log: `test_logs/v3.0.0.101-20261112-224706.log`
-- Version `3.0.0.101`: host checks, driver/display build, Mesa ICD build, XP
+- Full VFIO log: `test_logs/v3.0.0.102-20261112-230139.log`
+- Version `3.0.0.102`: host checks, driver/display build, Mesa ICD build, XP
   import/subsystem audit, and guest boot completed. XP ran the full test and
   shut down normally. The runner exited 1 because hardware OpenGL was not
   proven.
@@ -60,34 +60,46 @@ pixels.
   narrows the missing output investigation to checking the actual vertex BO
   contents/format, shader code and constant data, and GPU state; the draw is
   not absent from the submitted command stream.
+- The `.101` stream exposed a validator inventory gap: Mesa names these
+  pointers `VERTEX_ARRAY_START_HIGH/LOW`, but the generator only recognized
+  `*_ADDRESS_HIGH/LOW`. The inventory now includes indexed vertex-array
+  pointers (32, read access) and the single index-array start pair (read
+  access), so Nouveau draw inputs are included in kernel ownership/range
+  validation and direct-address reference discovery. A 3D ABI regression test
+  covers an owned vertex start address and rejects an out-of-range one. Host
+  `make -C src_driver check` passed with the updated table. In `.102`, cube
+  push submissions preceding the later timeout were accepted, but pixel output
+  did not change; this validation gap was real but was not the cause of the
+  black target.
 - The log reports that the separate GR pipeline triangle draw, readback, and
   semaphore completed. This miniport probe does not validate Nouveau's draw
   packets or raster output.
-- Firmware assertion count remains at 1 in `.101`; no Nouveau submit timeout
-  was found. The `.100` GPFIFO `0x37` timeout remains a prior-run observation,
-  not the immediate `.101` blocker.
+- `.102` later hit an NVC0/PBDMA timeout at GPFIFO entry `0x67`: USERD GET
+  stayed at `0x67` with PUT `0x68`, fence `0x267` remained zero, and PBDMA
+  GET/FETCH stopped at push-buffer VA `0x187801F0`. Firmware assertions rose to 3
+  after the timeout. This repeats the `.100` class of failure at a different
+  entry; `.101` had completed without a timeout.
 - The animation reports 100 frames at 18.4 FPS, but a black image means this is
   not successful rendered-frame evidence.
 
 ## Next work
 
-1. Trace why native Nouveau batches submit but NVC0 draw probes leave the
-   target black. The `.101` capture has framebuffer and draw packets; compare
-   their vertex array contents and format, shader code and constants,
-   viewport, primitive, and raster state against a known working NVC0/NVK
-   sequence. Follow this 24-vertex draw from Gallium state emission through
-   reloc translation and mapped BO contents to GPU completion.
-2. Separate output stages with progressively smaller Nouveau GPU tests: first
+1. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
+   Decode the 12-dword failed stream at VA `0x187a0000` and correlate it with
+   channel state and the first firmware assertion.
+2. For the earlier black draws, capture vertex BO bytes and compare the
+   fixed-function shader code/constants and array format against a known
+   working NVC0/NVK sequence. The added pointer ownership validation did not
+   fix the black output.
+3. Separate output stages with progressively smaller Nouveau GPU tests: first
    NVC0 clear, then a minimal supported triangle, then Mesa's shader draw.
    Read the same target after each fence to locate where output disappears.
-3. Keep the `.100` timeout analysis secondary unless it recurs; `.101` completed
-   its GR fence probe and reported no Nouveau submit timeout.
 4. Increment the final version component for every real-hardware run. Keep Mesa
    changes outside the Mesa submodule under `mesa_patches/`.
 
 ## Relevant files
 
-- Latest full VFIO log: `test_logs/v3.0.0.101-20261112-224706.log`
+- Latest full VFIO log: `test_logs/v3.0.0.102-20261112-230139.log`
 - Latest copied Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest Mesa/Nouveau bridge excerpt: `notes/mesa-bridge-latest.txt`
 - GPFIFO submission and diagnostics: `src_driver/nvx_gsp.c`,
