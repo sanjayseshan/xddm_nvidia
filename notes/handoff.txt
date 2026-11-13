@@ -77,6 +77,25 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Latest hardware evidence
 
+Revision 3.0.0.161 adds a direct CE scan of the full-size render-target BO
+after the GL_QUADS probe. Full VFIO log:
+`test_logs/v3.0.0.161-20261113-045422.log`. The CE download succeeded for the
+1,310,720-byte screen BO at VA `0x162e0000` (BO 28), and found zero green and
+zero blue pixels. `glReadPixels(GL_BACK)` also found black with no GL error;
+the earlier blue clear still reads back correctly. This confirms readback can
+access the target and that GL readback is not hiding green pixels in that BO.
+The full-size draw is not writing expected color output. The separate triangle
+control again reads black, then a later batch times out at fence `0x7b` and the
+channel faults. GR and 2D checks passed, but `[OPENGL_RESULT] FAIL`.
+
+The direct readback reported the other of the two screen BOs from the cube
+snapshot (`0x15f40000`); the screen uses alternating buffers. Keep the test's
+GL_BACK readback as the authoritative selected-back-buffer result, and record
+the raw VA so each CE sample can be associated with the draw target. The next
+probe should snapshot NVC0 state for the first full-viewport draw (viewport X
+scale > 100, screen-sized RT, before the cube), then compare its shaders and
+vertex input to the passing 64x64 triangle. Phase 2C remains incomplete.
+
 Revision `.160` added a full-window GL_TRIANGLES control immediately after the
 full-window GL_QUADS probe, drawing to the same back buffer. Full VFIO log:
 `test_logs/v3.0.0.160-20261113-044736.log`. The back-buffer clear still reads

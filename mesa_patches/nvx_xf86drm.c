@@ -88,6 +88,7 @@ struct nvx_drm_device_slot {
    uint64_t shader_triangle_input_vertex_address;
    uint64_t shader_triangle_target_address;
    uint64_t shader_ffvs_target_address;
+   uint64_t shader_full_target_address;
    uint64_t shader_cube_vertex_address;
    uint32_t shader_cube_vertex_stride;
    uint32_t shader_cube_vertex_count;
@@ -279,6 +280,17 @@ nvx_drm_capture_shader_addresses_locked(
          draw_kind);
       if (draw_kind == 3U)
          device->gr_ffvs_draw_state_snapshot_done = 1U;
+   }
+   /* Keep the full-window back-buffer target from the first regular draw.
+    * The test can then inspect the BO through CE readback, independently of
+    * Mesa's glReadPixels path. The 0xa00-byte pitch filters out the small FBO
+    * controls while matching the current 632x453 XP display target. */
+   if (draw_seen && device->gr_state[0x0808U / 4U] >= 0x800U &&
+       device->gr_state[0x080cU / 4U] >= 200U) {
+      uint64_t target = ((uint64_t)device->gr_state[0x0800U / 4U] << 32) |
+                        device->gr_state[0x0804U / 4U];
+      if (target)
+         device->shader_full_target_address = target;
    }
    /* The first GLSL triangle is the passing explicit-array control. Capture
     * the next GLSL triangle separately; the test submits its Begin/End
@@ -1856,7 +1868,7 @@ NvxXf86DrmReadDrawTargetRaw(uint32_t draw_kind, uint32_t *green_pixels,
       *buffer_id = 0;
    if (!green_pixels || !blue_rgba_pixels || !blue_bgra_pixels ||
        !bytes || !target_va ||
-       (draw_kind != 2U && draw_kind != 3U))
+       (draw_kind != 2U && draw_kind != 3U && draw_kind != 4U))
       return 0;
 
    nvx_drm_lock_acquire();
@@ -1867,7 +1879,8 @@ NvxXf86DrmReadDrawTargetRaw(uint32_t draw_kind, uint32_t *green_pixels,
          continue;
       requested_target_va = draw_kind == 2U ?
          device->shader_triangle_target_address :
-         device->shader_ffvs_target_address;
+         draw_kind == 3U ? device->shader_ffvs_target_address :
+         device->shader_full_target_address;
       if (!requested_target_va)
          continue;
       for (j = 0; j < NVX_DRM_BUFFER_SLOTS; j++) {

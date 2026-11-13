@@ -2016,6 +2016,9 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             BYTE fullTargetBackCenter[4]={0,0,0,0};
             BYTE fullTargetTrianglesBack[4]={0,0,0,0};
             BYTE mesaClearBackCenter[4]={0,0,0,0};
+            uint64_t rawTargetVa=0,rawTargetBuffer=0;
+            uint32_t rawTargetBlue=0,rawTargetBytes=0;
+            int rawTargetAvailable=0;
             GLenum fullTargetError;
             unsigned batchesBefore=mesaGpuBridgeBatchCount;
             glViewport(0,0,w,h);
@@ -2058,6 +2061,14 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                 glReadPixels(w/2,h/2,1,1,GL_RGBA,GL_UNSIGNED_BYTE,
                              fullTargetBackCenter);
                 fullTargetError=glGetError();
+            }
+            {
+                unsigned rawGreen=ReadRawMesaTargetGreenPixels(
+                    4,&rawTargetBlue,&rawTargetVa,&rawTargetBuffer,
+                    &rawTargetBytes,&rawTargetAvailable);
+                LogMsg("[MESA_GPU_FULL_TARGET_RAW] available=%d green=%u blue=%u bytes=%u va=0x%I64X buffer=%I64u\n",
+                       rawTargetAvailable,rawGreen,rawTargetBlue,
+                       rawTargetBytes,rawTargetVa,rawTargetBuffer);
             }
             if(fullTargetError==GL_NO_ERROR&&(directDdiCurrent ? directSwapBuffers(hdc) : SwapBuffers(hdc))) {
                 glReadBuffer(GL_FRONT);
