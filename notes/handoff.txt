@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 12, 2026 while preparing VFIO run `.111`.
+Updated November 13, 2026 after VFIO run `.111`.
 
 ## Current status
 
@@ -272,13 +272,28 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
   On the first draw after all three bindings are known, the shim snapshots each
   program buffer after the submission fence and labels it `draw_snapshot=1`.
   This avoids a blocking shader download for every subsequent animated frame.
-  Bumped the runner to `.111`; host checks and VFIO validation are pending.
+  `make -C src_driver check` passed. The XP ICD rebuilt and passed its XP
+  import audit. The full VFIO run booted on the first attempt and shut down
+  normally. Full log: `test_logs/v3.0.0.111-20261112-235812.log`.
+- The trace confirms stage 1, 2, and 5 snapshots at
+  `0x22e9f3c0`, `0x22e9f2c0`, and `0x22e9f100`, each marked
+  `draw_snapshot=1`. Cube vertex arrays remain coherent. This establishes that
+  the cached program addresses were observed by the draw-time snapshot; it
+  does not establish that shaders execute or produce correct outputs.
+- Clear readback passes. Cube and no-depth cube remain at zero colored pixels
+  with no GL error; `[OPENGL_RESULT] FAIL`. The animation completed 100 frames
+  in 7.7937 seconds (12.8 FPS) on a black image. The recurring PBDMA stall and
+  firmware assertions remain, with assertion count 3.
+- `notes/nouveau-trace-latest.txt` now contains the `.111` draw-time shader
+  snapshots and cube draw packet. Next decode these NVC0 programs, then record
+  the persistent render-target, viewport, and raster state at the same draw.
 
 ## Next work
 
-1. Carry stage program addresses across submissions and correlate them with
-   the cube draw, render target, and viewport state; decode the captured
-   programs and constants.
+1. Decode the `.111` stage 1/2/5 program words and their constant buffers.
+   Compare the vertex/fragment stage selection and outputs with Mesa NVC0
+   emission, and capture persistent target/viewport/raster state at the cube
+   draw.
 2. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
    The failed stream is decoded above; trace the Mesa semaphore release and
    miniport completion fence through PBDMA progress, and correlate with the
@@ -289,12 +304,12 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 4. Separate output stages with progressively smaller Nouveau GPU tests: first
    NVC0 clear, then a minimal supported triangle, then Mesa's shader draw.
    Read the same target after each fence to locate where output disappears.
-4. Increment the final version component for every real-hardware run. Keep Mesa
+5. Increment the final version component for every real-hardware run. Keep Mesa
    changes outside the Mesa submodule under `mesa_patches/`.
 
 ## Relevant files
 
-- Latest completed full VFIO log: `test_logs/v3.0.0.108-20261112-234420.log`
+- Latest completed full VFIO log: `test_logs/v3.0.0.111-20261112-235812.log`
 - Latest extracted Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest Mesa/Nouveau bridge excerpt: `notes/mesa-bridge-latest.txt`
 - GPFIFO submission and diagnostics: `src_driver/nvx_gsp.c`,
