@@ -2621,6 +2621,7 @@ end_gl_loop:
             pixel[0], pixel[1], pixel[2], error);
         if (error != GL_NO_ERROR) failures++;
     }
+    ShowWindow(hwnd, SW_HIDE);
     DumpMesaRuntimeTraces();
     if (directDdiCurrent) {
         /* DrvSetContext(NULL, 0) is the Mesa ICD's supported unbind path. */
@@ -4282,11 +4283,18 @@ static void TestDirect3D9(HWND hwnd)
     }
     LogMsg("-> IDirect3D9 interface created!\n");
 
+    /* Create a dedicated hidden probe window so D3D9 device creation attempts
+       do not flash or reset presentation parameters on the main test window. */
+    HWND probeHwnd = CreateWindowA("STATIC", "d3d9_probe", WS_POPUP,
+                                   0, 0, 16, 16, NULL, NULL,
+                                   GetModuleHandleA(NULL), NULL);
+    HWND targetHwnd = probeHwnd ? probeHwnd : hwnd;
+
     D3DPRESENT_PARAMETERS d3dpp;
     memset(&d3dpp, 0, sizeof(d3dpp));
     d3dpp.Windowed = TRUE;
     d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-    d3dpp.hDeviceWindow = hwnd;
+    d3dpp.hDeviceWindow = targetHwnd;
     d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
     d3dpp.EnableAutoDepthStencil = TRUE;
     d3dpp.AutoDepthStencilFormat = D3DFMT_D16;
@@ -4297,19 +4305,19 @@ static void TestDirect3D9(HWND hwnd)
     D3DDEVTYPE deviceType = D3DDEVTYPE_HAL;
     IDirect3DDevice9 *pDevice = NULL;
     HRESULT hr = pD3D->lpVtbl->CreateDevice(pD3D, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL,
-                                           hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING,
+                                           targetHwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING,
                                            &d3dpp, &pDevice);
     if (FAILED(hr)) {
         LogMsg("-> HAL device creation with depth stencil returned 0x%08lX, retrying without depth stencil...\n", (unsigned long)hr);
         d3dpp.EnableAutoDepthStencil = FALSE;
         hr = pD3D->lpVtbl->CreateDevice(pD3D, D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL,
-                                       hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING,
+                                       targetHwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING,
                                        &d3dpp, &pDevice);
         if (FAILED(hr)) {
             LogMsg("-> HAL without depth returned 0x%08lX, attempting REF...\n", (unsigned long)hr);
             deviceType = D3DDEVTYPE_REF;
             hr = pD3D->lpVtbl->CreateDevice(pD3D, D3DADAPTER_DEFAULT, D3DDEVTYPE_REF,
-                                           hwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING,
+                                           targetHwnd, D3DCREATE_SOFTWARE_VERTEXPROCESSING,
                                            &d3dpp, &pDevice);
         }
     }
@@ -4367,6 +4375,8 @@ static void TestDirect3D9(HWND hwnd)
 
     pD3D->lpVtbl->Release(pD3D);
     FreeLibrary(hD3D9);
+    if (probeHwnd)
+        DestroyWindow(probeHwnd);
 }
 
 /* ---------------- Window Procedure & Main ---------------- */

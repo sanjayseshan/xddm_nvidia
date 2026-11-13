@@ -4,7 +4,7 @@ set -euo pipefail
 NVX_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVX_ARCHIVE="$NVX_ROOT/test_logs"
 NVX_STAMP="$(date +%Y%m%d-%H%M%S)"
-NVX_TEST_VERSION="3.0.0.175"
+NVX_TEST_VERSION="3.0.0.181"
 NVX_REQUIRE_HW_OPENGL="${NVX_REQUIRE_HW_OPENGL:-1}"
 NVX_RUN_LOG="$NVX_ARCHIVE/v$NVX_TEST_VERSION-$NVX_STAMP.log"
 NVX_TEST_FLAGS=()
@@ -66,6 +66,8 @@ i686-w64-mingw32-gcc -O2 -Wall -Wextra -static-libgcc \
     -lopengl32 -lgdi32 -luser32 \
     -Wl,--major-subsystem-version,5 -Wl,--minor-subsystem-version,2 \
     -o "$NVX_ROOT/test/test_gpu_accel32.exe"
+x86_64-w64-mingw32-gcc -x c -O2 -static-libgcc "$NVX_ROOT/test/3d_tests/glxgears_main.cpp" -lopengl32 -lgdi32 -luser32 -o "$NVX_ROOT/test/3d_tests/wglgears.exe"
+i686-w64-mingw32-gcc -x c -O2 -static-libgcc -D_WIN32_WINNT=0x0502 -DWINVER=0x0502 "$NVX_ROOT/test/3d_tests/glxgears_main.cpp" -lopengl32 -lgdi32 -luser32 -Wl,--major-subsystem-version,5 -Wl,--minor-subsystem-version,2 -o "$NVX_ROOT/test/3d_tests/wglgears32.exe"
 cp "$NVX_ROOT/test/test_gpu_accel.exe" "$NVX_ROOT/dist_full/test_gpu_accel.exe"
 if [ "${NVX_GR_CHANNEL_PROBE:-0}" = "1" ]; then
     NVX_DRIVER_BUILD_TARGET=full-gr-probe
@@ -107,6 +109,12 @@ if [ "${NVX_BUILD_MESA_ICD:-0}" = "1" ]; then
     # The display DDI must advertise non-generic OpenGL pixel formats to GDI;
     # otherwise XP selects PFD_GENERIC_FORMAT and stays on GDI Generic before
     # it can dispatch context creation to the ICD.
+    make -C "$NVX_ROOT/src_disp" NVX_ENABLE_EXPERIMENTAL_OPENGL_DDI=1
+elif [ -f "$NVX_ROOT/dist_full/nvxogl64.dll" ]; then
+    # Mesa ICD already built; rebuild nvxdisp with OpenGL DDI enabled so that
+    # DrvDescribePixelFormat/DrvSetPixelFormat/DrvSwapBuffers are registered.
+    # Without this, ChoosePixelFormat returns PFD_GENERIC_FORMAT and wglgears
+    # never reaches the ICD (GL_RENDERER stays GDI Generic).
     make -C "$NVX_ROOT/src_disp" NVX_ENABLE_EXPERIMENTAL_OPENGL_DDI=1
 else
     make -C "$NVX_ROOT/src_disp"
@@ -151,7 +159,7 @@ finish() {
     echo
     echo "==> Result log: $NVX_RUN_LOG"
     if [ -f "$NVX_ROOT/winxp_x64.qcow2" ] && command -v guestfish >/dev/null 2>&1; then
-        for guest_log in mesa_bridge.log nvx_nouveau_trace.log test_accel.log wglgears.log; do
+        for guest_log in mesa_bridge.log nvx_nouveau_trace.log nvxogl_trace.txt test_accel.log wglgears.log; do
             echo "==> Guest OpenGL trace: $guest_log"
             guestfish --ro -a "$NVX_ROOT/winxp_x64.qcow2" -i cat "/$guest_log" \
                 >> "$NVX_RUN_LOG" 2>/dev/null || \

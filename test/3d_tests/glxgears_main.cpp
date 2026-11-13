@@ -344,6 +344,25 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
 	return DefWindowProc(hWnd, uMsg, wParam, lParam);
 }
 
+static int g_autoExitSeconds = 0;
+
+static void log_out(const char *fmt, ...) {
+	char buf[512];
+	va_list ap;
+	va_start(ap, fmt);
+	vsnprintf(buf, sizeof(buf), fmt, ap);
+	va_end(ap);
+
+	printf("%s", buf);
+	fflush(stdout);
+
+	FILE *fp = fopen("C:\\wglgears.log", "a");
+	if (fp) {
+		fputs(buf, fp);
+		fclose(fp);
+	}
+}
+
 /*
  * Create an RGB, double-buffered window.
  * Return the window and context handles.
@@ -352,24 +371,8 @@ static void make_window(const char *name, int x, int y, int width, int height) {
 	GLuint PixelFormat;
 	WNDCLASS wc;
 	DWORD dwExStyle, dwStyle;
-	static PIXELFORMATDESCRIPTOR pfd = {
-		sizeof(PIXELFORMATDESCRIPTOR),
-		1,
-		PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER,
-		PFD_TYPE_RGBA,
-		24,
-		0, 0, 0, 0, 0, 0,
-		0,
-		0,
-		0,
-		0, 0, 0, 0,
-		16,
-		0,
-		0,
-		PFD_MAIN_PLANE,
-		0,
-		0, 0, 0
-	};
+	PIXELFORMATDESCRIPTOR pfd;
+	PIXELFORMATDESCRIPTOR actualPfd;
 
 	winrect.left = (long)0;
 	winrect.right = (long)width;
@@ -393,7 +396,7 @@ static void make_window(const char *name, int x, int y, int width, int height) {
 	}
 
 	dwExStyle = WS_EX_APPWINDOW | WS_EX_WINDOWEDGE;
-	dwStyle = WS_OVERLAPPEDWINDOW;
+	dwStyle = WS_OVERLAPPEDWINDOW | WS_VISIBLE;
 	AdjustWindowRectEx(&winrect, dwStyle, False, dwExStyle);
 
 	if (!(hWnd = CreateWindowEx(dwExStyle, name, name,
@@ -404,37 +407,128 @@ static void make_window(const char *name, int x, int y, int width, int height) {
 		exit(0);
 	}
 
-	if (!(hDC = GetDC(hWnd)) ||
-		!(PixelFormat = ChoosePixelFormat(hDC, &pfd)) ||
-		!(SetPixelFormat(hDC, PixelFormat, &pfd)) ||
-		!(hRC = wglCreateContext(hDC)) ||
-		!(wglMakeCurrent(hDC, hRC))) {
-		printf("failed to initialise opengl\n");
+	ShowWindow(hWnd, SW_SHOW);
+	UpdateWindow(hWnd);
+	SetForegroundWindow(hWnd);
+	SetFocus(hWnd);
+
+	memset(&pfd, 0, sizeof(pfd));
+	pfd.nSize = sizeof(pfd);
+	pfd.nVersion = 1;
+	pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
+	pfd.iPixelType = PFD_TYPE_RGBA;
+	pfd.cColorBits = 32;
+	pfd.cDepthBits = 24;
+	pfd.iLayerType = PFD_MAIN_PLANE;
+
+	if (!(hDC = GetDC(hWnd))) {
+		log_out("[WGLGEARS] failed to get DC err=%lu\n", GetLastError());
 		exit(0);
 	}
 
-	ShowWindow(hWnd, SW_SHOW);
-	SetForegroundWindow(hWnd);
-	SetFocus(hWnd);
-}
+	/*
+	 * Warm-up: call OPENGL32's wglDescribePixelFormat on our window DC.
+	 * This forces OPENGL32 to load the Mesa ICD and register all ICD pixel
+	 * formats before ChoosePixelFormat runs. Without it, only GDI formats
+	 * (1-36) are visible and ChoosePixelFormat returns PFD_GENERIC_FORMAT.
+	 * Pass a real buffer — some XP OPENGL32 builds dereference ppfd even
+	 * when cjpfd=0 is passed for a count-only query.
+	 */
+	{
+		typedef int (WINAPI *PFNWGLDPF)(HDC, int, UINT, LPPIXELFORMATDESCRIPTOR);
+		HMODULE hGL = GetModuleHandleA("opengl32.dll");
+		if (!hGL) hGL = LoadLibraryA("opengl32.dll");
+		PFNWGLDPF wglDPF = hGL ?
+		    (PFNWGLDPF)(void*)GetProcAddress(hGL, "wglDescribePixelFormat") : NULL;
+		if (wglDPF) {
+			PIXELFORMATDESCRIPTOR warmPfd;
+			memset(&warmPfd, 0, sizeof(warmPfd));
+			warmPfd.nSize = sizeof(warmPfd);
+			int total = wglDPF(hDC, 1, sizeof(warmPfd), &warmPfd);
+			log_out("[WGLGEARS] wglDescribePixelFormat warm-up: %d ICD formats\n", total);
+		} else {
+			log_out("[WGLGEARS] wglDescribePixelFormat unavailable; ICD may not load\n");
+		}
+	}
 
+	if (!(PixelFormat = ChoosePixelFormat(hDC, &pfd))) {
+		log_out("[WGLGEARS] failed to choose pixel format err=%lu\n", GetLastError());
+		exit(0);
+	}
 
-static int g_autoExitSeconds = 0;
+	memset(&actualPfd, 0, sizeof(actualPfd));
+	DescribePixelFormat(hDC, PixelFormat, sizeof(actualPfd), &actualPfd);
 
-static void log_out(const char *fmt, ...) {
-	char buf[512];
-	va_list ap;
-	va_start(ap, fmt);
-	vsnprintf(buf, sizeof(buf), fmt, ap);
-	va_end(ap);
+	/* Log raw flags before any scan so we can verify PFD_GENERIC_FORMAT detection */
+	log_out("[WGLGEARS] ChoosePixelFormat->%u; DescribePixelFormat flags=0x%lx PFD_GENERIC_FORMAT=%s\n",
+	        PixelFormat, (unsigned long)actualPfd.dwFlags,
+	        (actualPfd.dwFlags & PFD_GENERIC_FORMAT) ? "YES" : "NO");
 
-	printf("%s", buf);
-	fflush(stdout);
+	/* If Windows GDI chose a software/generic format (PFD_GENERIC_FORMAT),
+	   search ALL advertised formats (including ICD formats) for a hardware-
+	   accelerated one. We scan up to 1024 and stop when DescribePixelFormat
+	   returns 0 (no more formats). We do NOT rely on DescribePixelFormat(hDC,1,0,NULL)
+	   for the count — that goes through GDI32 which only knows about the 2 nvxdisp
+	   formats and returns 2, missing all the ICD-provided Mesa formats at indices 3+. */
+	if (actualPfd.dwFlags & PFD_GENERIC_FORMAT) {
+		int foundFmt = 0;
+		log_out("[WGLGEARS] ChoosePixelFormat returned generic fmt=%u flags=0x%lx; scanning for HW format\n",
+		        PixelFormat, (unsigned long)actualPfd.dwFlags);
+		for (int fmt = 1; fmt <= 1024; fmt++) {
+			PIXELFORMATDESCRIPTOR candidate;
+			memset(&candidate, 0, sizeof(candidate));
+			int cnt = DescribePixelFormat(hDC, fmt, sizeof(candidate), &candidate);
+			if (cnt == 0) {
+				log_out("[WGLGEARS] DescribePixelFormat returned 0 at fmt=%d; stopping scan\n", fmt);
+				break;
+			}
+			if ((candidate.dwFlags & (PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER)) ==
+			    (PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER) &&
+			    !(candidate.dwFlags & PFD_GENERIC_FORMAT) &&
+			    candidate.cColorBits == 32 && candidate.cDepthBits >= 24) {
+				foundFmt = fmt;
+				PixelFormat = fmt;
+				actualPfd = candidate;
+				log_out("[WGLGEARS] Found HW format at index %d (flags=0x%lx color=%u depth=%u)\n",
+				        fmt, (unsigned long)candidate.dwFlags,
+				        (unsigned)candidate.cColorBits, (unsigned)candidate.cDepthBits);
+				break;
+			}
+		}
+		if (!foundFmt) {
+			log_out("[WGLGEARS] WARNING: No HW format found in scan; falling back to generic fmt=%u\n", PixelFormat);
+		}
+	}
 
-	FILE *fp = fopen("C:\\wglgears.log", "a");
-	if (fp) {
-		fputs(buf, fp);
-		fclose(fp);
+	if (!SetPixelFormat(hDC, PixelFormat, &actualPfd)) {
+		log_out("[WGLGEARS] failed to set pixel format err=%lu\n", GetLastError());
+		exit(0);
+	}
+
+	log_out("[WGLGEARS] PixelFormat=%u (flags=0x%lx color=%u depth=%u)\n",
+	        PixelFormat, (unsigned long)actualPfd.dwFlags,
+	        (unsigned)actualPfd.cColorBits, (unsigned)actualPfd.cDepthBits);
+
+	if (!(hRC = wglCreateContext(hDC))) {
+		log_out("[WGLGEARS] failed to create context err=%lu\n", GetLastError());
+		exit(0);
+	}
+	if (!(wglMakeCurrent(hDC, hRC))) {
+		log_out("[WGLGEARS] failed to make context current err=%lu\n", GetLastError());
+		exit(0);
+	}
+
+	/* Log GL info immediately after context creation */
+	{
+		const char *renderer = (const char*)glGetString(GL_RENDERER);
+		const char *version  = (const char*)glGetString(GL_VERSION);
+		const char *vendor   = (const char*)glGetString(GL_VENDOR);
+		log_out("GL_RENDERER   = %s\n", renderer ? renderer : "(null)");
+		log_out("GL_VERSION    = %s\n", version  ? version  : "(null)");
+		log_out("GL_VENDOR     = %s\n", vendor   ? vendor   : "(null)");
+		if (renderer && strstr(renderer, "GDI")) {
+			log_out("[WGLGEARS] WARNING: GDI Generic context — Mesa ICD not active for this window\n");
+		}
 	}
 }
 
@@ -443,10 +537,11 @@ static void event_loop() {
 	int t, t0 = current_time();
 	int t_start = t0;
 	int frames = 0;
+	int total_frames = 0;
 
 	while(1) {
 		if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-			if (msg.message == WM_QUIT) break;;
+			if (msg.message == WM_QUIT) break;
 			TranslateMessage(&msg);
 			DispatchMessage(&msg);
 		}
@@ -458,11 +553,12 @@ static void event_loop() {
             ExitProcess(1);
         }
 		GdiFlush();
-		Sleep(5);
+		Sleep(0);
 
 		/* calc framerate */
 		t = current_time();
 		frames++;
+		total_frames++;
 		if (t - t0 >= 5.0) {
 			GLfloat s = t - t0;
 			GLfloat fps = frames / s;
@@ -472,6 +568,11 @@ static void event_loop() {
 		}
 
 		if (g_autoExitSeconds > 0 && (t - t_start) >= g_autoExitSeconds) {
+			GLfloat s = t - t_start;
+			if (s > 0) {
+				log_out("[WGLGEARS] Completed: %d total frames in %3.1f seconds = %6.3f FPS\n",
+				        total_frames, s, (GLfloat)total_frames / s);
+			}
 			log_out("[WGLGEARS] Reached auto-exit duration of %d seconds. Exiting.\n", g_autoExitSeconds);
 			ExitProcess(0);
 		}
@@ -483,6 +584,8 @@ main(int argc, char *argv[])
 {
    int            i;
    Bool	printInfo = False;
+   FILE *fpReset = fopen("C:\\wglgears.log", "w");
+   if (fpReset) fclose(fpReset);
 
    ProgramName = argv[0];
 
@@ -525,10 +628,10 @@ main(int argc, char *argv[])
 #endif
 	
    if (printInfo) {
-      printf("GL_RENDERER   = %s\n", (char *) glGetString(GL_RENDERER));
-      printf("GL_VERSION    = %s\n", (char *) glGetString(GL_VERSION));
-      printf("GL_VENDOR     = %s\n", (char *) glGetString(GL_VENDOR));
-      printf("GL_EXTENSIONS = %s\n", (char *) glGetString(GL_EXTENSIONS));
+      log_out("GL_RENDERER   = %s\n", (char *) glGetString(GL_RENDERER));
+      log_out("GL_VERSION    = %s\n", (char *) glGetString(GL_VERSION));
+      log_out("GL_VENDOR     = %s\n", (char *) glGetString(GL_VENDOR));
+      log_out("GL_EXTENSIONS = %s\n", (char *) glGetString(GL_EXTENSIONS));
    }
 
    log_out("[WGLGEARS] Starting benchmark. autoExitSeconds=%d\n", g_autoExitSeconds);
@@ -540,6 +643,7 @@ main(int argc, char *argv[])
 /* cleanup */
 	wglMakeCurrent (NULL, NULL);
 	wglDeleteContext (hRC);
+	ShowWindow(hWnd, SW_HIDE);
 	ReleaseDC (hWnd, hDC);
 	DestroyWindow(hWnd);
 
