@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.145`; preparing `.146`.
+Updated November 13, 2026 after VFIO run `.146`; preparing `.147`.
 
 ## Current status
 
@@ -20,12 +20,15 @@ failure. Run `.145` also captures `(0,0,0,1)` for all immediate-mode shader
 vertices, with one generated primitive, zero samples, and no GL error. The
 same GLSL shader receives the correct positions and renders through
 `glDrawArrays`. This narrows the fault to the `glVertex3f`/Begin-End input
-dispatch or its vertex staging. Revision `.146` compares direct ICD-resolved
-Begin/End/Vertex calls with the normal opengl32 dispatch. Full `.145` log:
-`test_logs/v3.0.0.145-20261113-031957.log`.
+dispatch or its vertex staging. Run `.146` returns the same zero positions and
+zero samples through both normal opengl32 calls and pointers resolved directly
+from the ICD, ruling out a difference between those dispatch paths. Revision
+`.147` records `GL_CURRENT_VERTEX` and generic attribute 0 after End to see
+whether the API updates current state before draw staging. Full `.146` log:
+`test_logs/v3.0.0.146-20261113-032426.log`.
 
 The cube test had no colored pixels in its depth or no-depth draw. Animation
-reached 100 frames at 17.1 FPS, then timed out at FIFO index/fence `0xff`;
+reached 100 frames at 18.2 FPS, then timed out at FIFO index/fence `0x101`;
 firmware assertions reached 3. The callback type warning has been fixed.
 
 The XP x64 Mesa ICD builds and selects Mesa / NV170 (OpenGL 4.3 Compatibility
@@ -955,4 +958,16 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   `glVertex3f` pointers resolved directly from the ICD, then compares its
   transform-feedback positions and samples with the opengl32-dispatched call.
   This checks whether the Windows GL dispatch table is dropping vertex values.
-  Full VFIO result is pending.
+- Full VFIO log: `test_logs/v3.0.0.146-20261113-032426.log`. Direct ICD and
+  opengl32 calls both capture `(0,0,0,1)` for all vertices and return one
+  primitive, zero samples, and zero pixels. The explicit-array GLSL triangle
+  still passes with 1,352 pixels. The cube remains black; animation reached
+  100 frames at 18.2 FPS before timeout at FIFO/fence `0x101`; assertions
+  reached 3.
+
+### Revision 3.0.0.147 — inspect immediate current vertex state
+
+- After each immediate-mode draw, queries `GL_CURRENT_VERTEX` and generic
+  attribute 0's `GL_CURRENT_VERTEX_ATTRIB`. The values will tell whether
+  `glVertex3f` updates Mesa's current state before the Begin/End buffer is
+  submitted. Full VFIO result is pending.
