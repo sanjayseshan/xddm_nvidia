@@ -2533,6 +2533,12 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
     TestSelectedZetaFullSurface(hdc);
 #endif
     glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LESS);
+    glDepthMask(GL_TRUE);
+    glClearDepth(1.0);
+    glEnable(GL_CULL_FACE);
+    glCullFace(GL_BACK);
+    glFrontFace(GL_CCW);
 
     const char *envFrames = getenv("NVX_OPENGL_FRAMES");
     const int GL_FRAMES = (envFrames && atoi(envFrames) > 0) ? atoi(envFrames) : 300;

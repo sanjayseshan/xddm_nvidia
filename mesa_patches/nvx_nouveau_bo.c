@@ -11,6 +11,23 @@ void NvxWglRecordNouveauPushbufItem(uint32_t kind, uint32_t index,
 static uint32_t nvx_bo_readmap_trace_count;
 #endif
 
+#define NVX_4K_GART_BO_POOL_CAPACITY 32
+
+typedef struct {
+   NVX_WINSYS_DEVICE *device;
+   NVX_3D_ALLOC_BUFFER allocation;
+} NVX_POOLED_GART_BO;
+
+static NVX_POOLED_GART_BO s_nvx_gart_pool[NVX_4K_GART_BO_POOL_CAPACITY];
+static uint32_t s_nvx_gart_pool_count = 0;
+static int s_nvx_gart_pool_enabled = 0;
+
+void
+NvxNouveauBoPoolEnable(int enable)
+{
+   s_nvx_gart_pool_enabled = enable;
+}
+
 int
 NvxNouveauBoCreate(NVX_WINSYS_DEVICE *device,
                    const NVX_3D_ALLOC_BUFFER *description,
@@ -26,6 +43,25 @@ NvxNouveauBoCreate(NVX_WINSYS_DEVICE *device,
        client_token != device->ClientToken ||
        description->Bytes > device->caps.MaxBufferBytes)
       return 0;
+
+   if (s_nvx_gart_pool_enabled &&
+       description->Bytes == 4096 &&
+       description->Usage == NVX_3D_USAGE_GART_BUFFER) {
+      uint32_t i;
+      for (i = s_nvx_gart_pool_count; i > 0; i--) {
+         if (s_nvx_gart_pool[i - 1].device == device) {
+            uint32_t align = description->Alignment ? description->Alignment : 0x1000U;
+            if (align && (s_nvx_gart_pool[i - 1].allocation.GpuVa & (align - 1U)))
+               continue;
+            bo->allocation = s_nvx_gart_pool[i - 1].allocation;
+            s_nvx_gart_pool[i - 1] = s_nvx_gart_pool[s_nvx_gart_pool_count - 1];
+            s_nvx_gart_pool_count--;
+            bo->device = device;
+            bo->references = 1;
+            return 1;
+         }
+      }
+   }
 
    request = *description;
    request.Size = sizeof(request);
@@ -320,10 +356,40 @@ NvxNouveauBoDestroy(NVX_NOUVEAU_BO *bo)
       bo->references = 1;
       return 0;
    }
+   if (bo->shadow) {
+      free(bo->shadow);
+      bo->shadow = NULL;
+   }
+   if (s_nvx_gart_pool_enabled &&
+       bo->allocation.Bytes == 4096 &&
+       bo->allocation.Usage == NVX_3D_USAGE_GART_BUFFER &&
+       s_nvx_gart_pool_count < NVX_4K_GART_BO_POOL_CAPACITY) {
+      s_nvx_gart_pool[s_nvx_gart_pool_count].device = bo->device;
+      s_nvx_gart_pool[s_nvx_gart_pool_count].allocation = bo->allocation;
+      s_nvx_gart_pool_count++;
+      memset(bo, 0, sizeof(*bo));
+      return 1;
+   }
    if (!NvxWinsysFreeBuffer(bo->device, bo->allocation.BufferId)) {
       bo->references = 1;
       return 0;
    }
    memset(bo, 0, sizeof(*bo));
    return 1;
+}
+
+void
+NvxNouveauBoPoolFlush(NVX_WINSYS_DEVICE *device)
+{
+   uint32_t i = 0;
+   while (i < s_nvx_gart_pool_count) {
+      if (!device || s_nvx_gart_pool[i].device == device) {
+         (void)NvxWinsysFreeBuffer(s_nvx_gart_pool[i].device,
+                                  s_nvx_gart_pool[i].allocation.BufferId);
+         s_nvx_gart_pool[i] = s_nvx_gart_pool[s_nvx_gart_pool_count - 1];
+         s_nvx_gart_pool_count--;
+      } else {
+         i++;
+      }
+   }
 }

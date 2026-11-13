@@ -52,5 +52,7 @@ int NvxNouveauBoFlushRange(NVX_NOUVEAU_BO *bo, uint64_t offset,
                            uint64_t bytes);
 int NvxNouveauBoUnmap(NVX_NOUVEAU_BO *bo);
 int NvxNouveauBoDestroy(NVX_NOUVEAU_BO *bo);
+void NvxNouveauBoPoolEnable(int enable);
+void NvxNouveauBoPoolFlush(NVX_WINSYS_DEVICE *device);
 
 #endif

@@ -2093,10 +2093,14 @@ BOOLEAN NTAPI HwVidStartIO(
                engine->GspGraphicsChannelFaulted||engine->GspMmuFaultQueued||
                !engine->GspGraphicsChannelHandle||
                !engine->GspGraphicsObjectHandle||
-               !engine->GspGraphicsComputeObjectHandle||
-               (engine->Nvx3dChannelOwnerToken&&
-                engine->Nvx3dChannelOwnerToken!=request.ClientToken)) {
+               !engine->GspGraphicsComputeObjectHandle) {
                 Nvx3dUnlockBuffers();status=ERROR_BUSY;break;
+            }
+            if(engine->Nvx3dChannelOwnerToken&&
+               engine->Nvx3dChannelOwnerToken!=request.ClientToken) {
+                LogStr("NVX [3D-CHANNEL]: reassigning channel owner to new client token=");
+                LogHex(request.ClientToken);
+                LogStr("\n");
             }
             engine->Nvx3dChannelOwnerToken=request.ClientToken;
             engine->Nvx3dChannelBoundToken=0;
@@ -2110,8 +2114,7 @@ BOOLEAN NTAPI HwVidStartIO(
             request.TwoDClassEngineId=engine->GspGraphics2dClassEngineId;
             status=NO_ERROR;
         } else if(request.Operation==NVX_3D_CHANNEL_CLOSE) {
-            if(engine->Nvx3dChannelOwnerToken!=request.ClientToken||
-               request.ChannelHandle!=engine->GspGraphicsChannelHandle||
+            if(request.ChannelHandle!=engine->GspGraphicsChannelHandle||
                request.GraphicsObjectHandle!=engine->GspGraphicsObjectHandle||
                request.ComputeObjectHandle!=engine->GspGraphicsComputeObjectHandle||
                request.GraphicsClassEngineId!=engine->GspGraphicsObjectClassEngineId||
@@ -2121,8 +2124,10 @@ BOOLEAN NTAPI HwVidStartIO(
                request.TwoDClassEngineId!=engine->GspGraphics2dClassEngineId) {
                 Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;
             }
-            engine->Nvx3dChannelOwnerToken=0;
-            engine->Nvx3dChannelBoundToken=0;
+            if(engine->Nvx3dChannelOwnerToken==request.ClientToken) {
+                engine->Nvx3dChannelOwnerToken=0;
+                engine->Nvx3dChannelBoundToken=0;
+            }
             status=NO_ERROR;
         } else {
             Nvx3dUnlockBuffers();status=ERROR_INVALID_PARAMETER;break;

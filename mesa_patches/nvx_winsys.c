@@ -1,4 +1,5 @@
 #include "nvx_winsys.h"
+#include "nvx_nouveau_bo.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -180,6 +181,7 @@ NvxWinsysCloseClient(NVX_WINSYS_DEVICE *device)
    int ok;
    if (!nvx_winsys_ready(device) || !device->ClientToken)
       return 0;
+   NvxNouveauBoPoolFlush(device);
    if (!NvxWinsysCloseNouveauChannel(device))
       return 0;
    memset(&session, 0, sizeof(session));

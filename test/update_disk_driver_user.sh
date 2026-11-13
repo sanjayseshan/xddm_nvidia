@@ -94,6 +94,8 @@ cp -v "$NVX_PACKAGE/nvxmp.sys" "$NVX_DRIVERS/nvxmp.sys"
 cp -v "$NVX_PACKAGE/nvxdisp.dll" "$NVX_SYSTEM32/nvxdisp.dll"
 if [ -f "$NVX_PACKAGE/nvxogl64.dll" ]; then
     cp -v "$NVX_PACKAGE/nvxogl64.dll" "$NVX_SYSTEM32/nvxogl64.dll"
+    mkdir -p "$NVX_MOUNT/test_accel"
+    cp -v "$NVX_PACKAGE/nvxogl64.dll" "$NVX_MOUNT/test_accel/nvxogl64.dll"
     NVX_SOFTWARE_HIVE="$(find "$NVX_MOUNT" -maxdepth 4 -type f -ipath '*/windows/system32/config/software' -print -quit)"
     if [ -z "$NVX_SOFTWARE_HIVE" ]; then
         echo "Could not locate the offline SOFTWARE registry hive for the Mesa ICD." >&2
@@ -143,6 +145,7 @@ test_gpu_accel.exe >> C:\test_accel.log 2>&1
 echo [TEST] 64-bit Test Return Code: %ERRORLEVEL% >> C:\test_accel.log
 if exist C:\test_accel\wglgears.exe (
     cd /d C:\test_accel
+    set GALLIUM_DRIVER=nouveau
     echo [TEST] Running 64-bit wglgears 3D benchmark... >> C:\test_accel.log
     wglgears.exe -info -seconds 6 >> C:\test_accel.log 2>&1
     echo [TEST] 64-bit wglgears Return Code: %ERRORLEVEL% >> C:\test_accel.log
@@ -154,6 +157,7 @@ if exist x86\test_gpu_accel32.exe (
 )
 if exist C:\test_accel\x86\wglgears32.exe (
     cd /d C:\test_accel\x86
+    set GALLIUM_DRIVER=nouveau
     echo [TEST] Running 32-bit wglgears 3D benchmark... >> C:\test_accel.log
     wglgears32.exe -info -seconds 6 >> C:\test_accel.log 2>&1
     echo [TEST] 32-bit wglgears Return Code: %ERRORLEVEL% >> C:\test_accel.log

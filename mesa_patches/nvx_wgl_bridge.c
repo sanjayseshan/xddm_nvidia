@@ -390,6 +390,7 @@ nvx_wgl_create_native_nouveau_screen(void)
    nvx_bridge_nouveau_trace("Nouveau screen create begin");
    if (fd <= 0 || !NvxXf86DrmIsRegistered(fd))
       return NULL;
+   NvxNouveauBoPoolEnable(1);
    screen = nouveau_drm_screen_create(fd);
    if (screen) {
       nvx_bridge_nouveau_trace("Native Nouveau Gallium pipe_screen created");
