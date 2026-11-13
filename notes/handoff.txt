@@ -1206,6 +1206,15 @@ Relevant files: `mesa_patches/nvx_xf86drm.c`,
   first cube draw, isolate which method or state faults the channel, then retry
   the fenced position readback once the draw submission completes. Phase 2C
   remains incomplete.
+- The post-draw GPU readback is blocked by the draw timeout itself. Revision
+  3.0.0.159 moves the data comparison earlier: after the synchronous copy-engine
+  upload of the cube position range, read the same bytes back through the
+  existing download escape and compare them with the CPU shadow before the 3D
+  draw is submitted. This will establish whether the GPU-visible vertex bytes
+  are correct even when the later NVC0 draw faults.
+- Revision 3.0.0.159 hardware run is pending. Relevant files:
+  `mesa_patches/nvx_xf86drm.c`, `test/test_full_driver.sh`,
+  `dist_full/nvx.inf`, and this handoff.
 - Relevant files: `mesa_patches/nvx_nouveau_bo.c`,
   `mesa_patches/nvx_nouveau_bo.h`, `mesa_patches/nvx_xf86drm.c`,
   `test/test_full_driver.sh`, and `dist_full/nvx.inf`.

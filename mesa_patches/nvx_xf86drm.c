@@ -595,6 +595,45 @@ nvx_drm_add_nvc0_address_references(
                         }
                         if (address == device->shader_cube_vertex_address)
                            device->shader_cube_vertex_flush_done = 1U;
+#if defined(_WIN32) || defined(_WIN64)
+                        if (address == device->shader_cube_vertex_address &&
+                            !device->shader_cube_vertex_readback_scheduled &&
+                            bytes <= NVX_DRM_VERTEX_DUMP_MAX_BYTES) {
+                           uint32_t gpu_dwords[
+                              NVX_DRM_VERTEX_DUMP_MAX_BYTES / sizeof(uint32_t)];
+                           uint32_t dword_count = (uint32_t)(bytes / 4U);
+                           uint32_t readback_ok, matches = 0U;
+                           NvxWglRecordNouveauBufferDwords(
+                              (uint32_t)slot->bo.allocation.BufferId,
+                              address, (uint32_t)offset,
+                              (const uint32_t *)(slot->bo.shadow +
+                                                (size_t)offset),
+                              dword_count, 1U);
+                           readback_ok = (uint32_t)NvxWinsysDownloadBuffer(
+                              &device->device, slot->bo.allocation.BufferId,
+                              (uint32_t)slot->bo.allocation.Bytes,
+                              (uint32_t)offset, gpu_dwords,
+                              (uint32_t)bytes);
+                           if (readback_ok) {
+                              matches = (uint32_t)(memcmp(
+                                 slot->bo.shadow + (size_t)offset,
+                                 gpu_dwords, (size_t)bytes) == 0);
+                              NvxWglRecordNouveauBufferDwords(
+                                 (uint32_t)slot->bo.allocation.BufferId,
+                                 address, (uint32_t)offset, gpu_dwords,
+                                 dword_count, 0U);
+                           }
+                           if (nvx_drm_vertex_upload_trace_count < 32U) {
+                              uint32_t trace_index =
+                                 nvx_drm_vertex_upload_trace_count++;
+                              NvxWglRecordNouveauPushbufItem(17U, trace_index,
+                                 (uint32_t)slot->bo.allocation.BufferId,
+                                 (uint32_t)offset, (uint32_t)bytes,
+                                 matches, readback_ok, 0U);
+                           }
+                           device->shader_cube_vertex_readback_scheduled = 1U;
+                        }
+#endif
                      }
                      break;
                   }
@@ -723,53 +762,6 @@ nvx_drm_submit_pushbuf(int fd,
              (size_t)NVX_3D_MAX_BATCH_BUFFERS * sizeof(references[0]),
           dword_count, references, &reference_count))
       goto done;
-
-#if defined(_WIN32) || defined(_WIN64)
-   /* Capture a small CPU/GPU comparison for the first cube position array.
-    * The range uploader above runs before the eventual draw batch is sent. */
-   if (device->shader_cube_vertex_flush_done &&
-       !device->shader_cube_vertex_readback_scheduled &&
-       vertex_dump_count < NVX_DRM_VERTEX_DUMP_LIMIT &&
-       device->shader_cube_vertex_stride &&
-       device->shader_cube_vertex_count) {
-      uint32_t slot_index;
-      for (slot_index = 0; slot_index < NVX_DRM_BUFFER_SLOTS; slot_index++) {
-         struct nvx_drm_bo_slot *slot = &device->buffers[slot_index];
-         uint64_t base = slot->bo.allocation.GpuVa;
-         uint64_t offset, bytes;
-         struct nvx_drm_vertex_dump *dump;
-         if (!slot->handle || !slot->bo.shadow || !base ||
-             device->shader_cube_vertex_address < base ||
-             device->shader_cube_vertex_address - base >=
-                slot->bo.allocation.Bytes)
-            continue;
-         offset = device->shader_cube_vertex_address - base;
-         bytes = (uint64_t)device->shader_cube_vertex_stride *
-                 device->shader_cube_vertex_count;
-         if (bytes > NVX_DRM_VERTEX_DUMP_MAX_BYTES)
-            bytes = NVX_DRM_VERTEX_DUMP_MAX_BYTES;
-         if (bytes > (uint64_t)slot->bo.allocation.Bytes - offset)
-            bytes = (uint64_t)slot->bo.allocation.Bytes - offset;
-         bytes &= ~3ULL;
-         if (!bytes)
-            break;
-         NvxWglRecordNouveauBufferDwords((uint32_t)slot->bo.allocation.BufferId,
-            device->shader_cube_vertex_address, (uint32_t)offset,
-            (const uint32_t *)(slot->bo.shadow + (size_t)offset),
-            (uint32_t)(bytes / sizeof(uint32_t)), 1U);
-         dump = &vertex_dumps[vertex_dump_count++];
-         memset(dump, 0, sizeof(*dump));
-         dump->buffer_id = slot->bo.allocation.BufferId;
-         dump->gpu_va = device->shader_cube_vertex_address;
-         dump->allocation_bytes = (uint32_t)slot->bo.allocation.Bytes;
-         dump->offset = (uint32_t)offset;
-         dump->bytes = (uint32_t)bytes;
-         dump->force_gpu_readback = 1U;
-         device->shader_cube_vertex_readback_scheduled = 1U;
-         break;
-      }
-   }
-#endif
 
    /* Flush after direct NVC0 addresses have been resolved. Nouveau vertex BOs
     * can be referenced only by VERTEX_ARRAY_START, so they are absent from
