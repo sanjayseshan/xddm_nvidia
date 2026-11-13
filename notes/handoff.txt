@@ -88,13 +88,11 @@ The full-size draw is not writing expected color output. The separate triangle
 control again reads black, then a later batch times out at fence `0x7b` and the
 channel faults. GR and 2D checks passed, but `[OPENGL_RESULT] FAIL`.
 
-The direct readback reported the other of the two screen BOs from the cube
-snapshot (`0x15f40000`); the screen uses alternating buffers. Keep the test's
-GL_BACK readback as the authoritative selected-back-buffer result, and record
-the raw VA so each CE sample can be associated with the draw target. The next
-probe should snapshot NVC0 state for the first full-viewport draw (viewport X
-scale > 100, screen-sized RT, before the cube), then compare its shaders and
-vertex input to the passing 64x64 triangle. Phase 2C remains incomplete.
+The direct readback reported VA `0x162e0000`, while the later cube snapshot
+reported `0x15f40000`. The screen has two render-target BOs, but the `.161`
+probe did not yet tie its raw VA to a particular draw. Keep the test's
+GL_BACK readback as the selected-back-buffer result and capture viewport plus
+target state to associate each CE sample with the intended draw.
 
 Revision 3.0.0.162 attempted the full-target state snapshot. Full VFIO log:
 `test_logs/v3.0.0.162-20261113-045842.log`. It captured a screen-sized RT and
@@ -105,6 +103,17 @@ probe. The trace still confirms the diagnostic uses the same target format,
 enabled RGBA mask, shader bindings, and vertex fetch setup as the cube; it does
 not represent the full-window draw. Revision `.163` will require both X and Y
 viewport scales above 100 to capture the full-window draw.
+
+Revision 3.0.0.163 added an X and Y scale threshold, but the comparison treated
+the Y scale as an unsigned integer. Nouveau represents the OpenGL Y scale as a
+negative float, so `-8.0` from the 576x16 probe passed the raw bit threshold
+and was captured again. Full VFIO log:
+`test_logs/v3.0.0.163-20261113-050324.log`. The CE raw read still returned
+screen BO `0x162e0000` with no green pixels; GL back read was black. Clear
+readback passed, GR and 2D passed, and OpenGL failed. The state is still the
+16-pixel diagnostic, not the full-window draw. Revision `.164` will compare
+the absolute IEEE-754 scale magnitude so `-8` is rejected and the full-height
+viewport (about `-226.5`) is selected.
 
 Revision `.160` added a full-window GL_TRIANGLES control immediately after the
 full-window GL_QUADS probe, drawing to the same back buffer. Full VFIO log:

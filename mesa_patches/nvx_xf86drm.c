@@ -271,13 +271,13 @@ nvx_drm_capture_shader_addresses_locked(
       device->shader_cube_vertex_count = draw_vertex_count;
    }
    /* Capture the first genuinely full-viewport draw before the cube. The
-    * smaller passing triangle uses a 32-pixel viewport scale; the screen
-    * diagnostics use a scale above 100 and the 632x453 render target. */
+    * earlier 576x16 diagnostic has X scale above 100 but Y scale -8. */
    if (!draw_kind && draw_seen && draw_vertex_count >= 3U &&
        !device->shader_full_target_snapshot_done &&
        device->gr_state[0x0808U / 4U] >= 0x800U &&
        device->gr_state[0x080cU / 4U] >= 200U &&
-       device->gr_state[0x0a00U / 4U] >= 0x42c80000U) {
+       device->gr_state[0x0a00U / 4U] >= 0x42c80000U &&
+       device->gr_state[0x0a04U / 4U] >= 0x42c80000U) {
       uint32_t values[sizeof(trace_methods) / sizeof(trace_methods[0])];
       uint32_t i;
       draw_kind = 5U;
@@ -301,11 +301,12 @@ nvx_drm_capture_shader_addresses_locked(
          device->gr_ffvs_draw_state_snapshot_done = 1U;
    }
    /* Keep the full-window back-buffer target from the first regular draw.
-    * The test can then inspect the BO through CE readback, independently of
-    * Mesa's glReadPixels path. The 0xa00-byte pitch filters out the small FBO
-    * controls while matching the current 632x453 XP display target. */
+    * Require large X and Y viewport scales so the 576x16 probe cannot
+    * replace this target before direct CE readback. */
    if (draw_seen && device->gr_state[0x0808U / 4U] >= 0x800U &&
-       device->gr_state[0x080cU / 4U] >= 200U) {
+       device->gr_state[0x080cU / 4U] >= 200U &&
+       device->gr_state[0x0a00U / 4U] >= 0x42c80000U &&
+       device->gr_state[0x0a04U / 4U] >= 0x42c80000U) {
       uint64_t target = ((uint64_t)device->gr_state[0x0800U / 4U] << 32) |
                         device->gr_state[0x0804U / 4U];
       if (target)
