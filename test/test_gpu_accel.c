@@ -9,6 +9,7 @@
 #include <d3d9.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
 #include <share.h>
 #include "../src_driver/nvx_3d_abi.h"
@@ -1364,6 +1365,21 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                                                                   unsigned int *);
             typedef void (APIENTRY *PFN_GL_DELETE_QUERIES)(int,
                                                             const unsigned int *);
+            typedef void (APIENTRY *PFN_GL_TRANSFORM_FEEDBACK_VARYINGS)(
+                unsigned int, int, const char *const *, unsigned int);
+            typedef void (APIENTRY *PFN_GL_GEN_BUFFERS)(int, unsigned int *);
+            typedef void (APIENTRY *PFN_GL_BIND_BUFFER)(unsigned int,
+                                                        unsigned int);
+            typedef void (APIENTRY *PFN_GL_BUFFER_DATA)(unsigned int,
+                ptrdiff_t, const void *, unsigned int);
+            typedef void (APIENTRY *PFN_GL_BIND_BUFFER_BASE)(unsigned int,
+                unsigned int, unsigned int);
+            typedef void (APIENTRY *PFN_GL_BEGIN_TRANSFORM_FEEDBACK)(unsigned int);
+            typedef void (APIENTRY *PFN_GL_END_TRANSFORM_FEEDBACK)(void);
+            typedef void (APIENTRY *PFN_GL_GET_BUFFER_SUB_DATA)(unsigned int,
+                ptrdiff_t, ptrdiff_t, void *);
+            typedef void (APIENTRY *PFN_GL_DELETE_BUFFERS)(int,
+                                                           const unsigned int *);
             PFN_GL_CREATE_SHADER createShader = (PFN_GL_CREATE_SHADER)
                 (directGetProcAddress ? directGetProcAddress("glCreateShader") :
                  wglGetProcAddress("glCreateShader"));
@@ -1419,9 +1435,41 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             PFN_GL_DELETE_QUERIES deleteQueries = (PFN_GL_DELETE_QUERIES)
                 (directGetProcAddress ? directGetProcAddress("glDeleteQueries") :
                  wglGetProcAddress("glDeleteQueries"));
+            PFN_GL_TRANSFORM_FEEDBACK_VARYINGS transformFeedbackVaryings =
+                (PFN_GL_TRANSFORM_FEEDBACK_VARYINGS)
+                (directGetProcAddress ? directGetProcAddress("glTransformFeedbackVaryings") :
+                 wglGetProcAddress("glTransformFeedbackVaryings"));
+            PFN_GL_GEN_BUFFERS genBuffers = (PFN_GL_GEN_BUFFERS)
+                (directGetProcAddress ? directGetProcAddress("glGenBuffers") :
+                 wglGetProcAddress("glGenBuffers"));
+            PFN_GL_BIND_BUFFER bindBuffer = (PFN_GL_BIND_BUFFER)
+                (directGetProcAddress ? directGetProcAddress("glBindBuffer") :
+                 wglGetProcAddress("glBindBuffer"));
+            PFN_GL_BUFFER_DATA bufferData = (PFN_GL_BUFFER_DATA)
+                (directGetProcAddress ? directGetProcAddress("glBufferData") :
+                 wglGetProcAddress("glBufferData"));
+            PFN_GL_BIND_BUFFER_BASE bindBufferBase = (PFN_GL_BIND_BUFFER_BASE)
+                (directGetProcAddress ? directGetProcAddress("glBindBufferBase") :
+                 wglGetProcAddress("glBindBufferBase"));
+            PFN_GL_BEGIN_TRANSFORM_FEEDBACK beginTransformFeedback =
+                (PFN_GL_BEGIN_TRANSFORM_FEEDBACK)
+                (directGetProcAddress ? directGetProcAddress("glBeginTransformFeedback") :
+                 wglGetProcAddress("glBeginTransformFeedback"));
+            PFN_GL_END_TRANSFORM_FEEDBACK endTransformFeedback =
+                (PFN_GL_END_TRANSFORM_FEEDBACK)
+                (directGetProcAddress ? directGetProcAddress("glEndTransformFeedback") :
+                 wglGetProcAddress("glEndTransformFeedback"));
+            PFN_GL_GET_BUFFER_SUB_DATA getBufferSubData =
+                (PFN_GL_GET_BUFFER_SUB_DATA)
+                (directGetProcAddress ? directGetProcAddress("glGetBufferSubData") :
+                 wglGetProcAddress("glGetBufferSubData"));
+            PFN_GL_DELETE_BUFFERS deleteBuffers = (PFN_GL_DELETE_BUFFERS)
+                (directGetProcAddress ? directGetProcAddress("glDeleteBuffers") :
+                 wglGetProcAddress("glDeleteBuffers"));
             static const char vertexSource[] =
                 "#version 110\n"
-                "void main() { gl_Position = vec4(gl_Vertex.xyz, 1.0); }\n";
+                "varying vec4 capturedPosition;\n"
+                "void main() { gl_Position = vec4(gl_Vertex.xyz, 1.0); capturedPosition = gl_Position; }\n";
             static const char fragmentSource[] =
                 "#version 110\n"
                 "void main() { gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0); }\n";
@@ -1429,8 +1477,15 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             unsigned int fixedVertexProgram = 0;
             unsigned int samplesQuery = 0, samplesPassed = 0;
             unsigned int generatedQuery = 0, primitivesGenerated = 0;
+            unsigned int transformFeedbackBuffer = 0;
+            GLfloat capturedPositions[12] = {0};
             int queryApiReady = genQueries && beginQuery && endQuery &&
                 getQueryObjectuiv && deleteQueries;
+            int transformFeedbackApiReady = transformFeedbackVaryings &&
+                genBuffers && bindBuffer && bufferData && bindBufferBase &&
+                beginTransformFeedback && endTransformFeedback &&
+                getBufferSubData && deleteBuffers;
+            int transformFeedbackReady = 0;
             int vertexCompiled = 0, fragmentCompiled = 0, linked = 0;
             int fixedVertexLinked = 0;
             BYTE *pixels = NULL;
@@ -1458,6 +1513,8 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                    shaderApiReady ? "ready" : "missing");
             LogMsg("[MESA_GLSL_TRIANGLE] occlusion_query_api=%s\n",
                    queryApiReady ? "ready" : "missing");
+            LogMsg("[MESA_GLSL_TRIANGLE] transform_feedback_api=%s\n",
+                   transformFeedbackApiReady ? "ready" : "missing");
             if (queryApiReady) {
                 genQueries(1, &samplesQuery);
                 genQueries(1, &generatedQuery);
@@ -1491,9 +1548,13 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                            shaderLog);
                 }
                 if (vertexCompiled && fragmentCompiled) {
+                    static const char *captureVarying = "capturedPosition";
                     program = createProgram();
                     attachShader(program, vertexShader);
                     attachShader(program, fragmentShader);
+                    if (transformFeedbackApiReady)
+                        transformFeedbackVaryings(program, 1,
+                                                  &captureVarying, 0x8C8CU);
                     linkProgram(program);
                     getProgramiv(program, 0x8B82U, &linked);
                     if (!linked) {
@@ -1510,6 +1571,17 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                     if (w > 0 && h > 0 && w <= 4096 && h <= 4096 &&
                         pixelBytes / 4U / (size_t)w == (size_t)h)
                         pixels = (BYTE *)malloc(pixelBytes);
+                    if (transformFeedbackApiReady) {
+                        genBuffers(1, &transformFeedbackBuffer);
+                        if (transformFeedbackBuffer) {
+                            bindBuffer(0x8C8EU, transformFeedbackBuffer);
+                            bufferData(0x8C8EU, sizeof(capturedPositions), NULL,
+                                       0x88E1U);
+                            bindBufferBase(0x8C8EU, 0,
+                                           transformFeedbackBuffer);
+                            transformFeedbackReady = 1;
+                        }
+                    }
                     glViewport(0, 0, 64, 64);
                     glMatrixMode(GL_PROJECTION);
                     glLoadIdentity();
@@ -1533,11 +1605,15 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                         beginQuery(0x8914U, samplesQuery); /* SAMPLES_PASSED */
                     if (generatedQuery)
                         beginQuery(0x8C87U, generatedQuery); /* PRIMITIVES_GENERATED */
+                    if (transformFeedbackReady)
+                        beginTransformFeedback(GL_TRIANGLES);
                     glBegin(GL_TRIANGLES);
                     glVertex3f(-0.8f, -0.8f, 0.0f);
                     glVertex3f( 0.8f, -0.8f, 0.0f);
                     glVertex3f( 0.0f,  0.8f, 0.0f);
                     glEnd();
+                    if (transformFeedbackReady)
+                        endTransformFeedback();
                     if (generatedQuery)
                         endQuery(0x8C87U);
                     if (samplesQuery)
@@ -1549,6 +1625,10 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                     if (generatedQuery)
                         getQueryObjectuiv(generatedQuery, 0x8866U,
                                           &primitivesGenerated);
+                    if (transformFeedbackReady)
+                        getBufferSubData(0x8C8EU, 0,
+                                         sizeof(capturedPositions),
+                                         capturedPositions);
                     if (shaderError == GL_NO_ERROR)
                         shaderError = glGetError();
                     rawTargetGreen = ReadRawMesaTargetGreenPixels(
@@ -1677,6 +1757,8 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                     deleteQueries(1, &samplesQuery);
                 if (deleteQueries && generatedQuery)
                     deleteQueries(1, &generatedQuery);
+                if (deleteBuffers && transformFeedbackBuffer)
+                    deleteBuffers(1, &transformFeedbackBuffer);
             }
             if (pixels) free(pixels);
             int glslPass = shaderApiReady && vertexCompiled &&
@@ -1696,6 +1778,14 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                    baselinePixel[3], postDrawPixel[0], postDrawPixel[1],
                    postDrawPixel[2], postDrawPixel[3],
                    shaderError);
+            LogMsg("[MESA_GLSL_TF_POSITION] available=%d p0=%.6f,%.6f,%.6f,%.6f p1=%.6f,%.6f,%.6f,%.6f p2=%.6f,%.6f,%.6f,%.6f\n",
+                   transformFeedbackReady,
+                   capturedPositions[0], capturedPositions[1],
+                   capturedPositions[2], capturedPositions[3],
+                   capturedPositions[4], capturedPositions[5],
+                   capturedPositions[6], capturedPositions[7],
+                   capturedPositions[8], capturedPositions[9],
+                   capturedPositions[10], capturedPositions[11]);
             if (!glslPass) failures++;
             glViewport(0, 0, w, h);
         }

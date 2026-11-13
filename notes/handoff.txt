@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.139`; preparing `.140`.
+Updated November 13, 2026 after VFIO run `.140`; preparing `.141`.
 
 ## Current status
 
@@ -9,13 +9,13 @@ The latest completed VFIO run `.138` booted and shut down normally, but
 still finds 286,296 blue pixels on the exact 632x453 draw target. OpenGL
 queries report `primitives_generated=1` and `samples_passed=0`, with no GL
 error. The `.139` draw-state trace confirms NVC0 `VIEWPORT_TRANSFORM_EN=1`.
-Revision `.140` makes homogeneous W explicitly 1.0 in the GLSL vertex shader;
-the vertex array supplies three components and a faulty default W could clip
-the primitive. Full `.139` log:
-`test_logs/v3.0.0.139-20261113-025103.log`.
+Explicit clip-space W did not change the result in `.140`. Revision `.141`
+uses transform feedback to capture the three actual vertex shader clip
+positions. Full `.140` log:
+`test_logs/v3.0.0.140-20261113-025354.log`.
 
-The cube ran 100 frames at 16.1 FPS, then the animation path timed out waiting
-for fence `0x12f` at FIFO index `0x12f`; the channel faulted and firmware
+The cube ran 100 frames at 15.7 FPS, then the animation path timed out waiting
+for fence `0x15f` at FIFO index `0x15f`; the channel faulted and firmware
 assertions rose to 3. This recurring submission fault remains separate from
 the initial triangle's zero pixels. The callback type warning has been fixed.
 
@@ -869,4 +869,15 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
 
 - Changes the GLSL vertex probe to construct clip coordinates with an explicit
   `w=1.0` from the three-component position. This tests whether a missing
-  fourth vertex component is clipping the triangle. Full VFIO result pending.
+  fourth vertex component is clipping the triangle.
+- Full VFIO log: `test_logs/v3.0.0.140-20261113-025354.log`. Explicit W did
+  not change the outcome: `primitives_generated=1`, `samples_passed=0`, zero
+  green pixels, and all 286,296 target pixels remained blue. The cube reached
+  100 frames at 15.7 FPS before timeout at FIFO/fence `0x15f`; assertions
+  reached 3.
+
+### Revision 3.0.0.141 — capture vertex clip positions
+
+- Adds transform feedback for the GLSL probe and logs the three captured
+  `capturedPosition` values. This checks vertex shader output directly. Full
+  VFIO result is pending.
