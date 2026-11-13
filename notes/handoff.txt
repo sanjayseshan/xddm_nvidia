@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.121`.
+Updated November 13, 2026 after VFIO run `.122`.
 
 ## Current status
 
@@ -15,6 +15,10 @@ state snapshot actually captured an earlier small QUADS probe. Revision
 the cube state and shader bytes. The corrected snapshot shows plausible cube
 vertex fetch, target, viewport, cull, and fill state; the bound shader draw
 still writes no colored pixels.
+The `.122` snapshot also confirms identity viewport swizzle, depth range 0..1,
+all RGBA color-mask bits enabled for target 0, blending disabled, logic op
+disabled, and multisampling modifiers disabled. These fixed-function gates do
+not explain the black output.
 The trace reports `screens=1 callbacks=0`; callbacks are the unused WGL hybrid
 path and do not represent the native Nouveau screen's activity.
 
@@ -297,12 +301,11 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 ## Next work
 
 1. Explain the missing raster output even though cube draw submissions complete:
-   `.120` completed two 24-vertex QUADS batches with matching fences (`0x3f`,
-   `0x40`, then `0x4b`, `0x4c`), but depth and no-depth cube readbacks were
-   still black. Its state snapshot was from an earlier QUADS probe, so it does
-   not prove the cube's cull/raster state. Run `.121` to capture actual cube
-   state and shader bytes, then compare them against a working NVC0 draw and
-   isolate vertex shader, rasterization, and fragment shader output.
+   `.122` captures the actual 24-vertex cube state, with coherent vertex fetch,
+   target, viewport/swizzle/depth range, fill/cull, color mask, blend and shader
+   output state. Cube readback remains black. Add a programmable GLSL triangle
+   probe through Mesa Nouveau to separate fixed-function shader/linkage from
+   general NVC0 raster output, then inspect shader instructions and varyings.
 2. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
    The failed stream is decoded above; trace the Mesa semaphore release and
    miniport completion fence through PBDMA progress, and correlate with the
@@ -318,7 +321,7 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Relevant files
 
-- Latest completed full VFIO log: `test_logs/v3.0.0.121-20261113-005724.log`
+- Latest completed full VFIO log: `test_logs/v3.0.0.122-20261113-010634.log`
 - Latest extracted Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest Mesa/Nouveau bridge excerpt: `notes/mesa-bridge-latest.txt`
 - GPFIFO submission and diagnostics: `src_driver/nvx_gsp.c`,
@@ -511,5 +514,28 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   Firmware assertion count reaches 3 during the later animation.
 - Next, decode the cube-bound instructions and constant-buffer contents,
   especially vertex output and fragment varying slots, then compare emitted
-  setup to Nouveau's working NVC0 initialization/draw sequences. Keep the later
-  FIFO stall as a separate issue unless evidence ties it to the black draws.
+  setup to Nouveau's working NVC0 initialization/draw sequences. The `.122`
+  capture shows viewport swizzle/depth range and output masks are valid. Keep
+  the later FIFO stall as a separate issue unless evidence ties it to the black
+  draws.
+
+### Revision 3.0.0.122 — verify remaining raster output gates
+
+- Expanded the actual-cube state trace to 64 methods, including viewport
+  swizzle, depth range, color masks, blend independent/common state, logic-op,
+  multisample control, and NVRM macro blend enables.
+- `make -C src_driver check` and `git diff --check` passed. XP x64 Mesa ICD
+  built and passed XP import/subsystem audits. VFIO booted on attempt 1, ran
+  the guest suite, and shut down normally. Full log:
+  `test_logs/v3.0.0.122-20261113-010634.log`.
+- Actual cube snapshot reports identity viewport swizzle `0x6420`, depth range
+  0..1, `COLOR_MASK_COMMON=0` with target 0 mask `0x1111` (RGBA enabled), blend
+  disabled (`BLEND_ENABLE_COMMON=0`, macro blend enables 0), logic-op disabled,
+  and multisample modifiers 0. These settings do not explain the missing pixels.
+- Two cube fences again completed (`0x3f/0x40`); depth and no-depth readback
+  remain black. Clear and independent GR triangle readback pass. The 100-frame
+  animation took 7.9107 seconds (12.6 FPS), and firmware assertions reached 3.
+- Next: add a programmable GLSL triangle probe through the Mesa Nouveau WGL
+  path. If it renders, isolate the fixed-function-generated shader/varying
+  path; if it also returns black, isolate common NVC0 shader execution and
+  raster target setup. Continue shader instruction/varying analysis in parallel.
