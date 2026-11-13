@@ -79,14 +79,25 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
   GET/FETCH stopped at push-buffer VA `0x187801F0`. Firmware assertions rose to 3
   after the timeout. This repeats the `.100` class of failure at a different
   entry; `.101` had completed without a timeout.
+- Decoding the `.102` failed 12-dword stream shows five Mesa dwords first:
+  `SET_REPORT_SEMAPHORE_A` writes payload `0xc5` to the mapped GART BO at
+  `0x11c90000`, followed by `WAIT_FOR_IDLE` and the miniport's completion
+  semaphore release to `0x10005000` with payload `0x267`. The Mesa semaphore
+  BO is owned and mapped (allocation id 8). This narrows the timeout to this
+  synchronization submission sequence or prior PBDMA state; it is not an
+  unmapped semaphore address. `.100` and `.102` both show PBDMA
+  `PB_HEADER=0x21401b0c` and `PB_COUNT=0` at timeout, with GP_FETCH stalled at
+  the current GPFIFO entry. Treat these as repeated raw register values until
+  their GA104 semantics are confirmed.
 - The animation reports 100 frames at 18.4 FPS, but a black image means this is
   not successful rendered-frame evidence.
 
 ## Next work
 
 1. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
-   Decode the 12-dword failed stream at VA `0x187a0000` and correlate it with
-   channel state and the first firmware assertion.
+   The failed stream is decoded above; trace the Mesa semaphore release and
+   miniport completion fence through PBDMA progress, and correlate with the
+   first firmware assertion.
 2. For the earlier black draws, capture vertex BO bytes and compare the
    fixed-function shader code/constants and array format against a known
    working NVC0/NVK sequence. The added pointer ownership validation did not
