@@ -163,6 +163,15 @@ struct nvx_drm_shader_dump {
    uint32_t copied_from_shadow;
 };
 
+static int
+nvx_drm_viewport_scale_abs_ge_100(uint32_t bits)
+{
+   /* IEEE-754 bit patterns are monotonic within each sign. A negative
+    * OpenGL Y scale such as -226.5 is >= 0xc2c80000; -8.0 is not. */
+   return (bits < 0x80000000U && bits >= 0x42c80000U) ||
+          bits >= 0xc2c80000U;
+}
+
 static uint32_t
 nvx_drm_capture_shader_addresses_locked(
    struct nvx_drm_device_slot *device, const uint8_t *dword_data,
@@ -276,8 +285,10 @@ nvx_drm_capture_shader_addresses_locked(
        !device->shader_full_target_snapshot_done &&
        device->gr_state[0x0808U / 4U] >= 0x800U &&
        device->gr_state[0x080cU / 4U] >= 200U &&
-       device->gr_state[0x0a00U / 4U] >= 0x42c80000U &&
-       device->gr_state[0x0a04U / 4U] >= 0x42c80000U) {
+       nvx_drm_viewport_scale_abs_ge_100(
+          device->gr_state[0x0a00U / 4U]) &&
+       nvx_drm_viewport_scale_abs_ge_100(
+          device->gr_state[0x0a04U / 4U])) {
       uint32_t values[sizeof(trace_methods) / sizeof(trace_methods[0])];
       uint32_t i;
       draw_kind = 5U;
@@ -305,8 +316,10 @@ nvx_drm_capture_shader_addresses_locked(
     * replace this target before direct CE readback. */
    if (draw_seen && device->gr_state[0x0808U / 4U] >= 0x800U &&
        device->gr_state[0x080cU / 4U] >= 200U &&
-       device->gr_state[0x0a00U / 4U] >= 0x42c80000U &&
-       device->gr_state[0x0a04U / 4U] >= 0x42c80000U) {
+       nvx_drm_viewport_scale_abs_ge_100(
+          device->gr_state[0x0a00U / 4U]) &&
+       nvx_drm_viewport_scale_abs_ge_100(
+          device->gr_state[0x0a04U / 4U])) {
       uint64_t target = ((uint64_t)device->gr_state[0x0800U / 4U] << 32) |
                         device->gr_state[0x0804U / 4U];
       if (target)

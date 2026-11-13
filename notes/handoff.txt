@@ -115,6 +115,23 @@ readback passed, GR and 2D passed, and OpenGL failed. The state is still the
 the absolute IEEE-754 scale magnitude so `-8` is rejected and the full-height
 viewport (about `-226.5`) is selected.
 
+Revision 3.0.0.164 implements the signed-float magnitude check for both
+viewport dimensions. The target tracker and draw-state snapshot now require
+the screen-sized RT plus absolute X and Y scales of at least 100. Full VFIO
+run `test_logs/v3.0.0.164-20261113-050615.log` captured the full-size draw on
+the same BO as the raw probe (`0x162e0000`). It reports pitch `0x0a00`, height
+453, linear target format `0xcf`, viewport scale `(316,-226.5)`, matching
+translation `(316,226.5)`, full `632x453` scissor, QUADS topology, and enabled
+RGBA writes. Direct CE readback finds no green pixels; GL back readback is
+also black. GR triangle and 2D checks pass, but OpenGL fails; a later batch
+times out at fence `0x5b`. This is the first state capture tied to the
+full-window draw, and it rules out a too-small viewport/scissor and disabled
+color mask. The draw uses vertex arrays at `0x1609015c` and `0x1609014c`, with
+28-byte stride, plus the captured NVC0 stages at `0x22e9f3c0`, `0x22e9f2c0`,
+and `0x22e9f100`. Next verify those exact vertex bytes in the CPU shadow and
+after GPU upload, then compare the bound shader inputs with the passing
+triangle. Phase 2C remains incomplete.
+
 Revision `.160` added a full-window GL_TRIANGLES control immediately after the
 full-window GL_QUADS probe, drawing to the same back buffer. Full VFIO log:
 `test_logs/v3.0.0.160-20261113-044736.log`. The back-buffer clear still reads
