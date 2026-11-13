@@ -592,6 +592,7 @@ NvxWglRecordNouveauDrawState(const uint32_t *methods, const uint32_t *values,
       const char *label = draw_kind == 2U ? "GLSL_TRIANGLES/3" :
                           draw_kind == 3U ? "FFVS_GLSL_FS_TRIANGLES/3" :
                           draw_kind == 4U ? "GLSL_IMMEDIATE_TRIANGLES/3" :
+                          draw_kind == 5U ? "FULL_TARGET_DRAW" :
                                             "QUADS/24";
       int length = wsprintfA(line,
          "Nouveau draw state trace_rev=130 draw=%s entries=%lu\r\n",
@@ -606,7 +607,8 @@ NvxWglRecordNouveauDrawState(const uint32_t *methods, const uint32_t *values,
          "Nouveau draw state draw=%s index=%lu method_dec=%lu value=%08lx\r\n",
          draw_kind == 2U ? "GLSL_TRIANGLES/3" :
          draw_kind == 3U ? "FFVS_GLSL_FS_TRIANGLES/3" :
-         draw_kind == 4U ? "GLSL_IMMEDIATE_TRIANGLES/3" : "QUADS/24",
+         draw_kind == 4U ? "GLSL_IMMEDIATE_TRIANGLES/3" :
+         draw_kind == 5U ? "FULL_TARGET_DRAW" : "QUADS/24",
          (unsigned long)i, (unsigned long)methods[i],
          (unsigned long)values[i]);
       if (length <= 0 || (uint32_t)length > sizeof(output) - used)
@@ -694,7 +696,8 @@ NvxWglRecordNouveauShaderDwords(uint32_t stage, uint32_t buffer_id,
    _snprintf(line, sizeof(line) - 1U,
       "Nouveau shader dump draw=%s stage=%lu buffer=%08lx gpu=%08lx:%08lx offset=%lu dwords=%lu source=%lu draw_snapshot=%lu\r\n",
       draw_kind == 2U ? "GLSL_TRIANGLES/3" :
-      draw_kind == 3U ? "FFVS_GLSL_FS_TRIANGLES/3" : "QUADS/24",
+      draw_kind == 3U ? "FFVS_GLSL_FS_TRIANGLES/3" :
+      draw_kind == 5U ? "FULL_TARGET_DRAW" : "QUADS/24",
       (unsigned long)stage, (unsigned long)buffer_id,
       (unsigned long)(gpu_va >> 32), (unsigned long)gpu_va,
       (unsigned long)offset, (unsigned long)count,

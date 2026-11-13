@@ -101,6 +101,7 @@ struct nvx_drm_device_slot {
    uint32_t shader_triangle_input_readback_scheduled;
    uint32_t shader_triangle_input_flush_trace_done;
    uint32_t shader_ffvs_snapshot_done;
+   uint32_t shader_full_target_snapshot_done;
    uint32_t gr_state[0x4000U / sizeof(uint32_t)];
    uint32_t gr_draw_state_snapshot_done;
    uint32_t gr_ffvs_draw_state_snapshot_done;
@@ -268,6 +269,24 @@ nvx_drm_capture_shader_addresses_locked(
       device->shader_cube_vertex_stride =
          device->gr_state[0x1c00U / 4U] & 0x0fffU;
       device->shader_cube_vertex_count = draw_vertex_count;
+   }
+   /* Capture the first genuinely full-viewport draw before the cube. The
+    * smaller passing triangle uses a 32-pixel viewport scale; the screen
+    * diagnostics use a scale above 100 and the 632x453 render target. */
+   if (!draw_kind && draw_seen && draw_vertex_count >= 3U &&
+       !device->shader_full_target_snapshot_done &&
+       device->gr_state[0x0808U / 4U] >= 0x800U &&
+       device->gr_state[0x080cU / 4U] >= 200U &&
+       device->gr_state[0x0a00U / 4U] >= 0x42c80000U) {
+      uint32_t values[sizeof(trace_methods) / sizeof(trace_methods[0])];
+      uint32_t i;
+      draw_kind = 5U;
+      device->shader_full_target_snapshot_done = 1U;
+      for (i = 0; i < sizeof(trace_methods) / sizeof(trace_methods[0]); i++)
+         values[i] = device->gr_state[trace_methods[i] / sizeof(uint32_t)];
+      NvxWglRecordNouveauDrawState(trace_methods, values,
+         (uint32_t)(sizeof(trace_methods) / sizeof(trace_methods[0])),
+         draw_kind);
    }
    if (draw_kind && (draw_kind != 3U ||
                      !device->gr_ffvs_draw_state_snapshot_done)) {
