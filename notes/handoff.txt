@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 12, 2026 after VFIO run `.107`.
+Updated November 12, 2026 after VFIO run `.108`.
 
 ## Current status
 
@@ -211,13 +211,20 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 - Cube/no-depth results remain black, with clear readback passing. No frame is
   proven. The late PBDMA stall and firmware assertions remain unresolved.
 
-## Current revision `.108` (pending test)
+## `.108` implementation and results
 
-- Moved shader BO readback until after its containing batch is accepted and
-  its completion fence is observed. If the fence does not complete, the trace
-  records that result instead of misreporting pre-upload bytes as shader data.
-- Host checks and the `.108` VFIO test are pending. Expected log:
-  `test_logs/v3.0.0.108-<timestamp>.log`.
+- `make -C src_driver check`, the XP Mesa build/import audit, VFIO boot, and
+  normal XP shutdown passed. The runner exited 1 because OpenGL output remains
+  black. Full log: `test_logs/v3.0.0.108-20261112-234420.log`.
+- Post-fence downloads now show nonzero shader bytes at bound addresses for
+  stages 1, 2, and 5. Their first dwords (`0x00020461`, `0x00020861`,
+  `0x00021462`) match the inline P2MF upload payloads in the same submitted
+  stream. This confirms upload and readback for those program buffers; it
+  does not prove the stage bindings or shader execution are correct.
+- Color-clear readback still passes; cube readback remains 0 colored pixels
+  with no GL error and `[OPENGL_RESULT] FAIL`. The animation completed 100
+  frames at 11.5 FPS on a black image. Firmware assertion count reached 3.
+  `notes/nouveau-trace-latest.txt` now contains the post-fence shader bytes.
 
 ## Next work
 
@@ -225,9 +232,9 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
    The failed stream is decoded above; trace the Mesa semaphore release and
    miniport completion fence through PBDMA progress, and correlate with the
    first firmware assertion.
-2. With the cube vertex stream/layout now confirmed plausible, inspect its
-   shader code/constants and NVC0 draw/viewport/target state against a known
-   working NVC0/NVK sequence.
+2. Decode the bound shader bytes and constant-buffer contents, then check the
+   cube's shader stage selection, draw/viewport state, and target writes
+   against a known working NVC0/NVK sequence.
 3. Separate output stages with progressively smaller Nouveau GPU tests: first
    NVC0 clear, then a minimal supported triangle, then Mesa's shader draw.
    Read the same target after each fence to locate where output disappears.
@@ -236,8 +243,7 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Relevant files
 
-- Latest completed full VFIO log: `test_logs/v3.0.0.107-20261112-233608.log`
-- Pending `.108` run: `test_logs/v3.0.0.108-<timestamp>.log`
+- Latest completed full VFIO log: `test_logs/v3.0.0.108-20261112-234420.log`
 - Latest extracted Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest Mesa/Nouveau bridge excerpt: `notes/mesa-bridge-latest.txt`
 - GPFIFO submission and diagnostics: `src_driver/nvx_gsp.c`,
