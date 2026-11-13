@@ -54,6 +54,12 @@ pixels.
   buffer setup and `VERTEX_BEGIN_GL` / `VERTEX_END_GL` packets. So a draw packet
   reaches the submitted stream, though the captures do not yet prove its
   vertex fetch, shaders, or raster writes are valid.
+- One captured cube draw begins primitive `QUADS`, sets vertex-array 0 enabled
+  with 24-byte stride at GPU VA `0x160903a8`, and submits 24 vertices. Its
+  containing GART BO mapping starts at `0x16090000` and spans 2 MiB. This
+  narrows the missing output investigation to checking the actual vertex BO
+  contents/format, shader code and constant data, and GPU state; the draw is
+  not absent from the submitted command stream.
 - The log reports that the separate GR pipeline triangle draw, readback, and
   semaphore completed. This miniport probe does not validate Nouveau's draw
   packets or raster output.
@@ -67,10 +73,10 @@ pixels.
 
 1. Trace why native Nouveau batches submit but NVC0 draw probes leave the
    target black. The `.101` capture has framebuffer and draw packets; compare
-   their vertex array addresses/limits, shader code and constants, viewport,
-   primitive, and raster state against a known working NVC0/NVK sequence.
-   Follow one minimal draw from Gallium state emission through reloc
-   translation to GPU completion.
+   their vertex array contents and format, shader code and constants,
+   viewport, primitive, and raster state against a known working NVC0/NVK
+   sequence. Follow this 24-vertex draw from Gallium state emission through
+   reloc translation and mapped BO contents to GPU completion.
 2. Separate output stages with progressively smaller Nouveau GPU tests: first
    NVC0 clear, then a minimal supported triangle, then Mesa's shader draw.
    Read the same target after each fence to locate where output disappears.
