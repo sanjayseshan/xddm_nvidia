@@ -1553,6 +1553,69 @@ NvxXf86DrmGetStatus(NVX_XF86DRM_STATUS *status)
    nvx_drm_lock_release();
 }
 
+/* Read the currently bound render target through the miniport's copy-engine
+ * tile path, independently of Mesa's glReadPixels and CPU-shadow refresh. */
+#if defined(_WIN32) || defined(_WIN64)
+__declspec(dllexport) int __stdcall
+NvxXf86DrmReadCurrentTargetTile(uint32_t tile_x, uint32_t tile_y,
+                                uint32_t *pixels, uint64_t *buffer_id)
+{
+   NVX_WINSYS_DEVICE winsys;
+   NVX_3D_READBACK request;
+   unsigned i, j;
+   int found = 0;
+
+   if (buffer_id)
+      *buffer_id = 0;
+   if (!pixels || (tile_x & 63U) || (tile_y & 15U))
+      return 0;
+
+   nvx_drm_lock_acquire();
+   for (i = 0; i < NVX_DRM_DEVICE_SLOTS && !found; i++) {
+      struct nvx_drm_device_slot *device = &nvx_drm_devices[i];
+      uint64_t target_va;
+      if (device->fd < 0 || !device->device.escape ||
+          !device->device.ClientToken)
+         continue;
+      target_va = ((uint64_t)device->gr_state[0x0800U / 4U] << 32) |
+                  device->gr_state[0x0804U / 4U];
+      if (!target_va)
+         continue;
+      for (j = 0; j < NVX_DRM_BUFFER_SLOTS; j++) {
+         struct nvx_drm_bo_slot *slot = &device->buffers[j];
+         if (!slot->handle || slot->bo.allocation.GpuVa != target_va ||
+             !(slot->bo.allocation.Usage & NVX_3D_USAGE_COLOR_TARGET) ||
+             slot->bo.allocation.ClientToken != device->device.ClientToken ||
+             tile_x >= slot->bo.allocation.Width ||
+             tile_y >= slot->bo.allocation.Height)
+            continue;
+         winsys = device->device;
+         memset(&request, 0, sizeof(request));
+         request.Size = sizeof(request);
+         request.Version = NVX_3D_ABI_VERSION;
+         request.BufferId = slot->bo.allocation.BufferId;
+         request.Width = NVX_3D_TRIANGLE_WIDTH;
+         request.Height = NVX_3D_TRIANGLE_HEIGHT;
+         request.Reserved[0] = tile_x;
+         request.Reserved[1] = tile_y;
+         if (buffer_id)
+            *buffer_id = request.BufferId;
+         found = 1;
+         break;
+      }
+   }
+   nvx_drm_lock_release();
+
+   if (!found || !Nvx3dValidateReadback(&request, NVX_3D_READBACK_BYTES,
+                                         NVX_3D_TRIANGLE_TARGET_BYTES) ||
+       !winsys.escape(winsys.opaque, NVX_ESCAPE_3D_READBACK,
+                      sizeof(request), &request, NVX_3D_READBACK_BYTES,
+                      pixels))
+      return 0;
+   return 1;
+}
+#endif
+
 static int
 nvx_drm_gem_new(struct nvx_drm_device_slot *device,
                 struct drm_nouveau_gem_new *request)

@@ -646,6 +646,35 @@ static void LogMsg(const char *fmt, ...)
     }
 }
 
+static unsigned ReadRawMesaTargetGreenPixels(int height,
+                                              uint64_t *buffer_id,
+                                              int *available)
+{
+    typedef int (WINAPI *PFN_READ_TARGET_TILE)(DWORD, DWORD, DWORD *,
+                                               uint64_t *);
+    HMODULE icd = GetModuleHandleA("nvxogl64.dll");
+    PFN_READ_TARGET_TILE readTarget = icd ?
+        (PFN_READ_TARGET_TILE)GetProcAddress(
+            icd, "NvxXf86DrmReadCurrentTargetTile") : NULL;
+    DWORD rawPixels[64U * 16U];
+    DWORD tileY;
+    unsigned green = 0;
+
+    if (buffer_id) *buffer_id = 0;
+    if (available) *available = readTarget != NULL;
+    if (!readTarget)
+        return 0;
+    for (tileY = 384U; tileY < (DWORD)height; tileY += 16U) {
+        DWORD i;
+        if (!readTarget(0U, tileY, rawPixels, buffer_id))
+            continue;
+        for (i = 0; i < 64U * 16U; i++)
+            if ((rawPixels[i] & 0x00ffffffU) == 0x0000ff00U)
+                green++;
+    }
+    return green;
+}
+
 static void ClearMesaIcdTrace(void)
 {
     DWORD deleteError;
@@ -1382,6 +1411,9 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             BYTE fixedVertexBaseline[4] = {0, 0, 0, 0};
             BYTE fixedVertexCenter[4] = {0, 0, 0, 0};
             unsigned fixedVertexGreen = 0;
+            unsigned rawTargetGreen = 0, fixedRawTargetGreen = 0;
+            uint64_t rawTargetBufferId = 0, fixedRawTargetBufferId = 0;
+            int rawTargetAvailable = 0, fixedRawTargetAvailable = 0;
             int baselinePass;
             int shaderApiReady = createShader && shaderSource && compileShader &&
                 getShaderiv && getShaderLog && createProgram && attachShader &&
@@ -1464,6 +1496,12 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                     glFinish();
                     if (shaderError == GL_NO_ERROR)
                         shaderError = glGetError();
+                    rawTargetGreen = ReadRawMesaTargetGreenPixels(
+                        h, &rawTargetBufferId, &rawTargetAvailable);
+                    LogMsg("[MESA_GLSL_RAW_TARGET] buffer=%I64u green_pixels=%u source=%s\n",
+                           rawTargetBufferId, rawTargetGreen,
+                           rawTargetAvailable ? "miniport-copy-engine" :
+                                                "unavailable");
                     glReadBuffer(GL_BACK);
                     if (pixels)
                         glReadPixels(0, 0, w, h, GL_RGBA,
@@ -1526,6 +1564,13 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                         glFinish();
                         if (fixedVertexError == GL_NO_ERROR)
                             fixedVertexError = glGetError();
+                        fixedRawTargetGreen = ReadRawMesaTargetGreenPixels(
+                            h, &fixedRawTargetBufferId,
+                            &fixedRawTargetAvailable);
+                        LogMsg("[MESA_GLSL_FFVS_RAW_TARGET] buffer=%I64u green_pixels=%u source=%s\n",
+                               fixedRawTargetBufferId, fixedRawTargetGreen,
+                               fixedRawTargetAvailable ?
+                                   "miniport-copy-engine" : "unavailable");
                         glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
                                      pixels);
                         glReadPixels(32, 32, 1, 1, GL_RGBA,
@@ -1545,6 +1590,9 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                                fixedVertexCenter[0], fixedVertexCenter[1],
                                fixedVertexCenter[2], fixedVertexCenter[3],
                                fixedVertexError);
+                        if (rawTargetGreen >= 200U ||
+                            fixedRawTargetGreen >= 200U)
+                            LogMsg("[MESA_GLSL_RAW_TARGET] hardware readback found triangle pixels missed by glReadPixels\n");
                         if (!fixedVertexLinked ||
                             fixedVertexBaseline[2] < 150U ||
                             fixedVertexGreen < 200U ||

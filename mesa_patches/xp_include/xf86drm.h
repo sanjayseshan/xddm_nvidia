@@ -115,6 +115,11 @@ int NvxXf86DrmRegisterDevice(const NVX_WINSYS_DEVICE *device);
 void NvxXf86DrmUnregisterDevice(int fd);
 int NvxXf86DrmIsRegistered(int fd);
 void NvxXf86DrmGetStatus(NVX_XF86DRM_STATUS *status);
+#if defined(_WIN32) || defined(_WIN64)
+__declspec(dllexport) int __stdcall
+NvxXf86DrmReadCurrentTargetTile(uint32_t tile_x, uint32_t tile_y,
+                               uint32_t *pixels, uint64_t *buffer_id);
+#endif
 void *NvxXf86DrmMapBuffer(int fd, uint32_t handle, uint32_t access);
 int NvxXf86DrmUnmapBuffer(int fd, uint32_t handle);
 int NvxXf86DrmFlushBuffer(int fd, uint32_t handle);

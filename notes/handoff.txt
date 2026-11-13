@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.129`.
+Updated November 13, 2026 before VFIO run `.131`.
 
 ## Current status
 
@@ -735,3 +735,26 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   and depth/cull/blend/logic-op gates are disabled. These captures don't prove
   execution. Next inspect the raw per-draw batch and validated class/address
   substitutions through the GPFIFO submission path.
+
+
+### Revision 3.0.0.130 — independent render-target readback build attempt
+
+- Adds an ICD diagnostic export that finds the current NVC0 render-target BO by
+  the RT GPU address captured from the submitted batch, then asks the miniport
+  to read 64x16 tiles through its GPU copy-engine path. The OpenGL probe scans
+  the 64-pixel viewport's full vertical extent immediately after each triangle
+  fence and before `glReadPixels`.
+- This separates a Mesa GL readback/shadow problem from a draw that writes no
+  pixels to the actual GPU target. It is diagnostic only and does not change
+  rendering state or decide the existing OpenGL pass result.
+- The `.130` full-suite attempt stopped before VM launch: Mesa rejected the new
+  export because `-Werror=missing-prototypes` requires a declaration. The
+  declaration is now in the Windows xf86drm shim. No guest result exists for
+  `.130`.
+
+### Revision 3.0.0.131 — retry independent render-target readback
+
+- Rebuilds the `.130` diagnostic with its export prototype declared. The full
+  VFIO result is pending. A nonzero miniport green count with zero GL count
+  indicates a GL readback issue; zero counts from both paths keeps focus on the
+  GPU draw/submission state.
