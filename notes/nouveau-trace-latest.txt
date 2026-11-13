@@ -2949,3 +2949,28 @@ Nouveau pushbuf item kind=1 index=5 a=0000000f b=00000000 c=00000004 d=00000004 
 Nouveau pushbuf item kind=1 index=6 a=00000006 b=00000002 c=00000000 d=00000002 e=00000001 f=00000002
 Nouveau pushbuf item kind=2 index=0 a=00000000 b=00002940 c=00000000 d=00000220 e=00000000 f=00000000
 Nouveau pushbuf item kind=5 index=0 a=0000000a b=00080000 c=00002940 d=00000220 e=00000000 f=00010002
+
+Fragment program decode (nvdisasm -b SM86), beginning at the 20-dword NVC0
+shader header:
+
+    /*0000*/ NOP;
+    /*0010*/ NOP;
+    /*0020*/ NOP;
+    /*0030*/ MOV R0, 0x0;
+    /*0040*/ MOV R1, 0x3f800000;
+    /*0050*/ MOV R2, 0x0;
+    /*0060*/ MOV R3, 0x3f800000;
+    /*0070*/ EXIT;
+
+The shader header begins `0x00021462`, matching Mesa's fragment-stage header
+construction (`0x20062 | (5 << 10)`). Header dword 18 is `0x0000000f`, declaring
+RGBA output. Both triangle draws' fragment binaries are byte-identical over
+their program data, and the draw-state bindings point to their respective
+captured shader addresses. This confirms the expected green constant and output
+mask are present in the uploaded program image; it does not by itself prove the
+GPU fetched or executed that image.
+
+NVC0 scissor note: `mesa/src/gallium/drivers/nouveau/nvc0/nvc0_screen.c`
+explicitly leaves hardware scissor enabled with 16384-pixel bounds. Therefore
+the captured enable bit and `0x40000000` bounds after `glDisable(GL_SCISSOR_TEST)`
+are the normal full-range setting, not a stale restrictive rectangle.

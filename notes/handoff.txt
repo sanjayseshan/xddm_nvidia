@@ -722,7 +722,11 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   assertion count reached 3 during animation.
 - Explicitly disabling scissor (and resetting depth/culling/blending for both
   probes) did not change the GPU capture or readback. The hypothesis is rejected
-  as the explanation for missing fragments. The fresh trace is recorded in
-  `notes/nouveau-trace-latest.txt`. Next verify which GL state calls actually
-  reach Mesa and how Mesa maps the pipeline state to the captured NVC0 registers;
-  then inspect the shared fragment execution/output path.
+  as the explanation for missing fragments. Upstream `nvc0_screen.c` explicitly
+  keeps hardware scissors enabled and initializes the bounds to 16384; the
+  captured `SCISSOR_ENABLE=1` and `0x40000000` bounds are therefore expected.
+  The fresh trace and fragment disassembly are recorded in
+  `notes/nouveau-trace-latest.txt`. The constant-green fragment shader has the
+  expected `MOV R0,0; MOV R1,1.0; MOV R2,0; MOV R3,1.0; EXIT` code, and its
+  header declares all four color components. Next check shader address/header
+  alignment and the translation of fragment output routing and target state.
