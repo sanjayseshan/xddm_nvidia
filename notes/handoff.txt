@@ -1152,7 +1152,19 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
 - Store a 12-dword GPU readback in the current submission's local dump list
   only after the targeted upload succeeds; the existing post-submit code
   waits for this batch's fence before downloading it.
-- Version bumped to `3.0.0.157`. Full VFIO result pending.
+- Full VFIO log: `test_logs/v3.0.0.157-20261113-041759.log`. The dedicated
+  post-fence GPU download (`source=0`) now exactly matches the CPU shadow for
+  the three positions at BO `0x16`, offset `0xe0`:
+  `bf4ccccd bf4ccccd 00000000`, `3f4ccccd bf4ccccd 00000000`,
+  `00000000 3f4ccccd 00000000`. The immediate vertex upload/readback path is
+  proven. This does not mean the GL workload passes: OpenGL still reports
+  failure, and cube readback has zero colored pixels (regular test: four new
+  GPU batches; no-depth probe: zero new batches in this run). The explicit
+  GLSL triangle control and GR triangle/semaphore pass. Firmware assertions
+  reached 3; animation reported 50.8 FPS.
+- Next work should focus on why the cube's NVC0 draw produces no colored
+  framebuffer pixels; vertex transport and its fenced readback are no longer
+  the current blocker.
 
 Relevant files: `mesa_patches/nvx_xf86drm.c`,
 `mesa_patches/xp_include/xf86drm.h`,
