@@ -1,10 +1,13 @@
-Latest Nouveau/OpenGL trace excerpt: test_logs/v3.0.0.126-20261113-013041.log
+Latest Nouveau/OpenGL trace excerpt: test_logs/v3.0.0.127-20261113-013445.log
 [MESA_GLSL_TRIANGLE_RESULT] FAIL compiled=1/1 linked=1 baseline_pass=1 green_pixels=0 bbox=632,453--1,-1 readback=632x453 baseline=0,0,191,255 post_center=0,0,191,255 error=0x0
+[MESA_GLSL_FFVS_RESULT] linked=1 green_pixels=0 readback=632x453 baseline=0,0,191,255 post_center=0,0,191,255 error=0x0
 [MESA_GPU_CLEAR_BACK_READBACK] pixel=32,64,191 error=0x0
 [MESA_GPU_CLEAR_BACK_RESULT] PASS
-NVX [NVC0-DRAW]: completed index=2 primitive=4 start=0 count=3 fence=0x13 observed=0x13
-NVX [NVC0-DRAW]: completed index=3 primitive=4 start=0 count=3 fence=0x14 observed=0x14
-GLSL triangle state:
+NVC0 GLSL VS+FS draw: index=2 primitive=4 start=0 count=3 fence=0x13 observed=0x13
+NVC0 GLSL VS+FS draw: index=3 primitive=4 start=0 count=3 fence=0x14 observed=0x14
+NVC0 fixed-function VS+GLSL FS draw: index=4 primitive=4 start=0 count=3 fence=0x21 observed=0x21
+NVC0 fixed-function VS+GLSL FS draw: index=5 primitive=4 start=0 count=3 fence=0x22 observed=0x22
+GLSL VS+FS draw state and shader dumps:
 Nouveau draw state trace_rev=124 draw=GLSL_TRIANGLES/3 entries=64
 Nouveau draw state draw=GLSL_TRIANGLES/3 index=0 method_dec=892 value=00000001
 Nouveau draw state draw=GLSL_TRIANGLES/3 index=1 method_dec=2048 value=00000000
@@ -84,7 +87,7 @@ Nouveau vertex data offset=416: 00000000 00000000 00000000 00000000 00000000 000
 Nouveau vertex data offset=440: 00000000 00000000 00000000 00000000 00000000 00000000
 Nouveau vertex data offset=464: 00000000 00000000 00000000 00000000 00000000 00000000
 Nouveau vertex data offset=488: 00000000 00000000 00000000 00000000 00000000 00000000
-GLSL triangle shader stage dumps:
+GLSL VS+FS shader stage dumps:
 Nouveau shader dump draw=GLSL_TRIANGLES/3 stage=1 buffer=00000009 gpu=00000000:22e9efc0 offset=520128 dwords=128 source=0 draw_snapshot=1
 Nouveau shader data offset=520128: 00020461 00000000 00000000 00000000 000ff000 00000000
 Nouveau shader data offset=520152: 0000000f 00000000 00000000 00000000 00000000 00000000

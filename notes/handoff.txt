@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.126`.
+Updated November 13, 2026 after VFIO run `.127`.
 
 ## Current status
 
@@ -324,6 +324,10 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
    `.126` confirms a blue clear on the test's back buffer before drawing
    (`0,0,191,255` at center), then reads the identical blue value afterward;
    all target pixels remain unchanged by the draw.
+   `.127` reuses the same green fragment shader without the GLSL vertex shader;
+   that draw also leaves the blue target unchanged. This makes the custom GLSL
+   vertex shader an unlikely cause and points toward common fragment execution,
+   rasterization, or draw submission state.
 2. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
    The failed stream is decoded above; trace the Mesa semaphore release and
    miniport completion fence through PBDMA progress, and correlate with the
@@ -339,7 +343,7 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Relevant files
 
-- Latest completed full VFIO log: `test_logs/v3.0.0.126-20261113-013041.log`
+- Latest completed full VFIO log: `test_logs/v3.0.0.127-20261113-013445.log`
 - Latest extracted Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest Mesa/Nouveau bridge excerpt: `notes/mesa-bridge-latest.txt`
 - GPFIFO submission and diagnostics: `src_driver/nvx_gsp.c`,
@@ -639,3 +643,22 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   assertions reach 3 during animation. Next isolate the programmable vertex
   shader from the fragment/raster/target path with a constant-color fragment
   shader using Mesa's fixed-function vertex stage. Keep the FIFO stall separate.
+
+### Revision 3.0.0.127 — fixed-function vertex isolation
+
+- Reuses the constant-green GLSL fragment shader with no user vertex shader,
+  so Mesa supplies the compatibility fixed-function vertex stage. It clears
+  and validates the same back-buffer center before drawing, then scans the full
+  target and reports center color and GL errors.
+- The VFIO run booted on attempt 3, completed the suite, and shut down normally.
+  Full log: `test_logs/v3.0.0.127-20261113-013445.log`; `[OPENGL_RESULT] FAIL`.
+- The custom VS+FS draw and the fixed-function VS+same constant-green FS draw
+  both submitted three-vertex NVC0 batches with completed fences. The
+  fragment-only path linked. Both scans found zero green pixels; center stayed
+  `(0,0,191,255)` before and after each draw, with `GL error=0`. This isolates
+  the failure to shared fragment execution, rasterization, or draw state more
+  strongly than the vertex shader.
+- Cube remains black; animation reached 100 frames in 7.1623 s (14.0 FPS).
+  Firmware assertions rise to 3 during later animation. Next capture the
+  fragment-only draw's state and shader bindings independently to see whether
+  its shared fragment stage and output state match the GLSL VS+FS draw.

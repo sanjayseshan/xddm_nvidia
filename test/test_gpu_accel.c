@@ -1369,13 +1369,19 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                 "#version 110\n"
                 "void main() { gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0); }\n";
             unsigned int vertexShader = 0, fragmentShader = 0, program = 0;
+            unsigned int fixedVertexProgram = 0;
             int vertexCompiled = 0, fragmentCompiled = 0, linked = 0;
+            int fixedVertexLinked = 0;
             BYTE *pixels = NULL;
             BYTE baselinePixel[4] = {0, 0, 0, 0};
             BYTE postDrawPixel[4] = {0, 0, 0, 0};
             unsigned greenPixels = 0, pixel;
             int greenMinX = w, greenMinY = h, greenMaxX = -1, greenMaxY = -1;
             GLenum shaderError = GL_NO_ERROR;
+            GLenum fixedVertexError = GL_NO_ERROR;
+            BYTE fixedVertexBaseline[4] = {0, 0, 0, 0};
+            BYTE fixedVertexCenter[4] = {0, 0, 0, 0};
+            unsigned fixedVertexGreen = 0;
             int baselinePass;
             int shaderApiReady = createShader && shaderSource && compileShader &&
                 getShaderiv && getShaderLog && createProgram && attachShader &&
@@ -1483,10 +1489,74 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                             if ((int)y > greenMaxY) greenMaxY = (int)y;
                         }
                     useProgram(0);
+
+                    /* Reuse the constant-green fragment shader with Mesa's
+                     * fixed-function vertex stage to isolate the GLSL VS. */
+                    fixedVertexProgram = createProgram();
+                    attachShader(fixedVertexProgram, fragmentShader);
+                    linkProgram(fixedVertexProgram);
+                    getProgramiv(fixedVertexProgram, 0x8B82U,
+                                 &fixedVertexLinked);
+                    if (fixedVertexLinked && pixels) {
+                        glViewport(0, 0, 64, 64);
+                        glMatrixMode(GL_PROJECTION);
+                        glLoadIdentity();
+                        glMatrixMode(GL_MODELVIEW);
+                        glLoadIdentity();
+                        glReadBuffer(GL_BACK);
+                        glClearColor(0.0f, 0.0f, 0.75f, 1.0f);
+                        glClear(GL_COLOR_BUFFER_BIT);
+                        useProgram(fixedVertexProgram);
+                        glFinish();
+                        fixedVertexError = glGetError();
+                        glReadPixels(32, 32, 1, 1, GL_RGBA,
+                                     GL_UNSIGNED_BYTE, fixedVertexBaseline);
+                        if (fixedVertexError == GL_NO_ERROR)
+                            fixedVertexError = glGetError();
+                        glBegin(GL_TRIANGLES);
+                        glVertex3f(-0.8f, -0.8f, 0.0f);
+                        glVertex3f( 0.8f, -0.8f, 0.0f);
+                        glVertex3f( 0.0f,  0.8f, 0.0f);
+                        glEnd();
+                        glFinish();
+                        if (fixedVertexError == GL_NO_ERROR)
+                            fixedVertexError = glGetError();
+                        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
+                                     pixels);
+                        glReadPixels(32, 32, 1, 1, GL_RGBA,
+                                     GL_UNSIGNED_BYTE, fixedVertexCenter);
+                        if (fixedVertexError == GL_NO_ERROR)
+                            fixedVertexError = glGetError();
+                        for (pixel = 0; pixel < (unsigned)w * (unsigned)h;
+                             pixel++)
+                            if (pixels[pixel * 4U + 1U] > 200U &&
+                                pixels[pixel * 4U] < 32U &&
+                                pixels[pixel * 4U + 2U] < 32U)
+                                fixedVertexGreen++;
+                        LogMsg("[MESA_GLSL_FFVS_RESULT] linked=%d green_pixels=%u readback=%dx%d baseline=%u,%u,%u,%u post_center=%u,%u,%u,%u error=0x%X\n",
+                               fixedVertexLinked, fixedVertexGreen, w, h,
+                               fixedVertexBaseline[0], fixedVertexBaseline[1],
+                               fixedVertexBaseline[2], fixedVertexBaseline[3],
+                               fixedVertexCenter[0], fixedVertexCenter[1],
+                               fixedVertexCenter[2], fixedVertexCenter[3],
+                               fixedVertexError);
+                        if (!fixedVertexLinked ||
+                            fixedVertexBaseline[2] < 150U ||
+                            fixedVertexGreen < 200U ||
+                            fixedVertexError != GL_NO_ERROR)
+                            failures++;
+                    } else {
+                        LogMsg("[MESA_GLSL_FFVS_RESULT] linked=%d readback_buffer=%s error=0x%X\n",
+                               fixedVertexLinked, pixels ? "ready" : "missing",
+                               fixedVertexError);
+                        failures++;
+                    }
+                    useProgram(0);
                 }
                 if (vertexShader) deleteShader(vertexShader);
                 if (fragmentShader) deleteShader(fragmentShader);
                 if (program) deleteProgram(program);
+                if (fixedVertexProgram) deleteProgram(fixedVertexProgram);
             }
             if (pixels) free(pixels);
             int glslPass = shaderApiReady && vertexCompiled &&
