@@ -132,6 +132,24 @@ and `0x22e9f100`. Next verify those exact vertex bytes in the CPU shadow and
 after GPU upload, then compare the bound shader inputs with the passing
 triangle. Phase 2C remains incomplete.
 
+Revision 3.0.0.166 adds a full-window draw of the already passing programmable
+GLSL triangle, using the same three positions and full-size WGL back buffer as
+the failing fixed-function quad. Full VFIO log:
+`test_logs/v3.0.0.166-20261113-052026.log`. The full-viewport GLSL triangle
+produced 91,770 green pixels, center `(0,255,0)`, with no GL error. The same
+run's fixed-function full-size quad and triangle read black; direct CE target
+readback is also black. This proves the full-size target, viewport, raster
+output path, and GL readback work for programmable shaders. The remaining
+failure is specific to the compatibility fixed-function pipeline or its
+primitive/attribute handling. GR and 2D checks passed; OpenGL still fails and
+the channel later times out at fence `0x91`.
+
+Revision 3.0.0.167 will draw both GL_TRIANGLES and GL_QUADS at full size using
+the passing test's fixed-function vertex stage and a constant-green GLSL
+fragment shader. This distinguishes fixed-function vertex transformation
+from quad topology and from the fixed-function fragment/color path. Full VFIO
+run pending.
+
 Revision 3.0.0.165 verifies both exact full-window vertex arrays. Full VFIO
 log: `test_logs/v3.0.0.165-20261113-051354.log`. For BO16, position at offset
 348 (`0x1609015c`) and color at offset 332 (`0x1609014c`), each four vertices

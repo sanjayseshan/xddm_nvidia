@@ -1968,6 +1968,50 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                         if (arrayGreen < 200U || arrayError != GL_NO_ERROR)
                             failures++;
                     }
+                    if (linked && vertexInputApiReady && pixels) {
+                        BYTE fullViewportCenter[4]={0,0,0,0};
+                        unsigned fullViewportGreen=0;
+                        GLenum fullViewportError;
+                        glViewport(0,0,w,h);
+                        glDisable(GL_DEPTH_TEST);
+                        glDisable(GL_CULL_FACE);
+                        glDisable(GL_BLEND);
+                        glDisable(GL_SCISSOR_TEST);
+                        glReadBuffer(GL_BACK);
+                        glClearColor(0.0f,0.0f,0.0f,1.0f);
+                        glClear(GL_COLOR_BUFFER_BIT);
+                        useProgram(program);
+                        vertexAttribPointer(0,3,GL_FLOAT,GL_FALSE,0,
+                                            triangleVertices);
+                        enableVertexAttribArray(0);
+                        drawArrays(GL_TRIANGLES,0,3);
+                        glFinish();
+                        fullViewportError=glGetError();
+                        if(fullViewportError==GL_NO_ERROR) {
+                            glReadPixels(w/2,h/2,1,1,GL_RGBA,
+                                         GL_UNSIGNED_BYTE,
+                                         fullViewportCenter);
+                            glReadPixels(0,0,w,h,GL_RGBA,
+                                         GL_UNSIGNED_BYTE,pixels);
+                            fullViewportError=glGetError();
+                        }
+                        if(fullViewportError==GL_NO_ERROR)
+                            for(pixel=0;pixel<(unsigned)w*(unsigned)h;pixel++)
+                                if(pixels[pixel*4U+1U]>200U&&
+                                   pixels[pixel*4U]<32U&&
+                                   pixels[pixel*4U+2U]<32U)
+                                    fullViewportGreen++;
+                        disableVertexAttribArray(0);
+                        useProgram(0);
+                        LogMsg("[MESA_GLSL_FULL_VIEWPORT_RESULT] green_pixels=%u center=%u,%u,%u error=0x%X size=%dx%d\n",
+                               fullViewportGreen,fullViewportCenter[0],
+                               fullViewportCenter[1],fullViewportCenter[2],
+                               fullViewportError,w,h);
+                        if(fullViewportGreen<200U||
+                           fullViewportCenter[1]<200U||
+                           fullViewportError!=GL_NO_ERROR)
+                            failures++;
+                    }
                     useProgram(0);
                 }
                 if (vertexShader) deleteShader(vertexShader);
