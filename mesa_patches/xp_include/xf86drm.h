@@ -123,6 +123,8 @@ NvxXf86DrmReadDrawTargetRaw(uint32_t draw_kind, uint32_t *green_pixels,
                             uint64_t *target_va, uint64_t *buffer_id);
 #endif
 void *NvxXf86DrmMapBuffer(int fd, uint32_t handle, uint32_t access);
+int NvxXf86DrmUpdateBufferMapAccess(int fd, uint32_t handle,
+                                    uint32_t access);
 int NvxXf86DrmUnmapBuffer(int fd, uint32_t handle);
 int NvxXf86DrmFlushBuffer(int fd, uint32_t handle);
 

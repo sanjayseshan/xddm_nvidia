@@ -1,0 +1,21 @@
+diff --git a/src/gallium/winsys/nouveau/drm/nouveau.c b/src/gallium/winsys/nouveau/drm/nouveau.c
+--- a/src/gallium/winsys/nouveau/drm/nouveau.c
++++ b/src/gallium/winsys/nouveau/drm/nouveau.c
+@@ -779,4 +779,17 @@ nouveau_bo_map(struct nouveau_bo *bo, uint32_t access, struct nouveau_client *client)
+ #endif
+    }
++#ifdef NVX_XP_WIN32_SHIMS
++   else {
++      uint32_t nvx_access = 0;
++      if (access & NOUVEAU_BO_RD)
++         nvx_access |= NVX_XF86DRM_MAP_READ;
++      if (access & NOUVEAU_BO_WR)
++         nvx_access |= NVX_XF86DRM_MAP_WRITE;
++      if (!nvx_access)
++         nvx_access = NVX_XF86DRM_MAP_READ;
++      if (NvxXf86DrmUpdateBufferMapAccess(drm->fd, bo->handle, nvx_access))
++         return -errno;
++   }
++#endif
+    return nouveau_bo_wait(bo, access, client);
+ }

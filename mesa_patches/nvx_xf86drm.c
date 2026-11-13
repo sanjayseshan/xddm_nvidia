@@ -85,6 +85,7 @@ struct nvx_drm_device_slot {
 #if defined(_WIN32) || defined(_WIN64)
    uint64_t shader_address[6];
    uint64_t shader_triangle_vertex_address;
+   uint64_t shader_triangle_input_vertex_address;
    uint64_t shader_triangle_target_address;
    uint64_t shader_ffvs_target_address;
    uint32_t shader_address_mask;
@@ -92,6 +93,7 @@ struct nvx_drm_device_slot {
    uint32_t shader_triangle_snapshot_done;
    uint32_t shader_triangle_input_snapshot_done;
    uint32_t shader_triangle_input_readback_scheduled;
+   uint32_t shader_triangle_input_flush_trace_done;
    uint32_t shader_ffvs_snapshot_done;
    uint32_t gr_state[0x4000U / sizeof(uint32_t)];
    uint32_t gr_draw_state_snapshot_done;
@@ -279,6 +281,9 @@ nvx_drm_capture_shader_addresses_locked(
       NvxWglRecordNouveauDrawState(trace_methods, values,
          (uint32_t)(sizeof(trace_methods) / sizeof(trace_methods[0])), 4U);
       device->shader_triangle_input_snapshot_done = 1U;
+      device->shader_triangle_input_vertex_address =
+         ((uint64_t)device->gr_state[0x1c04U / 4U] << 32) |
+         device->gr_state[0x1c08U / 4U];
    }
 
    /* Program addresses are persistent 3D state. A later draw batch often
@@ -664,6 +669,30 @@ nvx_drm_submit_pushbuf(int fd,
       }
       if (!slot)
          goto done;
+      if (device->shader_triangle_input_vertex_address &&
+          !device->shader_triangle_input_flush_trace_done &&
+          slot->bo.allocation.GpuVa <=
+             device->shader_triangle_input_vertex_address &&
+          device->shader_triangle_input_vertex_address -
+             slot->bo.allocation.GpuVa < slot->bo.allocation.Bytes) {
+         uint32_t flush_ok = 0U;
+         if (slot->bo.map_count &&
+             (slot->bo.map_access & NVX_NOUVEAU_BO_WRITE))
+            flush_ok = (uint32_t)NvxNouveauBoFlush(&slot->bo);
+         NvxWglRecordNouveauPushbufItem(14U, 0U,
+            (uint32_t)references[i].BufferId,
+            (uint32_t)(device->shader_triangle_input_vertex_address -
+                      slot->bo.allocation.GpuVa),
+            references[i].Access, slot->bo.map_count,
+            slot->bo.map_access, flush_ok);
+         device->shader_triangle_input_flush_trace_done = 1U;
+         if (!flush_ok && slot->bo.map_count &&
+             (slot->bo.map_access & NVX_NOUVEAU_BO_WRITE))
+            goto done;
+         if (flush_ok)
+            flushed_shadow_count++;
+         continue;
+      }
       if (!slot->bo.map_count ||
           !(slot->bo.map_access & NVX_NOUVEAU_BO_WRITE))
          continue;
@@ -1916,6 +1945,39 @@ NvxXf86DrmMapBuffer(int fd, uint32_t handle, uint32_t access)
    if (!map)
       errno = found ? EIO : ENOENT;
    return map;
+}
+
+int
+NvxXf86DrmUpdateBufferMapAccess(int fd, uint32_t handle, uint32_t access)
+{
+   struct nvx_drm_device_slot *device;
+   struct nvx_drm_bo_slot *slot;
+   uint32_t bo_access = 0U;
+   int result = 0;
+   int found;
+
+   if (!access || (access & ~(NVX_XF86DRM_MAP_READ |
+                              NVX_XF86DRM_MAP_WRITE))) {
+      errno = EINVAL;
+      return -1;
+   }
+   if (access & NVX_XF86DRM_MAP_READ)
+      bo_access |= NVX_NOUVEAU_BO_READ;
+   if (access & NVX_XF86DRM_MAP_WRITE)
+      bo_access |= NVX_NOUVEAU_BO_WRITE;
+
+   nvx_drm_lock_acquire();
+   device = nvx_drm_find_device_locked(fd);
+   slot = nvx_drm_find_bo_locked(device, handle);
+   found = slot != NULL;
+   if (slot && slot->bo.map_count) {
+      slot->bo.map_access |= bo_access;
+      result = 1;
+   }
+   nvx_drm_lock_release();
+   if (!result)
+      errno = found ? EINVAL : ENOENT;
+   return result ? 0 : -1;
 }
 
 int

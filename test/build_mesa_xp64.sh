@@ -55,6 +55,7 @@ PY
 restore_mesa_sources() {
     rm -f "$ROOT/mesa/src/gallium/winsys/nouveau/drm/nvx_xf86drm.c"
     for patch_file in \
+        "$ROOT/mesa_patches/0028-nouveau-xp-widen-cached-bo-map.patch" \
         "$ROOT/mesa_patches/0027-mesa-begin-end-staging-trace.patch" \
         "$ROOT/mesa_patches/0026-nouveau-xp-render-target-trace.patch" \
         "$ROOT/mesa_patches/0025-nouveau-xp-force-cpu-prep.patch" \

@@ -1055,4 +1055,28 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   are resolved, then flushes all referenced read-domain BOs with writable
   mappings. This includes vertex BOs that are absent from Nouveau's explicit
   `request->buffers` list.
-- Test/package version is bumped to `3.0.0.152`; VFIO result pending.
+- VFIO log `test_logs/v3.0.0.152-20261113-035339.log` still shows zeroes in
+  the GPU readback. The immediate draw has nine referenced BOs but only one
+  writable shadow was flushed, so the immediate position BO still was not
+  considered writable.
+
+### Revision 3.0.0.153 — widen access on cached BO maps
+
+- Root cause hypothesis: Mesa's `nouveau_bo_map()` calls the NVX mapping shim
+  only when `bo->map` is null. Later calls that request additional access bits
+  reuse the cached pointer and never widen `NVX_NOUVEAU_BO.map_access`.
+- Added `NvxXf86DrmUpdateBufferMapAccess()` to widen the existing NVX BO
+  mapping flags without changing its map reference count. Added external Mesa
+  patch `0028-nouveau-xp-widen-cached-bo-map.patch` to invoke it for cached
+  mappings.
+- Added one-shot kind-14 tracing for the immediate triangle's vertex BO,
+  logging its buffer ID, address offset, reference access, map count, map
+  flags, and whether the upload flush succeeded.
+- Verified patch 0028 applies after 0012 and cleanly reverses. Full VFIO test
+  result pending.
+
+Relevant files: `mesa_patches/nvx_xf86drm.c`,
+`mesa_patches/xp_include/xf86drm.h`,
+`mesa_patches/0028-nouveau-xp-widen-cached-bo-map.patch`,
+`test/apply_mesa_xp_patches.sh`, `test/build_mesa_xp64.sh`,
+`test/test_full_driver.sh`, and `dist_full/nvx.inf`.
