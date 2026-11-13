@@ -1133,7 +1133,23 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   only when the targeted upload is complete and a post-upload GPU readback
   has not yet been scheduled. Other captured vertex addresses remain
   deduplicated.
-- Version bumped to `3.0.0.156`. Full VFIO result pending.
+- Full VFIO log: `test_logs/v3.0.0.156-20261113-041428.log`. The explicit
+  GLSL triangle control passed; the targeted CPU shadow still had the expected
+  positions and upload succeeded. No GPU-source readback followed it. The
+  no-depth cube probe now submitted five new GPU batches (`hardware_rendered=1`)
+  but read back zero colored pixels; the regular cube result had six new
+  batches and also zero colored pixels. The 100-frame run reported 18.7 FPS.
+  GR triangle/semaphore passed; OpenGL failed and firmware assertion count
+  reached 3.
+- The ordinary dump path is capped and address-deduplicated, so allowing a
+  recapture alone did not produce the needed post-upload readback.
+
+### Revision 3.0.0.157 — dedicated post-upload GPU readback
+
+- Schedule the immediate vertex BO readback directly in the targeted upload
+  branch, using the submission's existing post-fence download path. This
+  avoids the general vertex-dump count and address deduplication limits.
+- Version bumped to `3.0.0.157`. Full VFIO result pending.
 
 Relevant files: `mesa_patches/nvx_xf86drm.c`,
 `mesa_patches/xp_include/xf86drm.h`,
