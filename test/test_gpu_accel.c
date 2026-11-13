@@ -1355,6 +1355,15 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             typedef void (APIENTRY *PFN_GL_USE_PROGRAM)(unsigned int);
             typedef void (APIENTRY *PFN_GL_DELETE_SHADER)(unsigned int);
             typedef void (APIENTRY *PFN_GL_DELETE_PROGRAM)(unsigned int);
+            typedef void (APIENTRY *PFN_GL_GEN_QUERIES)(int, unsigned int *);
+            typedef void (APIENTRY *PFN_GL_BEGIN_QUERY)(unsigned int,
+                                                         unsigned int);
+            typedef void (APIENTRY *PFN_GL_END_QUERY)(unsigned int);
+            typedef void (APIENTRY *PFN_GL_GET_QUERY_OBJECT_UIV)(unsigned int,
+                                                                  unsigned int,
+                                                                  unsigned int *);
+            typedef void (APIENTRY *PFN_GL_DELETE_QUERIES)(int,
+                                                            const unsigned int *);
             PFN_GL_CREATE_SHADER createShader = (PFN_GL_CREATE_SHADER)
                 (directGetProcAddress ? directGetProcAddress("glCreateShader") :
                  wglGetProcAddress("glCreateShader"));
@@ -1394,6 +1403,22 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             PFN_GL_DELETE_PROGRAM deleteProgram = (PFN_GL_DELETE_PROGRAM)
                 (directGetProcAddress ? directGetProcAddress("glDeleteProgram") :
                  wglGetProcAddress("glDeleteProgram"));
+            PFN_GL_GEN_QUERIES genQueries = (PFN_GL_GEN_QUERIES)
+                (directGetProcAddress ? directGetProcAddress("glGenQueries") :
+                 wglGetProcAddress("glGenQueries"));
+            PFN_GL_BEGIN_QUERY beginQuery = (PFN_GL_BEGIN_QUERY)
+                (directGetProcAddress ? directGetProcAddress("glBeginQuery") :
+                 wglGetProcAddress("glBeginQuery"));
+            PFN_GL_END_QUERY endQuery = (PFN_GL_END_QUERY)
+                (directGetProcAddress ? directGetProcAddress("glEndQuery") :
+                 wglGetProcAddress("glEndQuery"));
+            PFN_GL_GET_QUERY_OBJECT_UIV getQueryObjectuiv =
+                (PFN_GL_GET_QUERY_OBJECT_UIV)
+                (directGetProcAddress ? directGetProcAddress("glGetQueryObjectuiv") :
+                 wglGetProcAddress("glGetQueryObjectuiv"));
+            PFN_GL_DELETE_QUERIES deleteQueries = (PFN_GL_DELETE_QUERIES)
+                (directGetProcAddress ? directGetProcAddress("glDeleteQueries") :
+                 wglGetProcAddress("glDeleteQueries"));
             static const char vertexSource[] =
                 "#version 110\n"
                 "void main() { gl_Position = gl_Vertex; }\n";
@@ -1402,6 +1427,9 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                 "void main() { gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0); }\n";
             unsigned int vertexShader = 0, fragmentShader = 0, program = 0;
             unsigned int fixedVertexProgram = 0;
+            unsigned int samplesQuery = 0, samplesPassed = 0;
+            int queryApiReady = genQueries && beginQuery && endQuery &&
+                getQueryObjectuiv && deleteQueries;
             int vertexCompiled = 0, fragmentCompiled = 0, linked = 0;
             int fixedVertexLinked = 0;
             BYTE *pixels = NULL;
@@ -1427,6 +1455,10 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                 deleteShader && deleteProgram;
             LogMsg("[MESA_GLSL_TRIANGLE] shader_api=%s\n",
                    shaderApiReady ? "ready" : "missing");
+            LogMsg("[MESA_GLSL_TRIANGLE] occlusion_query_api=%s\n",
+                   queryApiReady ? "ready" : "missing");
+            if (queryApiReady)
+                genQueries(1, &samplesQuery);
             if (shaderApiReady) {
                 const char *source = vertexSource;
                 char shaderLog[512];
@@ -1494,12 +1526,19 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                                  baselinePixel);
                     if (shaderError == GL_NO_ERROR)
                         shaderError = glGetError();
+                    if (samplesQuery)
+                        beginQuery(0x8914U, samplesQuery); /* SAMPLES_PASSED */
                     glBegin(GL_TRIANGLES);
                     glVertex3f(-0.8f, -0.8f, 0.0f);
                     glVertex3f( 0.8f, -0.8f, 0.0f);
                     glVertex3f( 0.0f,  0.8f, 0.0f);
                     glEnd();
+                    if (samplesQuery)
+                        endQuery(0x8914U);
                     glFinish();
+                    if (samplesQuery)
+                        getQueryObjectuiv(samplesQuery, 0x8866U,
+                                          &samplesPassed); /* QUERY_RESULT */
                     if (shaderError == GL_NO_ERROR)
                         shaderError = glGetError();
                     rawTargetGreen = ReadRawMesaTargetGreenPixels(
@@ -1624,6 +1663,8 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                 if (fragmentShader) deleteShader(fragmentShader);
                 if (program) deleteProgram(program);
                 if (fixedVertexProgram) deleteProgram(fixedVertexProgram);
+                if (deleteQueries && samplesQuery)
+                    deleteQueries(1, &samplesQuery);
             }
             if (pixels) free(pixels);
             int glslPass = shaderApiReady && vertexCompiled &&
@@ -1633,9 +1674,10 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                            baselinePixel[1] < 32U &&
                            baselinePixel[2] > 150U;
             glslPass = glslPass && baselinePass;
-            LogMsg("[MESA_GLSL_TRIANGLE_RESULT] %s compiled=%d/%d linked=%d baseline_pass=%d green_pixels=%u bbox=%d,%d-%d,%d readback=%dx%d baseline=%u,%u,%u,%u post_center=%u,%u,%u,%u error=0x%X\n",
+            LogMsg("[MESA_GLSL_TRIANGLE_RESULT] %s compiled=%d/%d linked=%d baseline_pass=%d samples_passed=%u green_pixels=%u bbox=%d,%d-%d,%d readback=%dx%d baseline=%u,%u,%u,%u post_center=%u,%u,%u,%u error=0x%X\n",
                    glslPass ? "PASS" : "FAIL", vertexCompiled,
-                   fragmentCompiled, linked, baselinePass, greenPixels,
+                   fragmentCompiled, linked, baselinePass, samplesPassed,
+                   greenPixels,
                    greenMinX, greenMinY, greenMaxX, greenMaxY, w, h,
                    baselinePixel[0], baselinePixel[1], baselinePixel[2],
                    baselinePixel[3], postDrawPixel[0], postDrawPixel[1],
