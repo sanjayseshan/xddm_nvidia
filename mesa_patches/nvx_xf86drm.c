@@ -86,7 +86,7 @@ static NVX_XF86DRM_STATUS nvx_drm_status;
 static uint32_t nvx_drm_fence_trace_count;
 static uint32_t nvx_drm_prep_trace_count;
 static uint32_t nvx_drm_prep_call_trace_count;
-#define NVX_DRM_VERTEX_DUMP_LIMIT 8U
+#define NVX_DRM_VERTEX_DUMP_LIMIT 16U
 static uint64_t nvx_drm_vertex_dump_addresses[NVX_DRM_VERTEX_DUMP_LIMIT];
 static uint32_t nvx_drm_vertex_dump_count;
 #endif

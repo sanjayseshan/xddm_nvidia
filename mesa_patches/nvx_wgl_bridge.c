@@ -574,7 +574,7 @@ NvxWglRecordNouveauBufferDwords(uint32_t buffer_id, uint64_t gpu_va,
                                 uint32_t offset, const uint32_t *dwords,
                                 uint32_t count, uint32_t result)
 {
-   char output[8U * 192U];
+   char output[48U * 192U];
    char line[192];
    uint32_t i, used = 0;
    HANDLE file;
