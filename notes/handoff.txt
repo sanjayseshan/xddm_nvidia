@@ -290,10 +290,11 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Next work
 
-1. Extend draw-state capture to NVC0 vertex format (`0x0458` onward), vertex
-   array setup (`0x0700` onward), and draw start/count. Compare these values
-   with Mesa NVC0 emission and establish whether input attribute and vertex
-   fetch state match the cube buffers.
+1. Resolve the `.114` trace discrepancy: source requests start method `0x0d74`,
+   but the guest log labels it `0x1d74`. Confirm the packaged ICD contains the
+   latest shim, then log the raw `0x0d74` value from the decoded batch and
+   compare it with the fetched BO and 24-vertex draw. The `.113/.114` fetch
+   bases resolve to BO `0x16`, whose shadow contains plausible cube data.
 2. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
    The failed stream is decoded above; trace the Mesa semaphore release and
    miniport completion fence through PBDMA progress, and correlate with the
@@ -309,7 +310,7 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Relevant files
 
-- Latest completed full VFIO log: `test_logs/v3.0.0.112-20261113-001254.log`
+- Latest completed full VFIO log: `test_logs/v3.0.0.114-20261113-002205.log`
 - Latest extracted Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest Mesa/Nouveau bridge excerpt: `notes/mesa-bridge-latest.txt`
 - GPFIFO submission and diagnostics: `src_driver/nvx_gsp.c`,
@@ -344,9 +345,39 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
 - Cube readback still has zero colored pixels and `[OPENGL_RESULT] FAIL`; 100
   frames took 8.5124 s (11.7 FPS). Clear readback passes. Three firmware
   assertions and the PBDMA stall remain.
-- The trace instrumentation captured `0x1160/0x1164`, which are vertex
-  attribute control methods, not the actual vertex format methods in this
-  draw packet. The packet shows format words at `0x0458/0x045c`, and vertex
-  array setup around `0x0700`; extend the state snapshot to include those
-  methods and the vertex-array start/count before interpreting input setup.
-  Full extracted trace: `notes/nouveau-trace-latest.txt`.
+- Corrected method decoding: packet headers encode method addresses divided by
+  four. Thus packet words `0x20020458` and `0x20030700` address actual methods
+  `0x1160` and `0x1c00`; the logged vertex formats and fetch state are the
+  relevant NVC0 methods. The snapshot's `0x1164` and `0x1c00/0x1c10` values
+  differ from earlier words in the bounded packet excerpt, so capture the full
+  vertex fetch state at the draw and correlate the complete submission before
+  drawing conclusions. Full extracted trace:
+  `notes/nouveau-trace-latest.txt`.
+
+### Revision 3.0.0.113 — complete cube fetch snapshot
+
+- Extended the one-time draw snapshot with the second vertex array's low GPU
+  address and `SET_VERTEX_ARRAY_START` (`0x1d74`), alongside the existing
+  attribute format and fetch stride/base registers. This lets the next trace
+  compare persistent fetch state with all setup writes in the bounded draw
+  packet and the 24-vertex draw count.
+- Full VFIO log: `test_logs/v3.0.0.113-20261113-001825.log`. XP booted on the
+  first attempt, completed benchmarks, and shut down normally. Cube readback
+  remains black; `[OPENGL_RESULT] FAIL`; animation reached 100 frames at
+  11.7 FPS.
+- The snapshot resolves both vertex fetch bases to BO `0x16`; the mapped shadow
+  contains plausible cube data. A packet decoding slip used `0x1d74`; the
+  correct method is `0x0d74`, since the method field is encoded in dwords.
+  `.114` corrects this and records the actual vertex start/count.
+
+### Revision 3.0.0.114 — vertex start trace discrepancy
+
+- Source now requests NVC0 vertex-array start method `0x0d74`; method packet
+  headers encode method offsets in dwords. However, the `.114` guest trace
+  still prints `method=1d74`, so the start value remains unverified and the
+  discrepancy needs investigation.
+- Full VFIO log: `test_logs/v3.0.0.114-20261113-002205.log`. XP booted on the
+  first attempt, ran the suite, and shut down normally. Cube remains at zero
+  colored pixels; 100 frames took 8.2670 s (12.1 FPS); `[OPENGL_RESULT] FAIL`.
+  Clear readback and the broader 2D checks pass. The draw snapshot still shows
+  rasterization enabled and plausible vertex data in BO `0x16`.
