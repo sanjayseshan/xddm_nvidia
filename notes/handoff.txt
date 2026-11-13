@@ -1,18 +1,23 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 before VFIO run `.132`.
+Updated November 13, 2026 after VFIO run `.132`; preparing `.133`.
 
 ## Current status
 
-The latest completed VFIO run `.131` booted and shut down normally, but
-`[OPENGL_RESULT] FAIL`; GLSL and fixed-function vertex triangle readback still
-show zero green pixels. The `.131` alternate target diagnostic did not find its
-BO because Mesa allocated it as generic VRAM; it did not read the actual target.
-During later cube animation, NVC0 batch submission timed out at FIFO index
-`0x1a9`, the channel faulted, and firmware assertions rose to 3. Full log:
-`test_logs/v3.0.0.131-20261113-021118.log`. Revision `.132` switches to a raw
-miniport CE download of the target BO to distinguish GL readback failure from
-missing GPU writes.
+The latest completed VFIO run `.132` booted and shut down normally, but
+`[OPENGL_RESULT] FAIL`; GLSL and fixed-function vertex triangle probes still
+produced zero green pixels. The new raw target diagnostic successfully
+downloaded Mesa's generic target allocation (BufferId 28, 1,310,720 bytes)
+through the miniport CE path and also found zero green pixels after both draws.
+This confirms the GL result matches target memory and moves the failure back to
+NVC0 execution, rasterization, or render-target state rather than GL shadow
+readback. Full log: `test_logs/v3.0.0.132-20261113-021746.log`.
+
+The cube ran 100 frames at 17.0 FPS, then the animation path timed out waiting
+for fence `0x195` at FIFO index `0x195`; the channel faulted and firmware
+assertions rose to 3. This recurring submission fault remains separate from
+the initial triangle's zero target writes. Revision `.133` only fixes the
+diagnostic callback's pointer typedef warning; it does not change rendering.
 
 The XP x64 Mesa ICD builds and selects Mesa / NV170 (OpenGL 4.3 Compatibility
 Profile, Mesa 27.0.0-devel). The run creates a native Nouveau Gallium
@@ -774,5 +779,18 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   miniport's generic CE download operation and counts green RGBA8 words. This
   works with Mesa's existing generic VRAM BO allocation.
 - The diagnostic runs after each triangle's draw fence and before GL readback.
-  It will establish whether GPU target bytes contain green pixels when
-  `glReadPixels` reports none. Full VFIO result is pending.
+  Full VFIO log: `test_logs/v3.0.0.132-20261113-021746.log`. Both draws found
+  the expected target BO but zero green pixels, matching zero in
+  `glReadPixels`; the target is read as raw bytes directly through miniport CE.
+  Draw fences and GL error checks passed, so investigate actual shader/raster
+  execution, render-target format/layout and submission state next.
+- The cube reached 100 frames at 17.0 FPS before NVC0 timed out at FIFO entry
+  `0x195` with fence `0x195` and three firmware assertions. The run's host
+  compile also warned that the test callback used `DWORD *` while its exported
+  helper uses `uint32_t *`; revision `.133` corrects those typedefs.
+
+### Revision 3.0.0.133 — clean diagnostic callback types
+
+- Aligns the test callback's pointer types with the exported ICD helper to
+  remove the incompatible-pointer warnings. Rendering is unchanged. Full VFIO
+  result is pending.

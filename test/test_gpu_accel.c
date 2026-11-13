@@ -650,7 +650,8 @@ static unsigned ReadRawMesaTargetGreenPixels(uint64_t *buffer_id,
                                               uint32_t *buffer_bytes,
                                               int *available)
 {
-    typedef int (WINAPI *PFN_READ_TARGET_RAW)(DWORD *, DWORD *, uint64_t *);
+    typedef int (WINAPI *PFN_READ_TARGET_RAW)(uint32_t *, uint32_t *,
+                                               uint64_t *);
     HMODULE icd = GetModuleHandleA("nvxogl64.dll");
     PFN_READ_TARGET_RAW readTarget = icd ?
         (PFN_READ_TARGET_RAW)GetProcAddress(
