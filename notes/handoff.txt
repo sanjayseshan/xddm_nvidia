@@ -498,11 +498,18 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   captured shadows contain 24 plausible position/color records. Both fill
   macros are `GL_FILL`; culling is disabled; shader stages VP_B/FP are enabled
   at the captured addresses. The snapshot now corresponds to the actual cube.
+- Compared the actual captured shader headers with Mesa's `nvc0_program.c`:
+  VP header word 0 is `0x20461` (the expected `0x20061 | (1 << 10)`), its
+  declared position output mask is present, and FP word 0 is `0x21462` (the
+  expected `0x20062 | (5 << 10)`) with color output mask `0xf` for target 0.
+  This rules out a wrong stage header/program base or absent basic FP color
+  output declaration; it does not prove instructions execute or that VP-to-FP
+  varying linkage is correct.
 - Despite this coherent state and completed draw fences, depth and no-depth
   cube readbacks remain black. Clear and independent GR triangle readback pass;
   `[OPENGL_RESULT] FAIL`. 100 animation frames took 8.4388 seconds (11.8 FPS).
   Firmware assertion count reaches 3 during the later animation.
-- Next, inspect the cube-bound shader headers/instructions and constant-buffer
-  contents against the vertex attribute layout, then compare emitted setup to
-  Nouveau's working NVC0 initialization/draw sequences. Keep the later FIFO
-  stall as a separate issue unless evidence ties it to the black draws.
+- Next, decode the cube-bound instructions and constant-buffer contents,
+  especially vertex output and fragment varying slots, then compare emitted
+  setup to Nouveau's working NVC0 initialization/draw sequences. Keep the later
+  FIFO stall as a separate issue unless evidence ties it to the black draws.
