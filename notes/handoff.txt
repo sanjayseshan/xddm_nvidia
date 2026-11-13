@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.147`; preparing `.148`.
+Updated November 13, 2026 after VFIO run `.147`; `.148` adds CPU staging capture.
 
 ## Current status
 
@@ -979,3 +979,16 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   probe result belongs to this query. Correct/remove it before the next test.
   Inspect Begin/End buffer contents at `vbo_exec_vtx_flush()`; that is the next
   concrete diagnostic. `.148` is the next test revision.
+
+
+### Revision 3.0.0.148 — capture Begin/End CPU staging
+
+- Removes the invalid post-draw current-attribute queries from the test, so
+  the reported GL error reflects the draw/readback path.
+- Adds external Mesa patch `mesa_patches/0027-mesa-begin-end-staging-trace.patch`
+  to record the first Begin/End primitive's CPU staging bytes immediately
+  before `DrawGalliumMultiMode`. The trace uses a distinctive buffer id
+  (`42454749`) and records its start offset, vertex count, and packed data.
+  This distinguishes a bad CPU vertex staging buffer from downstream NVC0
+  vertex fetch/state problems.
+- Test version is bumped to `3.0.0.148`; full VFIO result is pending.

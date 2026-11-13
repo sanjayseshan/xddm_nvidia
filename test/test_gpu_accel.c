@@ -1516,10 +1516,6 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                 (diagnosticGetProcAddress ? diagnosticGetProcAddress("glEnd") : NULL);
             PFN_GL_VERTEX3F icdVertex3f = (PFN_GL_VERTEX3F)
                 (diagnosticGetProcAddress ? diagnosticGetProcAddress("glVertex3f") : NULL);
-            PFN_GL_GET_VERTEX_ATTRIB_FV getVertexAttribfv =
-                (PFN_GL_GET_VERTEX_ATTRIB_FV)
-                (directGetProcAddress ? directGetProcAddress("glGetVertexAttribfv") :
-                 wglGetProcAddress("glGetVertexAttribfv"));
             static const char vertexSource[] =
                 "#version 110\n"
                 "varying vec4 capturedPosition;\n"
@@ -1737,8 +1733,6 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                         unsigned immediateSamples = 0;
                         unsigned immediatePrimitives = 0;
                         GLfloat immediatePositions[12] = {0};
-                        GLfloat immediateCurrentVertex[4] = {0};
-                        GLfloat immediateCurrentAttrib[4] = {0};
                         unsigned immediateGreen = 0;
                         GLenum immediateError = GL_NO_ERROR;
                         glClearColor(0.0f, 0.0f, 0.75f, 1.0f);
@@ -1754,10 +1748,6 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                         glVertex3f( 0.8f, -0.8f, 0.0f);
                         glVertex3f( 0.0f,  0.8f, 0.0f);
                         glEnd();
-                        glGetFloatv(0x0B02U, immediateCurrentVertex);
-                        if (getVertexAttribfv)
-                            getVertexAttribfv(0, 0x8626U,
-                                              immediateCurrentAttrib);
                         if (transformFeedbackReady)
                             endTransformFeedback();
                         if (generatedQuery)
@@ -1787,7 +1777,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                                 pixels[pixel * 4U] < 32U &&
                                 pixels[pixel * 4U + 2U] < 32U)
                                 immediateGreen++;
-                        LogMsg("[MESA_GLSL_IMMEDIATE_RESULT] primitives_generated=%u samples_passed=%u green_pixels=%u tf=%d p0=%.6f,%.6f,%.6f,%.6f p1=%.6f,%.6f,%.6f,%.6f p2=%.6f,%.6f,%.6f,%.6f current_vertex=%.6f,%.6f,%.6f,%.6f attrib0=%.6f,%.6f,%.6f,%.6f attrib_query=%d error=0x%X\n",
+                        LogMsg("[MESA_GLSL_IMMEDIATE_RESULT] primitives_generated=%u samples_passed=%u green_pixels=%u tf=%d p0=%.6f,%.6f,%.6f,%.6f p1=%.6f,%.6f,%.6f,%.6f p2=%.6f,%.6f,%.6f,%.6f error=0x%X\n",
                             immediatePrimitives, immediateSamples,
                             immediateGreen, transformFeedbackReady,
                             immediatePositions[0], immediatePositions[1],
@@ -1796,16 +1786,9 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                             immediatePositions[6], immediatePositions[7],
                             immediatePositions[8], immediatePositions[9],
                             immediatePositions[10], immediatePositions[11],
-                            immediateCurrentVertex[0], immediateCurrentVertex[1],
-                            immediateCurrentVertex[2], immediateCurrentVertex[3],
-                            immediateCurrentAttrib[0], immediateCurrentAttrib[1],
-                            immediateCurrentAttrib[2], immediateCurrentAttrib[3],
-                            getVertexAttribfv != NULL,
                             immediateError);
                         if (icdBegin && icdEnd && icdVertex3f) {
                             GLfloat icdPositions[12] = {0};
-                            GLfloat icdCurrentVertex[4] = {0};
-                            GLfloat icdCurrentAttrib[4] = {0};
                             unsigned icdSamples = 0, icdPrimitives = 0;
                             unsigned icdGreen = 0;
                             GLenum icdError = GL_NO_ERROR;
@@ -1821,10 +1804,6 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                             icdVertex3f( 0.8f, -0.8f, 0.0f);
                             icdVertex3f( 0.0f,  0.8f, 0.0f);
                             icdEnd();
-                            glGetFloatv(0x0B02U, icdCurrentVertex);
-                            if (getVertexAttribfv)
-                                getVertexAttribfv(0, 0x8626U,
-                                                  icdCurrentAttrib);
                             if (transformFeedbackReady)
                                 endTransformFeedback();
                             if (generatedQuery)
@@ -1854,7 +1833,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                                     pixels[pixel * 4U] < 32U &&
                                     pixels[pixel * 4U + 2U] < 32U)
                                     icdGreen++;
-                            LogMsg("[MESA_GLSL_IMMEDIATE_ICD_RESULT] primitives_generated=%u samples_passed=%u green_pixels=%u tf=%d p0=%.6f,%.6f,%.6f,%.6f p1=%.6f,%.6f,%.6f,%.6f p2=%.6f,%.6f,%.6f,%.6f current_vertex=%.6f,%.6f,%.6f,%.6f attrib0=%.6f,%.6f,%.6f,%.6f attrib_query=%d error=0x%X\n",
+                            LogMsg("[MESA_GLSL_IMMEDIATE_ICD_RESULT] primitives_generated=%u samples_passed=%u green_pixels=%u tf=%d p0=%.6f,%.6f,%.6f,%.6f p1=%.6f,%.6f,%.6f,%.6f p2=%.6f,%.6f,%.6f,%.6f error=0x%X\n",
                                 icdPrimitives, icdSamples, icdGreen,
                                 transformFeedbackReady,
                                 icdPositions[0], icdPositions[1],
@@ -1863,17 +1842,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                                 icdPositions[6], icdPositions[7],
                                 icdPositions[8], icdPositions[9],
                                 icdPositions[10], icdPositions[11],
-                                icdCurrentVertex[0], icdCurrentVertex[1],
-                                icdCurrentVertex[2], icdCurrentVertex[3],
-                                icdCurrentAttrib[0], icdCurrentAttrib[1],
-                                icdCurrentAttrib[2], icdCurrentAttrib[3],
-                                getVertexAttribfv != NULL, icdError);
-                            LogMsg("[MESA_GLSL_IMMEDIATE_ICD_CURRENT] vertex=%.6f,%.6f,%.6f,%.6f attrib0=%.6f,%.6f,%.6f,%.6f attrib_query=%d\n",
-                                icdCurrentVertex[0], icdCurrentVertex[1],
-                                icdCurrentVertex[2], icdCurrentVertex[3],
-                                icdCurrentAttrib[0], icdCurrentAttrib[1],
-                                icdCurrentAttrib[2], icdCurrentAttrib[3],
-                                getVertexAttribfv != NULL);
+                                icdError);
                         } else {
                             LogMsg("[MESA_GLSL_IMMEDIATE_ICD_RESULT] unavailable proc_address=%d\n",
                                    diagnosticGetProcAddress != NULL);

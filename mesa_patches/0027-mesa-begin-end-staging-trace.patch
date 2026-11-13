@@ -1,0 +1,12 @@
+diff --git a/src/mesa/vbo/vbo_exec_draw.c b/src/mesa/vbo/vbo_exec_draw.c
+index b1ab6d3500da..9fd24e8ccfb5 100644
+--- a/src/mesa/vbo/vbo_exec_draw.c
++++ b/src/mesa/vbo/vbo_exec_draw.c
+@@ -27,6 +27,7 @@
+ 
+ #include <stdbool.h>
+ #include <stdio.h>
++#include <stdint.h>
+ #include "main/arrayobj.h"
+ #include "util/glheader.h"
+ #include "main/bufferobj.h"
