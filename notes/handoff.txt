@@ -1189,8 +1189,23 @@ Relevant files: `mesa_patches/nvx_xf86drm.c`,
 - Record the cube position array's CPU shadow and schedule a fenced GPU readback
   for the same range, so the next run can determine whether its quad failure
   comes from stale input data or later raster/framebuffer state.
-- This is a diagnostic revision; the full VFIO run is pending. Do not treat
-  Phase 2C as complete until hardware output and the cube are verified.
+- Full VFIO log: `test_logs/v3.0.0.158-20261113-043352.log`. Host tests,
+  MinGW builds, the 705-step XP x64 Nouveau WGL ICD build, package import
+  audit, guest boot, and clean shutdown all completed. The GR triangle and 2D
+  checks passed, but OpenGL failed: full-target and depth probes read black,
+  and the cube had zero colored pixels.
+- Kind-16 traces confirm mapped BO16 input ranges were uploaded, including the
+  cube position range at offset `0x414` for `0x240` bytes and color range at
+  `0x408`. CPU shadow dumps contain the expected cube coordinates. The
+  planned fenced GPU comparison did not appear because the cube batch timed
+  out first: fence `0x6d` remained zero, `channel_faulted=1`, and the captured
+  143-dword batch failed to complete. Firmware assertions reached 3. Thus the
+  vertex-range upload path works, but the underlying NVC0 draw stream/channel
+  failure remains earlier than framebuffer readback.
+- Next: inspect the captured failed stream and PBDMA fault state around the
+  first cube draw, isolate which method or state faults the channel, then retry
+  the fenced position readback once the draw submission completes. Phase 2C
+  remains incomplete.
 - Relevant files: `mesa_patches/nvx_nouveau_bo.c`,
   `mesa_patches/nvx_nouveau_bo.h`, `mesa_patches/nvx_xf86drm.c`,
   `test/test_full_driver.sh`, and `dist_full/nvx.inf`.
