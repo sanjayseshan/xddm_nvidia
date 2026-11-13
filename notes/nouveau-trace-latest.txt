@@ -1,14 +1,10 @@
-Latest Nouveau/OpenGL trace excerpt: test_logs/v3.0.0.127-20261113-013445.log
+Latest Nouveau/OpenGL trace excerpt: test_logs/v3.0.0.128-20261113-014022.log
 [MESA_GLSL_TRIANGLE_RESULT] FAIL compiled=1/1 linked=1 baseline_pass=1 green_pixels=0 bbox=632,453--1,-1 readback=632x453 baseline=0,0,191,255 post_center=0,0,191,255 error=0x0
 [MESA_GLSL_FFVS_RESULT] linked=1 green_pixels=0 readback=632x453 baseline=0,0,191,255 post_center=0,0,191,255 error=0x0
-[MESA_GPU_CLEAR_BACK_READBACK] pixel=32,64,191 error=0x0
-[MESA_GPU_CLEAR_BACK_RESULT] PASS
-NVC0 GLSL VS+FS draw: index=2 primitive=4 start=0 count=3 fence=0x13 observed=0x13
-NVC0 GLSL VS+FS draw: index=3 primitive=4 start=0 count=3 fence=0x14 observed=0x14
-NVC0 fixed-function VS+GLSL FS draw: index=4 primitive=4 start=0 count=3 fence=0x21 observed=0x21
-NVC0 fixed-function VS+GLSL FS draw: index=5 primitive=4 start=0 count=3 fence=0x22 observed=0x22
-GLSL VS+FS draw state and shader dumps:
-Nouveau draw state trace_rev=124 draw=GLSL_TRIANGLES/3 entries=64
+NVC0 GLSL VS+FS draws: primitive=4 start=0 count=3 fences=0x13,0x14 (completed)
+NVC0 fixed-function VS+GLSL FS draws: primitive=4 start=0 count=3 fences=0x21,0x22 (completed)
+GLSL VS+FS state:
+Nouveau draw state trace_rev=128 draw=GLSL_TRIANGLES/3 entries=64
 Nouveau draw state draw=GLSL_TRIANGLES/3 index=0 method_dec=892 value=00000001
 Nouveau draw state draw=GLSL_TRIANGLES/3 index=1 method_dec=2048 value=00000000
 Nouveau draw state draw=GLSL_TRIANGLES/3 index=2 method_dec=2052 value=162e0000
@@ -73,7 +69,7 @@ Nouveau draw state draw=GLSL_TRIANGLES/3 index=60 method_dec=8536 value=22e9ee80
 Nouveau draw state draw=GLSL_TRIANGLES/3 index=61 method_dec=14360 value=00001b02
 Nouveau draw state draw=GLSL_TRIANGLES/3 index=62 method_dec=14368 value=00001b02
 Nouveau draw state draw=GLSL_TRIANGLES/3 index=63 method_dec=14424 value=00000000
-GLSL triangle vertex input:
+GLSL VS+FS vertex input:
 Nouveau vertex dump buffer=00000016 gpu=00000000:160900e0 offset=224 dwords=72 source=1
 Nouveau vertex data offset=224: bf4ccccd bf4ccccd 00000000 3f4ccccd bf4ccccd 00000000
 Nouveau vertex data offset=248: 00000000 3f4ccccd 00000000 00000000 00000000 00000000
@@ -87,7 +83,7 @@ Nouveau vertex data offset=416: 00000000 00000000 00000000 00000000 00000000 000
 Nouveau vertex data offset=440: 00000000 00000000 00000000 00000000 00000000 00000000
 Nouveau vertex data offset=464: 00000000 00000000 00000000 00000000 00000000 00000000
 Nouveau vertex data offset=488: 00000000 00000000 00000000 00000000 00000000 00000000
-GLSL VS+FS shader stage dumps:
+GLSL VS+FS shader dumps:
 Nouveau shader dump draw=GLSL_TRIANGLES/3 stage=1 buffer=00000009 gpu=00000000:22e9efc0 offset=520128 dwords=128 source=0 draw_snapshot=1
 Nouveau shader data offset=520128: 00020461 00000000 00000000 00000000 000ff000 00000000
 Nouveau shader data offset=520152: 0000000f 00000000 00000000 00000000 00000000 00000000
@@ -157,3 +153,153 @@ Nouveau shader data offset=520240: 00000000 00000000 00000000 00000000 ff007321 
 Nouveau shader data offset=520264: 00000c00 000e1e00 ff007322 00007000 00000cff 0011c400
 Nouveau shader data offset=520288: 0000794d 00000000 03800000 03ffde00 00000000 00000000
 Nouveau shader data offset=520312: 00000000 00000000
+Fixed-function VS + GLSL FS state:
+Nouveau draw state trace_rev=128 draw=FFVS_GLSL_FS_TRIANGLES/3 entries=64
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=0 method_dec=892 value=00000001
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=1 method_dec=2048 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=2 method_dec=2052 value=162e0000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=3 method_dec=2056 value=00000a00
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=4 method_dec=2060 value=000001c5
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=5 method_dec=2064 value=000000cf
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=6 method_dec=2068 value=00001000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=7 method_dec=2560 value=42000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=8 method_dec=2564 value=c2000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=9 method_dec=2568 value=3f000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=10 method_dec=2572 value=42000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=11 method_dec=2576 value=43d28000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=12 method_dec=2580 value=3f000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=13 method_dec=2584 value=00006420
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=14 method_dec=3072 value=00400000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=15 method_dec=3076 value=00400185
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=16 method_dec=3080 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=17 method_dec=3084 value=3f800000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=18 method_dec=3584 value=00000001
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=19 method_dec=3588 value=40000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=20 method_dec=3592 value=40000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=21 method_dec=3984 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=22 method_dec=4084 value=02780000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=23 method_dec=4088 value=01c50000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=24 method_dec=3500 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=25 method_dec=3504 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=26 method_dec=4448 value=38400000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=27 method_dec=4452 value=3a400040
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=28 method_dec=4636 value=0fac6881
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=29 method_dec=4812 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=30 method_dec=4816 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=31 method_dec=4836 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=32 method_dec=4840 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=33 method_dec=4872 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=34 method_dec=4876 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=35 method_dec=4956 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=36 method_dec=4960 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=37 method_dec=5436 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=38 method_dec=5656 value=00000004
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=39 method_dec=6424 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=40 method_dec=6428 value=00000901
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=41 method_dec=6432 value=00000405
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=42 method_dec=6596 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=43 method_dec=6656 value=00001111
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=44 method_dec=7168 value=0000100c
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=45 method_dec=7172 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=46 method_dec=7176 value=16090104
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=47 method_dec=7180 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=48 method_dec=7184 value=0000101c
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=49 method_dec=7188 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=50 method_dec=7192 value=16090000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=51 method_dec=3444 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=52 method_dec=8256 value=00000011
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=53 method_dec=8276 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=54 method_dec=8280 value=22e9ec40
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=55 method_dec=8320 value=00000020
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=56 method_dec=8340 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=57 method_dec=8344 value=22e9f2c0
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=58 method_dec=8512 value=00000051
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=59 method_dec=8532 value=00000000
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=60 method_dec=8536 value=22e9eb00
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=61 method_dec=14360 value=00001b02
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=62 method_dec=14368 value=00001b02
+Nouveau draw state draw=FFVS_GLSL_FS_TRIANGLES/3 index=63 method_dec=14424 value=00000000
+Fixed-function VS + GLSL FS vertex input:
+Nouveau vertex dump buffer=00000016 gpu=00000000:16090104 offset=260 dwords=72 source=1
+Nouveau vertex data offset=260: bf4ccccd bf4ccccd 00000000 3f4ccccd bf4ccccd 00000000
+Nouveau vertex data offset=284: 00000000 3f4ccccd 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=308: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=332: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=356: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=380: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=404: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=428: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=452: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=476: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=500: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau vertex data offset=524: 00000000 00000000 00000000 00000000 00000000 00000000
+Fixed-function VS + GLSL FS shader dumps:
+Nouveau shader dump draw=FFVS_GLSL_FS_TRIANGLES/3 stage=1 buffer=00000009 gpu=00000000:22e9ec40 offset=519232 dwords=128 source=0 draw_snapshot=1
+Nouveau shader data offset=519232: 00020461 00000000 00000000 00000000 000ff000 00000000
+Nouveau shader data offset=519256: 0000000f 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519280: 00000000 0000f000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519304: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519328: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519352: 00000000 00000000 ff007321 000080ff 00000c00 000e1e00
+Nouveau shader data offset=519376: 00047a20 00000000 00410000 041fc200 00057a20 00000100
+Nouveau shader data offset=519400: 00410000 040fc200 00067a20 00000200 00410000 040fc200
+Nouveau shader data offset=519424: 00007a20 00000300 00410000 000fc600 01047a23 00000400
+Nouveau shader data offset=519448: 00010004 040fc200 01057a23 00000500 00010005 040fc200
+Nouveau shader data offset=519472: 01067a23 00000600 00010006 040fc200 01007a23 00000700
+Nouveau shader data offset=519496: 00010000 000fc600 02017a23 00000800 00010004 040fc200
+Nouveau shader data offset=519520: 02047a23 00000900 00010005 040fc200 02057a23 00000a00
+Nouveau shader data offset=519544: 00010006 040fc200 02067a23 00000b00 00010000 000fc600
+Nouveau shader data offset=519568: 03007a23 00000c00 00010001 040fc200 03017a23 00000d00
+Nouveau shader data offset=519592: 00010004 040fc200 03027a23 00000e00 00010005 040fc200
+Nouveau shader data offset=519616: 03037a23 00000f00 00010006 000fcc00 ff007322 00007000
+Nouveau shader data offset=519640: 00000cff 0001c400 0000794d 00000000 03800000 03ffde00
+Nouveau shader data offset=519664: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519688: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519712: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519736: 00000000 00000000
+Nouveau shader dump draw=FFVS_GLSL_FS_TRIANGLES/3 stage=2 buffer=00000009 gpu=00000000:22e9f2c0 offset=520896 dwords=128 source=0 draw_snapshot=1
+Nouveau shader data offset=520896: 00020861 06000000 01000000 60000000 000ff000 00000000
+Nouveau shader data offset=520920: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520944: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520968: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=520992: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=521016: 00000000 00000000 0000794d 00000000 03800000 03ffde00
+Nouveau shader data offset=521040: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=521064: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=521088: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=521112: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=521136: 00000000 00000000 00000000 00000000 00020461 00000000
+Nouveau shader data offset=521160: 00000000 00000000 000ff000 00000000 000000ff 00000000
+Nouveau shader data offset=521184: 00000000 00000000 00000000 00000000 00000000 0000f000
+Nouveau shader data offset=521208: 00000000 00000000 00000000 000f0000 00000000 00000000
+Nouveau shader data offset=521232: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=521256: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=521280: ff007321 000080ff 00000c00 000e1e00 00047a20 00000000
+Nouveau shader data offset=521304: 00410000 041fc200 00057a20 00000100 00410000 040fc200
+Nouveau shader data offset=521328: 00067a20 00000200 00410000 040fc200 00007a20 00000300
+Nouveau shader data offset=521352: 00410000 000fc600 01047a23 00000400 00010004 040fc200
+Nouveau shader data offset=521376: 01057a23 00000500 00010005 040fc200 01067a23 00000600
+Nouveau shader data offset=521400: 00010006 040fc200
+Nouveau shader dump draw=FFVS_GLSL_FS_TRIANGLES/3 stage=5 buffer=00000009 gpu=00000000:22e9eb00 offset=518912 dwords=128 source=0 draw_snapshot=1
+Nouveau shader data offset=518912: 00021462 00000000 00000000 00000000 00000000 80000000
+Nouveau shader data offset=518936: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=518960: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=518984: 0000000f 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519008: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519032: 00000000 00000000 00007802 00000000 00000f00 000fc200
+Nouveau shader data offset=519056: 00017802 3f800000 00000f00 000fc200 00027802 00000000
+Nouveau shader data offset=519080: 00000f00 000fc200 00037802 3f800000 00000f00 000fc200
+Nouveau shader data offset=519104: 0000794d 00000000 03800000 03ffde00 00000000 00000000
+Nouveau shader data offset=519128: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519152: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519176: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519200: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519224: 00000000 00000000 00020461 00000000 00000000 00000000
+Nouveau shader data offset=519248: 000ff000 00000000 0000000f 00000000 00000000 00000000
+Nouveau shader data offset=519272: 00000000 00000000 00000000 0000f000 00000000 00000000
+Nouveau shader data offset=519296: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519320: 00000000 00000000 00000000 00000000 00000000 00000000
+Nouveau shader data offset=519344: 00000000 00000000 00000000 00000000 ff007321 000080ff
+Nouveau shader data offset=519368: 00000c00 000e1e00 00047a20 00000000 00410000 041fc200
+Nouveau shader data offset=519392: 00057a20 00000100 00410000 040fc200 00067a20 00000200
+Nouveau shader data offset=519416: 00410000 040fc200

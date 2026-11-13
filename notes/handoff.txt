@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.127`.
+Updated November 13, 2026 after VFIO run `.128`.
 
 ## Current status
 
@@ -327,7 +327,11 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
    `.127` reuses the same green fragment shader without the GLSL vertex shader;
    that draw also leaves the blue target unchanged. This makes the custom GLSL
    vertex shader an unlikely cause and points toward common fragment execution,
-   rasterization, or draw submission state.
+   rasterization, or draw submission state. `.128` records that second draw's
+   state and shader addresses separately. Target, viewport, `SP_SELECT`, and
+   color-mask state match the VS+FS draw; the selected vertex program changes
+   as expected, but no output appears. The shared fragment/raster/draw setup is
+   now the leading area to inspect.
 2. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
    The failed stream is decoded above; trace the Mesa semaphore release and
    miniport completion fence through PBDMA progress, and correlate with the
@@ -343,7 +347,7 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Relevant files
 
-- Latest completed full VFIO log: `test_logs/v3.0.0.127-20261113-013445.log`
+- Latest completed full VFIO log: `test_logs/v3.0.0.128-20261113-014022.log`
 - Latest extracted Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest Mesa/Nouveau bridge excerpt: `notes/mesa-bridge-latest.txt`
 - GPFIFO submission and diagnostics: `src_driver/nvx_gsp.c`,
@@ -662,3 +666,23 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   Firmware assertions rise to 3 during later animation. Next capture the
   fragment-only draw's state and shader bindings independently to see whether
   its shared fragment stage and output state match the GLSL VS+FS draw.
+
+### Revision 3.0.0.128 — capture fixed-function VS draw
+
+- Adds independent draw-state and shader-stage snapshots for the second
+  three-vertex TRIANGLES submission, which uses Mesa's fixed-function vertex
+  stage with the constant-green GLSL fragment shader.
+- Full VFIO log: `test_logs/v3.0.0.128-20261113-014022.log`. XP booted on
+  attempt 1, completed the suite, and shut down normally. Package audits
+  passed; `[OPENGL_RESULT] FAIL`.
+- The separate `FFVS_GLSL_FS_TRIANGLES/3` capture shows the same RT
+  (`0x162e0000`), viewport, `SP_SELECT(1)=0x11`, `SP_SELECT(5)=0x51`, and RGBA
+  mask as the GLSL VS+FS draw. The selected vertex program address changes
+  from `0x22e9efc0` to `0x22e9ec40`, while both draws complete their fences and
+  leave the pre-cleared blue center unchanged. The fragment program binding
+  also points at its separately captured program image. This narrows the
+  failure to state or execution shared after vertex processing, though correct
+  shader execution is not yet proven.
+- Cube remains black; 100 frames took 7.1623 s (14.0 FPS); firmware assertions
+  reach 3 during later animation. Next compare shared fragment shader headers,
+  fragment output routing, and raster setup to upstream NVC0 state emission.

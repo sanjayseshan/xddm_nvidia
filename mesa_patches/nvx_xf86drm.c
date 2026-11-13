@@ -84,11 +84,14 @@ struct nvx_drm_device_slot {
    uint32_t next_handle;
 #if defined(_WIN32) || defined(_WIN64)
    uint64_t shader_address[6];
+   uint64_t shader_triangle_vertex_address;
    uint32_t shader_address_mask;
    uint32_t shader_draw_snapshot_done;
    uint32_t shader_triangle_snapshot_done;
+   uint32_t shader_ffvs_snapshot_done;
    uint32_t gr_state[0x4000U / sizeof(uint32_t)];
    uint32_t gr_draw_state_snapshot_done;
+   uint32_t gr_ffvs_draw_state_snapshot_done;
 #endif
    struct nvx_drm_bo_slot buffers[NVX_DRM_BUFFER_SLOTS];
    struct nvx_drm_object_slot objects[NVX_DRM_OBJECT_SLOTS];
@@ -220,12 +223,18 @@ nvx_drm_capture_shader_addresses_locked(
       cursor += count + 1U;
    }
 
-   /* Capture the standalone GLSL triangle and cube independently. The GLSL
-    * probe precedes the cube and must not consume its diagnostic snapshot. */
+   /* Capture the programmable VS+FS triangle, the fragment-only triangle,
+    * and the later cube independently. */
    if (draw_seen && draw_primitive == 4U && draw_vertex_count == 3U &&
        !device->shader_triangle_snapshot_done) {
       draw_kind = 2U;
       device->shader_triangle_snapshot_done = 1U;
+      device->shader_triangle_vertex_address = device->shader_address[1];
+   } else if (draw_seen && draw_primitive == 4U && draw_vertex_count == 3U &&
+       !device->shader_ffvs_snapshot_done && device->shader_address[1] &&
+       device->shader_address[1] != device->shader_triangle_vertex_address) {
+      draw_kind = 3U;
+      device->shader_ffvs_snapshot_done = 1U;
    } else if (draw_seen && draw_primitive == 7U && draw_vertex_count == 24U &&
        !device->gr_draw_state_snapshot_done &&
        (device->shader_address_mask & ((1U << 1) | (1U << 2) | (1U << 5))) ==
@@ -233,7 +242,8 @@ nvx_drm_capture_shader_addresses_locked(
       draw_kind = 1U;
       device->gr_draw_state_snapshot_done = 1U;
    }
-   if (draw_kind) {
+   if (draw_kind && (draw_kind != 3U ||
+                     !device->gr_ffvs_draw_state_snapshot_done)) {
       uint32_t values[sizeof(trace_methods) / sizeof(trace_methods[0])];
       uint32_t i;
       for (i = 0; i < sizeof(trace_methods) / sizeof(trace_methods[0]); i++)
@@ -241,6 +251,8 @@ nvx_drm_capture_shader_addresses_locked(
       NvxWglRecordNouveauDrawState(trace_methods, values,
          (uint32_t)(sizeof(trace_methods) / sizeof(trace_methods[0])),
          draw_kind);
+      if (draw_kind == 3U)
+         device->gr_ffvs_draw_state_snapshot_done = 1U;
    }
 
    /* Program addresses are persistent 3D state. A later draw batch often
@@ -248,6 +260,7 @@ nvx_drm_capture_shader_addresses_locked(
    if (!draw_kind ||
        (draw_kind == 1U && device->shader_draw_snapshot_done) ||
        (draw_kind == 2U && device->shader_triangle_snapshot_done == 0U) ||
+       (draw_kind == 3U && device->shader_ffvs_snapshot_done == 0U) ||
        (draw_kind == 1U &&
         (device->shader_address_mask & ((1U << 1) | (1U << 2) | (1U << 5))) !=
         ((1U << 1) | (1U << 2) | (1U << 5))))
