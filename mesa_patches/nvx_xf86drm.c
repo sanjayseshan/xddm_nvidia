@@ -676,9 +676,25 @@ nvx_drm_submit_pushbuf(int fd,
           device->shader_triangle_input_vertex_address -
              slot->bo.allocation.GpuVa < slot->bo.allocation.Bytes) {
          uint32_t flush_ok = 0U;
-         if (slot->bo.map_count &&
-             (slot->bo.map_access & NVX_NOUVEAU_BO_WRITE))
+         uint32_t offset = (uint32_t)(
+            device->shader_triangle_input_vertex_address -
+            slot->bo.allocation.GpuVa);
+#if defined(_WIN32) || defined(_WIN64)
+         if (slot->bo.shadow && offset <= slot->bo.allocation.Bytes &&
+             12U * sizeof(uint32_t) <= slot->bo.allocation.Bytes - offset)
+            NvxWglRecordNouveauBufferDwords(
+               (uint32_t)references[i].BufferId,
+               device->shader_triangle_input_vertex_address, offset,
+               (const uint32_t *)(slot->bo.shadow + offset), 12U, 1U);
+#endif
+         /* This probe targets the immediate triangle's CPU-fed vertex range.
+          * Its shadow can be written through Mesa's cached map without a
+          * second map call carrying NOUVEAU_BO_WR. Ensure that exact source
+          * BO is uploaded before the GPU consumes its direct address. */
+         if (slot->bo.map_count && slot->bo.shadow) {
+            slot->bo.map_access |= NVX_NOUVEAU_BO_WRITE;
             flush_ok = (uint32_t)NvxNouveauBoFlush(&slot->bo);
+         }
          NvxWglRecordNouveauPushbufItem(14U, 0U,
             (uint32_t)references[i].BufferId,
             (uint32_t)(device->shader_triangle_input_vertex_address -

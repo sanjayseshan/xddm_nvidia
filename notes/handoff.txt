@@ -1092,6 +1092,17 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   vertex BO and check the fenced GPU readback; otherwise trace where the
   expected Begin/End data stops reaching that shadow.
 
+### Revision 3.0.0.154 — inspect and flush the immediate CPU shadow
+
+- For the one captured immediate-triangle position BO, record its first 12
+  shadow dwords before submission, mark that BO writable, and upload that
+  exact shadow before the GPU consumes its direct address. This tests whether
+  the expected vertices are present in CPU shadow and whether making that
+  shadow visible fixes the fenced GPU readback; it does not change other BOs.
+- Version bumped to `3.0.0.154`. Full VFIO result pending.
+- Relevant files: `mesa_patches/nvx_xf86drm.c`, `test/test_full_driver.sh`,
+  `dist_full/nvx.inf`, and this handoff.
+
 Relevant files: `mesa_patches/nvx_xf86drm.c`,
 `mesa_patches/xp_include/xf86drm.h`,
 `mesa_patches/0028-nouveau-xp-widen-cached-bo-map.patch`,
