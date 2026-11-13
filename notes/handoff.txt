@@ -381,3 +381,8 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   colored pixels; 100 frames took 8.2670 s (12.1 FPS); `[OPENGL_RESULT] FAIL`.
   Clear readback and the broader 2D checks pass. The draw snapshot still shows
   rasterization enabled and plausible vertex data in BO `0x16`.
+- The `.114` run still prints start-method label `1d74` despite the packaged
+  trace-method table containing `0x0d74`. The `.115` revision will log the
+  method's table index and an explicit trace build marker, then compare those
+  with the packaged DLL and guest output to determine whether this is a format
+  issue or stale runtime code.

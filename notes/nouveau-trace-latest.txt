@@ -1,6 +1,6 @@
 Latest Nouveau/OpenGL diagnostic excerpt from test_logs/v3.0.0.114-20261113-002205.log
-The `.114` VFIO run booted on the first attempt, ran the suite, and shut XP down normally. Cube readback still has zero colored pixels; 100 frames took 8.2670 s (12.1 FPS); `[OPENGL_RESULT] FAIL`.
-Raster, target, viewport, scissor, and vertex BO observations match `.113`. The revised source requests method `0x0d74`, but the guest trace still prints `method=1d74`; this indicates a logger/build-path discrepancy, so the reported start value is not treated as valid evidence yet.
+The `.114` VFIO run booted on the first attempt, completed the guest suite, and shut down normally. Cube readback still has zero colored pixels; 100 frames took 8.2670 s (12.1 FPS); `[OPENGL_RESULT] FAIL`.
+Raster, target, viewport, scissor, and vertex BO observations match `.113`. The compiled trace-method table contains `0x0d74`, but the guest emits label `1d74`; treat that start-method row as unresolved pending a raw-index logger check.
 All three stage program snapshots below are associated with the first draw after cached SP_ADDRESS binds were observed; each was downloaded after its submission fence.
 [MESA_GPU_CLEAR_BACK_READBACK] pixel=32,64,191 error=0x0
 [MESA_GPU_CLEAR_BACK_RESULT] PASS
@@ -34,6 +34,8 @@ Cube draw state methods:
 Cube draw state methods:
 
 Cube draw state methods as logged in `.114` (start-method label is under investigation):
+
+Cube draw state methods as logged in `.114` (start-method label is unresolved):
 Nouveau cube draw state method=037c value=00000001
 Nouveau cube draw state method=0800 value=00000000
 Nouveau cube draw state method=0804 value=15f40000
