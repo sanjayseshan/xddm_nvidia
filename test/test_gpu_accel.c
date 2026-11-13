@@ -1529,15 +1529,12 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
 
         /* Keep the cube's GPU evidence independent of the depth probe above. */
         DeleteFileA("C:\\test_accel\\mesa_bridge.log");
-        BYTE *cubePixels = NULL, *backPixels = NULL, *softCubePixels = NULL;
+        BYTE *cubePixels = NULL, *backPixels = NULL;
         SIZE_T cubeBytes = (SIZE_T)w * (SIZE_T)h * 4;
-        unsigned coloredPixels = 0, referenceColored = 0,
-                 backColored = 0,
+        unsigned coloredPixels = 0, backColored = 0, noDepthColored = 0,
                  facePixels[6] = {0,0,0,0,0,0},
-                 referenceFaces[6] = {0,0,0,0,0,0},
                  minX = (unsigned)w, minY = (unsigned)h, maxX = 0, maxY = 0,
-                 p, visibleFaces = 0, differentPixels = 0;
-        int referenceValid = 0;
+                 p, visibleFaces = 0;
         GLenum error;
         unsigned batchesBefore = mesaGpuBridgeBatchCount;
         glViewport(0, 0, w, h);
@@ -1579,50 +1576,10 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             glReadBuffer(GL_FRONT);
             glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, cubePixels);
             error = glGetError();
-            softCubePixels = (BYTE *)HeapAlloc(GetProcessHeap(), 0, cubeBytes);
-            if (error == GL_NO_ERROR && softCubePixels &&
-                SetEnvironmentVariableA("NVX_MESA_GALLIUM_BRIDGE", "0")) {
-                /* Mesa softpipe is the reference image for the same cube.
-                 * Compare the complete GPU-backed frame against it so a few
-                 * colored pixels cannot hide missing or overlapping faces. */
-                glViewport(0, 0, w, h);
-                glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
-                glClearDepth(1.0);
-                glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-                DrawCube(17.0f);
-                glFinish();
-                if (glGetError() == GL_NO_ERROR && (directDdiCurrent ? directSwapBuffers(hdc) : SwapBuffers(hdc))) {
-                    glReadBuffer(GL_FRONT);
-                    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
-                                 softCubePixels);
-                    referenceValid = glGetError() == GL_NO_ERROR;
-                }
-                SetEnvironmentVariableA("NVX_MESA_GALLIUM_BRIDGE", "1");
-                if (referenceValid) {
-                    for (p = 0; p < (unsigned)(w * h); p++) {
-                        BYTE rr = softCubePixels[p * 4];
-                        BYTE rg = softCubePixels[p * 4 + 1];
-                        BYTE rb = softCubePixels[p * 4 + 2];
-                        int dr = (int)cubePixels[p * 4] - softCubePixels[p * 4];
-                        int dg = (int)cubePixels[p * 4 + 1] - softCubePixels[p * 4 + 1];
-                        int db = (int)cubePixels[p * 4 + 2] - softCubePixels[p * 4 + 2];
-                        if (dr < 0) dr = -dr;
-                        if (dg < 0) dg = -dg;
-                        if (db < 0) db = -db;
-                        if (dr > 32 || dg > 32 || db > 32)
-                            differentPixels++;
-                        if (rr > 200 || rg > 200 || rb > 200) {
-                            referenceColored++;
-                            if (rr > 200 && rg < 32 && rb < 32) referenceFaces[0]++;
-                            else if (rg > 200 && rr < 32 && rb < 32) referenceFaces[1]++;
-                            else if (rb > 200 && rr < 32 && rg < 32) referenceFaces[2]++;
-                            else if (rr > 200 && rg > 200 && rb < 32) referenceFaces[3]++;
-                            else if (rg > 200 && rb > 200 && rr < 32) referenceFaces[4]++;
-                            else if (rr > 200 && rb > 200 && rg < 32) referenceFaces[5]++;
-                        }
-                    }
-                }
-            }
+            /* Changing an environment variable cannot replace the renderer
+             * for a context that already exists.  Treat readback pixels as
+             * the evidence; a second draw in this context is not a softpipe
+             * reference. */
             for (p = 0; p < (unsigned)(w * h); p++) {
                 BYTE r = cubePixels[p * 4 + 0];
                 BYTE g = cubePixels[p * 4 + 1];
@@ -1645,33 +1602,25 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             for (p = 0; p < 6; p++)
                 if (facePixels[p] >= 32) visibleFaces++;
             DumpMesaBridgeTrace();
-            if (error == GL_NO_ERROR && referenceValid &&
-                differentPixels <= (unsigned)(w * h / 100) &&
+            if (error == GL_NO_ERROR &&
                 coloredPixels >= 2000 &&
                 visibleFaces >= 2 && maxX - minX >= 40 && maxY - minY >= 40 &&
                 mesaGpuBridgeBatchCount > batchesBefore) {
-                LogMsg("[MESA_GPU_CUBE_RESULT] PASS colored_pixels=%u bbox=%u,%u-%u,%u faces=%u rgb_counts=%u,%u,%u,%u,%u,%u reference_colored=%u reference_faces=%u,%u,%u,%u,%u,%u reference_diff=%u new_gpu_batches=%u\n",
+                LogMsg("[MESA_GPU_CUBE_RESULT] PASS colored_pixels=%u bbox=%u,%u-%u,%u faces=%u rgb_counts=%u,%u,%u,%u,%u,%u comparison=none new_gpu_batches=%u\n",
                        coloredPixels, minX, minY, maxX, maxY, visibleFaces,
                        facePixels[0], facePixels[1], facePixels[2], facePixels[3],
-                       facePixels[4], facePixels[5], referenceColored,
-                       referenceFaces[0], referenceFaces[1], referenceFaces[2],
-                       referenceFaces[3], referenceFaces[4], referenceFaces[5],
-                       differentPixels,
+                       facePixels[4], facePixels[5],
                        mesaGpuBridgeBatchCount - batchesBefore);
             } else {
-                LogMsg("[MESA_GPU_CUBE_RESULT] FAIL colored_pixels=%u bbox=%u,%u-%u,%u faces=%u rgb_counts=%u,%u,%u,%u,%u,%u reference_valid=%u reference_colored=%u reference_faces=%u,%u,%u,%u,%u,%u reference_diff=%u gpu_batches=%u error=0x%X\n",
+                LogMsg("[MESA_GPU_CUBE_RESULT] FAIL colored_pixels=%u bbox=%u,%u-%u,%u faces=%u rgb_counts=%u,%u,%u,%u,%u,%u gpu_batches=%u error=0x%X\n",
                        coloredPixels, minX, minY, maxX, maxY, visibleFaces,
                        facePixels[0], facePixels[1], facePixels[2], facePixels[3],
-                       facePixels[4], facePixels[5], referenceValid,
-                       referenceColored, referenceFaces[0], referenceFaces[1],
-                       referenceFaces[2], referenceFaces[3], referenceFaces[4],
-                       referenceFaces[5], differentPixels,
+                       facePixels[4], facePixels[5],
                        mesaGpuBridgeBatchCount - batchesBefore, error);
                 failures++;
             }
         }
-        if (cubePixels && softCubePixels) {
-            unsigned noDepthDiff = 0;
+        if (cubePixels) {
             GLenum noDepthError = GL_NO_ERROR;
             unsigned noDepthBatches = mesaGpuBridgeBatchCount;
             glDisable(GL_DEPTH_TEST);
@@ -1686,61 +1635,34 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                 glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
                              cubePixels);
                 noDepthError = glGetError();
+                if (noDepthError == GL_NO_ERROR) {
+                    for (p = 0; p < (unsigned)(w * h); p++)
+                        if (cubePixels[p * 4] > 200 ||
+                            cubePixels[p * 4 + 1] > 200 ||
+                            cubePixels[p * 4 + 2] > 200)
+                            noDepthColored++;
+                }
             }
             DumpMesaBridgeTrace();
             {
                 unsigned noDepthBatchesAfterGpu = mesaGpuBridgeBatchCount;
                 int noDepthHardwareRendered =
                     noDepthBatchesAfterGpu > noDepthBatches;
-                int referenceRendered = 0;
-                if (noDepthError == GL_NO_ERROR &&
-                SetEnvironmentVariableA("NVX_MESA_GALLIUM_BRIDGE", "0")) {
-                glClear(GL_COLOR_BUFFER_BIT);
-                DrawCube(17.0f);
-                glFinish();
-                noDepthError = glGetError();
-            if (noDepthError == GL_NO_ERROR && !(directDdiCurrent ? directSwapBuffers(hdc) : SwapBuffers(hdc)))
-                    noDepthError = (GLenum)GetLastError();
-                if (noDepthError == GL_NO_ERROR) {
-                    glReadBuffer(GL_FRONT);
-                    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE,
-                                 softCubePixels);
-                    noDepthError = glGetError();
-                    referenceRendered = noDepthError == GL_NO_ERROR;
-                }
-                SetEnvironmentVariableA("NVX_MESA_GALLIUM_BRIDGE", "1");
-                }
-                if (noDepthError == GL_NO_ERROR && noDepthHardwareRendered &&
-                    referenceRendered) {
-                for (p = 0; p < (unsigned)(w * h); p++) {
-                    int dr = (int)cubePixels[p * 4] - softCubePixels[p * 4];
-                    int dg = (int)cubePixels[p * 4 + 1] - softCubePixels[p * 4 + 1];
-                    int db = (int)cubePixels[p * 4 + 2] - softCubePixels[p * 4 + 2];
-                    if (dr < 0) dr = -dr;
-                    if (dg < 0) dg = -dg;
-                    if (db < 0) db = -db;
-                    if (dr > 32 || dg > 32 || db > 32)
-                        noDepthDiff++;
-                }
-                }
-                LogMsg("[MESA_GPU_CUBE_NODEPTH] %s reference_diff=%u error=0x%X new_gpu_batches=%u hardware_rendered=%u reference_rendered=%u\n",
+                LogMsg("[MESA_GPU_CUBE_NODEPTH] %s colored_pixels=%u error=0x%X new_gpu_batches=%u hardware_rendered=%u\n",
                    noDepthError == GL_NO_ERROR &&
                    noDepthHardwareRendered &&
-                   referenceRendered &&
-                   noDepthDiff <= (unsigned)(w * h / 100) ? "PASS" : "FAIL",
-                   noDepthDiff, noDepthError,
+                   noDepthColored >= 2000 ? "PASS" : "FAIL",
+                   noDepthColored, noDepthError,
                    noDepthBatchesAfterGpu - noDepthBatches,
-                   noDepthHardwareRendered, referenceRendered);
+                   noDepthHardwareRendered);
                 if (noDepthError != GL_NO_ERROR ||
-                noDepthDiff > (unsigned)(w * h / 100) ||
-                    !noDepthHardwareRendered || !referenceRendered)
+                    noDepthColored < 2000 || !noDepthHardwareRendered)
                     failures++;
             }
             glEnable(GL_DEPTH_TEST);
         }
         if (cubePixels) HeapFree(GetProcessHeap(), 0, cubePixels);
         if (backPixels) HeapFree(GetProcessHeap(), 0, backPixels);
-        if (softCubePixels) HeapFree(GetProcessHeap(), 0, softCubePixels);
         glViewport(0, 0, w, h);
     }
 

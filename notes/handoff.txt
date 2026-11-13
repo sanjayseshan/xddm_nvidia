@@ -1,74 +1,88 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 12, 2026 after VFIO run `.100`.
+Updated November 12, 2026 after VFIO run `.101`.
 
 ## Current status
 
-The XP x64 Mesa ICD builds and selects `Mesa` / `NV170` (`4.3 Compatibility
-Profile`, Mesa 27.0.0-devel). The run creates one native Nouveau Gallium
-`pipe_screen` and submits Nouveau pushbuf batches through the NVX channel.
-The full VM reaches the OpenGL test and exits, but hardware rendering is not
-working: `[MESA_GPU_CUBE_RESULT] FAIL colored_pixels=0` and
-`[OPENGL_RESULT] FAIL`. No cube frame has been proven. The status trace reports
-`screens=1 callbacks=0`; the native screen is created, while the WGL hybrid
-callbacks remain unused.
+The XP x64 Mesa ICD builds and selects Mesa / NV170 (OpenGL 4.3 Compatibility
+Profile, Mesa 27.0.0-devel). The run creates a native Nouveau Gallium
+`pipe_screen`, allocates its channel and BOs, and submits batches through the
+NVX channel. Hardware rendering is still not working: draw probes and the cube
+read back black, and `[OPENGL_RESULT] FAIL`. No cube frame has been proven.
+The trace reports `screens=1 callbacks=0`; callbacks are the unused WGL hybrid
+path and do not represent the native Nouveau screen's activity.
 
-The current blocker is before render-target readback. The NVC0 miniport batch
-at GPFIFO index `0x37` times out, its completion fence remains zero, and the
-channel is marked faulted. Later submission requests are rejected. Therefore
-black readback is not yet evidence of a separate readback bug. The standalone
-native GR triangle path passed in earlier runs, but it does not validate this
-Nouveau submission stream.
+The `.101` run shows readback is not generally returning zeros:
+`[MESA_GPU_CLEAR_BACK_READBACK] pixel=32,64,191` and
+`[MESA_GPU_CLEAR_BACK_RESULT] PASS`. But multiple draw probes and the cube
+still read black with `GL_NO_ERROR`, including the no-depth cube. This narrows
+the immediate issue to draw/raster output or draw-target state; it does not yet
+prove the draw commands executed correctly. The earlier `.100` cube readback
+also preceded its later submission timeout, so that timeout did not explain
+the earlier black frame.
+
+The cube test's former "softpipe reference" was invalid: it changed an
+environment variable after creating the GL context, then rendered again
+through that same context. That cannot switch an existing Mesa screen from
+Nouveau to softpipe. The comparison and environment toggle have been removed.
+Cube acceptance now relies on actual colored pixel count, visible color faces,
+bounding box, GL error state, and newly submitted GPU batches. The no-depth
+check requires at least 2,000 colored pixels and new GPU batches, so two black
+frames cannot pass. In `.101` both depth and no-depth cases fail at 0 colored
+pixels.
 
 ## Latest hardware evidence
 
-- Full VFIO run: `test_logs/v3.0.0.100-20261112-223346.log`
-- Version: `3.0.0.100`; build, XP import/subsystem audit, and guest boot
-  completed. OpenGL failed and the script exited nonzero.
-- Mesa's test output reports `OpenGL Vendor: Mesa`, `OpenGL Renderer: NV170`,
-  and `OpenGL Version: 4.3 (Compatibility Profile) Mesa 27.0.0-devel`.
-- The Nouveau trace reports `Native Nouveau Gallium pipe_screen created`,
-  `screens=1`, `callbacks=0`, and batches submitted. Cube diagnostic reports
-  `gpu_batches=11`, `colored_pixels=0`, `reference_colored=0`.
-- At timeout, FIFO entry `0x37` points to push VA `0x18790000`, with 124
-  submitted dwords; USERD GET is `0x37`, PUT is `0x38`, and fence `0x237`
-  remains zero. The logged descriptor is visible in memory.
-- With the corrected PBDMA status register offset (`base + 0x100`), STATUS is
-  `0x10011111`. GP_FETCH remains `0x37`; TOP_GET, PB_FETCH, PB_GET, and PB_PUT
-  all remain `0x187801CC`. PBDMA interrupts are zero and CHRAM state is
-  `0x11C`. Preserve these as raw register evidence; do not infer individual
-  STATUS bit meanings without matching the GA104 register documentation.
-- The run reports firmware assertion counts reaching 3 after the stalled batch.
-  This differs from older successful graphics bring-up runs and should be
-  investigated alongside channel fault handling.
+- Full VFIO log: `test_logs/v3.0.0.101-20261112-224706.log`
+- Version `3.0.0.101`: host checks, driver/display build, Mesa ICD build, XP
+  import/subsystem audit, and guest boot completed. XP ran the full test and
+  shut down normally. The runner exited 1 because hardware OpenGL was not
+  proven.
+- Mesa reports `OpenGL Vendor: Mesa`, `OpenGL Renderer: NV170`, and
+  `OpenGL Version: 4.3 (Compatibility Profile) Mesa 27.0.0-devel`.
+- Native Nouveau reports one Gallium screen, device PCI `2488`, chipset `0170`,
+  channel allocation success (`c56f0002`), GEM buffer allocation, and GPU batch
+  activity. This proves backend setup and submission plumbing, not successful
+  rasterization.
+- Back-buffer clear readback succeeds with `(32,64,191)`. Full-target draw
+  readback, depth probe, cube front/back reads, and no-depth cube all contain
+  zero colored pixels with no GL error. The strengthened cube checks fail as
+  intended; no actual cube frame is proven.
+- The log reports that the separate GR pipeline triangle draw, readback, and
+  semaphore completed. This miniport probe does not validate Nouveau's draw
+  packets or raster output.
+- Firmware assertion count remains at 1 in `.101`; no Nouveau submit timeout
+  was found. The `.100` GPFIFO `0x37` timeout remains a prior-run observation,
+  not the immediate `.101` blocker.
+- The animation reports 100 frames at 18.4 FPS, but a black image means this is
+  not successful rendered-frame evidence.
 
 ## Next work
 
-1. Resolve why GP_FETCH does not consume entry `0x37`, and identify the PBDMA
-   fault source. Use the full failed push dump and relevant GA104 PBDMA,
-   RAMFC/USERD, channel-switch, and fault registers. The descriptor was visible;
-   correlate the stalled push's GPU VA, mapping, channel context, and method
-   stream rather than assuming readback is the first failure.
-2. Check firmware assertion and CHRAM/PBDMA fault transitions on the first
-   failing submission. Avoid treating later rejected submissions as independent
-   root causes once the channel is already faulted.
-3. Once push submission and its fence complete, separately validate render
-   target writes and readback synchronization. Keep a rendered pixel count and
-   frame result as the acceptance evidence.
-4. Increment the final version component for each real-hardware run. Keep Mesa
+1. Trace why native Nouveau batches submit but NVC0 draw probes leave the
+   target black. Compare emitted framebuffer, vertex input, shader, viewport,
+   primitive, and raster state against a known working NVC0/NVK sequence.
+   Follow one minimal draw from Gallium state emission through reloc
+   translation to GPU completion, using the `.101` pushbuf capture.
+2. Separate output stages with progressively smaller Nouveau GPU tests: first
+   NVC0 clear, then a minimal supported triangle, then Mesa's shader draw.
+   Read the same target after each fence to locate where output disappears.
+3. Keep the `.100` timeout analysis secondary unless it recurs; `.101` completed
+   its GR fence probe and reported no Nouveau submit timeout.
+4. Increment the final version component for every real-hardware run. Keep Mesa
    changes outside the Mesa submodule under `mesa_patches/`.
 
 ## Relevant files
 
-- Latest full VFIO log: `test_logs/v3.0.0.100-20261112-223346.log`
+- Latest full VFIO log: `test_logs/v3.0.0.101-20261112-224706.log`
 - Latest copied Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest Mesa/Nouveau bridge excerpt: `notes/mesa-bridge-latest.txt`
-- GPFIFO submission, timeout capture, and register diagnostics:
-  `src_driver/nvx_gsp.c`, `src_driver/include/nvx_nvidia_open_shim.h`
+- GPFIFO submission and diagnostics: `src_driver/nvx_gsp.c`,
+  `src_driver/include/nvx_nvidia_open_shim.h`
 - Nouveau WGL bridge, BO mapping, winsys, and DRM shims:
   `mesa_patches/nvx_wgl_bridge.c`, `mesa_patches/nvx_nouveau_bo.c`,
   `mesa_patches/nvx_winsys.c`, `mesa_patches/nvx_xf86drm.c`
-- OpenGL cube/readback test: `test/test_gpu_accel.c`
+- OpenGL cube/readback checks: `test/test_gpu_accel.c`
 - Mesa patch/build flow: `test/apply_mesa_xp_patches.sh`,
   `test/build_mesa_xp64.sh`
 - Full build and VFIO runner: `test/test_full_driver.sh`
