@@ -1773,9 +1773,10 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                                fixedVertexCenter[0], fixedVertexCenter[1],
                                fixedVertexCenter[2], fixedVertexCenter[3],
                                fixedVertexError);
-                        if (rawTargetGreen >= 200U ||
-                            fixedRawTargetGreen >= 200U)
-                            LogMsg("[MESA_GLSL_RAW_TARGET] hardware readback found triangle pixels missed by glReadPixels\n");
+                        if (rawTargetGreen == greenPixels && greenPixels >= 200U)
+                            LogMsg("[MESA_GLSL_RAW_TARGET] CE readback agrees with glReadPixels\n");
+                        else if (rawTargetGreen >= 200U)
+                            LogMsg("[MESA_GLSL_RAW_TARGET] CE readback found triangle pixels; glReadPixels count differs\n");
                         if (!fixedVertexLinked ||
                             fixedVertexBaseline[2] < 150U ||
                             fixedVertexGreen < 200U ||
@@ -1786,6 +1787,43 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                                fixedVertexLinked, pixels ? "ready" : "missing",
                                fixedVertexError);
                         failures++;
+                    }
+                    if (fixedVertexLinked && pixels && drawArrays) {
+                        GLenum arrayError;
+                        unsigned arrayGreen = 0;
+                        glViewport(0, 0, 64, 64);
+                        glMatrixMode(GL_PROJECTION);
+                        glLoadIdentity();
+                        glMatrixMode(GL_MODELVIEW);
+                        glLoadIdentity();
+                        glDisable(GL_DEPTH_TEST);
+                        glDisable(GL_CULL_FACE);
+                        glDisable(GL_BLEND);
+                        glDisable(GL_SCISSOR_TEST);
+                        glReadBuffer(GL_BACK);
+                        glClearColor(0.0f, 0.0f, 0.75f, 1.0f);
+                        glClear(GL_COLOR_BUFFER_BIT);
+                        useProgram(fixedVertexProgram);
+                        glEnableClientState(GL_VERTEX_ARRAY);
+                        glVertexPointer(3, GL_FLOAT, 0, triangleVertices);
+                        drawArrays(GL_TRIANGLES, 0, 3);
+                        glDisableClientState(GL_VERTEX_ARRAY);
+                        glFinish();
+                        arrayError = glGetError();
+                        glReadPixels(0, 0, w, h, GL_RGBA,
+                                     GL_UNSIGNED_BYTE, pixels);
+                        if (arrayError == GL_NO_ERROR)
+                            arrayError = glGetError();
+                        for (pixel = 0; arrayError == GL_NO_ERROR &&
+                             pixel < (unsigned)w * (unsigned)h; pixel++)
+                            if (pixels[pixel * 4U + 1U] > 200U &&
+                                pixels[pixel * 4U] < 32U &&
+                                pixels[pixel * 4U + 2U] < 32U)
+                                arrayGreen++;
+                        LogMsg("[MESA_GLSL_FFVS_ARRAY_RESULT] green_pixels=%u error=0x%X\n",
+                               arrayGreen, arrayError);
+                        if (arrayGreen < 200U || arrayError != GL_NO_ERROR)
+                            failures++;
                     }
                     useProgram(0);
                 }

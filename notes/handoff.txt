@@ -1,30 +1,30 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.141`; preparing `.142`.
+Updated November 13, 2026 after VFIO run `.142`; preparing `.143`.
 
 ## Current status
 
-The latest completed VFIO run `.141` booted and shut down normally, but
-`[OPENGL_RESULT] FAIL`. Raw CE readback confirms the exact 632x453 draw target
-is all blue after the draw. Queries report `primitives_generated=1` and
-`samples_passed=0`, with no GL error. Transform feedback captured three
-`(0,0,0,1)` positions from the GLSL probe, although it submitted three distinct
-vertices. This identifies vertex input as the next boundary to isolate; either
-the immediate-mode input is not reaching the shader or feedback is reporting
-zeroed input. Revision `.142` switches the probe to an explicit attribute 0
-array and `glDrawArrays`, while retaining transform feedback. Full `.141` log:
-`test_logs/v3.0.0.141-20261113-025956.log`.
+The latest completed VFIO run `.142` booted and shut down normally. The
+standalone GLSL triangle now passes on the hardware path: transform feedback
+captured all three intended positions, the sample query returned 1,352, and
+both `glReadPixels` and direct CE readback found 1,352 green pixels on the
+exact 632x453 target. This confirms shader execution, rasterization, color
+write, and readback for an explicit attribute array. Overall
+`[OPENGL_RESULT] FAIL` remains because the Mesa/Nouveau fixed-function cube
+draws still produce zero colored pixels, with and without depth. Revision
+`.143` compares fixed-function immediate mode against a legacy client vertex
+array to isolate the failing fixed-function input path. Full `.142` log:
+`test_logs/v3.0.0.142-20261113-030348.log`.
 
-The cube ran 100 frames at 15.7 FPS, then the animation path timed out waiting
-for fence `0x15f` at FIFO index `0x15f`; the channel faulted and firmware
-assertions rose to 3. This recurring submission fault remains separate from
-the initial triangle's zero pixels. The callback type warning has been fixed.
+The cube test had no colored pixels in its depth or no-depth draw. Animation
+reached 100 frames at 16.9 FPS, then timed out at FIFO index/fence `0x137`;
+firmware assertions reached 3. The callback type warning has been fixed.
 
 The XP x64 Mesa ICD builds and selects Mesa / NV170 (OpenGL 4.3 Compatibility
 Profile, Mesa 27.0.0-devel). The run creates a native Nouveau Gallium
 `pipe_screen`, allocates its channel and BOs, and submits batches through the
-NVX channel. Hardware rendering is still not working: the cube readback is
-black and `[OPENGL_RESULT] FAIL`. No cube frame has been proven. `.120` proved
+NVX channel. The simple GLSL triangle is now proven on hardware; the
+fixed-function cube remains black and `[OPENGL_RESULT] FAIL`. No cube frame has been proven. `.120` proved
 the 24-vertex cube batches complete their release fences, but its one-time
 state snapshot actually captured an earlier small QUADS probe. Revision
 `.121` fixes the snapshot trigger to require exactly QUADS/24 before recording
@@ -892,5 +892,19 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
 - Replaces compatibility immediate-mode input for the GLSL probe with an
   explicit `inputPosition` attribute bound to location 0 and a three-vertex
   client array submitted through `glDrawArrays`. Transform feedback remains
-  enabled to confirm the values received by the shader. Full VFIO result is
-  pending.
+  enabled to confirm the values received by the shader.
+- Full VFIO log: `test_logs/v3.0.0.142-20261113-030348.log`. The GLSL triangle
+  passed with correct transform feedback, 1,352 passed samples, and matching
+  1,352-pixel GPU and CE readbacks. The separate fixed-function immediate-mode
+  triangle and cube remain black. The depth and no-depth cube each had zero
+  colored pixels; animation reached 100 frames at 16.9 FPS before timeout at
+  FIFO/fence `0x137`, with 3 firmware assertions.
+
+### Revision 3.0.0.143 — compare fixed-function vertex inputs
+
+- Keeps the existing fixed-function immediate-mode triangle result and adds
+  the same fixed-function vertex shader draw using a three-vertex client array
+  with `glVertexPointer` and `glDrawArrays`. This distinguishes immediate-mode
+  input handling from generated fixed-function shader execution. Also corrects
+  the CE readback message so it reports agreement when pixel counts match.
+  Full VFIO result is pending.
