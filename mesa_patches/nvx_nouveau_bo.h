@@ -46,6 +46,10 @@ int NvxNouveauBoBuildRelocation(const NVX_NOUVEAU_BO *bo,
 void *NvxNouveauBoMap(NVX_NOUVEAU_BO *bo, uint32_t access);
 /* Publish writes from a persistent CPU mapping before a GPU submission. */
 int NvxNouveauBoFlush(NVX_NOUVEAU_BO *bo);
+/* Upload a CPU-shadow range consumed as NVC0 vertex input. Mesa may modify a
+ * cached map without widening its original map access flags. */
+int NvxNouveauBoFlushRange(NVX_NOUVEAU_BO *bo, uint64_t offset,
+                           uint64_t bytes);
 int NvxNouveauBoUnmap(NVX_NOUVEAU_BO *bo);
 int NvxNouveauBoDestroy(NVX_NOUVEAU_BO *bo);
 

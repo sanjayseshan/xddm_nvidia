@@ -1180,3 +1180,17 @@ Relevant files: `mesa_patches/nvx_xf86drm.c`,
 `mesa_patches/0028-nouveau-xp-widen-cached-bo-map.patch`,
 `test/apply_mesa_xp_patches.sh`, `test/build_mesa_xp64.sh`,
 `test/test_full_driver.sh`, and `dist_full/nvx.inf`.
+
+### Revision 3.0.0.158 — targeted NVC0 vertex-array visibility probe
+
+- Capture the current NVC0 draw state before resolving its direct vertex-array
+  addresses. For each enabled vertex array, upload only `stride * vertex_count`
+  bytes from the mapped CPU shadow, preserving the map's original access flags.
+- Record the cube position array's CPU shadow and schedule a fenced GPU readback
+  for the same range, so the next run can determine whether its quad failure
+  comes from stale input data or later raster/framebuffer state.
+- This is a diagnostic revision; the full VFIO run is pending. Do not treat
+  Phase 2C as complete until hardware output and the cube are verified.
+- Relevant files: `mesa_patches/nvx_nouveau_bo.c`,
+  `mesa_patches/nvx_nouveau_bo.h`, `mesa_patches/nvx_xf86drm.c`,
+  `test/test_full_driver.sh`, and `dist_full/nvx.inf`.

@@ -260,6 +260,25 @@ NvxNouveauBoFlush(NVX_NOUVEAU_BO *bo)
 }
 
 int
+NvxNouveauBoFlushRange(NVX_NOUVEAU_BO *bo, uint64_t offset, uint64_t bytes)
+{
+   if (!bo || !bo->references || !bo->map_count || !bo->shadow || !bytes ||
+       offset > bo->allocation.Bytes ||
+       bytes > (uint64_t)bo->allocation.Bytes - offset ||
+       offset > UINT32_MAX || bytes > UINT32_MAX || (offset & 3U) ||
+       (bytes & 3U))
+      return 0;
+   if (!NvxWinsysUploadBuffer(bo->device, bo->allocation.BufferId,
+                              bo->allocation.Bytes, (uint32_t)offset,
+                              bo->shadow + (size_t)offset,
+                              (uint32_t)bytes))
+      return 0;
+   bo->contents_valid = 1U;
+   bo->shadow_fence = bo->last_fence;
+   return 1;
+}
+
+int
 NvxNouveauBoUnmap(NVX_NOUVEAU_BO *bo)
 {
    int result = 1;
