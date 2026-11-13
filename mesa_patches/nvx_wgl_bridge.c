@@ -591,9 +591,10 @@ NvxWglRecordNouveauDrawState(const uint32_t *methods, const uint32_t *values,
    {
       const char *label = draw_kind == 2U ? "GLSL_TRIANGLES/3" :
                           draw_kind == 3U ? "FFVS_GLSL_FS_TRIANGLES/3" :
+                          draw_kind == 4U ? "GLSL_IMMEDIATE_TRIANGLES/3" :
                                             "QUADS/24";
       int length = wsprintfA(line,
-         "Nouveau draw state trace_rev=129 draw=%s entries=%lu\r\n",
+         "Nouveau draw state trace_rev=130 draw=%s entries=%lu\r\n",
          label, (unsigned long)count);
       if (length > 0 && (uint32_t)length <= sizeof(output) - used) {
          memcpy(output + used, line, (size_t)length);
@@ -604,7 +605,8 @@ NvxWglRecordNouveauDrawState(const uint32_t *methods, const uint32_t *values,
       int length = wsprintfA(line,
          "Nouveau draw state draw=%s index=%lu method_dec=%lu value=%08lx\r\n",
          draw_kind == 2U ? "GLSL_TRIANGLES/3" :
-         draw_kind == 3U ? "FFVS_GLSL_FS_TRIANGLES/3" : "QUADS/24",
+         draw_kind == 3U ? "FFVS_GLSL_FS_TRIANGLES/3" :
+         draw_kind == 4U ? "GLSL_IMMEDIATE_TRIANGLES/3" : "QUADS/24",
          (unsigned long)i, (unsigned long)methods[i],
          (unsigned long)values[i]);
       if (length <= 0 || (uint32_t)length > sizeof(output) - used)

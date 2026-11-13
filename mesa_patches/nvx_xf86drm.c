@@ -90,6 +90,7 @@ struct nvx_drm_device_slot {
    uint32_t shader_address_mask;
    uint32_t shader_draw_snapshot_done;
    uint32_t shader_triangle_snapshot_done;
+   uint32_t shader_triangle_input_snapshot_done;
    uint32_t shader_ffvs_snapshot_done;
    uint32_t gr_state[0x4000U / sizeof(uint32_t)];
    uint32_t gr_draw_state_snapshot_done;
@@ -262,6 +263,20 @@ nvx_drm_capture_shader_addresses_locked(
          draw_kind);
       if (draw_kind == 3U)
          device->gr_ffvs_draw_state_snapshot_done = 1U;
+   }
+   /* The first GLSL triangle is the passing explicit-array control. Capture
+    * the next GLSL triangle separately; the test submits its Begin/End
+    * diagnostic with the same program and primitive, but a distinct VAO. */
+   if (!draw_kind && draw_seen && draw_primitive == 4U &&
+       draw_vertex_count == 3U && device->shader_triangle_snapshot_done &&
+       !device->shader_triangle_input_snapshot_done) {
+      uint32_t values[sizeof(trace_methods) / sizeof(trace_methods[0])];
+      uint32_t i;
+      for (i = 0; i < sizeof(trace_methods) / sizeof(trace_methods[0]); i++)
+         values[i] = device->gr_state[trace_methods[i] / sizeof(uint32_t)];
+      NvxWglRecordNouveauDrawState(trace_methods, values,
+         (uint32_t)(sizeof(trace_methods) / sizeof(trace_methods[0])), 4U);
+      device->shader_triangle_input_snapshot_done = 1U;
    }
 
    /* Program addresses are persistent 3D state. A later draw batch often

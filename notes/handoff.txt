@@ -1,34 +1,27 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.149`; preparing `.150` GPU fetch comparison.
+Updated November 13, 2026 after VFIO run `.149`; `.150` captures the immediate draw state.
 
 ## Current status
 
-The latest completed VFIO run `.147` booted and shut down normally. The
-standalone GLSL triangle passes on hardware: transform feedback captured all
-three intended positions, the sample query returned 1,352, and both
-`glReadPixels` and direct CE readback found 1,352 green pixels on the exact
-632x453 target. The fixed-function shader path also draws correctly from a
-client vertex array (1,352 green pixels). In contrast, GLSL and fixed-function
-Begin/End input still produce zero positions/samples, and the immediate-mode
-cube remains black with and without depth.
+The latest completed VFIO run `.149` booted and shut down normally. The
+explicit GLSL client-array triangle passes on the RTX 3070 with 1,352 green
+pixels, confirmed by query, `glReadPixels`, and direct CE readback. CPU tracing
+now proves that the Begin/End path stages the expected three positions and
+that those bytes are present in the GPU-visible BO shadow at VA `0x160900e0`
+(offset 224). Yet transform feedback receives `(0,0,0,1)` for each vertex.
+The remaining fault is downstream in Gallium vertex-element or buffer binding,
+addressing, or GPU fetch. The `.149` trace captured NVC0 state only for the
+passing array control, not the following immediate draw.
 
-The `.147` current-state query did not answer the intended question. The enum
-used as `GL_CURRENT_VERTEX` (`0x0B02`) is actually `GL_CURRENT_NORMAL`, and
-`glGetVertexAttribfv(0, GL_CURRENT_VERTEX_ATTRIB)` is invalid in this Mesa
-compatibility context because attribute zero aliases the current vertex. The
-resulting `0x502` is from the diagnostic query, not proof that the draw itself
-raised an error. Remove/fix these queries and inspect Mesa's Begin/End staging
-buffer at `vbo_exec_vtx_flush()` to find why the shader receives zero input.
-The `.144` submit-time writable-shadow flush is active (trace kind 13) but did
-not fix it; `.146` already showed opengl32 and direct-ICD dispatch behave the
-same. Full `.147` log: `test_logs/v3.0.0.147-20261113-032753.log`.
-
-The cube test had no colored pixels in its depth or no-depth draw. Animation
-reached 100 frames at 25.4 FPS, then timed out at FIFO index/fence `0x81`;
-firmware assertion count reached 3. The separate Ampere GR triangle and
-semaphore probe still completes. The OpenGL suite remains failed and no cube
-frame is proven. Next test version is `.148`.
+The `.150` revision adds a separately labeled NVC0 snapshot for the immediate
+GLSL triangle, including vertex formats, array addresses, strides, target, and
+shader bindings for comparison with the array draw. Full `.149` log:
+`test_logs/v3.0.0.149-20261113-033901.log`; `.150` hardware result is pending.
+The depth and no-depth cube remain black. In `.149`, animation reached 100
+frames in 5.1758 seconds (19.3 FPS), then timed out at FIFO/fence `0xdf`;
+firmware assertions reached 3. The separate GR triangle and semaphore probe
+passed. `[OPENGL_RESULT]` remains FAIL and no cube frame is proven.
 
 The XP x64 Mesa ICD builds and selects Mesa / NV170 (OpenGL 4.3 Compatibility
 Profile, Mesa 27.0.0-devel). The run creates a native Nouveau Gallium
@@ -1000,20 +993,10 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   vertex bytes before the Gallium draw callback.
 
 
-### Revision 3.0.0.149 — correct Begin/End staging capture
-
-- Repairs `0027` to include the actual call at `vbo_exec_vtx_flush()`, capturing
-  up to 256 dwords from the first queued primitive through the WGL trace helper.
-  The prior `.148` patch included only `<stdint.h>` and emitted no CPU staging
-  data; this was caught by inspecting the linked `libmesa.a` object and the
-  extracted guest trace.
-- Removes the stray invalid query from the OpenGL probe (validated in `.148`),
-  and bumps the package/test version to `3.0.0.149`. Hardware result pending.
-
-
 ### Revision 3.0.0.149 — verify CPU Begin/End vertex staging
 
-- Corrected patch `0027` is applied during the Mesa build and the linked
+- Fixes patch `0027`; `.148` had only included `<stdint.h>` and did not capture
+  data. The corrected patch is applied during the Mesa build and the linked
   `libmesa.a` object references `NvxWglRecordNouveauBufferDwords`. The guest
   trace now contains 109 Begin/End staging dumps. Three-vertex GLSL immediate
   draws show the expected CPU values: `-0.8,-0.8,0`, `0.8,-0.8,0`, and
@@ -1031,3 +1014,17 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   (19.3 FPS), then timed out at FIFO/fence `0xdf`; firmware assertions
   reached 3. The GR triangle and semaphore passed.
 - Next test version: `3.0.0.150`.
+
+
+### Revision 3.0.0.150 — capture the immediate draw's NVC0 state
+
+- The `.149` trace proves the immediate triangle's expected coordinates are
+  present both in Mesa's Begin/End staging buffer and in the GPU-visible BO
+  shadow at VA `0x160900e0` (offset 224). The one existing `GLSL_TRIANGLES/3`
+  NVC0 snapshot belongs to the earlier passing explicit-array control.
+- Adds a separate bounded snapshot for the next GLSL triangle with the same
+  program/primitive, labeled `GLSL_IMMEDIATE_TRIANGLES/3`. It records the same
+  vertex attribute formats, array start addresses, strides, target, and shader
+  bindings, allowing direct comparison to the passing draw. All custom changes
+  remain in `mesa_patches/`; the Mesa submodule is unchanged.
+- Test/package version is bumped to `3.0.0.150`; VFIO result pending.
