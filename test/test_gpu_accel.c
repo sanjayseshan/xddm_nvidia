@@ -1421,7 +1421,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                  wglGetProcAddress("glDeleteQueries"));
             static const char vertexSource[] =
                 "#version 110\n"
-                "void main() { gl_Position = gl_Vertex; }\n";
+                "void main() { gl_Position = vec4(gl_Vertex.xyz, 1.0); }\n";
             static const char fragmentSource[] =
                 "#version 110\n"
                 "void main() { gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0); }\n";

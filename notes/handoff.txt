@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.138`; preparing `.139`.
+Updated November 13, 2026 after VFIO run `.139`; preparing `.140`.
 
 ## Current status
 
@@ -8,12 +8,14 @@ The latest completed VFIO run `.138` booted and shut down normally, but
 `[OPENGL_RESULT] FAIL`; no triangle pixels reach the target. Raw CE readback
 still finds 286,296 blue pixels on the exact 632x453 draw target. OpenGL
 queries report `primitives_generated=1` and `samples_passed=0`, with no GL
-error. Revision `.139` captures the draw-time NVC0 `VIEWPORT_TRANSFORM_EN`
-value to check the viewport/raster path. Full log:
-`test_logs/v3.0.0.138-20261113-024620.log`.
+error. The `.139` draw-state trace confirms NVC0 `VIEWPORT_TRANSFORM_EN=1`.
+Revision `.140` makes homogeneous W explicitly 1.0 in the GLSL vertex shader;
+the vertex array supplies three components and a faulty default W could clip
+the primitive. Full `.139` log:
+`test_logs/v3.0.0.139-20261113-025103.log`.
 
-The cube ran 100 frames at 18.2 FPS, then the animation path timed out waiting
-for fence `0x17b` at FIFO index `0x17b`; the channel faulted and firmware
+The cube ran 100 frames at 16.1 FPS, then the animation path timed out waiting
+for fence `0x12f` at FIFO index `0x12f`; the channel faulted and firmware
 assertions rose to 3. This recurring submission fault remains separate from
 the initial triangle's zero pixels. The callback type warning has been fixed.
 
@@ -857,4 +859,14 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
 ### Revision 3.0.0.139 — capture viewport transform enable
 
 - Adds NVC0 method `0x192c` (`VIEWPORT_TRANSFORM_EN`) to the draw-state trace.
-  Full VFIO result is pending.
+- Full VFIO log: `test_logs/v3.0.0.139-20261113-025103.log`. The draw-time
+  value is `1`; viewport transform is enabled. Queries remained
+  `primitives_generated=1`, `samples_passed=0`, and `[OPENGL_RESULT] FAIL`.
+  The cube reached 100 frames at 16.1 FPS, then timed out at FIFO/fence
+  `0x12f`; firmware assertions reached 3.
+
+### Revision 3.0.0.140 — explicit homogeneous vertex W
+
+- Changes the GLSL vertex probe to construct clip coordinates with an explicit
+  `w=1.0` from the three-component position. This tests whether a missing
+  fourth vertex component is clipping the triangle. Full VFIO result pending.
