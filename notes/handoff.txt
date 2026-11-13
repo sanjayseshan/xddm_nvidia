@@ -1111,6 +1111,14 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
 - Relevant files: `mesa_patches/nvx_xf86drm.c`, `test/test_full_driver.sh`,
   `dist_full/nvx.inf`, and this handoff.
 
+### Revision 3.0.0.155 — read back after targeted upload
+
+- Gate the immediate vertex GPU readback on the targeted upload trace having
+  completed. This prevents the prior pre-upload submission from consuming
+  the one-shot readback slot and ensures the diagnostic fence follows the
+  batch containing the uploaded shadow.
+- Version bumped to `3.0.0.155`. Full VFIO result pending.
+
 Relevant files: `mesa_patches/nvx_xf86drm.c`,
 `mesa_patches/xp_include/xf86drm.h`,
 `mesa_patches/0028-nouveau-xp-widen-cached-bo-map.patch`,

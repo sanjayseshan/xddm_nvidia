@@ -399,6 +399,7 @@ nvx_drm_capture_vertex_shadow_locked(
                device->gr_state[0x1c08U / 4U];
             uint32_t force_gpu_readback =
                device->shader_triangle_input_snapshot_done &&
+               device->shader_triangle_input_flush_trace_done &&
                !device->shader_triangle_input_readback_scheduled &&
                address == immediate_position_address;
          for (slot_index = 0; slot_index < captured_count; slot_index++)
