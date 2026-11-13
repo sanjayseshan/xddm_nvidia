@@ -995,6 +995,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
     PFN_DIRECT_DRV_DESCRIBE_PIXEL_FORMAT directDescribePixelFormat = NULL;
     PFN_DIRECT_DRV_SWAP_BUFFERS directSwapBuffers = NULL;
     PFN_DIRECT_DRV_GET_PROC_ADDRESS directGetProcAddress = NULL;
+    PFN_DIRECT_DRV_GET_PROC_ADDRESS diagnosticGetProcAddress = NULL;
     /* The bridge appends per-process results. Remove any prior guest run so
        batch-count deltas cannot be satisfied by stale hardware submissions. */
     BOOL bridgeTraceDeleted = DeleteFileA("C:\\test_accel\\mesa_bridge.log");
@@ -1239,6 +1240,17 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
         return;
     }
 
+    diagnosticGetProcAddress = directGetProcAddress;
+    if (!diagnosticGetProcAddress) {
+        directIcdModule = LoadLibraryA("nvxogl64.dll");
+        if (directIcdModule)
+            diagnosticGetProcAddress =
+                (PFN_DIRECT_DRV_GET_PROC_ADDRESS)GetProcAddress(
+                    directIcdModule, "DrvGetProcAddress");
+    }
+    LogMsg("-> Direct ICD GL entrypoint comparison: %s\n",
+           diagnosticGetProcAddress ? "available" : "unavailable");
+
     LogMsg("-> nvxogl64.dll loaded in process: %s\n",
            GetModuleHandleA("nvxogl64.dll") ? "yes" : "no");
 
@@ -1382,6 +1394,9 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                 ptrdiff_t, ptrdiff_t, void *);
             typedef void (APIENTRY *PFN_GL_DELETE_BUFFERS)(int,
                                                            const unsigned int *);
+            typedef void (APIENTRY *PFN_GL_BEGIN)(unsigned int);
+            typedef void (APIENTRY *PFN_GL_END)(void);
+            typedef void (APIENTRY *PFN_GL_VERTEX3F)(GLfloat, GLfloat, GLfloat);
             typedef void (APIENTRY *PFN_GL_VERTEX_ATTRIB_POINTER)(unsigned int,
                 int, unsigned int, unsigned char, int, const void *);
             typedef void (APIENTRY *PFN_GL_ENABLE_VERTEX_ATTRIB_ARRAY)(unsigned int);
@@ -1492,6 +1507,12 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             PFN_GL_DRAW_ARRAYS drawArrays = (PFN_GL_DRAW_ARRAYS)
                 (directGetProcAddress ? directGetProcAddress("glDrawArrays") :
                  wglGetProcAddress("glDrawArrays"));
+            PFN_GL_BEGIN icdBegin = (PFN_GL_BEGIN)
+                (diagnosticGetProcAddress ? diagnosticGetProcAddress("glBegin") : NULL);
+            PFN_GL_END icdEnd = (PFN_GL_END)
+                (diagnosticGetProcAddress ? diagnosticGetProcAddress("glEnd") : NULL);
+            PFN_GL_VERTEX3F icdVertex3f = (PFN_GL_VERTEX3F)
+                (diagnosticGetProcAddress ? diagnosticGetProcAddress("glVertex3f") : NULL);
             static const char vertexSource[] =
                 "#version 110\n"
                 "varying vec4 capturedPosition;\n"
@@ -1763,6 +1784,65 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                             immediatePositions[8], immediatePositions[9],
                             immediatePositions[10], immediatePositions[11],
                             immediateError);
+                        if (icdBegin && icdEnd && icdVertex3f) {
+                            GLfloat icdPositions[12] = {0};
+                            unsigned icdSamples = 0, icdPrimitives = 0;
+                            unsigned icdGreen = 0;
+                            GLenum icdError = GL_NO_ERROR;
+                            glClear(GL_COLOR_BUFFER_BIT);
+                            if (samplesQuery)
+                                beginQuery(0x8914U, samplesQuery);
+                            if (generatedQuery)
+                                beginQuery(0x8C87U, generatedQuery);
+                            if (transformFeedbackReady)
+                                beginTransformFeedback(GL_TRIANGLES);
+                            icdBegin(GL_TRIANGLES);
+                            icdVertex3f(-0.8f, -0.8f, 0.0f);
+                            icdVertex3f( 0.8f, -0.8f, 0.0f);
+                            icdVertex3f( 0.0f,  0.8f, 0.0f);
+                            icdEnd();
+                            if (transformFeedbackReady)
+                                endTransformFeedback();
+                            if (generatedQuery)
+                                endQuery(0x8C87U);
+                            if (samplesQuery)
+                                endQuery(0x8914U);
+                            glFinish();
+                            if (samplesQuery)
+                                getQueryObjectuiv(samplesQuery, 0x8866U,
+                                                  &icdSamples);
+                            if (generatedQuery)
+                                getQueryObjectuiv(generatedQuery, 0x8866U,
+                                                  &icdPrimitives);
+                            if (transformFeedbackReady)
+                                getBufferSubData(0x8C8EU, 0,
+                                    sizeof(icdPositions), icdPositions);
+                            if (pixels)
+                                glReadPixels(0, 0, w, h, GL_RGBA,
+                                             GL_UNSIGNED_BYTE, pixels);
+                            else
+                                icdError = 0x0505U;
+                            if (icdError == GL_NO_ERROR)
+                                icdError = glGetError();
+                            for (pixel = 0; icdError == GL_NO_ERROR && pixels &&
+                                 pixel < (unsigned)w * (unsigned)h; pixel++)
+                                if (pixels[pixel * 4U + 1U] > 200U &&
+                                    pixels[pixel * 4U] < 32U &&
+                                    pixels[pixel * 4U + 2U] < 32U)
+                                    icdGreen++;
+                            LogMsg("[MESA_GLSL_IMMEDIATE_ICD_RESULT] primitives_generated=%u samples_passed=%u green_pixels=%u tf=%d p0=%.6f,%.6f,%.6f,%.6f p1=%.6f,%.6f,%.6f,%.6f p2=%.6f,%.6f,%.6f,%.6f error=0x%X\n",
+                                icdPrimitives, icdSamples, icdGreen,
+                                transformFeedbackReady,
+                                icdPositions[0], icdPositions[1],
+                                icdPositions[2], icdPositions[3],
+                                icdPositions[4], icdPositions[5],
+                                icdPositions[6], icdPositions[7],
+                                icdPositions[8], icdPositions[9],
+                                icdPositions[10], icdPositions[11], icdError);
+                        } else {
+                            LogMsg("[MESA_GLSL_IMMEDIATE_ICD_RESULT] unavailable proc_address=%d\n",
+                                   diagnosticGetProcAddress != NULL);
+                        }
                     }
                     useProgram(0);
 

@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.144`; preparing `.145`.
+Updated November 13, 2026 after VFIO run `.145`; preparing `.146`.
 
 ## Current status
 
@@ -16,13 +16,16 @@ zero pixels. The cube uses immediate mode and remains black, with and without
 depth. Revision `.144` flushes referenced writable BO shadows before batch
 submission. Its trace confirms the flush path runs, but the immediate-mode
 triangle and cube remain black, so flushing alone does not resolve the
-failure. Revision `.145` captures transform feedback and raster samples from
-an immediate-mode draw using the same GLSL program that passes via
-`glDrawArrays`. Full `.144` log:
-`test_logs/v3.0.0.144-20261113-031455.log`.
+failure. Run `.145` also captures `(0,0,0,1)` for all immediate-mode shader
+vertices, with one generated primitive, zero samples, and no GL error. The
+same GLSL shader receives the correct positions and renders through
+`glDrawArrays`. This narrows the fault to the `glVertex3f`/Begin-End input
+dispatch or its vertex staging. Revision `.146` compares direct ICD-resolved
+Begin/End/Vertex calls with the normal opengl32 dispatch. Full `.145` log:
+`test_logs/v3.0.0.145-20261113-031957.log`.
 
 The cube test had no colored pixels in its depth or no-depth draw. Animation
-reached 100 frames at 16.1 FPS, then timed out at FIFO index/fence `0x109`;
+reached 100 frames at 17.1 FPS, then timed out at FIFO index/fence `0xff`;
 firmware assertions reached 3. The callback type warning has been fixed.
 
 The XP x64 Mesa ICD builds and selects Mesa / NV170 (OpenGL 4.3 Compatibility
@@ -938,4 +941,18 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   that passes through `glDrawArrays`, captures its shader positions using
   transform feedback, and records generated primitives, passing samples, and
   pixels. This tests whether immediate-mode input is still zero after the
-  writable-shadow flush. Full VFIO result is pending.
+  writable-shadow flush.
+- Full VFIO log: `test_logs/v3.0.0.145-20261113-031957.log`. Immediate mode
+  still outputs `(0,0,0,1)` for all three vertices, with one primitive, zero
+  samples, no green pixels, and no GL error. The explicit array GLSL and
+  fixed-function probes continue to render 1,352 pixels. The cube remained
+  black; animation reached 100 frames at 17.1 FPS before timeout at
+  FIFO/fence `0xff`, with 3 firmware assertions.
+
+### Revision 3.0.0.146 — compare immediate-mode dispatch paths
+
+- Repeats the immediate-mode GLSL capture using `glBegin`, `glEnd`, and
+  `glVertex3f` pointers resolved directly from the ICD, then compares its
+  transform-feedback positions and samples with the opengl32-dispatched call.
+  This checks whether the Windows GL dispatch table is dropping vertex values.
+  Full VFIO result is pending.
