@@ -94,6 +94,8 @@ void NvxWglRecordNouveauIoctl(uint32_t type, uint32_t version,
                               uint32_t size);
 void NvxWglRecordNouveauGetparam(uint32_t param, uint32_t value,
                                  uint32_t result);
+void NvxWglRecordNouveauDrawState(const uint32_t *methods,
+                                 const uint32_t *values, uint32_t count);
 static int nvx_bridge_is_enabled(void);
 static int nvx_pack_color(const float rgba[4], uint32_t *color);
 static int nvx_alloc(HDC hdc, const NVX_3D_ALLOC_BUFFER *request,
@@ -561,6 +563,38 @@ NvxWglRecordNouveauPushbufDwords(uint32_t push_index, uint32_t first_word,
       used += (uint32_t)length;
       output[used++] = '\r';
       output[used++] = '\n';
+   }
+   if (!used)
+      return;
+   file = CreateFileA("C:\\test_accel\\nvx_nouveau_trace.log",
+                      FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                      NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+   if (file == INVALID_HANDLE_VALUE)
+      return;
+   WriteFile(file, output, used, &written, NULL);
+   CloseHandle(file);
+}
+
+void
+NvxWglRecordNouveauDrawState(const uint32_t *methods, const uint32_t *values,
+                             uint32_t count)
+{
+   char output[8192];
+   char line[96];
+   uint32_t i, used = 0;
+   HANDLE file;
+   DWORD written;
+
+   if (!methods || !values || !count || count > 64U)
+      return;
+   for (i = 0; i < count; i++) {
+      int length = wsprintfA(line, "Nouveau cube draw state method=%04lx value=%08lx\r\n",
+                             (unsigned long)methods[i],
+                             (unsigned long)values[i]);
+      if (length <= 0 || (uint32_t)length > sizeof(output) - used)
+         break;
+      memcpy(output + used, line, (size_t)length);
+      used += (uint32_t)length;
    }
    if (!used)
       return;

@@ -290,10 +290,10 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Next work
 
-1. Decode the `.111` stage 1/2/5 program words and their constant buffers.
-   Compare the vertex/fragment stage selection and outputs with Mesa NVC0
-   emission, and capture persistent target/viewport/raster state at the cube
-   draw.
+1. Extend draw-state capture to NVC0 vertex format (`0x0458` onward), vertex
+   array setup (`0x0700` onward), and draw start/count. Compare these values
+   with Mesa NVC0 emission and establish whether input attribute and vertex
+   fetch state match the cube buffers.
 2. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
    The failed stream is decoded above; trace the Mesa semaphore release and
    miniport completion fence through PBDMA progress, and correlate with the
@@ -309,7 +309,7 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Relevant files
 
-- Latest completed full VFIO log: `test_logs/v3.0.0.111-20261112-235812.log`
+- Latest completed full VFIO log: `test_logs/v3.0.0.112-20261113-001254.log`
 - Latest extracted Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest Mesa/Nouveau bridge excerpt: `notes/mesa-bridge-latest.txt`
 - GPFIFO submission and diagnostics: `src_driver/nvx_gsp.c`,
@@ -327,3 +327,26 @@ Run the real-hardware suite from the repository root with:
 ```sh
 NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROBE=1 NVX_GR_SUBMISSION_PROBE=1 NVX_MESA_GALLIUM_BRIDGE=1 ./test/test_full_driver.sh
 ```
+
+### Revision 3.0.0.112 — persistent cube state result
+
+- Added per-device NVC0 method tracking and a one-time state snapshot at the
+  QUADS draw when shader stages 1, 2, and 5 have been seen. `make -C
+  src_driver check` passed; XP Mesa/driver packaging passed import and XP 5.2
+  subsystem audits.
+- Full VFIO log: `test_logs/v3.0.0.112-20261113-001254.log`. Attempt 1 had no
+  serial activity; auto-retry attempt 2 booted successfully, ran the suite, and
+  shut XP down normally.
+- Draw state: rasterization enabled; target `0x15f40000`, pitch `0xa00`, 453
+  rows, format `0xcf`; viewport size `576x437`; scissor enabled; depth test,
+  depth writes, and blend controls are zero. QUADS was the primitive. The
+  method snapshot alone does not prove each encoded register interpretation.
+- Cube readback still has zero colored pixels and `[OPENGL_RESULT] FAIL`; 100
+  frames took 8.5124 s (11.7 FPS). Clear readback passes. Three firmware
+  assertions and the PBDMA stall remain.
+- The trace instrumentation captured `0x1160/0x1164`, which are vertex
+  attribute control methods, not the actual vertex format methods in this
+  draw packet. The packet shows format words at `0x0458/0x045c`, and vertex
+  array setup around `0x0700`; extend the state snapshot to include those
+  methods and the vertex-array start/count before interpreting input setup.
+  Full extracted trace: `notes/nouveau-trace-latest.txt`.

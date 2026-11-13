@@ -45,6 +45,8 @@ void NvxWglRecordNouveauIoctl(uint32_t type, uint32_t version,
                               uint32_t size);
 void NvxWglRecordNouveauGetparam(uint32_t param, uint32_t value,
                                  uint32_t result);
+void NvxWglRecordNouveauDrawState(const uint32_t *methods,
+                                const uint32_t *values, uint32_t count);
 #endif
 
 #define NVX_DRM_DEVICE_SLOTS 8U
@@ -83,6 +85,8 @@ struct nvx_drm_device_slot {
    uint64_t shader_address[6];
    uint32_t shader_address_mask;
    uint32_t shader_draw_snapshot_done;
+   uint32_t gr_state[0x2200U / sizeof(uint32_t)];
+   uint32_t gr_draw_state_snapshot_done;
 #endif
    struct nvx_drm_bo_slot buffers[NVX_DRM_BUFFER_SLOTS];
    struct nvx_drm_object_slot objects[NVX_DRM_OBJECT_SLOTS];
@@ -142,6 +146,14 @@ nvx_drm_capture_shader_addresses_locked(
    struct nvx_drm_device_slot *device, const uint8_t *dword_data,
    uint32_t dword_count, struct nvx_drm_shader_dump *dumps)
 {
+   static const uint32_t trace_methods[] = {
+      0x037cU, 0x0800U, 0x0804U, 0x0808U, 0x080cU, 0x0810U, 0x0814U,
+      0x0a00U, 0x0a04U, 0x0a08U, 0x0a0cU, 0x0a10U, 0x0a14U,
+      0x0c00U, 0x0c04U, 0x0e00U, 0x0e04U, 0x0e08U, 0x0ff4U, 0x0ff8U,
+      0x0dacU, 0x0db0U, 0x1160U, 0x1164U, 0x121cU, 0x12ccU, 0x12d0U,
+      0x12e8U, 0x1308U, 0x130cU, 0x135cU, 0x1360U, 0x1618U,
+      0x1c00U, 0x1c04U, 0x1c08U, 0x1c0cU, 0x1c10U, 0x1c14U
+   };
    uint32_t cursor = 0, captured = 0, draw_seen = 0;
 
    while (cursor < dword_count) {
@@ -172,8 +184,11 @@ nvx_drm_capture_shader_addresses_locked(
             current_method = method;
          if (subchannel != 0U)
             continue;
+         if (current_method < sizeof(device->gr_state))
+            device->gr_state[current_method / sizeof(uint32_t)] =
+               Nvx3dBatchReadDword(dword_data, cursor + 1U + i);
          if (current_method == 0x1618U)
-            draw_seen = 1;
+            draw_seen = Nvx3dBatchReadDword(dword_data, cursor + 1U + i) == 7U;
          if (Nvx3dNvc0AddressMethodKind(subchannel, current_method,
                                        &pair_index, &stage) != 1)
             continue;
@@ -191,6 +206,18 @@ nvx_drm_capture_shader_addresses_locked(
          device->shader_address_mask |= 1U << stage;
       }
       cursor += count + 1U;
+   }
+
+   if (draw_seen && !device->gr_draw_state_snapshot_done &&
+       (device->shader_address_mask & ((1U << 1) | (1U << 2) | (1U << 5))) ==
+       ((1U << 1) | (1U << 2) | (1U << 5))) {
+      uint32_t values[sizeof(trace_methods) / sizeof(trace_methods[0])];
+      uint32_t i;
+      for (i = 0; i < sizeof(trace_methods) / sizeof(trace_methods[0]); i++)
+         values[i] = device->gr_state[trace_methods[i] / sizeof(uint32_t)];
+      NvxWglRecordNouveauDrawState(trace_methods, values,
+         (uint32_t)(sizeof(trace_methods) / sizeof(trace_methods[0])));
+      device->gr_draw_state_snapshot_done = 1U;
    }
 
    /* Program addresses are persistent 3D state. A later draw batch often

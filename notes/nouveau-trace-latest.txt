@@ -1,4 +1,6 @@
-Latest Nouveau/OpenGL diagnostic excerpt from test_logs/v3.0.0.111-20261112-235812.log
+Latest Nouveau/OpenGL diagnostic excerpt from test_logs/v3.0.0.112-20261113-001254.log
+The `.112` run completed after one empty-serial VFIO retry; guest booted, ran benchmarks, and shut down normally. Cube readback still reports 0 colored pixels; 100 frames took 8.5124 s (11.7 FPS), and `[OPENGL_RESULT] FAIL`.
+The first-draw state snapshot is appended below. It confirms rasterizer enabled, target `0x15f40000` (pitch `0xa00`, height `0x1c5`, format `0xcf`), viewport dimensions `576x437`, scissor enabled, and depth/blend controls zero. Firmware assertions reached 3; the PBDMA stall remains.
 All three stage program snapshots below are associated with the first draw after cached SP_ADDRESS binds were observed; each was downloaded after its submission fence.
 [MESA_GPU_CLEAR_BACK_READBACK] pixel=32,64,191 error=0x0
 [MESA_GPU_CLEAR_BACK_RESULT] PASS
@@ -26,3 +28,44 @@ Nouveau dwords push=0 capture=31 offset=104: 00000002 01c01f30 00000000 00000000
 Nouveau dwords push=0 capture=31 offset=112: 00000002 01bc8ec0 00000000 46d0eaad 00000002 80008000 000000a4 01bdec50
 Nouveau dwords push=0 capture=31 offset=120: 00000000 00000000 00000000 00000000 00000000 20040478 88888888 88888888
 Nouveau dwords push=0 capture=31 offset=128: 88888888 88888888 20010586 00000007 2002035d 00000000 00000018 80000585
+
+Cube draw state methods:
+Nouveau cube draw state method=037c value=00000001
+Nouveau cube draw state method=0800 value=00000000
+Nouveau cube draw state method=0804 value=15f40000
+Nouveau cube draw state method=0808 value=00000a00
+Nouveau cube draw state method=080c value=000001c5
+Nouveau cube draw state method=0810 value=000000cf
+Nouveau cube draw state method=0814 value=00001000
+Nouveau cube draw state method=0a00 value=43900000
+Nouveau cube draw state method=0a04 value=c1000000
+Nouveau cube draw state method=0a08 value=3f000000
+Nouveau cube draw state method=0a0c value=43900000
+Nouveau cube draw state method=0a10 value=43de8000
+Nouveau cube draw state method=0a14 value=3f000000
+Nouveau cube draw state method=0c00 value=02400000
+Nouveau cube draw state method=0c04 value=001001b5
+Nouveau cube draw state method=0e00 value=00000001
+Nouveau cube draw state method=0e04 value=40000000
+Nouveau cube draw state method=0e08 value=40000000
+Nouveau cube draw state method=0ff4 value=02780000
+Nouveau cube draw state method=0ff8 value=01c50000
+Nouveau cube draw state method=0dac value=00000000
+Nouveau cube draw state method=0db0 value=00000000
+Nouveau cube draw state method=1160 value=38400000
+Nouveau cube draw state method=1164 value=38200001
+Nouveau cube draw state method=121c value=0fac6881
+Nouveau cube draw state method=12cc value=00000000
+Nouveau cube draw state method=12d0 value=00000000
+Nouveau cube draw state method=12e8 value=00000000
+Nouveau cube draw state method=1308 value=00000000
+Nouveau cube draw state method=130c value=00000000
+Nouveau cube draw state method=135c value=00000000
+Nouveau cube draw state method=1360 value=00000000
+Nouveau cube draw state method=1618 value=00000007
+Nouveau cube draw state method=1c00 value=0000101c
+Nouveau cube draw state method=1c04 value=00000000
+Nouveau cube draw state method=1c08 value=16090010
+Nouveau cube draw state method=1c0c value=00000000
+Nouveau cube draw state method=1c10 value=0000101c
+Nouveau cube draw state method=1c14 value=00000000
