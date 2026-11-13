@@ -1,21 +1,19 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.133`; preparing `.134`.
+Updated November 13, 2026 after VFIO run `.134`; preparing `.135`.
 
 ## Current status
 
-The latest completed VFIO run `.133` booted and shut down normally, but
-`[OPENGL_RESULT] FAIL`; both triangle probes remain black. The raw diagnostic
-downloaded a generic Mesa allocation (BufferId 28, VA `0x164d0000`,
-1,310,720 bytes) through miniport CE and found no green pixels. However, the
-captured triangle draw state binds RT VA `0x162e0000`, so the diagnostic's
-post-draw current-target lookup did not prove it read the exact draw target.
-Revision `.134` records the RT VA at each captured triangle draw and reads that
-specific BO. Full `.133` log:
-`test_logs/v3.0.0.133-20261113-022042.log`.
+The latest completed VFIO run `.134` booted on retry attempt 3 and shut down
+normally, but `[OPENGL_RESULT] FAIL`; both triangle probes remain black. The
+raw diagnostic captured the draw's exact RT VA `0x162e0000`, matching the
+NVC0 draw-state trace, downloaded 1,310,720 bytes through miniport CE, and
+found zero green pixels. The test still needs a raw count of the blue clear
+pixels to establish that the same target contains the expected pre-draw clear.
+Full log: `test_logs/v3.0.0.134-20261113-022650.log`.
 
-The cube ran 100 frames at 15.3 FPS, then the animation path timed out waiting
-for fence `0x18b` at FIFO index `0x18b`; the channel faulted and firmware
+The cube ran 100 frames at 16.6 FPS, then the animation path timed out waiting
+for fence `0x1e5` at FIFO index `0x1e5`; the channel faulted and firmware
 assertions rose to 3. This recurring submission fault remains separate from
 the initial triangle's zero pixels. The callback type warning has been fixed.
 
@@ -800,5 +798,19 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
 
 - Records the render-target VA alongside the GLSL and fixed-function triangle
   shader snapshots, then downloads that exact BO after each draw. The log now
-  includes the target VA for comparison with the captured NVC0 state. Full VFIO
-  result is pending.
+  includes the target VA for comparison with the captured NVC0 state.
+- Full VFIO log: `test_logs/v3.0.0.134-20261113-022650.log`. Two initial VFIO
+  attempts failed before guest output; attempt 3 booted, ran the suite, and
+  shut down. The exact target for both triangle probes was `0x162e0000`,
+  matching the captured draw state. Its raw download returned zero green
+  pixels, matching the black GL readback. The cube reached 100 frames at
+  16.6 FPS, then timed out at FIFO `0x1e5`/fence `0x1e5`; firmware assertions
+  reached 3.
+- This confirms the draw target address and raw download path. It does not yet
+  prove the pre-draw clear bytes in that BO; revision `.135` counts exact blue
+  clear pixels alongside green pixels.
+
+### Revision 3.0.0.135 — verify clear bytes in captured target
+
+- Counts the expected RGBA8 blue clear color in the same exact target BO after
+  each triangle, in addition to green pixels. Full VFIO result is pending.

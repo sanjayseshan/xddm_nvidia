@@ -1566,8 +1566,8 @@ NvxXf86DrmGetStatus(NVX_XF86DRM_STATUS *status)
 #if defined(_WIN32) || defined(_WIN64)
 __declspec(dllexport) int __stdcall
 NvxXf86DrmReadDrawTargetRaw(uint32_t draw_kind, uint32_t *green_pixels,
-                            uint32_t *bytes, uint64_t *target_va,
-                            uint64_t *buffer_id)
+                            uint32_t *blue_pixels, uint32_t *bytes,
+                            uint64_t *target_va, uint64_t *buffer_id)
 {
    NVX_WINSYS_DEVICE winsys;
    uint64_t requested_target_va = 0;
@@ -1579,13 +1579,15 @@ NvxXf86DrmReadDrawTargetRaw(uint32_t draw_kind, uint32_t *green_pixels,
 
    if (green_pixels)
       *green_pixels = 0;
+   if (blue_pixels)
+      *blue_pixels = 0;
    if (bytes)
       *bytes = 0;
    if (target_va)
       *target_va = 0;
    if (buffer_id)
       *buffer_id = 0;
-   if (!green_pixels || !bytes || !target_va ||
+   if (!green_pixels || !blue_pixels || !bytes || !target_va ||
        (draw_kind != 2U && draw_kind != 3U))
       return 0;
 
@@ -1636,6 +1638,8 @@ NvxXf86DrmReadDrawTargetRaw(uint32_t draw_kind, uint32_t *green_pixels,
       memcpy(&pixel, raw + i, sizeof(pixel));
       if ((pixel & 0x00ffffffU) == 0x0000ff00U)
          (*green_pixels)++;
+      else if ((pixel & 0x00ffffffU) == 0x00bf0000U)
+         (*blue_pixels)++;
    }
    free(raw);
    *bytes = target_bytes;
