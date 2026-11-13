@@ -640,10 +640,12 @@ NvxWglRecordNouveauShaderDwords(uint32_t stage, uint32_t buffer_id,
    if (!dwords || !count || count > 128U)
       return;
    _snprintf(line, sizeof(line) - 1U,
-      "Nouveau shader dump stage=%lu buffer=%08lx gpu=%08lx:%08lx offset=%lu dwords=%lu source=%lu\r\n",
+      "Nouveau shader dump stage=%lu buffer=%08lx gpu=%08lx:%08lx offset=%lu dwords=%lu source=%lu draw_snapshot=%lu\r\n",
       (unsigned long)stage, (unsigned long)buffer_id,
       (unsigned long)(gpu_va >> 32), (unsigned long)gpu_va,
-      (unsigned long)offset, (unsigned long)count, (unsigned long)result);
+      (unsigned long)offset, (unsigned long)count,
+      (unsigned long)(result == 4U ? 0U : result),
+      (unsigned long)(result == 4U));
    line[sizeof(line) - 1U] = '\0';
    used = (uint32_t)strlen(line);
    if (used >= sizeof(output))

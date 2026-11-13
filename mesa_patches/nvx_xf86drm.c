@@ -79,6 +79,11 @@ struct nvx_drm_device_slot {
    NVX_WINSYS_DEVICE device;
    uint64_t client_token;
    uint32_t next_handle;
+#if defined(_WIN32) || defined(_WIN64)
+   uint64_t shader_address[6];
+   uint32_t shader_address_mask;
+   uint32_t shader_draw_snapshot_done;
+#endif
    struct nvx_drm_bo_slot buffers[NVX_DRM_BUFFER_SLOTS];
    struct nvx_drm_object_slot objects[NVX_DRM_OBJECT_SLOTS];
 };
@@ -137,9 +142,9 @@ nvx_drm_capture_shader_addresses_locked(
    struct nvx_drm_device_slot *device, const uint8_t *dword_data,
    uint32_t dword_count, struct nvx_drm_shader_dump *dumps)
 {
-   uint32_t cursor = 0, captured = 0;
+   uint32_t cursor = 0, captured = 0, draw_seen = 0;
 
-   while (cursor < dword_count && captured < NVX_DRM_SHADER_DUMP_LIMIT) {
+   while (cursor < dword_count) {
       uint32_t header, packet_type, count, method, subchannel, i;
       memcpy(&header, dword_data + (size_t)cursor * 4U, sizeof(header));
       packet_type = header & 0xe0000000U;
@@ -155,8 +160,8 @@ nvx_drm_capture_shader_addresses_locked(
       subchannel = (header >> 13) & 7U;
       if (!count || count > dword_count - cursor - 1U)
          break;
-      for (i = 0; i < count && captured < NVX_DRM_SHADER_DUMP_LIMIT; i++) {
-         uint32_t current_method, pair_index, stage, high, low, slot_index;
+      for (i = 0; i < count; i++) {
+         uint32_t current_method, pair_index, stage, high, low;
          uint64_t address;
          const NVX_3D_NVC0_ADDRESS_PAIR *pair;
          if (packet_type == 0x20000000U)
@@ -165,13 +170,16 @@ nvx_drm_capture_shader_addresses_locked(
             current_method = method + 4U;
          else
             current_method = method;
-         if (subchannel != 0U ||
-             Nvx3dNvc0AddressMethodKind(subchannel, current_method,
-                                        &pair_index, &stage) != 1)
+         if (subchannel != 0U)
+            continue;
+         if (current_method == 0x1618U)
+            draw_seen = 1;
+         if (Nvx3dNvc0AddressMethodKind(subchannel, current_method,
+                                       &pair_index, &stage) != 1)
             continue;
          pair = &Nvx3dNvc0AddressPairs[pair_index];
          if (pair->HighMethod != 0x2014U || pair->IndexStride != 0x40U ||
-             stage >= NVX_DRM_SHADER_DUMP_LIMIT || i + 1U >= count ||
+             stage >= 6U || i + 1U >= count ||
              packet_type != 0x20000000U)
             continue;
          high = Nvx3dBatchReadDword(dword_data, cursor + 1U + i);
@@ -179,34 +187,52 @@ nvx_drm_capture_shader_addresses_locked(
          if (high > 0xffU)
             continue;
          address = ((uint64_t)high << 32) | low;
-         for (slot_index = 0; slot_index < NVX_DRM_BUFFER_SLOTS; slot_index++) {
-            struct nvx_drm_bo_slot *slot = &device->buffers[slot_index];
-            uint64_t base = slot->bo.allocation.GpuVa;
-            uint64_t allocation_bytes = slot->bo.allocation.Bytes;
-            uint64_t offset;
-            struct nvx_drm_shader_dump *dump;
-            if (!slot->handle || !slot->bo.allocation.BufferId || !base ||
-                address < base || address - base >= allocation_bytes)
-               continue;
-            offset = address - base;
-            if (offset > UINT32_MAX || allocation_bytes > UINT32_MAX)
-               break;
-            dump = &dumps[captured];
-            memset(dump, 0, sizeof(*dump));
-            dump->buffer_id = slot->bo.allocation.BufferId;
-            dump->gpu_va = address;
-            dump->stage = stage;
-            dump->allocation_bytes = (uint32_t)allocation_bytes;
-            dump->offset = (uint32_t)offset;
-            dump->bytes = NVX_DRM_SHADER_DUMP_BYTES;
-            if (dump->bytes > allocation_bytes - offset)
-               dump->bytes = (uint32_t)(allocation_bytes - offset) & ~3U;
-            captured++;
-            break;
-         }
+         device->shader_address[stage] = address;
+         device->shader_address_mask |= 1U << stage;
       }
       cursor += count + 1U;
    }
+
+   /* Program addresses are persistent 3D state. A later draw batch often
+    * omits SP_ADDRESS writes, so snapshot the cached bindings at draw time. */
+   if (!draw_seen || device->shader_draw_snapshot_done ||
+       (device->shader_address_mask & ((1U << 1) | (1U << 2) | (1U << 5))) !=
+       ((1U << 1) | (1U << 2) | (1U << 5)))
+      return 0;
+   for (uint32_t stage = 0; stage < 6U && captured < NVX_DRM_SHADER_DUMP_LIMIT;
+        stage++) {
+      uint64_t address = device->shader_address[stage];
+      uint32_t slot_index;
+      if (!address)
+         continue;
+      for (slot_index = 0; slot_index < NVX_DRM_BUFFER_SLOTS; slot_index++) {
+         struct nvx_drm_bo_slot *slot = &device->buffers[slot_index];
+         uint64_t base = slot->bo.allocation.GpuVa;
+         uint64_t allocation_bytes = slot->bo.allocation.Bytes;
+         uint64_t offset;
+         struct nvx_drm_shader_dump *dump;
+         if (!slot->handle || !slot->bo.allocation.BufferId || !base ||
+             address < base || address - base >= allocation_bytes)
+            continue;
+         offset = address - base;
+         if (offset > UINT32_MAX || allocation_bytes > UINT32_MAX)
+            break;
+         dump = &dumps[captured];
+         memset(dump, 0, sizeof(*dump));
+         dump->buffer_id = slot->bo.allocation.BufferId;
+         dump->gpu_va = address;
+         dump->stage = stage;
+         dump->allocation_bytes = (uint32_t)allocation_bytes;
+         dump->offset = (uint32_t)offset;
+         dump->bytes = NVX_DRM_SHADER_DUMP_BYTES;
+         if (dump->bytes > allocation_bytes - offset)
+            dump->bytes = (uint32_t)(allocation_bytes - offset) & ~3U;
+         captured++;
+         break;
+      }
+   }
+   if (captured >= 3U)
+      device->shader_draw_snapshot_done = 1U;
    return captured;
 }
 
@@ -709,7 +735,8 @@ nvx_drm_submit_pushbuf(int fd,
          }
          NvxWglRecordNouveauShaderDwords(dump->stage,
             (uint32_t)dump->buffer_id, dump->gpu_va, dump->offset,
-            dump->dwords, dump->bytes / sizeof(uint32_t), result);
+            dump->dwords, dump->bytes / sizeof(uint32_t),
+            completed && result == 0U ? 4U : result);
       }
    }
 #endif
