@@ -726,7 +726,12 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   keeps hardware scissors enabled and initializes the bounds to 16384; the
   captured `SCISSOR_ENABLE=1` and `0x40000000` bounds are therefore expected.
   The fresh trace and fragment disassembly are recorded in
-  `notes/nouveau-trace-latest.txt`. The constant-green fragment shader has the
-  expected `MOV R0,0; MOV R1,1.0; MOV R2,0; MOV R3,1.0; EXIT` code, and its
-  header declares all four color components. Next check shader address/header
-  alignment and the translation of fragment output routing and target state.
+  `notes/nouveau-trace-latest.txt`. C797 uses Mesa's 32-dword TU102 shader
+  header. Fragment header `0x22e9ee80` and vertex header `0x22e9efc0` are
+  128-byte aligned; code begins at `0x22e9ef00` and `0x22e9f040` respectively.
+  Disassembly confirms the expected green fragment writes and vertex position
+  passthrough. The captured `RT_CONTROL=0x0fac6881` is the expected one-target
+  route `(076543210 << 4) | 1`; RGBA mask is `0x1111`, rasterization is enabled,
+  and depth/cull/blend/logic-op gates are disabled. These captures don't prove
+  execution. Next inspect the raw per-draw batch and validated class/address
+  substitutions through the GPFIFO submission path.
