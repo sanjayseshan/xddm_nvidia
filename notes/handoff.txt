@@ -1149,6 +1149,9 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
 - Schedule the immediate vertex BO readback directly in the targeted upload
   branch, using the submission's existing post-fence download path. This
   avoids the general vertex-dump count and address deduplication limits.
+- Store a 12-dword GPU readback in the current submission's local dump list
+  only after the targeted upload succeeds; the existing post-submit code
+  waits for this batch's fence before downloading it.
 - Version bumped to `3.0.0.157`. Full VFIO result pending.
 
 Relevant files: `mesa_patches/nvx_xf86drm.c`,

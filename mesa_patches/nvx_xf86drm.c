@@ -707,8 +707,27 @@ nvx_drm_submit_pushbuf(int fd,
          if (!flush_ok && slot->bo.map_count &&
              (slot->bo.map_access & NVX_NOUVEAU_BO_WRITE))
             goto done;
-         if (flush_ok)
+         if (flush_ok) {
             flushed_shadow_count++;
+#if defined(_WIN32) || defined(_WIN64)
+            if (!device->shader_triangle_input_readback_scheduled &&
+                vertex_dump_count < NVX_DRM_VERTEX_DUMP_LIMIT &&
+                offset <= slot->bo.allocation.Bytes &&
+                12U * sizeof(uint32_t) <=
+                   slot->bo.allocation.Bytes - offset) {
+               struct nvx_drm_vertex_dump *dump =
+                  &vertex_dumps[vertex_dump_count++];
+               memset(dump, 0, sizeof(*dump));
+               dump->buffer_id = slot->bo.allocation.BufferId;
+               dump->gpu_va = device->shader_triangle_input_vertex_address;
+               dump->allocation_bytes = (uint32_t)slot->bo.allocation.Bytes;
+               dump->offset = offset;
+               dump->bytes = 12U * sizeof(uint32_t);
+               dump->force_gpu_readback = 1U;
+               device->shader_triangle_input_readback_scheduled = 1U;
+            }
+#endif
+         }
          continue;
       }
       if (!slot->bo.map_count ||
