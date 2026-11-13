@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.147`; `.148` adds CPU staging capture.
+Updated November 13, 2026 after VFIO run `.148`; preparing corrected `.149` CPU staging capture.
 
 ## Current status
 
@@ -985,10 +985,27 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
 
 - Removes the invalid post-draw current-attribute queries from the test, so
   the reported GL error reflects the draw/readback path.
-- Adds external Mesa patch `mesa_patches/0027-mesa-begin-end-staging-trace.patch`
-  to record the first Begin/End primitive's CPU staging bytes immediately
-  before `DrawGalliumMultiMode`. The trace uses a distinctive buffer id
-  (`42454749`) and records its start offset, vertex count, and packed data.
-  This distinguishes a bad CPU vertex staging buffer from downstream NVC0
-  vertex fetch/state problems.
-- Test version is bumped to `3.0.0.148`; full VFIO result is pending.
+- Intended to add an external Mesa patch for CPU staging capture, but review
+  found the patch contained only an unused `<stdint.h>` include and did not
+  instrument the draw. The full run therefore did not capture staging bytes.
+  The diagnostic query cleanup worked: both immediate-mode reports now show
+  `error=0`, while transform feedback still receives zero positions and both
+  depth/no-depth cube readbacks remain black.
+- Full VFIO log: `test_logs/v3.0.0.148-20261113-033432.log`. XP booted and shut
+  down normally. The explicit GLSL triangle passed with 1,352 pixels. The cube
+  rendered 0 pixels; animation reached 100 frames in 4.4585 s (22.4 FPS), then
+  timed out at FIFO/fence `0x81`; assertions reached 3. The GR triangle and
+  semaphore probe passed.
+- `.149` corrects the Mesa patch so it records the first queued Begin/End
+  vertex bytes before the Gallium draw callback.
+
+
+### Revision 3.0.0.149 — correct Begin/End staging capture
+
+- Repairs `0027` to include the actual call at `vbo_exec_vtx_flush()`, capturing
+  up to 256 dwords from the first queued primitive through the WGL trace helper.
+  The prior `.148` patch included only `<stdint.h>` and emitted no CPU staging
+  data; this was caught by inspecting the linked `libmesa.a` object and the
+  extracted guest trace.
+- Removes the stray invalid query from the OpenGL probe (validated in `.148`),
+  and bumps the package/test version to `3.0.0.149`. Hardware result pending.

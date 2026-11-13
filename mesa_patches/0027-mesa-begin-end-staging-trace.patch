@@ -1,12 +1,31 @@
 diff --git a/src/mesa/vbo/vbo_exec_draw.c b/src/mesa/vbo/vbo_exec_draw.c
-index b1ab6d3500da..9fd24e8ccfb5 100644
+index b1ab6d3500da..afad1098f982 100644
 --- a/src/mesa/vbo/vbo_exec_draw.c
 +++ b/src/mesa/vbo/vbo_exec_draw.c
-@@ -27,6 +27,7 @@
- 
- #include <stdbool.h>
- #include <stdio.h>
+@@ -29,0 +30 @@
 +#include <stdint.h>
- #include "main/arrayobj.h"
- #include "util/glheader.h"
- #include "main/bufferobj.h"
+@@ -40,0 +42,7 @@
++/* NVX XP diagnostic: capture the Begin/End CPU staging data immediately
++ * before Gallium consumes it. Implemented by the WGL bridge overlay. */
++extern void NvxWglRecordNouveauBufferDwords(uint32_t buffer_id, uint64_t gpu_va,
++                                            uint32_t offset,
++                                            const uint32_t *dwords,
++                                            uint32_t count, uint32_t result);
++
+@@ -343,0 +352,16 @@ vbo_exec_vtx_flush(struct vbo_exec_context *exec)
++         /* Capture the first queued Begin/End primitive before the driver
++          * consumes it. This distinguishes bad CPU staging from a GPU fetch
++          * or vertex-element setup problem. */
++         if (exec->vtx.buffer_map && exec->vtx.prim_count &&
++             exec->vtx.draw[0].count) {
++            const GLuint count = exec->vtx.draw[0].count *
++                                 exec->vtx.vertex_size;
++            const GLuint start = exec->vtx.draw[0].start *
++                                 exec->vtx.vertex_size;
++            NvxWglRecordNouveauBufferDwords(0x42454749U, 0,
++               start * sizeof(GLfloat),
++               (const uint32_t *)(exec->vtx.buffer_map + start),
++               count > 256U ? 256U : count,
++               exec->vtx.draw[0].count);
++         }
++
