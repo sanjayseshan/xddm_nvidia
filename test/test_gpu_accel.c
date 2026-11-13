@@ -1348,6 +1348,8 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             typedef unsigned int (APIENTRY *PFN_GL_CREATE_PROGRAM)(void);
             typedef void (APIENTRY *PFN_GL_ATTACH_SHADER)(unsigned int,
                 unsigned int);
+            typedef void (APIENTRY *PFN_GL_BIND_ATTRIB_LOCATION)(unsigned int,
+                unsigned int, const char *);
             typedef void (APIENTRY *PFN_GL_LINK_PROGRAM)(unsigned int);
             typedef void (APIENTRY *PFN_GL_GET_PROGRAM_IV)(unsigned int,
                 unsigned int, int *);
@@ -1380,6 +1382,11 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                 ptrdiff_t, ptrdiff_t, void *);
             typedef void (APIENTRY *PFN_GL_DELETE_BUFFERS)(int,
                                                            const unsigned int *);
+            typedef void (APIENTRY *PFN_GL_VERTEX_ATTRIB_POINTER)(unsigned int,
+                int, unsigned int, unsigned char, int, const void *);
+            typedef void (APIENTRY *PFN_GL_ENABLE_VERTEX_ATTRIB_ARRAY)(unsigned int);
+            typedef void (APIENTRY *PFN_GL_DISABLE_VERTEX_ATTRIB_ARRAY)(unsigned int);
+            typedef void (APIENTRY *PFN_GL_DRAW_ARRAYS)(unsigned int, int, int);
             PFN_GL_CREATE_SHADER createShader = (PFN_GL_CREATE_SHADER)
                 (directGetProcAddress ? directGetProcAddress("glCreateShader") :
                  wglGetProcAddress("glCreateShader"));
@@ -1401,6 +1408,10 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             PFN_GL_ATTACH_SHADER attachShader = (PFN_GL_ATTACH_SHADER)
                 (directGetProcAddress ? directGetProcAddress("glAttachShader") :
                  wglGetProcAddress("glAttachShader"));
+            PFN_GL_BIND_ATTRIB_LOCATION bindAttribLocation =
+                (PFN_GL_BIND_ATTRIB_LOCATION)
+                (directGetProcAddress ? directGetProcAddress("glBindAttribLocation") :
+                 wglGetProcAddress("glBindAttribLocation"));
             PFN_GL_LINK_PROGRAM linkProgram = (PFN_GL_LINK_PROGRAM)
                 (directGetProcAddress ? directGetProcAddress("glLinkProgram") :
                  wglGetProcAddress("glLinkProgram"));
@@ -1466,10 +1477,29 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             PFN_GL_DELETE_BUFFERS deleteBuffers = (PFN_GL_DELETE_BUFFERS)
                 (directGetProcAddress ? directGetProcAddress("glDeleteBuffers") :
                  wglGetProcAddress("glDeleteBuffers"));
+            PFN_GL_VERTEX_ATTRIB_POINTER vertexAttribPointer =
+                (PFN_GL_VERTEX_ATTRIB_POINTER)
+                (directGetProcAddress ? directGetProcAddress("glVertexAttribPointer") :
+                 wglGetProcAddress("glVertexAttribPointer"));
+            PFN_GL_ENABLE_VERTEX_ATTRIB_ARRAY enableVertexAttribArray =
+                (PFN_GL_ENABLE_VERTEX_ATTRIB_ARRAY)
+                (directGetProcAddress ? directGetProcAddress("glEnableVertexAttribArray") :
+                 wglGetProcAddress("glEnableVertexAttribArray"));
+            PFN_GL_DISABLE_VERTEX_ATTRIB_ARRAY disableVertexAttribArray =
+                (PFN_GL_DISABLE_VERTEX_ATTRIB_ARRAY)
+                (directGetProcAddress ? directGetProcAddress("glDisableVertexAttribArray") :
+                 wglGetProcAddress("glDisableVertexAttribArray"));
+            PFN_GL_DRAW_ARRAYS drawArrays = (PFN_GL_DRAW_ARRAYS)
+                (directGetProcAddress ? directGetProcAddress("glDrawArrays") :
+                 wglGetProcAddress("glDrawArrays"));
             static const char vertexSource[] =
                 "#version 110\n"
                 "varying vec4 capturedPosition;\n"
-                "void main() { gl_Position = vec4(gl_Vertex.xyz, 1.0); capturedPosition = gl_Position; }\n";
+                "attribute vec3 inputPosition;\n"
+                "void main() { gl_Position = vec4(inputPosition, 1.0); capturedPosition = gl_Position; }\n";
+            static const GLfloat triangleVertices[9] = {
+                -0.8f, -0.8f, 0.0f, 0.8f, -0.8f, 0.0f, 0.0f, 0.8f, 0.0f
+            };
             static const char fragmentSource[] =
                 "#version 110\n"
                 "void main() { gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0); }\n";
@@ -1486,6 +1516,8 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                 beginTransformFeedback && endTransformFeedback &&
                 getBufferSubData && deleteBuffers;
             int transformFeedbackReady = 0;
+            int vertexInputApiReady = bindAttribLocation && vertexAttribPointer &&
+                enableVertexAttribArray && disableVertexAttribArray && drawArrays;
             int vertexCompiled = 0, fragmentCompiled = 0, linked = 0;
             int fixedVertexLinked = 0;
             BYTE *pixels = NULL;
@@ -1515,6 +1547,8 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                    queryApiReady ? "ready" : "missing");
             LogMsg("[MESA_GLSL_TRIANGLE] transform_feedback_api=%s\n",
                    transformFeedbackApiReady ? "ready" : "missing");
+            LogMsg("[MESA_GLSL_TRIANGLE] vertex_array_api=%s\n",
+                   vertexInputApiReady ? "ready" : "missing");
             if (queryApiReady) {
                 genQueries(1, &samplesQuery);
                 genQueries(1, &generatedQuery);
@@ -1552,6 +1586,8 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                     program = createProgram();
                     attachShader(program, vertexShader);
                     attachShader(program, fragmentShader);
+                    if (bindAttribLocation)
+                        bindAttribLocation(program, 0, "inputPosition");
                     if (transformFeedbackApiReady)
                         transformFeedbackVaryings(program, 1,
                                                   &captureVarying, 0x8C8CU);
@@ -1605,15 +1641,19 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                         beginQuery(0x8914U, samplesQuery); /* SAMPLES_PASSED */
                     if (generatedQuery)
                         beginQuery(0x8C87U, generatedQuery); /* PRIMITIVES_GENERATED */
+                    if (vertexInputApiReady) {
+                        vertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0,
+                                            triangleVertices);
+                        enableVertexAttribArray(0);
+                    }
                     if (transformFeedbackReady)
                         beginTransformFeedback(GL_TRIANGLES);
-                    glBegin(GL_TRIANGLES);
-                    glVertex3f(-0.8f, -0.8f, 0.0f);
-                    glVertex3f( 0.8f, -0.8f, 0.0f);
-                    glVertex3f( 0.0f,  0.8f, 0.0f);
-                    glEnd();
+                    if (vertexInputApiReady)
+                        drawArrays(GL_TRIANGLES, 0, 3);
                     if (transformFeedbackReady)
                         endTransformFeedback();
+                    if (vertexInputApiReady)
+                        disableVertexAttribArray(0);
                     if (generatedQuery)
                         endQuery(0x8C87U);
                     if (samplesQuery)
@@ -1761,7 +1801,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                     deleteBuffers(1, &transformFeedbackBuffer);
             }
             if (pixels) free(pixels);
-            int glslPass = shaderApiReady && vertexCompiled &&
+            int glslPass = shaderApiReady && vertexInputApiReady && vertexCompiled &&
                 fragmentCompiled && linked && shaderError == GL_NO_ERROR &&
                 greenPixels >= 200U;
             baselinePass = baselinePixel[0] < 32U &&
