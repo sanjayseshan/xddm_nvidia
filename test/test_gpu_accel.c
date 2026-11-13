@@ -1303,6 +1303,169 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                    greenByTile[6], greenByTile[7], greenByTile[8],
                    rightRedPixels);
         }
+        {
+            typedef unsigned int (APIENTRY *PFN_GL_CREATE_SHADER)(unsigned int);
+            typedef void (APIENTRY *PFN_GL_SHADER_SOURCE)(unsigned int, int,
+                const char *const *, const int *);
+            typedef void (APIENTRY *PFN_GL_COMPILE_SHADER)(unsigned int);
+            typedef void (APIENTRY *PFN_GL_GET_SHADER_IV)(unsigned int,
+                unsigned int, int *);
+            typedef void (APIENTRY *PFN_GL_GET_SHADER_LOG)(unsigned int,
+                int, int *, char *);
+            typedef unsigned int (APIENTRY *PFN_GL_CREATE_PROGRAM)(void);
+            typedef void (APIENTRY *PFN_GL_ATTACH_SHADER)(unsigned int,
+                unsigned int);
+            typedef void (APIENTRY *PFN_GL_LINK_PROGRAM)(unsigned int);
+            typedef void (APIENTRY *PFN_GL_GET_PROGRAM_IV)(unsigned int,
+                unsigned int, int *);
+            typedef void (APIENTRY *PFN_GL_GET_PROGRAM_LOG)(unsigned int,
+                int, int *, char *);
+            typedef void (APIENTRY *PFN_GL_USE_PROGRAM)(unsigned int);
+            typedef void (APIENTRY *PFN_GL_DELETE_SHADER)(unsigned int);
+            typedef void (APIENTRY *PFN_GL_DELETE_PROGRAM)(unsigned int);
+            PFN_GL_CREATE_SHADER createShader = (PFN_GL_CREATE_SHADER)
+                (directGetProcAddress ? directGetProcAddress("glCreateShader") :
+                 wglGetProcAddress("glCreateShader"));
+            PFN_GL_SHADER_SOURCE shaderSource = (PFN_GL_SHADER_SOURCE)
+                (directGetProcAddress ? directGetProcAddress("glShaderSource") :
+                 wglGetProcAddress("glShaderSource"));
+            PFN_GL_COMPILE_SHADER compileShader = (PFN_GL_COMPILE_SHADER)
+                (directGetProcAddress ? directGetProcAddress("glCompileShader") :
+                 wglGetProcAddress("glCompileShader"));
+            PFN_GL_GET_SHADER_IV getShaderiv = (PFN_GL_GET_SHADER_IV)
+                (directGetProcAddress ? directGetProcAddress("glGetShaderiv") :
+                 wglGetProcAddress("glGetShaderiv"));
+            PFN_GL_GET_SHADER_LOG getShaderLog = (PFN_GL_GET_SHADER_LOG)
+                (directGetProcAddress ? directGetProcAddress("glGetShaderInfoLog") :
+                 wglGetProcAddress("glGetShaderInfoLog"));
+            PFN_GL_CREATE_PROGRAM createProgram = (PFN_GL_CREATE_PROGRAM)
+                (directGetProcAddress ? directGetProcAddress("glCreateProgram") :
+                 wglGetProcAddress("glCreateProgram"));
+            PFN_GL_ATTACH_SHADER attachShader = (PFN_GL_ATTACH_SHADER)
+                (directGetProcAddress ? directGetProcAddress("glAttachShader") :
+                 wglGetProcAddress("glAttachShader"));
+            PFN_GL_LINK_PROGRAM linkProgram = (PFN_GL_LINK_PROGRAM)
+                (directGetProcAddress ? directGetProcAddress("glLinkProgram") :
+                 wglGetProcAddress("glLinkProgram"));
+            PFN_GL_GET_PROGRAM_IV getProgramiv = (PFN_GL_GET_PROGRAM_IV)
+                (directGetProcAddress ? directGetProcAddress("glGetProgramiv") :
+                 wglGetProcAddress("glGetProgramiv"));
+            PFN_GL_GET_PROGRAM_LOG getProgramLog = (PFN_GL_GET_PROGRAM_LOG)
+                (directGetProcAddress ? directGetProcAddress("glGetProgramInfoLog") :
+                 wglGetProcAddress("glGetProgramInfoLog"));
+            PFN_GL_USE_PROGRAM useProgram = (PFN_GL_USE_PROGRAM)
+                (directGetProcAddress ? directGetProcAddress("glUseProgram") :
+                 wglGetProcAddress("glUseProgram"));
+            PFN_GL_DELETE_SHADER deleteShader = (PFN_GL_DELETE_SHADER)
+                (directGetProcAddress ? directGetProcAddress("glDeleteShader") :
+                 wglGetProcAddress("glDeleteShader"));
+            PFN_GL_DELETE_PROGRAM deleteProgram = (PFN_GL_DELETE_PROGRAM)
+                (directGetProcAddress ? directGetProcAddress("glDeleteProgram") :
+                 wglGetProcAddress("glDeleteProgram"));
+            static const char vertexSource[] =
+                "#version 110\n"
+                "void main() { gl_Position = gl_Vertex; }\n";
+            static const char fragmentSource[] =
+                "#version 110\n"
+                "void main() { gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0); }\n";
+            unsigned int vertexShader = 0, fragmentShader = 0, program = 0;
+            int vertexCompiled = 0, fragmentCompiled = 0, linked = 0;
+            BYTE pixels[64 * 64 * 4];
+            unsigned greenPixels = 0, pixel;
+            GLenum shaderError = GL_NO_ERROR;
+            int shaderApiReady = createShader && shaderSource && compileShader &&
+                getShaderiv && getShaderLog && createProgram && attachShader &&
+                linkProgram && getProgramiv && getProgramLog && useProgram &&
+                deleteShader && deleteProgram;
+            LogMsg("[MESA_GLSL_TRIANGLE] shader_api=%s\n",
+                   shaderApiReady ? "ready" : "missing");
+            if (shaderApiReady) {
+                const char *source = vertexSource;
+                char shaderLog[512];
+                vertexShader = createShader(0x8B31U);
+                shaderSource(vertexShader, 1, &source, NULL);
+                compileShader(vertexShader);
+                getShaderiv(vertexShader, 0x8B81U, &vertexCompiled);
+                if (!vertexCompiled) {
+                    int logBytes = 0;
+                    getShaderLog(vertexShader, sizeof(shaderLog) - 1,
+                                 &logBytes, shaderLog);
+                    shaderLog[sizeof(shaderLog) - 1] = '\0';
+                    LogMsg("[MESA_GLSL_TRIANGLE] vertex compile failed: %s\n",
+                           shaderLog);
+                }
+                source = fragmentSource;
+                fragmentShader = createShader(0x8B30U);
+                shaderSource(fragmentShader, 1, &source, NULL);
+                compileShader(fragmentShader);
+                getShaderiv(fragmentShader, 0x8B81U, &fragmentCompiled);
+                if (!fragmentCompiled) {
+                    int logBytes = 0;
+                    getShaderLog(fragmentShader, sizeof(shaderLog) - 1,
+                                 &logBytes, shaderLog);
+                    shaderLog[sizeof(shaderLog) - 1] = '\0';
+                    LogMsg("[MESA_GLSL_TRIANGLE] fragment compile failed: %s\n",
+                           shaderLog);
+                }
+                if (vertexCompiled && fragmentCompiled) {
+                    program = createProgram();
+                    attachShader(program, vertexShader);
+                    attachShader(program, fragmentShader);
+                    linkProgram(program);
+                    getProgramiv(program, 0x8B82U, &linked);
+                    if (!linked) {
+                        int logBytes = 0;
+                        getProgramLog(program, sizeof(shaderLog) - 1,
+                                      &logBytes, shaderLog);
+                        shaderLog[sizeof(shaderLog) - 1] = '\0';
+                        LogMsg("[MESA_GLSL_TRIANGLE] program link failed: %s\n",
+                               shaderLog);
+                    }
+                }
+                if (linked) {
+                    glViewport(0, 0, 64, 64);
+                    glMatrixMode(GL_PROJECTION);
+                    glLoadIdentity();
+                    glMatrixMode(GL_MODELVIEW);
+                    glLoadIdentity();
+                    glDisable(GL_DEPTH_TEST);
+                    glDisable(GL_CULL_FACE);
+                    glDisable(GL_BLEND);
+                    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+                    glClear(GL_COLOR_BUFFER_BIT);
+                    useProgram(program);
+                    glBegin(GL_TRIANGLES);
+                    glVertex3f(-0.8f, -0.8f, 0.0f);
+                    glVertex3f( 0.8f, -0.8f, 0.0f);
+                    glVertex3f( 0.0f,  0.8f, 0.0f);
+                    glEnd();
+                    glFinish();
+                    shaderError = glGetError();
+                    glReadBuffer(GL_BACK);
+                    glReadPixels(0, 0, 64, 64, GL_RGBA,
+                                 GL_UNSIGNED_BYTE, pixels);
+                    if (shaderError == GL_NO_ERROR)
+                        shaderError = glGetError();
+                    for (pixel = 0; pixel < 64U * 64U; pixel++)
+                        if (pixels[pixel * 4U + 1U] > 200U &&
+                            pixels[pixel * 4U] < 32U &&
+                            pixels[pixel * 4U + 2U] < 32U)
+                            greenPixels++;
+                    useProgram(0);
+                }
+                if (vertexShader) deleteShader(vertexShader);
+                if (fragmentShader) deleteShader(fragmentShader);
+                if (program) deleteProgram(program);
+            }
+            int glslPass = shaderApiReady && vertexCompiled &&
+                fragmentCompiled && linked && shaderError == GL_NO_ERROR &&
+                greenPixels >= 200U;
+            LogMsg("[MESA_GLSL_TRIANGLE_RESULT] %s compiled=%d/%d linked=%d green_pixels=%u error=0x%X\n",
+                   glslPass ? "PASS" : "FAIL", vertexCompiled,
+                   fragmentCompiled, linked, greenPixels, shaderError);
+            if (!glslPass) failures++;
+            glViewport(0, 0, w, h);
+        }
         DumpMesaBridgeTrace();
         {
             BYTE fullTargetCenter[4]={0,0,0,0},fullTargetCorner[4]={0,0,0,0};

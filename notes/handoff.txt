@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.122`.
+Updated November 13, 2026 after VFIO run `.123`.
 
 ## Current status
 
@@ -19,6 +19,10 @@ The `.122` snapshot also confirms identity viewport swizzle, depth range 0..1,
 all RGBA color-mask bits enabled for target 0, blending disabled, logic op
 disabled, and multisampling modifiers disabled. These fixed-function gates do
 not explain the black output.
+The `.123` programmable GLSL triangle also returns black despite successful
+shader compile/link and completed draw fences. This points to a common shader
+execution, vertex/raster, or render-target path rather than only the
+fixed-function-generated shaders.
 The trace reports `screens=1 callbacks=0`; callbacks are the unused WGL hybrid
 path and do not represent the native Nouveau screen's activity.
 
@@ -300,12 +304,13 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Next work
 
-1. Explain the missing raster output even though cube draw submissions complete:
-   `.122` captures the actual 24-vertex cube state, with coherent vertex fetch,
-   target, viewport/swizzle/depth range, fill/cull, color mask, blend and shader
-   output state. Cube readback remains black. Add a programmable GLSL triangle
-   probe through Mesa Nouveau to separate fixed-function shader/linkage from
-   general NVC0 raster output, then inspect shader instructions and varyings.
+1. Explain the missing raster output even though draw submissions complete:
+   `.123` compiled/linked GLSL 1.10 shaders and submitted two 3-vertex NVC0
+   TRIANGLES batches whose release fences matched (`0x0f`, `0x10`), but its
+   back-buffer readback had zero green pixels and no GL error. The cube remains
+   black too. Capture the GLSL triangle's exact target, vertex, viewport,
+   shader-stage and output state separately from the later cube; compare its
+   generated shaders to a known working NVC0 programmable draw.
 2. Find why NVC0 submission stops at FIFO `0x67` during the later animation.
    The failed stream is decoded above; trace the Mesa semaphore release and
    miniport completion fence through PBDMA progress, and correlate with the
@@ -321,7 +326,7 @@ frames cannot pass. In both `.101` and `.102`, depth and no-depth cases fail at
 
 ## Relevant files
 
-- Latest completed full VFIO log: `test_logs/v3.0.0.122-20261113-010634.log`
+- Latest completed full VFIO log: `test_logs/v3.0.0.123-20261113-011259.log`
 - Latest extracted Nouveau trace: `notes/nouveau-trace-latest.txt`
 - Latest Mesa/Nouveau bridge excerpt: `notes/mesa-bridge-latest.txt`
 - GPFIFO submission and diagnostics: `src_driver/nvx_gsp.c`,
@@ -512,12 +517,11 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   cube readbacks remain black. Clear and independent GR triangle readback pass;
   `[OPENGL_RESULT] FAIL`. 100 animation frames took 8.4388 seconds (11.8 FPS).
   Firmware assertion count reaches 3 during the later animation.
-- Next, decode the cube-bound instructions and constant-buffer contents,
-  especially vertex output and fragment varying slots, then compare emitted
-  setup to Nouveau's working NVC0 initialization/draw sequences. The `.122`
-  capture shows viewport swizzle/depth range and output masks are valid. Keep
-  the later FIFO stall as a separate issue unless evidence ties it to the black
-  draws.
+- Next, capture the programmable triangle's own command state and shader bytes,
+  then compare them to a working NVC0 programmable draw. `.123` shows the
+  failure also affects explicit GLSL, so prioritize common shader execution,
+  vertex input, rasterization, and target setup. Keep the later FIFO stall as a
+  separate issue unless evidence ties it to the black draws.
 
 ### Revision 3.0.0.122 — verify remaining raster output gates
 
@@ -535,7 +539,25 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
 - Two cube fences again completed (`0x3f/0x40`); depth and no-depth readback
   remain black. Clear and independent GR triangle readback pass. The 100-frame
   animation took 7.9107 seconds (12.6 FPS), and firmware assertions reached 3.
-- Next: add a programmable GLSL triangle probe through the Mesa Nouveau WGL
-  path. If it renders, isolate the fixed-function-generated shader/varying
-  path; if it also returns black, isolate common NVC0 shader execution and
-  raster target setup. Continue shader instruction/varying analysis in parallel.
+- `.123` followed with a programmable GLSL probe; it also returned black after
+  successful compilation/link and completed NVC0 draw fences. Capture that
+  draw's exact state and shader bindings next.
+
+### Revision 3.0.0.123 — programmable shader probe
+
+- Added a GLSL 1.10 vertex/fragment shader probe to the Mesa Nouveau test path.
+  It takes only `gl_Vertex`, emits a constant green fragment color, reads 64x64
+  back-buffer pixels, and records compile/link/error/coverage results. This
+  bypasses Mesa's generated fixed-function shaders and color varying.
+- x64 MinGW build passed. The VFIO run booted on attempt 1, completed the guest
+  suite, and shut down normally. Full log:
+  `test_logs/v3.0.0.123-20261113-011259.log`.
+- The GLSL API resolved; vertex and fragment compile passed; program link
+  passed. Two NVC0 TRIANGLES batches with count 3 completed matching fences
+  `0x0f/0x0f` and `0x10/0x10`. The 64x64 back-buffer read found zero green
+  pixels, with `GL error=0`. The cube remains black; 100 frames took 8.2030 s
+  (12.2 FPS), firmware assertions reached 3, and `[OPENGL_RESULT] FAIL`.
+- This disproves the theory that only Mesa's fixed-function shader variant is
+  at fault. Next capture the programmable triangle's target, viewport, vertex
+  input, and shader-stage state; the current snapshot is reserved for the cube
+  and does not capture this triangle's shader bindings.
