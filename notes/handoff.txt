@@ -1212,9 +1212,24 @@ Relevant files: `mesa_patches/nvx_xf86drm.c`,
   existing download escape and compare them with the CPU shadow before the 3D
   draw is submitted. This will establish whether the GPU-visible vertex bytes
   are correct even when the later NVC0 draw faults.
-- Revision 3.0.0.159 hardware run is pending. Relevant files:
-  `mesa_patches/nvx_xf86drm.c`, `test/test_full_driver.sh`,
-  `dist_full/nvx.inf`, and this handoff.
+- Full VFIO log: `test_logs/v3.0.0.159-20261113-044039.log`. Host tests,
+  package build/import audit, guest boot, and clean shutdown passed. The GR
+  triangle and 2D checks passed; OpenGL still failed, with black full-target
+  readbacks and zero colored cube pixels.
+- The new pre-draw comparison succeeded: for BO16 position input at offset
+  `0x414`, all 144 dwords read through the copy engine match the CPU shadow
+  (`kind=17 ... matches=1 readback=1`). The cube draw completed two GPU fences
+  (`0x6d` and `0x6e`), so this run did not stall during the cube draw. The GPU
+  executed the draw with the expected vertex data but produced no readback
+  pixels. A later unrelated batch at fence `0x81` timed out and the graphics
+  channel faulted; firmware assertions again reached 3.
+- This moves the primary cube failure downstream of vertex memory: inspect the
+  active NVC0 rasterizer/shader/target state and the OpenGL framebuffer
+  readback path. Compare a known passing triangle and failing quad using the
+  captured draw states and target BO bytes. Phase 2C remains incomplete.
+- Relevant files: `mesa_patches/nvx_xf86drm.c`,
+  `mesa_patches/nvx_nouveau_bo.c`, `test/test_full_driver.sh`,
+  `dist_full/nvx.inf`, this log, and this handoff.
 - Relevant files: `mesa_patches/nvx_nouveau_bo.c`,
   `mesa_patches/nvx_nouveau_bo.h`, `mesa_patches/nvx_xf86drm.c`,
   `test/test_full_driver.sh`, and `dist_full/nvx.inf`.
