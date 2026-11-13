@@ -646,24 +646,28 @@ static void LogMsg(const char *fmt, ...)
     }
 }
 
-static unsigned ReadRawMesaTargetGreenPixels(uint64_t *buffer_id,
+static unsigned ReadRawMesaTargetGreenPixels(uint32_t draw_kind,
+                                              uint64_t *target_va,
+                                              uint64_t *buffer_id,
                                               uint32_t *buffer_bytes,
                                               int *available)
 {
-    typedef int (WINAPI *PFN_READ_TARGET_RAW)(uint32_t *, uint32_t *,
+    typedef int (WINAPI *PFN_READ_TARGET_RAW)(uint32_t, uint32_t *,
+                                               uint32_t *, uint64_t *,
                                                uint64_t *);
     HMODULE icd = GetModuleHandleA("nvxogl64.dll");
     PFN_READ_TARGET_RAW readTarget = icd ?
         (PFN_READ_TARGET_RAW)GetProcAddress(
-            icd, "NvxXf86DrmReadCurrentTargetRaw") : NULL;
+            icd, "NvxXf86DrmReadDrawTargetRaw") : NULL;
     unsigned green = 0;
 
     if (buffer_id) *buffer_id = 0;
+    if (target_va) *target_va = 0;
     if (available) *available = readTarget != NULL;
     if (buffer_bytes) *buffer_bytes = 0;
     if (!readTarget)
         return 0;
-    if (!readTarget(&green, buffer_bytes, buffer_id))
+    if (!readTarget(draw_kind, &green, buffer_bytes, target_va, buffer_id))
         return 0;
     return green;
 }
@@ -1406,6 +1410,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
             unsigned fixedVertexGreen = 0;
             unsigned rawTargetGreen = 0, fixedRawTargetGreen = 0;
             uint64_t rawTargetBufferId = 0, fixedRawTargetBufferId = 0;
+            uint64_t rawTargetVa = 0, fixedRawTargetVa = 0;
             uint32_t rawTargetBytes = 0, fixedRawTargetBytes = 0;
             int rawTargetAvailable = 0, fixedRawTargetAvailable = 0;
             int baselinePass;
@@ -1491,10 +1496,10 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                     if (shaderError == GL_NO_ERROR)
                         shaderError = glGetError();
                     rawTargetGreen = ReadRawMesaTargetGreenPixels(
-                        &rawTargetBufferId, &rawTargetBytes,
+                        2U, &rawTargetVa, &rawTargetBufferId, &rawTargetBytes,
                         &rawTargetAvailable);
-                    LogMsg("[MESA_GLSL_RAW_TARGET] buffer=%I64u bytes=%u green_pixels=%u source=%s\n",
-                           rawTargetBufferId, rawTargetBytes, rawTargetGreen,
+                    LogMsg("[MESA_GLSL_RAW_TARGET] va=%I64u buffer=%I64u bytes=%u green_pixels=%u source=%s\n",
+                           rawTargetVa, rawTargetBufferId, rawTargetBytes, rawTargetGreen,
                            rawTargetAvailable ? "miniport-ce-download" :
                                                 "unavailable");
                     glReadBuffer(GL_BACK);
@@ -1560,10 +1565,12 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                         if (fixedVertexError == GL_NO_ERROR)
                             fixedVertexError = glGetError();
                         fixedRawTargetGreen = ReadRawMesaTargetGreenPixels(
-                            &fixedRawTargetBufferId, &fixedRawTargetBytes,
+                            3U, &fixedRawTargetVa, &fixedRawTargetBufferId,
+                            &fixedRawTargetBytes,
                             &fixedRawTargetAvailable);
-                        LogMsg("[MESA_GLSL_FFVS_RAW_TARGET] buffer=%I64u bytes=%u green_pixels=%u source=%s\n",
-                               fixedRawTargetBufferId, fixedRawTargetBytes,
+                        LogMsg("[MESA_GLSL_FFVS_RAW_TARGET] va=%I64u buffer=%I64u bytes=%u green_pixels=%u source=%s\n",
+                               fixedRawTargetVa, fixedRawTargetBufferId,
+                               fixedRawTargetBytes,
                                fixedRawTargetGreen,
                                fixedRawTargetAvailable ?
                                    "miniport-ce-download" : "unavailable");

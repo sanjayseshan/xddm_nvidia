@@ -85,6 +85,8 @@ struct nvx_drm_device_slot {
 #if defined(_WIN32) || defined(_WIN64)
    uint64_t shader_address[6];
    uint64_t shader_triangle_vertex_address;
+   uint64_t shader_triangle_target_address;
+   uint64_t shader_ffvs_target_address;
    uint32_t shader_address_mask;
    uint32_t shader_draw_snapshot_done;
    uint32_t shader_triangle_snapshot_done;
@@ -230,11 +232,17 @@ nvx_drm_capture_shader_addresses_locked(
       draw_kind = 2U;
       device->shader_triangle_snapshot_done = 1U;
       device->shader_triangle_vertex_address = device->shader_address[1];
+      device->shader_triangle_target_address =
+         ((uint64_t)device->gr_state[0x0800U / 4U] << 32) |
+         device->gr_state[0x0804U / 4U];
    } else if (draw_seen && draw_primitive == 4U && draw_vertex_count == 3U &&
        !device->shader_ffvs_snapshot_done && device->shader_address[1] &&
        device->shader_address[1] != device->shader_triangle_vertex_address) {
       draw_kind = 3U;
       device->shader_ffvs_snapshot_done = 1U;
+      device->shader_ffvs_target_address =
+         ((uint64_t)device->gr_state[0x0800U / 4U] << 32) |
+         device->gr_state[0x0804U / 4U];
    } else if (draw_seen && draw_primitive == 7U && draw_vertex_count == 24U &&
        !device->gr_draw_state_snapshot_done &&
        (device->shader_address_mask & ((1U << 1) | (1U << 2) | (1U << 5))) ==
@@ -1553,14 +1561,16 @@ NvxXf86DrmGetStatus(NVX_XF86DRM_STATUS *status)
    nvx_drm_lock_release();
 }
 
-/* Read the currently bound render target through the miniport's generic
- * copy-engine download path, independently of glReadPixels and CPU shadows. */
+/* Read a triangle's captured target BO through the miniport CE path,
+ * independently of glReadPixels and CPU shadows. */
 #if defined(_WIN32) || defined(_WIN64)
 __declspec(dllexport) int __stdcall
-NvxXf86DrmReadCurrentTargetRaw(uint32_t *green_pixels, uint32_t *bytes,
-                               uint64_t *buffer_id)
+NvxXf86DrmReadDrawTargetRaw(uint32_t draw_kind, uint32_t *green_pixels,
+                            uint32_t *bytes, uint64_t *target_va,
+                            uint64_t *buffer_id)
 {
    NVX_WINSYS_DEVICE winsys;
+   uint64_t requested_target_va = 0;
    uint64_t target_buffer_id = 0;
    uint32_t target_bytes = 0;
    uint8_t *raw;
@@ -1571,25 +1581,29 @@ NvxXf86DrmReadCurrentTargetRaw(uint32_t *green_pixels, uint32_t *bytes,
       *green_pixels = 0;
    if (bytes)
       *bytes = 0;
+   if (target_va)
+      *target_va = 0;
    if (buffer_id)
       *buffer_id = 0;
-   if (!green_pixels || !bytes)
+   if (!green_pixels || !bytes || !target_va ||
+       (draw_kind != 2U && draw_kind != 3U))
       return 0;
 
    nvx_drm_lock_acquire();
    for (i = 0; i < NVX_DRM_DEVICE_SLOTS && !found; i++) {
       struct nvx_drm_device_slot *device = &nvx_drm_devices[i];
-      uint64_t target_va;
       if (device->fd < 0 || !device->device.escape ||
           !device->device.ClientToken)
          continue;
-      target_va = ((uint64_t)device->gr_state[0x0800U / 4U] << 32) |
-                  device->gr_state[0x0804U / 4U];
-      if (!target_va)
+      requested_target_va = draw_kind == 2U ?
+         device->shader_triangle_target_address :
+         device->shader_ffvs_target_address;
+      if (!requested_target_va)
          continue;
       for (j = 0; j < NVX_DRM_BUFFER_SLOTS; j++) {
          struct nvx_drm_bo_slot *slot = &device->buffers[j];
-         if (!slot->handle || slot->bo.allocation.GpuVa != target_va ||
+         if (!slot->handle ||
+             slot->bo.allocation.GpuVa != requested_target_va ||
              slot->bo.allocation.ClientToken != device->device.ClientToken ||
              !slot->bo.allocation.BufferId ||
              !slot->bo.allocation.Bytes ||
@@ -1598,6 +1612,7 @@ NvxXf86DrmReadCurrentTargetRaw(uint32_t *green_pixels, uint32_t *bytes,
          winsys = device->device;
          target_buffer_id = slot->bo.allocation.BufferId;
          target_bytes = (uint32_t)slot->bo.allocation.Bytes;
+         *target_va = requested_target_va;
          if (buffer_id)
             *buffer_id = target_buffer_id;
          found = 1;
