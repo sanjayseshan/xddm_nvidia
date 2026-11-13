@@ -1445,6 +1445,7 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                     glDisable(GL_DEPTH_TEST);
                     glDisable(GL_CULL_FACE);
                     glDisable(GL_BLEND);
+                    glDisable(GL_SCISSOR_TEST);
                     glReadBuffer(GL_BACK);
                     glClearColor(0.0f, 0.0f, 0.75f, 1.0f);
                     glClear(GL_COLOR_BUFFER_BIT);
@@ -1503,6 +1504,10 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                         glLoadIdentity();
                         glMatrixMode(GL_MODELVIEW);
                         glLoadIdentity();
+                        glDisable(GL_DEPTH_TEST);
+                        glDisable(GL_CULL_FACE);
+                        glDisable(GL_BLEND);
+                        glDisable(GL_SCISSOR_TEST);
                         glReadBuffer(GL_BACK);
                         glClearColor(0.0f, 0.0f, 0.75f, 1.0f);
                         glClear(GL_COLOR_BUFFER_BIT);

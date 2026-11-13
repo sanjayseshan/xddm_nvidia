@@ -1,8 +1,15 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.128`.
+Updated November 13, 2026 after VFIO run `.129`.
 
 ## Current status
+
+The latest VFIO run `.129` completed its guest benchmarks and clean shutdown, but
+`[OPENGL_RESULT] FAIL`; both same-target triangle readbacks still show zero
+green pixels. The explicit scissor reset did not change the result. Full log:
+`test_logs/v3.0.0.129-20261113-015132.log`; the latest triangle capture is in
+`notes/nouveau-trace-latest.txt`. The run took 100 cube frames in 6.8648 s
+(14.6 FPS), and firmware assertion count reached 3 during animation.
 
 The XP x64 Mesa ICD builds and selects Mesa / NV170 (OpenGL 4.3 Compatibility
 Profile, Mesa 27.0.0-devel). The run creates a native Nouveau Gallium
@@ -695,3 +702,27 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
 - Cube remains black; 100 frames took 7.1623 s (14.0 FPS); firmware assertions
   reach 3 during later animation. Next compare shared fragment shader headers,
   fragment output routing, and raster setup to upstream NVC0 state emission.
+
+### Revision 3.0.0.129 — isolate inherited scissor state
+
+- The `.128` draw-state capture showed scissor enabled (`SCISSOR_ENABLE=1`),
+  while the GLSL triangle probes reset depth, culling, and blending but did not
+  reset scissor. Both the GLSL vertex+fragment draw and fixed-function vertex
+  plus GLSL fragment draw now explicitly disable `GL_SCISSOR_TEST`; the latter
+  also resets depth, culling, and blending to match the first probe.
+- This is a diagnostic isolation: it tests whether stale scissor state from
+  preceding OpenGL probes explains the missing triangle pixels. The scissor
+  bounds in the trace appear broad, so this is a hypothesis rather than a
+  confirmed cause.
+- Full VFIO result: `test_logs/v3.0.0.129-20261113-015132.log`. Host tests and
+  package audits passed; the guest ran all benchmarks and shut down.
+  `[OPENGL_RESULT] FAIL`; the GLSL triangle and fixed-function-vertex/GLSL-
+  fragment triangle both still report zero green pixels, blue center unchanged,
+  and `GL error=0`. The cube ran 100 frames in 6.8648 s (14.6 FPS); firmware
+  assertion count reached 3 during animation.
+- Explicitly disabling scissor (and resetting depth/culling/blending for both
+  probes) did not change the GPU capture or readback. The hypothesis is rejected
+  as the explanation for missing fragments. The fresh trace is recorded in
+  `notes/nouveau-trace-latest.txt`. Next verify which GL state calls actually
+  reach Mesa and how Mesa maps the pipeline state to the captured NVC0 registers;
+  then inspect the shared fragment execution/output path.
