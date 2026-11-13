@@ -1,6 +1,6 @@
 # Phase 2C handoff: Windows XP x64 OpenGL on GA104
 
-Updated November 13, 2026 after VFIO run `.148`; preparing corrected `.149` CPU staging capture.
+Updated November 13, 2026 after VFIO run `.149`; preparing `.150` GPU fetch comparison.
 
 ## Current status
 
@@ -1009,3 +1009,25 @@ NVX_BUILD_MESA_ICD=1 NVX_AUTO_RETRY=1 NVX_GR_CHANNEL_PROBE=1 NVX_GR_PROMOTE_PROB
   extracted guest trace.
 - Removes the stray invalid query from the OpenGL probe (validated in `.148`),
   and bumps the package/test version to `3.0.0.149`. Hardware result pending.
+
+
+### Revision 3.0.0.149 — verify CPU Begin/End vertex staging
+
+- Corrected patch `0027` is applied during the Mesa build and the linked
+  `libmesa.a` object references `NvxWglRecordNouveauBufferDwords`. The guest
+  trace now contains 109 Begin/End staging dumps. Three-vertex GLSL immediate
+  draws show the expected CPU values: `-0.8,-0.8,0`, `0.8,-0.8,0`, and
+  `0,0.8,0` (hex `bf4ccccd`, `3f4ccccd`, and `3f800000`). CPU staging is
+  therefore correct before Gallium consumes it.
+- Despite correct CPU staging, transform feedback still returns `(0,0,0,1)`
+  for all immediate vertices. This moves the fault downstream of `glVertex3f`
+  dispatch and CPU staging, into Gallium's vertex-element/vertex-buffer
+  binding, upload, or GPU fetch path. Compare the immediate draw's NVC0 vertex
+  element formats, strides, offsets, GPU buffer address/content against the
+  passing explicit-array draw.
+- Full VFIO log: `test_logs/v3.0.0.149-20261113-033901.log`. XP booted and shut
+  down normally. Explicit GLSL array draw passed with 1,352 pixels; depth and
+  no-depth cube remained black. Animation reached 100 frames in 5.1758 s
+  (19.3 FPS), then timed out at FIFO/fence `0xdf`; firmware assertions
+  reached 3. The GR triangle and semaphore passed.
+- Next test version: `3.0.0.150`.
