@@ -144,11 +144,18 @@ failure is specific to the compatibility fixed-function pipeline or its
 primitive/attribute handling. GR and 2D checks passed; OpenGL still fails and
 the channel later times out at fence `0x91`.
 
-Revision 3.0.0.167 will draw both GL_TRIANGLES and GL_QUADS at full size using
-the passing test's fixed-function vertex stage and a constant-green GLSL
-fragment shader. This distinguishes fixed-function vertex transformation
-from quad topology and from the fixed-function fragment/color path. Full VFIO
-run pending.
+Revision 3.0.0.167 draws both GL_TRIANGLES and GL_QUADS at full size using the
+passing test's fixed-function vertex stage and constant-green GLSL fragment
+shader. Full VFIO log:
+`test_logs/v3.0.0.167-20261113-052535.log`. Both primitives read center
+`(0,255,0)` with no GL errors. So full-size fixed-function position
+transformation and QUADS topology both work when the fragment shader ignores
+vertex color. The default program-0 green quad and its triangle control still
+read black. This narrows the remaining failure to the fixed-function color
+varying path (vertex color output, its linkage, or the default fixed-function
+fragment shader). Revision `.168` adds a minimal GLSL fragment shader that
+reads `gl_Color` with the same fixed-function vertex stage, then compares it
+with the constant-green and default paths.
 
 Revision 3.0.0.165 verifies both exact full-window vertex arrays. Full VFIO
 log: `test_logs/v3.0.0.165-20261113-051354.log`. For BO16, position at offset

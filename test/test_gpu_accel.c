@@ -2012,6 +2012,64 @@ static void TestOpenGL(HWND hwnd, HDC hdc)
                            fullViewportError!=GL_NO_ERROR)
                             failures++;
                     }
+                    if(fixedVertexLinked) {
+                        BYTE fullFfvsTriangles[4]={0,0,0,0};
+                        BYTE fullFfvsQuads[4]={0,0,0,0};
+                        GLenum fullFfvsError;
+                        glViewport(0,0,w,h);
+                        glMatrixMode(GL_PROJECTION);
+                        glLoadIdentity();
+                        glMatrixMode(GL_MODELVIEW);
+                        glLoadIdentity();
+                        glDisable(GL_DEPTH_TEST);
+                        glDisable(GL_CULL_FACE);
+                        glDisable(GL_BLEND);
+                        glDisable(GL_SCISSOR_TEST);
+                        glReadBuffer(GL_BACK);
+                        useProgram(fixedVertexProgram);
+                        glClearColor(0.0f,0.0f,0.0f,1.0f);
+                        glClear(GL_COLOR_BUFFER_BIT);
+                        glBegin(GL_TRIANGLES);
+                        glVertex3f(-0.8f,-0.8f,0.0f);
+                        glVertex3f( 0.8f,-0.8f,0.0f);
+                        glVertex3f( 0.0f, 0.8f,0.0f);
+                        glEnd();
+                        glFinish();
+                        fullFfvsError=glGetError();
+                        if(fullFfvsError==GL_NO_ERROR) {
+                            glReadPixels(w/2,h/2,1,1,GL_RGBA,
+                                         GL_UNSIGNED_BYTE,
+                                         fullFfvsTriangles);
+                            fullFfvsError=glGetError();
+                        }
+                        LogMsg("[MESA_GLSL_FFVS_FULL_TRIANGLES] center=%u,%u,%u error=0x%X\n",
+                               fullFfvsTriangles[0],fullFfvsTriangles[1],
+                               fullFfvsTriangles[2],fullFfvsError);
+                        if(fullFfvsError!=GL_NO_ERROR||
+                           fullFfvsTriangles[1]<200U)
+                            failures++;
+                        glClear(GL_COLOR_BUFFER_BIT);
+                        glBegin(GL_QUADS);
+                        glVertex3f(-0.8f,-0.8f,0.0f);
+                        glVertex3f( 0.8f,-0.8f,0.0f);
+                        glVertex3f( 0.8f, 0.8f,0.0f);
+                        glVertex3f(-0.8f, 0.8f,0.0f);
+                        glEnd();
+                        glFinish();
+                        fullFfvsError=glGetError();
+                        if(fullFfvsError==GL_NO_ERROR) {
+                            glReadPixels(w/2,h/2,1,1,GL_RGBA,
+                                         GL_UNSIGNED_BYTE,fullFfvsQuads);
+                            fullFfvsError=glGetError();
+                        }
+                        useProgram(0);
+                        LogMsg("[MESA_GLSL_FFVS_FULL_QUADS] center=%u,%u,%u error=0x%X\n",
+                               fullFfvsQuads[0],fullFfvsQuads[1],
+                               fullFfvsQuads[2],fullFfvsError);
+                        if(fullFfvsError!=GL_NO_ERROR||
+                           fullFfvsQuads[1]<200U)
+                            failures++;
+                    }
                     useProgram(0);
                 }
                 if (vertexShader) deleteShader(vertexShader);
